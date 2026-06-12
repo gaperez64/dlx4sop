@@ -1,6 +1,6 @@
 # dlx4sop Architecture Plan
 
-This document describes the implementation direction for `dlx4sop`: a low-level, Unix-style toolkit for exact finite-modulus quadratic SOP simulation and translation.
+This document describes the implementation direction for `dlx4sop`: a low-level, Unix-style toolkit for exact finite-modulus quadratic SOP simulation and translation. As default, we can assume a 0-to-0 amplitude computation, other computational bases can be given to the tool as arguments (we only have long em-dash options/arguments in these tools).
 
 The current scope is deliberately restricted to **degree at most 2** SOPs. Higher-degree native SOPs are out of scope for now. Gates such as `CCZ` and Toffoli should be supported through **constant-size labelled quadratic gadgets**, not by admitting cubic monomials into the core solver.
 
