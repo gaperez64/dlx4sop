@@ -26,6 +26,13 @@ and `ARCHITECTURE.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.7% line coverage over `src`.
+- Added finite `p(...)` phase alias:
+  - reuses the existing `u1(...)` lowering path for symbolic multiples of
+    `pi/4`;
+  - golden coverage for `p(pi/2)`.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
 
 ## Current Task
 
@@ -37,6 +44,7 @@ and `ARCHITECTURE.md`.
 ## Future Tasks
 
 - Add more finite OpenQASM syntax compatibility with boundary-level examples.
+- Add small compatibility aliases when they reuse existing lowering paths.
 - Revisit performance-annex items as solver hot paths mature:
   - residual-state hashing;
   - stronger component fingerprints;

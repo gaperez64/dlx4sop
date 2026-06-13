@@ -213,7 +213,7 @@ deliberately small static OpenQASM 2.0 subset:
 - `qreg` declarations;
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
-- finite `u1(...)` phase calls for symbolic multiples of `pi/4`;
+- finite `u1(...)` and `p(...)` phase calls for symbolic multiples of `pi/4`;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;

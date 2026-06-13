@@ -509,7 +509,19 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
 
 static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
                                  uint32_t *out_coeff, bool *out_is_phase) {
-  return parse_param_phase_coeff(importer, gate, "u1(", "u1", out_coeff, out_is_phase);
+  bool matches = false;
+  if (!parse_param_phase_coeff(importer, gate, "u1(", "u1", out_coeff, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_phase = true;
+    return true;
+  }
+  if (!parse_param_phase_coeff(importer, gate, "p(", "p", out_coeff, &matches)) {
+    return false;
+  }
+  *out_is_phase = matches;
+  return true;
 }
 
 static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,

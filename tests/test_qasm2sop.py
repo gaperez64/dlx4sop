@@ -203,6 +203,7 @@ def main() -> int:
     run_case(exe, source_root, "qasm_swap_id")
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
+    run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_register_unary")
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]

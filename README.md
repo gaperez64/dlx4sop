@@ -35,7 +35,7 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
-  with explicit fixed input/output bitstrings, finite `u1`/controlled-phase
+  with explicit fixed input/output bitstrings, finite `u1`/`p`/controlled-phase
   calls, and a few decomposition-backed standard gates. Supported operands
   include indexed qubits, whole-register one-qubit operands, and matching
   whole-register two-qubit operands.
