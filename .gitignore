@@ -53,3 +53,9 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Local build and test artifacts
+build/
+build-*/
+__pycache__/
+.pytest_cache/
