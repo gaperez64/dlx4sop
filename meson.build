@@ -209,6 +209,16 @@ if python3.found()
     ],
     depends: qasm2sop,
   )
+  test(
+    'mqt bench scan smoke',
+    python3,
+    args: [
+      files('tests/test_scan_mqt_bench.py'),
+      files('tools/scan_mqt_bench.py'),
+      qasm2sop.full_path(),
+    ],
+    depends: qasm2sop,
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',

@@ -55,6 +55,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   circuit format into the supported OpenQASM subset.
 - `tools/scan_feynmandd_qasm.py`: scan a local FeynmanDD checkout or corpus
   root through `qasm2sop` and group import failures by cause.
+- `tools/scan_mqt_bench.py`: optionally generate Munich Quantum Toolkit Bench
+  QASM2 cases from an installed package or local checkout, strip final
+  measurements for strong-simulation imports, and group `qasm2sop` outcomes.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, deterministic algebraic invariants for canonicalization and solver
@@ -288,6 +291,19 @@ git clone --depth 1 https://github.com/cqs-thu/feynman-decision-diagram.git /tmp
 tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-feynmandd/benchmark/exp
 ```
 
+Inspect generated MQT Bench circuits without making MQT a project dependency:
+
+```sh
+git clone --depth 1 https://github.com/munich-quantum-toolkit/bench.git /tmp/dlx4sop-mqtbench
+tools/scan_mqt_bench.py build/qasm2sop --mqt-source /tmp/dlx4sop-mqtbench --benchmarks default --sizes 3
+tools/scan_mqt_bench.py build/qasm2sop --mqt-source /tmp/dlx4sop-mqtbench --benchmarks all --sizes 3 --levels indep --format json
+```
+
+The scanner strips terminal measurements by default because `qasm2sop` imports
+fixed-boundary amplitudes for straight-line circuits. Mid-circuit classical
+control, reset, custom gate definitions, and non-finite rotation angles remain
+unsupported and are reported as scan categories.
+
 Inspect the PyZX QASM benchmark subset used around the rank-width ZX work:
 
 ```sh
@@ -311,6 +327,6 @@ tools/qgraph2qasm.py diagram.qgraph | build/qasm2sop -
 
 The current implementation target is solver improvement using QASM-derived
 instances as regression inputs for backend agreement, component-cache behavior,
-trace stability, and benchmark trend tracking. The next external-format work is
-to prototype optional boundary utilities around PyZX `.qgraph`/circuit formats
-and FeynmanDD-compatible OpenQASM plus gate-set JSON.
+trace stability, and benchmark trend tracking. External-format utilities remain
+optional Python boundary tools so PyZX, Qiskit, MQT, and benchmark-corpus
+dependencies do not become runtime dependencies of the C solver.

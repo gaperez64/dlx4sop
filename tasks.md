@@ -112,6 +112,23 @@ and `ARCHITECTURE.md`.
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 77.9% line coverage over `src`.
+- Completed MQT Bench reconnaissance checkpoint:
+  - pushed the previous local branch state to `origin/main` before starting;
+  - cloned Munich Quantum Toolkit Bench to `/tmp/dlx4sop-mqtbench`;
+  - found that its source tree generates circuits through the `mqt.bench`
+    Python package and Qiskit exporters rather than vendoring a flat QASM
+    corpus;
+  - added optional `tools/scan_mqt_bench.py`, which can use an installed
+    package or local checkout, export generated QASM2, strip terminal
+    measurements for strong-simulation imports, and classify `qasm2sop`
+    outcomes;
+  - added a lean Meson smoke test for the scanner without making MQT a CI
+    dependency;
+  - current local scan results: default size-3 `indep` subset imports 7/8
+    generated cases, with `wstate` blocked by a non-`pi/4` `ry` angle; all
+    size-3 `indep` benchmark names import 8 generated cases, with remaining
+    cases grouped as generation constraints, QASM2 dump limitations,
+    custom-gate syntax, or unsupported angles.
 
 ## Current Task
 
@@ -135,6 +152,8 @@ and `ARCHITECTURE.md`.
     an optional test environment;
   - decide whether Quipper conversion still needs optional PyZX support beyond
     the dependency-free `.qc` bridge;
+  - use `tools/scan_mqt_bench.py` to identify MQT cases that only need importer
+    syntax support versus cases outside finite quadratic SOP scope;
   - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
     runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.

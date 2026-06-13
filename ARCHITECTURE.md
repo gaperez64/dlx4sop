@@ -370,6 +370,19 @@ misses are ten empty `.qc` files and one malformed Shor file. Sample translated
 files such as `tof_3_tpar.qc`, `grover_5.qc`, and `ham15-low.qc` import through
 `qasm2sop`.
 
+MQT Bench generates benchmark circuits through its Python package and can export
+OpenQASM 2.0, OpenQASM 3.0, or QPY rather than vendoring one flat QASM corpus
+in its source tree. `tools/scan_mqt_bench.py` keeps that dependency optional:
+it can use an installed `mqt.bench` package or a local checkout supplied with
+`--mqt-source`, exports generated circuits with Qiskit's QASM2 dumper, strips
+terminal measurements by default for strong-simulation amplitude imports, and
+then classifies `qasm2sop` outcomes. A shallow local checkout at
+`/tmp/dlx4sop-mqtbench` currently gives 7/8 imports on the default size-3
+target-independent subset; the miss is `wstate`, whose generated `ry` angle is
+not a finite `pi/4` multiple. A broader size-3 target-independent sweep imports
+8 generated cases and groups the rest into generation constraints, QASM2 dump
+limitations, custom-gate syntax, and unsupported non-finite angles.
+
 ## CI And Coverage
 
 CI runs on GitHub Actions with:
@@ -397,4 +410,8 @@ importer work should be driven by gates found in real circuit sources and should
 keep each added gate covered by boundary-level examples and amplitude checks.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
-import/export targets rather than runtime dependencies of the core solver.
+import/export targets rather than runtime dependencies of the core solver. The
+current Python tools sit at that boundary because they mostly manage external
+text formats, optional Python packages, subprocess scans, JSON reports, and
+benchmark checkouts; stable hot paths can be ported to C later once their
+supported subsets stop moving.
