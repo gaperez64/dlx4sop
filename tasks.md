@@ -245,6 +245,28 @@ and `ARCHITECTURE.md`.
     over a 64-bit NTT prime;
   - extended rankwidth stats and traces with maximum table size, signature
     counts, join-map phases, and importer-fed benchmark support.
+- Completed first rankwidth benchmark decision pass:
+  - checked the built-in QASM solver corpus and a combined external
+    branch-solvable manifest with `--skip-unsupported`, comparing generated
+    `linear`, `balanced`, and `min-fill` decompositions in count-table and
+    Fourier modes;
+  - built-in count-table summary over 27 sign-only records:
+    `linear` reached width 3, max table 32, and 472 join-signature pairs;
+    `balanced` reached width 2, max table 24, and 560 join-signature pairs;
+    `min-fill` reached width 2, max table 24, and 438 join-signature pairs;
+  - external count-table summary over 65 sign-only records:
+    `linear` reached width 3, max table 32, and 589 join-signature pairs;
+    `balanced` reached width 2, max table 24, and 685 join-signature pairs;
+    `min-fill` reached width 2, max table 24, and 563 join-signature pairs;
+  - Fourier mode showed the same ordering on signature growth: `linear` reached
+    max table 128 from max signature count 8, while both `balanced` and
+    `min-fill` stayed at max table 64 from max signature count 4; `min-fill`
+    had the lowest total table entries and join-signature pairs on both corpus
+    slices;
+  - decision: improve generated decomposition quality next. Indexed signature
+    maps remain deferred because these runs have small max signature counts
+    (4-8), and the trace is already more sensitive to decomposition shape than
+    to join-map lookup overhead.
 
 ## Current Task
 
@@ -255,10 +277,10 @@ and `ARCHITECTURE.md`.
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
-  - benchmark the sign-only `rankwidth` backend on imported corpus slices using
-    generated decompositions and both count-table/Fourier modes;
-  - improve generated decomposition quality using the table-growth traces before
-    changing the solver core again;
+  - improve generated decomposition quality using the rankwidth table-growth
+    traces before changing the solver core again;
+  - use min-fill as the generated-decomposition baseline in near-term
+    rankwidth benchmark comparisons;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;
@@ -298,9 +320,10 @@ and `ARCHITECTURE.md`.
     estimators or a full pluggable heuristic interface. See
     [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
   - rankwidth decomposition solver: continue the sign-only backend based on
-    arXiv:2605.29944 with better generated decompositions, indexed signature
-    maps if traces justify them, optional broader exact Fourier support for
-    awkward moduli, and larger imported sign-only benchmark coverage.
+    arXiv:2605.29944 with better generated decompositions first, indexed
+    signature maps only after larger traces justify them, optional broader
+    exact Fourier support for awkward moduli, and larger imported sign-only
+    benchmark coverage.
   - labelled rankwidth is deliberately deferred while the sign-only backend is
     benchmarked. The June 2026 QSOP models note identifies the right future
     parameter as labelled cut-signature width, not ordinary rankwidth of the

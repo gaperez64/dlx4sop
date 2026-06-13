@@ -84,6 +84,15 @@ def run_command(cmd: list[str], *, input_text: str | None = None) -> tuple[str, 
     return completed.stdout, completed.stderr, elapsed
 
 
+def is_skippable_rankwidth_error(error: Exception) -> bool:
+    text = str(error)
+    return (
+        "sign-only" in text
+        or "requires at least one variable" in text
+        or "could not find a 64-bit NTT prime" in text
+    )
+
+
 def load_cases(path: pathlib.Path) -> list[dict]:
     return json.loads(path.read_text())
 
@@ -261,7 +270,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
             try:
                 stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
             except RuntimeError as exc:
-                if args.skip_unsupported and backend == "rankwidth" and "sign-only" in str(exc):
+                if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
                     continue
                 raise
             stats = parse_stats(stats_text)
