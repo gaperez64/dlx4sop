@@ -158,6 +158,28 @@ and `ARCHITECTURE.md`.
     manifest: 32 case-boundaries, component cache hit rate 26/(26+43)=0.377,
     branch residual cache hit rate 0/(0+267)=0.000, branch leaves 477 versus
     component leaves 707.
+- Completed external branch-cache measurement checkpoint:
+  - added `tools/build_external_qasm_manifest.py` to materialize temporary
+    benchmark manifests from external QASM roots and optional `.qc`
+    translations after checking `qasm2sop` importability and an explicit
+    solver variable guard;
+  - added `--max-vars` pass-through to `tools/bench_qasm_corpus.py` so external
+    runs can state their solver guard;
+  - current size-gated external results:
+    - FeynmanDD `benchmark/exp` imports 152 files, but the smallest all-zero
+      boundary QSOP has 76 variables, so none fit the 24/32/40 branch-summary
+      guard;
+    - PyZX `feyn_bench/qasm` imports 44 files, but only one fits a 40-variable
+      guard and that branch run timed out at 30 seconds;
+    - PyZX translated `.qc` under a 24-variable guard emits 20 cases and 20
+      boundaries: branch cache hit rate 0/(0+26)=0.000, component cache hit
+      rate 17/(17+20)=0.459;
+    - MQT generated default size-3/4 `alg,indep` under a 24-variable guard
+      emits 20 cases and 20 boundaries: branch cache hit rate 0/(0+56)=0.000,
+      component cache hit rate 24/(24+30)=0.444;
+    - combined checked-in + MQT + PyZX `.qc` branch-solvable slice has 52 cases
+      and 72 boundaries: branch cache hit rate 0/(0+349)=0.000, component cache
+      hit rate 67/(67+93)=0.419.
 
 ## Current Task
 
@@ -167,9 +189,9 @@ and `ARCHITECTURE.md`.
 - Next likely solver work before tree/rankwidth experiments:
   - inspect branch trace summaries per case to tune variable ordering and split
     behavior before adding more branch-cache machinery;
-  - look for or construct residual-repetition circuit cases before investing in
-    component-aware residual keys, since the current imported corpus shows no
-    branch-cache hits;
+  - deprioritize additional branch-cache machinery until we have realistic
+    residual-repetition cases, since the checked-in plus branch-solvable
+    external slice still shows no branch-cache hits;
   - decide whether split estimates need incremental component metadata or
     whether component splitting is enough for current benchmark scale;
   - keep coverage above the 75% CI gate.

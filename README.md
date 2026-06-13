@@ -50,6 +50,10 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   and `sop-solve`, emitting JSONL, CSV, or aggregate summary output with backend
   counters, wall times, hashes, cache hit rates, and optional phase-trace
   summaries.
+- `tools/build_external_qasm_manifest.py`: build a
+  `qasm_solver_corpus.json`-compatible manifest from external QASM roots, and
+  optionally translated `.qc` files, after checking importability and an
+  explicit solver variable guard.
 - `tools/qgraph2qasm.py`: optional PyZX-backed starter utility for translating
   PyZX/Quantomatic `.qgraph` JSON diagrams to OpenQASM when PyZX can extract a
   circuit.
@@ -286,6 +290,13 @@ Run the manifest-backed QASM solver corpus as a lightweight benchmark:
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
+```
+
+Build a temporary external benchmark manifest for the same runner:
+
+```sh
+tools/build_external_qasm_manifest.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits --include-qc --qc2qasm tools/qc2qasm.py --max-vars 24 --output /tmp/pyzx-qc-manifest.json
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest /tmp/pyzx-qc-manifest.json --backend components --backend branch --trace --format summary
 ```
 
 Inspect a local FeynmanDD checkout:

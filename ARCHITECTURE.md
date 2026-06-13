@@ -302,6 +302,10 @@ QSOP hashes, QSOP size, import and solve wall-clock timings, backend counters,
 and optional aggregated trace summaries collected from `sop-solve --trace csv`.
 The summary mode aggregates per-backend cache hit rates, leaf/search counters,
 and trace phase event/item/elapsed totals.
+`tools/build_external_qasm_manifest.py` materializes compatible manifests from
+external QASM roots and optional `.qc` translations by first checking
+`qasm2sop` importability for selected fixed-boundary amplitudes and filtering
+out cases above an explicit solver variable guard.
 
 The default CI suite includes one-boundary benchmark smoke tests to keep the
 runner and summary format working without turning performance measurement into

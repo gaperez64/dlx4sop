@@ -175,7 +175,15 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
         )
         header = qsop_header(qsop)
         for backend in backends:
-            cmd = [str(args.sop_solve), "--backend", backend, "--format", "stats"]
+            cmd = [
+                str(args.sop_solve),
+                "--backend",
+                backend,
+                "--format",
+                "stats",
+                "--max-vars",
+                str(args.max_vars),
+            ]
             if args.trace:
                 cmd += ["--trace", "csv"]
             cmd.append("-")
@@ -266,10 +274,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
+    parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be non-negative")
+    if args.max_vars < 0:
+        parser.error("--max-vars must be non-negative")
     return args
 
 

@@ -238,6 +238,17 @@ if python3.found()
     ],
     depends: qasm2sop,
   )
+  test(
+    'external manifest smoke',
+    python3,
+    args: [
+      files('tests/test_external_manifest.py'),
+      files('tools/build_external_qasm_manifest.py'),
+      qasm2sop.full_path(),
+      files('tools/qc2qasm.py'),
+    ],
+    depends: qasm2sop,
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',
