@@ -228,7 +228,7 @@ and `ARCHITECTURE.md`.
     construction;
   - added a hand-written path decomposition fixture and tests comparing the
     rankwidth backend against brute force;
-  - added `sop-stats` width diagnostics for mask-backed instances:
+  - initially added `sop-stats` width diagnostics for mask-backed instances:
     min-fill width, min-fill fill-edge count, and natural-order linear
     cut-rank.
 - Completed sign-only rankwidth hardening checkpoint:
@@ -323,9 +323,9 @@ and `ARCHITECTURE.md`.
     lowest aggregate solve time in the sweep, while `linear` count-table had
     fewer total table entries. This means the small-corpus count-table
     conclusion is not universal once residue-pair joins grow;
-  - rebuilding the FeynmanDD `benchmark/exp` manifest with the same 63-variable
-    guard emitted no cases because all 152 importable sources exceeded the
-    current mask-backed rankwidth limit.
+  - rebuilding the FeynmanDD `benchmark/exp` manifest with the then-current
+    63-variable guard emitted no cases because all 152 importable sources
+    exceeded the old mask-backed rankwidth limit.
 - Completed first bitset-backed width diagnostics checkpoint:
   - extended `sop-stats` min-fill width, fill-edge count, and natural linear
     cut-rank diagnostics beyond the old 63-variable mask limit using bitset
@@ -333,10 +333,24 @@ and `ARCHITECTURE.md`.
   - added a 66-variable path regression test proving large text and JSON stats
     keep width diagnostics available;
   - verified a larger FeynmanDD-derived import can now be inspected by
-    `sop-stats` above 63 variables. Exact `sop-solve --backend rankwidth`
-    still remains capped because residue-count outputs are stored as
-    `uint64_t`; full beyond-63 solving needs arbitrary-precision counts or a
-    CRT-backed result representation in addition to bitset signatures.
+    `sop-stats` above 63 variables.
+- Completed first beyond-63 rankwidth solve checkpoint:
+  - extracted shared bitset helpers and kept `sop-stats` on the bitset-backed
+    large-width path;
+  - ported rankwidth decomposition variable sets, adjacency rows, cut-rank
+    checks, generated min-fill/min-fill-cut helpers, boundary signatures, and
+    representative assignments from one-word masks to dynamic bitsets;
+  - interned boundary signatures to integer IDs so rankwidth table keys stay
+    compact while signatures themselves can span multiple words;
+  - added checked `uint64_t` residue-count arithmetic for the existing
+    brute-force, branch, components, and small rankwidth fast paths, so overflow
+    reports an error instead of wrapping;
+  - added a CRT-backed rankwidth count-table path for instances with at least
+    64 variables. It runs the sparse DP modulo several 64-bit primes and
+    reconstructs only the final residue histogram as decimal strings;
+  - added a 64-variable rankwidth regression where the modulus is 16 but the
+    residue-0 count is `2^64`, plus a branch overflow diagnostic check for the
+    same instance.
 
 ## Current Task
 
@@ -344,6 +358,14 @@ and `ARCHITECTURE.md`.
   benchmark runner, trace output, branch heuristic selection, and branch cache
   stats as measurable circuit-derived regressions.
 - Next likely solver work:
+  - rerun PyZX/FeynmanDD/MQT sign-only rankwidth manifests with `--max-vars`
+    above 63 to measure how much of the external corpus the bitset/CRT path now
+    handles;
+  - compare CRT count-table timing against the small-instance `uint64_t` path on
+    cases below 64 variables to quantify overhead and confirm the fast path
+    remains the default;
+  - decide whether Fourier needs a multi-prime CRT variant or should remain a
+    small-instance comparison mode;
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
@@ -351,7 +373,7 @@ and `ARCHITECTURE.md`.
     baseline: `min-fill-cut` is best on the small checked-in slice, while
     `linear` is currently best on the larger PyZX-compatible slice;
   - rerun external sign-only manifest slices with the rankwidth sweep before
-    changing rankwidth defaults or optimizing table internals;
+    changing rankwidth defaults;
   - improve generated decomposition quality using rankwidth table-growth traces
     before changing the solver core again;
   - deprioritize additional branch-cache machinery until we have realistic

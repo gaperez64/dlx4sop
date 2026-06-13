@@ -27,6 +27,12 @@ void qsop_result_free(qsop_result_t *result) {
   if (result == NULL) {
     return;
   }
+  if (result->count_strings != NULL) {
+    for (uint32_t residue = 0; residue < result->r; residue++) {
+      free(result->count_strings[residue]);
+    }
+  }
+  free(result->count_strings);
   free(result->counts);
   free(result);
 }
@@ -104,7 +110,10 @@ bool qsop_solve_bruteforce_trace_stats(const qsop_instance_t *qsop, uint32_t max
         phase = (uint32_t)(((uint64_t)phase + qsop->edge_q[e]) % qsop->r);
       }
     }
-    result->counts[phase]++;
+    if (!qsop_count_add(&result->counts[phase], 1, error)) {
+      qsop_result_free(result);
+      return false;
+    }
   }
   qsop_trace_emit_elapsed(trace, "brute_force.enumerate", 0, assignments, enumerate_start);
 
@@ -123,7 +132,11 @@ bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result,
   fprintf(file, "n %" PRIu64 "\n", result->norm_h);
   fputs("counts", file);
   for (uint32_t residue = 0; residue < result->r; residue++) {
-    fprintf(file, " %" PRIu64, result->counts[residue]);
+    if (result->count_strings != NULL) {
+      fprintf(file, " %s", result->count_strings[residue]);
+    } else {
+      fprintf(file, " %" PRIu64, result->counts[residue]);
+    }
   }
   fputc('\n', file);
 

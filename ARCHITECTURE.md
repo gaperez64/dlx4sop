@@ -226,11 +226,13 @@ solvers.
 `qsop_solve_rankwidth_mode_trace_stats` is the first decomposition-based
 backend. Its default count-table mode implements the direct dynamic program from
 arXiv:2605.29944 over a rooted binary rank decomposition. Tables are sparse maps
-keyed by a boundary signature, represented as a GF(2) bit mask over the outside
-vertices, and a residue modulo `r`. Leaves add the two assignments of one QSOP
-variable. Join nodes combine child states, restrict/xor the child boundary
-signatures to the parent outside set, add the sign cross-term determined by
-representative child signatures, and accumulate residue-count vectors.
+keyed by an interned boundary-signature ID and a residue modulo `r`. Signature
+storage itself is bitset-backed, so the table key stays compact while the
+backend can represent cuts above one machine word. Leaves add the two
+assignments of one QSOP variable. Join nodes combine child states, restrict/xor
+the child boundary signatures to the parent outside set, add the sign
+cross-term determined by representative child signatures, and accumulate
+residue-count vectors.
 
 The backend can read an explicit decomposition file or generate one internally:
 linear input order, balanced input order, min-fill order with a balanced tree,
@@ -238,16 +240,25 @@ or min-fill order with recursive split points chosen by a GF(2) cut-rank score.
 The cut-aware splitter keeps the min-fill elimination order but, for each
 contiguous range, chooses the child split that minimizes the maximum child
 cut-rank and then prefers balanced splits. It is deliberately narrow: it
-requires sign-only quadratic coefficients and mask-backed instances under the
-solver variable guard. It reports decomposition width, total and maximum table
-entries, total and maximum signature entries, residue-pair joins, and
-signature-pair joins through `sop-solve --format stats`.
+requires sign-only quadratic coefficients under the solver variable guard. It
+reports decomposition width, total and maximum table entries, total and maximum
+signature entries, residue-pair joins, and signature-pair joins through
+`sop-solve --format stats`.
+
+Exact result counts are ordinary integer cardinalities, while phase residues
+are reduced modulo `r`. The count-table backend therefore keeps the existing
+`uint64_t` fast path when every residue count fits and switches to a CRT-backed
+path for instances with at least 64 variables. The CRT path runs the same sparse
+DP modulo several 64-bit primes, chooses enough primes for their product to
+exceed the assignment-count bound, and reconstructs only the final residue
+histogram as decimal strings. The hot DP tables stay fixed-width.
 
 The `QSOP_RANKWIDTH_SOLVE_FOURIER` mode is an exact modular-DFT variant. It
 chooses a 64-bit NTT prime `p = 1 mod r` larger than the assignment count, keeps
 one value per boundary signature per Fourier mode modulo `p`, and inverts the
-transform at the root. Under the existing 63-variable guard, recovered counts
-are exact whenever such a prime is found.
+transform at the root. Because this currently uses one 64-bit prime, it remains
+the small-instance Fourier path; larger exact rankwidth solves should use
+count-table mode.
 
 The labelled-QSOP rankwidth extension should not use ordinary rankwidth of the
 unlabelled support graph as its primary parameter. The deferred parameter from
@@ -397,11 +408,11 @@ control such as `if` or `reset`. It can also inline simple non-parameterized
 OpenQASM gate definitions as a boundary preprocessing step when those macro
 bodies are made only of supported static operations.
 
-`sop-stats` width diagnostics use a 64-bit mask fast path on small instances
-and a bitset-backed path on larger instances. This lets external benchmark
-imports above 63 variables be inspected for min-fill width, fill-edge count, and
-linear cut-rank even though exact solver result counts are still limited by the
-current `uint64_t` residue-count representation.
+`sop-stats` width diagnostics and the rankwidth backend use bitset-backed graph
+rows on larger instances. External benchmark imports above 63 variables can be
+inspected for min-fill width, fill-edge count, and linear cut-rank, and sign-only
+rankwidth count-table solves can now emit exact CRT-reconstructed histograms
+when `--max-vars` allows them.
 
 The default CI suite includes one-boundary benchmark smoke tests to keep the
 runner and summary format working without turning performance measurement into

@@ -1,5 +1,6 @@
 #include "dlx4sop/residue.h"
 
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,35 @@ void qsop_counts_clear(uint32_t r, uint64_t *counts) {
   memset(counts, 0, (size_t)r * sizeof(*counts));
 }
 
+bool qsop_count_add(uint64_t *dst, uint64_t value, qsop_error_t *error) {
+  if (dst == NULL) {
+    set_error(error, "internal error: null residue-count add argument");
+    return false;
+  }
+  if (UINT64_MAX - *dst < value) {
+    set_error(error, "residue count exceeds uint64 capacity; use a CRT-backed solver path");
+    return false;
+  }
+  *dst += value;
+  return true;
+}
+
+bool qsop_count_mul(uint64_t left, uint64_t right, uint64_t *out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residue-count multiply output");
+    return false;
+  }
+  if (left != 0 && right > UINT64_MAX / left) {
+    set_error(error,
+              "residue count product %" PRIu64 " * %" PRIu64
+              " exceeds uint64 capacity; use a CRT-backed solver path",
+              left, right);
+    return false;
+  }
+  *out = left * right;
+  return true;
+}
+
 void qsop_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift) {
   if (r == 0 || dst == NULL || src == NULL) {
     return;
@@ -61,6 +91,26 @@ void qsop_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint3
     }
     dst[target] += src[residue];
   }
+}
+
+bool qsop_counts_shift_add_checked(uint32_t r, uint64_t *dst, const uint64_t *src,
+                                   uint32_t shift, qsop_error_t *error) {
+  if (r == 0 || dst == NULL || src == NULL) {
+    set_error(error, "internal error: invalid residue shift-add argument");
+    return false;
+  }
+
+  const uint32_t delta = shift % r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    uint32_t target = residue + delta;
+    if (target >= r) {
+      target -= r;
+    }
+    if (!qsop_count_add(&dst[target], src[residue], error)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool qsop_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
@@ -83,7 +133,11 @@ bool qsop_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
       if (target >= r) {
         target -= r;
       }
-      dst[target] += left[a] * right[b];
+      uint64_t product = 0;
+      if (!qsop_count_mul(left[a], right[b], &product, error) ||
+          !qsop_count_add(&dst[target], product, error)) {
+        return false;
+      }
     }
   }
   return true;

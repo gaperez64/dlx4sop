@@ -1,4 +1,5 @@
 #include "dlx4sop/qsop_stats.h"
+#include "dlx4sop/bitset.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -93,54 +94,21 @@ static uint64_t min_fill_edges_for(uint32_t v, const uint64_t *adj, uint64_t act
   return fill;
 }
 
-static size_t bitset_words(uint32_t nvars) {
-  return ((size_t)nvars + 63U) / 64U;
-}
-
-static uint64_t *bitset_row(uint64_t *matrix, size_t words, uint32_t row) {
-  return matrix + (size_t)row * words;
-}
-
-static const uint64_t *bitset_const_row(const uint64_t *matrix, size_t words, uint32_t row) {
-  return matrix + (size_t)row * words;
-}
-
-static void bitset_set(uint64_t *bits, uint32_t bit) {
-  bits[bit / 64U] |= UINT64_C(1) << (bit % 64U);
-}
-
-static void bitset_clear(uint64_t *bits, uint32_t bit) {
-  bits[bit / 64U] &= ~(UINT64_C(1) << (bit % 64U));
-}
-
-static bool bitset_get(const uint64_t *bits, uint32_t bit) {
-  return (bits[bit / 64U] & (UINT64_C(1) << (bit % 64U))) != 0;
-}
-
-static uint32_t bitset_popcount_intersection(const uint64_t *a, const uint64_t *b,
-                                             size_t words) {
-  uint32_t count = 0;
-  for (size_t w = 0; w < words; w++) {
-    count += popcount_u64(a[w] & b[w]);
-  }
-  return count;
-}
-
 static uint64_t bitset_missing_edges_for(uint32_t v, const uint64_t *work,
                                          const uint64_t *active, uint64_t *remaining,
                                          size_t words, uint32_t nvars) {
-  const uint64_t *neighbors = bitset_const_row(work, words, v);
+  const uint64_t *neighbors = qsop_bitset_const_row(work, words, v);
   for (size_t w = 0; w < words; w++) {
     remaining[w] = neighbors[w] & active[w];
   }
 
   uint64_t fill = 0;
   for (uint32_t u = 0; u < nvars; u++) {
-    if (!bitset_get(remaining, u)) {
+    if (!qsop_bitset_get(remaining, u)) {
       continue;
     }
-    bitset_clear(remaining, u);
-    const uint64_t *u_neighbors = bitset_const_row(work, words, u);
+    qsop_bitset_clear(remaining, u);
+    const uint64_t *u_neighbors = qsop_bitset_const_row(work, words, u);
     for (size_t w = 0; w < words; w++) {
       fill += popcount_u64(remaining[w] & ~u_neighbors[w]);
     }
@@ -148,42 +116,9 @@ static uint64_t bitset_missing_edges_for(uint32_t v, const uint64_t *work,
   return fill;
 }
 
-static uint32_t gf2_rank_bitsets(uint64_t *rows, uint32_t nrows, uint32_t nvars,
-                                 size_t words) {
-  uint32_t rank = 0;
-  for (uint32_t col = 0; col < nvars && rank < nrows; col++) {
-    uint32_t pivot = rank;
-    while (pivot < nrows && !bitset_get(bitset_row(rows, words, pivot), col)) {
-      pivot++;
-    }
-    if (pivot == nrows) {
-      continue;
-    }
-    if (pivot != rank) {
-      for (size_t w = 0; w < words; w++) {
-        const uint64_t tmp = bitset_row(rows, words, rank)[w];
-        bitset_row(rows, words, rank)[w] = bitset_row(rows, words, pivot)[w];
-        bitset_row(rows, words, pivot)[w] = tmp;
-      }
-    }
-    const uint64_t *rank_row = bitset_const_row(rows, words, rank);
-    for (uint32_t row = 0; row < nrows; row++) {
-      if (row == rank || !bitset_get(bitset_const_row(rows, words, row), col)) {
-        continue;
-      }
-      uint64_t *target = bitset_row(rows, words, row);
-      for (size_t w = 0; w < words; w++) {
-        target[w] ^= rank_row[w];
-      }
-    }
-    rank++;
-  }
-  return rank;
-}
-
 static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t *stats,
                                             qsop_error_t *error) {
-  const size_t words = bitset_words(qsop->nvars);
+  const size_t words = qsop_bitset_words(qsop->nvars);
   uint64_t *adj = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*adj));
   uint64_t *work = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*work));
   uint64_t *rows = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*rows));
@@ -203,24 +138,24 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
   }
 
   for (uint32_t e = 0; e < qsop->nedges; e++) {
-    bitset_set(bitset_row(adj, words, qsop->edge_u[e]), qsop->edge_v[e]);
-    bitset_set(bitset_row(adj, words, qsop->edge_v[e]), qsop->edge_u[e]);
+    qsop_bitset_set(qsop_bitset_row(adj, words, qsop->edge_u[e]), qsop->edge_v[e]);
+    qsop_bitset_set(qsop_bitset_row(adj, words, qsop->edge_v[e]), qsop->edge_u[e]);
   }
 
   for (uint32_t cut = 1; cut < qsop->nvars; cut++) {
     memset(rows, 0, (size_t)qsop->nvars * words * sizeof(*rows));
     memset(right, 0, words * sizeof(*right));
     for (uint32_t v = cut; v < qsop->nvars; v++) {
-      bitset_set(right, v);
+      qsop_bitset_set(right, v);
     }
     for (uint32_t v = 0; v < cut; v++) {
-      const uint64_t *source = bitset_const_row(adj, words, v);
-      uint64_t *target = bitset_row(rows, words, v);
+      const uint64_t *source = qsop_bitset_const_row(adj, words, v);
+      uint64_t *target = qsop_bitset_row(rows, words, v);
       for (size_t w = 0; w < words; w++) {
         target[w] = source[w] & right[w];
       }
     }
-    const uint32_t rank = gf2_rank_bitsets(rows, cut, qsop->nvars, words);
+    const uint32_t rank = qsop_gf2_rank_bitsets(rows, cut, qsop->nvars, words);
     if (rank > stats->linear_cut_rank) {
       stats->linear_cut_rank = rank;
     }
@@ -229,7 +164,7 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
   memcpy(work, adj, (size_t)qsop->nvars * words * sizeof(*work));
   memset(active, 0, words * sizeof(*active));
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    bitset_set(active, v);
+    qsop_bitset_set(active, v);
   }
 
   uint32_t remaining_active = qsop->nvars;
@@ -239,11 +174,11 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
     uint64_t best_fill = UINT64_MAX;
     uint32_t best_degree = UINT32_MAX;
     for (uint32_t v = 0; v < qsop->nvars; v++) {
-      if (!bitset_get(active, v)) {
+      if (!qsop_bitset_get(active, v)) {
         continue;
       }
       const uint32_t degree =
-          bitset_popcount_intersection(bitset_const_row(work, words, v), active, words);
+          qsop_bitset_popcount_intersection(qsop_bitset_const_row(work, words, v), active, words);
       const uint64_t fill =
           bitset_missing_edges_for(v, work, active, scratch, words, qsop->nvars);
       if (!found || fill < best_fill || (fill == best_fill && degree < best_degree)) {
@@ -262,25 +197,25 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
     stats->min_fill_edges += best_fill;
 
     uint64_t *best_neighbors = scratch;
-    const uint64_t *best_row = bitset_const_row(work, words, best);
+    const uint64_t *best_row = qsop_bitset_const_row(work, words, best);
     for (size_t w = 0; w < words; w++) {
       best_neighbors[w] = best_row[w] & active[w];
     }
     for (uint32_t u = 0; u < qsop->nvars; u++) {
-      if (!bitset_get(best_neighbors, u)) {
+      if (!qsop_bitset_get(best_neighbors, u)) {
         continue;
       }
-      uint64_t *u_row = bitset_row(work, words, u);
+      uint64_t *u_row = qsop_bitset_row(work, words, u);
       for (size_t w = 0; w < words; w++) {
         u_row[w] |= best_neighbors[w];
         u_row[w] &= active[w];
       }
-      bitset_clear(u_row, u);
+      qsop_bitset_clear(u_row, u);
     }
-    bitset_clear(active, best);
+    qsop_bitset_clear(active, best);
     remaining_active--;
     for (uint32_t v = 0; v < qsop->nvars; v++) {
-      uint64_t *row = bitset_row(work, words, v);
+      uint64_t *row = qsop_bitset_row(work, words, v);
       for (size_t w = 0; w < words; w++) {
         row[w] &= active[w];
       }

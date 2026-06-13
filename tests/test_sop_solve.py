@@ -74,6 +74,36 @@ def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected diagnostic:\n{completed.stderr}")
 
 
+def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
+    qsop = "p qsop-sign 16 64 0\nn 0\ncst 0\n"
+    completed = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected = (
+        "p qsop-result 16\n"
+        "n 0\n"
+        "counts 18446744073709551616 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+    )
+    if completed.returncode != 0 or completed.stdout != expected:
+        raise AssertionError(f"large rankwidth CRT solve failed\n{completed.stdout}\n{completed.stderr}")
+
+    branch = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch.returncode == 0 or "exceeds uint64 capacity" not in branch.stderr:
+        raise AssertionError(f"branch did not report uint64 overflow\n{branch.stdout}\n{branch.stderr}")
+
+
 def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     cases = [
         (
@@ -666,6 +696,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_disconnected")
     run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)
+    run_large_rankwidth_crt(exe)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
     run_rankwidth_backend(exe, source_root)

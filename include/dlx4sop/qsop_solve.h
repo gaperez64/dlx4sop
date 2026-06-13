@@ -11,6 +11,7 @@ typedef struct qsop_result {
   uint32_t r;
   uint64_t norm_h;
   uint64_t *counts;
+  char **count_strings;
 } qsop_result_t;
 
 typedef struct qsop_solve_stats {

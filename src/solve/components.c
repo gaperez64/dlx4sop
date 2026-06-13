@@ -515,9 +515,7 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
 static bool shift_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
                          qsop_error_t *error) {
   qsop_counts_clear(r, dst);
-  qsop_counts_shift_add(r, dst, src, shift);
-  (void)error;
-  return true;
+  return qsop_counts_shift_add_checked(r, dst, src, shift, error);
 }
 
 static void add_saturating_u64(uint64_t *dst, uint64_t value) {

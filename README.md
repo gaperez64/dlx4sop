@@ -39,9 +39,11 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     residue-table fast path once no active quadratic edges remain. Experimental
     variable-choice heuristics can be selected with `--branch-heuristic`.
   - `rankwidth`: experimental sign-edge QSOP backend over explicit or generated
-    decompositions, using boundary-signature tables in either residue-count or
-    exact Fourier mode. Generated decompositions include linear, balanced,
-    min-fill, and min-fill with cut-rank-aware recursive splits.
+    decompositions, using interned boundary-signature tables in either
+    residue-count or exact Fourier mode. Count-table mode uses a `uint64_t` fast
+    path on small instances and a CRT-backed exact output path when assignment
+    counts exceed `uint64_t`. Generated decompositions include linear,
+    balanced, min-fill, and min-fill with cut-rank-aware recursive splits.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -213,7 +215,22 @@ selects generated balanced input-order, min-fill-order, or min-fill-order with
 cut-rank-aware recursive split decompositions. `--rankwidth-mode fourier` uses
 the exact modular-DFT variant and can be combined with any generated
 decomposition. The backend currently supports sign-only quadratic coefficients
-and mask-backed instances up to the solver variable guard.
+up to the solver variable guard. Fourier mode still uses one 64-bit NTT prime,
+so count-table mode is the path for larger exact histograms.
+
+The `counts` line is a histogram over phase residues modulo `r`, not a list of
+phase exponents. For example, this 64-variable zero SOP has modulus 16 and every
+assignment has residue 0, so the first count is `2^64`:
+
+```sh
+printf 'p qsop-sign 16 64 0\nn 0\ncst 0\n' | build/sop-solve --backend rankwidth --max-vars 64 -
+```
+
+```text
+p qsop-result 16
+n 0
+counts 18446744073709551616 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+```
 
 The branch cache counters expose repeated residual states when they occur. For
 example, the small triangle fixture revisits one residual:
@@ -315,9 +332,10 @@ Limit exact enumeration size:
 build/sop-solve --max-vars 20 tests/golden/solve_disconnected.qsop
 ```
 
-The `--max-vars` limit applies to whole-instance brute force and residual branch
-solving. For the default `components` backend it applies to each connected
-component.
+The `--max-vars` limit applies to whole-instance brute force, residual branch
+solving, and rankwidth solving. For the default `components` backend it applies
+to each connected component. Non-rankwidth exact result counts are
+`uint64_t`-backed and report overflow rather than wrapping.
 
 Run the manifest-backed QASM solver corpus as a lightweight benchmark:
 

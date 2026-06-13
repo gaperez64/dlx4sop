@@ -28,6 +28,7 @@ dlx4sop_core = static_library(
   'dlx4sop_core',
   files(
     'src/core/residue.c',
+    'src/core/bitset.c',
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
     'src/core/qsop_stats.c',
