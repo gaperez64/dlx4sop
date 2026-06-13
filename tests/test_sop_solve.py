@@ -92,6 +92,17 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 "--format",
                 "stats",
                 "--backend",
+                "branch",
+                str(source_root / "tests" / "golden" / "solve_isolated_branch.qsop"),
+            ],
+            source_root / "tests" / "golden" / "solve_isolated_branch.stats",
+        ),
+        (
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
                 "components",
                 str(source_root / "tests" / "golden" / "solve_disconnected.qsop"),
             ],

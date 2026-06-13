@@ -317,6 +317,8 @@ memoization, component decomposition, width heuristics, and SIMD kernels.
 The residual branch backend now handles the edge-free case directly by
 collapsing active independent unary variables into a residue-count table. This
 is a first solver-side form of isolated-variable deletion after branching.
+The branch selector also skips isolated active variables while active quadratic
+edges remain, leaving them for the edge-free residue-table path.
 
 ---
 

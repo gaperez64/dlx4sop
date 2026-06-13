@@ -28,20 +28,21 @@ and `ARCHITECTURE.md`.
 - Completed residual branch checkpoint:
   - added an edge-free residue-table fast path for active independent unary
     variables;
+  - taught the branch selector to skip isolated variables while active
+    quadratic edges remain;
   - reduced the `solve_labelled` branch stats search from 7 to 3 nodes while
     preserving the same represented leaf assignments.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.5% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.6% line coverage over `src`.
 
 ## Current Task
 
 - Pivot back to solver improvements using the current QASM importer as a circuit
   source for boundary-level solver regressions and backend stats.
 - Next likely solver work:
-  - inspect residual branch stats for split-heavy circuits and repeated
-    residual states;
+  - inspect repeated residual states and small-component canonical relabelling;
   - keep coverage above the 75% CI gate.
 
 ## Future Tasks

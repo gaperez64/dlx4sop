@@ -55,11 +55,14 @@ static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out,
 
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_residual_var_active(residual, v)) {
+      const uint32_t degree = qsop_residual_active_degree(residual, v);
+      if (degree == 0) {
+        continue;
+      }
       uint32_t components = 0;
       if (!qsop_residual_components_without_var(residual, v, &components, error)) {
         return false;
       }
-      const uint32_t degree = qsop_residual_active_degree(residual, v);
       const bool has_unary = qsop_residual_unary(residual, v) != 0;
       if (!found || components > best_components ||
           (components == best_components && degree > best_degree) ||

@@ -183,13 +183,14 @@ on cache misses.
 recursively branches on active variables. A reversible trail supports checkpoints
 and undo without copying the full residual state at every branch.
 
-The current branch heuristic first estimates how many active residual components
-would remain after removing each candidate variable. It then uses active degree
-and unary-label presence as tie breakers. When a branch leaves no active
-quadratic edges, the backend collapses the remaining independent unary variables
-with a residue-table update instead of branching through each isolated variable.
-The backend reports internal node and leaf counters through the stats-aware
-solve API and `sop-solve --format stats`.
+The current branch heuristic ignores isolated active variables while quadratic
+edges remain, then estimates how many active residual components would remain
+after removing each interacting candidate variable. It uses active degree and
+unary-label presence as tie breakers. When a branch leaves no active quadratic
+edges, the backend collapses the remaining independent unary variables with a
+residue-table update instead of branching through each isolated variable. The
+backend reports internal node and leaf counters through the stats-aware solve
+API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 
