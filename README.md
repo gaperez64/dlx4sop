@@ -20,7 +20,8 @@ f <vertex> <0|1>
 applied during parsing and the canonical writer emits the reduced QSOP.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the mathematical definition,
-normalization rules, and backend design notes.
+normalization rules, and backend design notes. Longer-term performance notes
+live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 
 ## Implemented Utilities
 
@@ -34,8 +35,10 @@ normalization rules, and backend design notes.
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
-  with explicit fixed input/output bitstrings, finite `u1` phase calls, and a
-  few decomposition-backed standard gates.
+  with explicit fixed input/output bitstrings, finite `u1`/controlled-phase
+  calls, and a few decomposition-backed standard gates. Supported operands
+  include indexed qubits, whole-register one-qubit operands, and matching
+  whole-register two-qubit operands.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, and deterministic algebraic invariants for canonicalization and solver
@@ -175,6 +178,12 @@ u 0 1
 The `--input` and `--output` bitstrings are ordered by flattened `qreg`
 declaration order. Omitted boundaries default to all-zero bits, matching the
 original 0-to-0 amplitude behavior.
+
+Whole-register OpenQASM operands are accepted for supported gates:
+
+```sh
+build/qasm2sop --input 1100 --output 1111 tests/golden/qasm_register_cx.qasm
+```
 
 Read from stdin:
 

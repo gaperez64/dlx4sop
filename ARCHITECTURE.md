@@ -7,6 +7,8 @@ framework runtimes and exposes it through small command-line utilities.
 The near-term scope is deliberately restricted to SOPs of degree at most two.
 Higher-degree gates such as `CCZ` and Toffoli should be decomposed, rewritten, or
 quadratized into labelled quadratic form before they reach the solver.
+Performance-oriented design notes that are not part of the current command-line
+contract are kept in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 
 ## Mathematical Object
 
@@ -141,10 +143,11 @@ Current production implementation lives under:
 - `src/core`: parser, writer, QSOP lifecycle, statistics, residue-vector helpers.
 - `src/solve`: brute force, component decomposition, residual branch-and-sum,
   and reversible residual state.
-- `src/cli`: `sop-check`, `sop-stats`, and `sop-solve`.
+- `src/cli`: `sop-check`, `sop-stats`, `sop-solve`, and `qasm2sop`.
 
 Tests are split between Python CLI golden tests and C unit tests for residue and
-residual behavior.
+residual behavior. Optional parser fuzzing is available as a separate Meson
+option.
 
 ## Solver Backends
 
@@ -200,7 +203,7 @@ qasm2sop    import a small static OpenQASM 2.0 subset to canonical QSOP
 
 ## OpenQASM Import
 
-The first importer slice is `qasm2sop`. It supports explicit fixed
+The current importer is `qasm2sop`. It supports explicit fixed
 input/output bitstrings through `--input` and `--output`, defaulting omitted
 boundaries to the original all-zero 0-to-0 amplitude behavior. It accepts a
 deliberately small static OpenQASM 2.0 subset:
@@ -214,6 +217,8 @@ deliberately small static OpenQASM 2.0 subset:
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
+- finite controlled phase calls `cu1(...)` and `cp(...)` for symbolic multiples
+  of `pi/4`;
 - decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
   primitive gate set.
 
@@ -240,10 +245,10 @@ bytes through the QSOP parser and uses canonical writer idempotence as its oracl
 
 ## Forward Direction
 
-Likely next solver-facing targets are:
-
-- broader OpenQASM importer coverage while keeping each added gate covered by
-  boundary-level examples.
+The next importer targets are broader OpenQASM compatibility while keeping each
+added gate covered by boundary-level examples. Candidate additions should either
+lower cleanly to the supported primitive gates or have a direct QSOP
+representation.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

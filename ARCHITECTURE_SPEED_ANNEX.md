@@ -1,13 +1,21 @@
-# Annex A: Early Design Choices for Performance
+# Annex A: Performance Direction
 
-This annex records early implementation choices that should make `dlx4sop` easier to optimize later. The main principle is to keep the hot path as a dense, integer-only, coefficient-labelled graph problem, and to push parsing, conversion, provenance, and competitor interoperability to separate Unix-style utilities.
+This annex records performance-oriented design constraints and future directions
+that are intentionally more speculative than the command-line contract in
+`ARCHITECTURE.md`. The main principle remains: keep the hot path as a dense,
+integer-only, coefficient-labelled graph problem, and push parsing, conversion,
+provenance, and competitor interoperability to separate Unix-style utilities.
 
-The annex assumes the core architecture described in `ARCHITECTURE.md`: C23, Meson, small command-line tools, exact finite-modulus quadratic SOPs, and two internal QSOP modes:
+The annex assumes the implemented core architecture described in
+`ARCHITECTURE.md`: C23, Meson, small command-line tools, exact finite-modulus
+quadratic SOPs, and two internal QSOP modes:
 
 - **sign mode**, where each quadratic coefficient is either `0` or `r/2`;
 - **labelled mode**, where each quadratic coefficient is an arbitrary residue in `Z_r`.
 
-Native degree greater than 2 remains out of scope for the current solver. Higher-degree gates such as `CCZ` and Toffoli should be compiled into constant-size labelled quadratic gadgets.
+Native degree greater than 2 remains out of scope for the current solver.
+Higher-degree gates such as `CCZ` and Toffoli should be compiled into
+constant-size labelled quadratic gadgets before solving.
 
 ---
 
@@ -21,7 +29,7 @@ The import/export pipeline should be:
 OpenQASM / MQT / ZX / FeynmanDD / benchmark formats
     -> importer
     -> normalized QSOP
-    -> sop-normalize / sop-stats / sop-solve
+    -> sop-check / sop-stats / sop-solve
     -> optional exporters to WMC / FeynmanDD / ZX / QASM
 ```
 
@@ -142,9 +150,11 @@ The first implementation should already follow this layout, because retrofitting
 
 ---
 
-## A.5 Design the reversible trail before the solver grows
+## A.5 Keep reversible mutation central
 
-The solver should not copy residual instances when branching. It should mutate in place and push every reversible change onto a trail.
+The residual branch backend already mutates in place and records enough state to
+undo branches. As the solver grows, new simplifications should keep this
+discipline instead of reintroducing full residual copies.
 
 Suggested trail kinds:
 
@@ -183,13 +193,16 @@ x_v = 1:
     delete v and all active incident edges
 ```
 
-That update is naturally compatible with a dancing-cells design: mutate only local cells, record mutations, and undo them in reverse order.
+That update is naturally compatible with a dancing-cells design: mutate only
+local cells, record mutations, and undo them in reverse order.
 
 ---
 
 ## A.6 Make incremental hashing part of mutation
 
-Memoization should be a first-class solver feature, not a later wrapper.
+Memoization should remain a first-class solver feature, not a later wrapper. The
+component backend already owns a local canonical component cache; residual-state
+hashing is still future work.
 
 Use a Zobrist-style incremental hash over the active residual state:
 
@@ -280,7 +293,7 @@ where `.sop.meta` records source gates, source spans, qubit maps, auxiliary vari
 
 ## A.9 Normalize aggressively at load time
 
-The loader and `sop-normalize` utility should canonicalize instances before solving.
+The parser and `sop-check` utility canonicalize instances before solving.
 
 Perform at least:
 
@@ -296,7 +309,9 @@ sort adjacency lists
 renumber variables by a chosen heuristic order
 ```
 
-These steps improve every later component: hashing, memoization, component decomposition, width heuristics, and SIMD kernels.
+Some of these are implemented today by parser normalization; the remaining
+items are future speed work. All of them improve later components: hashing,
+memoization, component decomposition, width heuristics, and SIMD kernels.
 
 ---
 
@@ -422,7 +437,7 @@ Suggested Unix-style tools:
 qasm2sop
 mqt2sop
 zx2sop
-sop-normalize
+sop-check
 sop-stats
 sop-solve
 sop2wmc
@@ -523,9 +538,12 @@ Do not mix this policy with the solver logic. It should be a replaceable arithme
 
 ---
 
-## A.17 Instrument every run
+## A.17 Keep instrumentation structured
 
-Performance comparisons will be unreliable unless the tool emits structured statistics from the start.
+Performance comparisons will be unreliable unless the tool emits structured
+statistics. `sop-stats` already supports JSON, and `sop-solve --format stats`
+reports backend counters; additional tracing should build on that interface
+rather than adding ad hoc output.
 
 Add:
 
@@ -708,4 +726,3 @@ The recommended implementation order is:
 The guiding rule is:
 
 > Keep the hot path as a dense integer-labelled graph problem. Push QASM parsing, MQT quirks, ZX JSON, WMC CNF, FeynmanDD compatibility, provenance, pretty-printing, and plotting to the edges of the Unix pipeline.
-

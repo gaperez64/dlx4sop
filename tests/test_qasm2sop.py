@@ -102,6 +102,22 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if mismatched_qregs.returncode == 0 or "matching sizes" not in mismatched_qregs.stderr:
         raise AssertionError(f"unexpected mismatched qreg result:\n{mismatched_qregs.stderr}")
 
+    bad_controlled_phase = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[2];\ncu1(pi/3) q[0], q[1];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        bad_controlled_phase.returncode == 0
+        or "unsupported cu1 phase angle" not in bad_controlled_phase.stderr
+    ):
+        raise AssertionError(
+            f"unexpected bad controlled phase result:\n{bad_controlled_phase.stderr}"
+        )
+
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), "--input"], "missing value"),
@@ -190,6 +206,10 @@ def main() -> int:
     run_case(exe, source_root, "qasm_register_unary")
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
+    )
+    run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
+    run_boundary_case(
+        exe, source_root, "qasm_register_cp", ["--input", "1010", "--output", "1010"]
     )
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)

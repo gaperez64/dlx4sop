@@ -39,6 +39,7 @@ typedef enum qasm_one_qubit_op {
 
 typedef enum qasm_two_qubit_op {
   QASM_TWO_CZ,
+  QASM_TWO_CPHASE,
   QASM_TWO_CX,
   QASM_TWO_CY,
   QASM_TWO_SWAP,
@@ -468,26 +469,26 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
   return true;
 }
 
-static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
-                                 uint32_t *out_coeff, bool *out_is_phase) {
-  static const char prefix[] = "u1(";
+static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
+                                    const char *prefix, const char *name,
+                                    uint32_t *out_coeff, bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
-    *out_is_phase = false;
+    *out_matches = false;
     return true;
   }
-  *out_is_phase = true;
+  *out_matches = true;
 
   if (gate_len <= prefix_len || gate[gate_len - 1U] != ')') {
-    set_error(importer, "u1 phase gate must be written as u1(<angle>)");
+    set_error(importer, "%s phase gate must be written as %s(<angle>)", name, name);
     return false;
   }
 
   const size_t expr_len = gate_len - prefix_len - 1U;
   char expr[64];
   if (expr_len == 0 || expr_len >= sizeof(expr)) {
-    set_error(importer, "unsupported u1 phase angle '%s'", gate);
+    set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
   memcpy(expr, gate + prefix_len, expr_len);
@@ -495,7 +496,7 @@ static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
 
   int64_t units = 0;
   if (!parse_pi_over_four_units(expr, &units)) {
-    set_error(importer, "unsupported u1 phase angle '%s'", gate);
+    set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
   int64_t residue = units % 8;
@@ -504,6 +505,11 @@ static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
   }
   *out_coeff = (uint32_t)residue;
   return true;
+}
+
+static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
+                                 uint32_t *out_coeff, bool *out_is_phase) {
+  return parse_param_phase_coeff(importer, gate, "u1(", "u1", out_coeff, out_is_phase);
 }
 
 static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
@@ -515,6 +521,24 @@ static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
     return true;
   }
   return parse_u1_phase_coeff(importer, gate, out_coeff, out_is_phase);
+}
+
+static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
+                                            uint32_t *out_coeff,
+                                            bool *out_is_controlled_phase) {
+  bool matches = false;
+  if (!parse_param_phase_coeff(importer, gate, "cu1(", "cu1", out_coeff, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_controlled_phase = true;
+    return true;
+  }
+  if (!parse_param_phase_coeff(importer, gate, "cp(", "cp", out_coeff, &matches)) {
+    return false;
+  }
+  *out_is_controlled_phase = matches;
+  return true;
 }
 
 static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
@@ -540,6 +564,14 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
 
 static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
   return add_edge(importer, importer->current[left], importer->current[right], 4);
+}
+
+static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                                   uint32_t coeff) {
+  if (coeff % 8U == 0) {
+    return true;
+  }
+  return add_edge(importer, importer->current[left], importer->current[right], coeff);
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
@@ -650,10 +682,12 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
 }
 
 static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op,
-                               uint32_t left, uint32_t right) {
+                               uint32_t left, uint32_t right, uint32_t phase_coeff) {
   switch (op) {
   case QASM_TWO_CZ:
     return apply_cz(importer, left, right);
+  case QASM_TWO_CPHASE:
+    return apply_controlled_phase(importer, left, right, phase_coeff);
   case QASM_TWO_CX:
     return apply_cx_decomposition(importer, left, right);
   case QASM_TWO_CY:
@@ -670,7 +704,7 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
 }
 
 static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
-                                     qasm_two_qubit_op_t op) {
+                                     qasm_two_qubit_op_t op, uint32_t phase_coeff) {
   char *left_text = NULL;
   char *right_text = NULL;
   if (!split_two_operands(importer, rest, &left_text, &right_text)) {
@@ -685,7 +719,7 @@ static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
   }
 
   if (!left.is_reg && !right.is_reg) {
-    return apply_two_qubit_op(importer, op, left.qubit, right.qubit);
+    return apply_two_qubit_op(importer, op, left.qubit, right.qubit, phase_coeff);
   }
   if (left.is_reg != right.is_reg) {
     set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
@@ -699,7 +733,7 @@ static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
   for (uint32_t i = 0; i < left.reg->size; i++) {
     const uint32_t left_qubit = left.reg->offset + i;
     const uint32_t right_qubit = right.reg->offset + i;
-    if (!apply_two_qubit_op(importer, op, left_qubit, right_qubit)) {
+    if (!apply_two_qubit_op(importer, op, left_qubit, right_qubit, phase_coeff)) {
       return false;
     }
   }
@@ -716,6 +750,16 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
   if (is_phase) {
     return apply_one_qubit_operand(importer, rest, QASM_ONE_PHASE, phase_coeff);
+  }
+
+  uint32_t controlled_phase_coeff = 0;
+  bool is_controlled_phase = false;
+  if (!controlled_phase_coeff_for_gate(importer, gate, &controlled_phase_coeff,
+                                       &is_controlled_phase)) {
+    return false;
+  }
+  if (is_controlled_phase) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CPHASE, controlled_phase_coeff);
   }
 
   if (strcmp(gate, "h") == 0) {
@@ -735,19 +779,19 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
 
   if (strcmp(gate, "cz") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CZ);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CZ, 0);
   }
 
   if (strcmp(gate, "cx") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CX);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CX, 0);
   }
 
   if (strcmp(gate, "cy") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CY);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CY, 0);
   }
 
   if (strcmp(gate, "swap") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP, 0);
   }
 
   set_error(importer, "unsupported OpenQASM operation '%s'", gate);

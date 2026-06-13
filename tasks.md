@@ -1,125 +1,44 @@
 # dlx4sop Task Tracker
 
 This file tracks local project state so work can resume after a pause or stop.
-Completed implementation history has been flushed into `README.md`.
+Completed implementation history is kept in Git and summarized in `README.md`
+and `ARCHITECTURE.md`.
 
-## Last Checkpoint
+## Previous Tasks
 
-- Rewrote `README.md` to describe the currently implemented utilities and
-  include concrete usage examples.
-- Moved the still-relevant QSOP definition, syntax, examples, normalization
-  rules, and backend design notes into `ARCHITECTURE.md`.
-- Copied `.github/FUNDING.yml` from `gaperez64/acacia-bonsai`, including the
-  `buy_me_a_coffee: gaperez64` entry.
-- Implemented `sop-solve --format stats`:
-  - additive stats-aware solver entry points;
-  - branch `search_nodes` and `leaf_assignments`;
-  - component count and component subproblem leaf work;
-  - golden CLI tests for branch and component stats output.
-- Verified with:
+- Pushed OpenQASM importer work through `fdc33f1` to `origin/main`.
+- Verified the latest pushed checkpoint with:
   - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.2% line coverage over `src`.
-- Implemented component-level solve caching:
-  - local cache inside the component backend;
-  - deterministic cache key from canonical component subinstance data;
-  - cache hit/miss counters in `sop-solve --format stats`;
-  - golden CLI coverage for a repeated-component cache hit.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 75.6% line coverage over `src`.
-- Implemented split-aware branch selection:
-  - residual helper to estimate active component count after removing a candidate variable;
-  - branch selector now prioritizes split count, then active degree, then unary-label presence;
-  - residual unit tests for articulation, non-articulation, post-branch, and inactive-variable cases.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
-- Added deterministic algebraic invariant tests:
-  - canonicalization idempotence;
-  - raw-vs-canonical solver agreement across available backends;
-  - constant-phase residue-vector rotation.
-- Registered the invariant test in Meson without adding new runtime dependencies.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
-- Added optional parser fuzz target:
-  - `tests/fuzz/fuzz_qsop_parse.c` with libFuzzer-compatible entry point;
-  - standalone replay mode for corpus files and stdin;
-  - parser plus canonical writer idempotence oracle;
-  - Meson target behind `-Dbuild_fuzzers=true`, outside normal CI.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `meson setup --wipe build-fuzz -Dbuild_fuzzers=true`
-  - `meson test -C build-fuzz --print-errorlogs`
-- Added initial OpenQASM static-subset importer:
-  - new `qasm2sop` utility;
-  - OpenQASM 2.0, `qreg`, ignored `include` and `barrier`;
-  - gates `h`, `t`, `tdg`, `s`, `sdg`, `z`, and `cz`;
-  - generated raw QSOP with 0-to-0 boundary pins, then canonicalized through the QSOP parser/writer;
-  - golden tests for `H-T-H`, `H-CZ-H`, stdin/help, and unsupported dynamic features.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 75.2% line coverage over `src`.
-- Extended direct OpenQASM static gate support:
-  - `id` as a no-op after operand validation;
-  - `swap` as a wire-state permutation;
-  - golden test covering `id` and `swap`.
-- Added explicit input/output boundary options to `qasm2sop`:
-  - `--input BITS` and `--output BITS`;
-  - omitted boundaries default to all-zero bits;
-  - boundary pins are emitted explicitly and contradictory fixed boundaries
-    produce a valid zero-amplitude QSOP;
-  - golden and CLI tests cover nonzero boundaries, zero boundaries, and option
-    validation.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 75.9% line coverage over `src`.
-- Added decomposition-backed OpenQASM imports:
-  - `x` lowered as `h; z; h`;
-  - `cx` lowered as `h` on the target, `cz`, then `h` on the target;
-  - boundary-level golden tests cover `x: 0 -> 1` and `cx: 10 -> 11`.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
-- Added phase-wrapped OpenQASM decompositions:
-  - `y` lowered as `sdg; x; s`;
-  - `cy` lowered as `sdg` on the target, `cx`, then `s` on the target;
-  - boundary-level golden tests cover the expected `i` phase for `y: 0 -> 1`
-    and `cy: 10 -> 11`.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.2% line coverage over `src`.
-- Added finite OpenQASM `u1(...)` phase imports:
-  - symbolic multiples of `pi/4` such as `3*pi/4` and `-pi/4`;
-  - direct lowering to unary phase coefficients modulo 8;
-  - golden coverage for positive and negative phases plus invalid-angle
+  - `tools/check-coverage.sh build-coverage` at 76.6% line coverage over `src`.
+- Audited local Markdown files:
+  - `README.md`
+  - `ARCHITECTURE.md`
+  - `ARCHITECTURE_SPEED_ANNEX.md`
+  - `tasks.md`
+- Trimmed `tasks.md` to resumable state and refreshed the architecture annex as
+  supplemental performance guidance.
+- Added finite controlled phase imports:
+  - `cu1(...)` and `cp(...)` for symbolic multiples of `pi/4`;
+  - direct lowering to labelled quadratic QSOP coefficients;
+  - indexed and matching qreg-pair operands;
+  - golden tests for indexed `cu1`, qreg-pair `cp`, and invalid-angle
     diagnostics.
 - Verified with:
   - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
-- Added whole-register one-qubit operands:
-  - supported one-qubit gates now accept either `q[i]` or `q`;
-  - register operands apply the gate to each qubit in declaration order;
-  - golden coverage for `h q; u1(pi/4) q; h q;`.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
-- Added matching whole-register two-qubit operands:
-  - supported two-qubit gates now accept indexed pairs or same-size qreg pairs;
-  - qreg pairs apply gates elementwise in declaration order;
-  - mismatched qreg sizes fail with diagnostics;
-  - boundary-level golden coverage for `cx a, b`.
-- Verified with:
-  - `meson test -C build --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.6% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 76.7% line coverage over `src`.
 
 ## Current Task
 
-- Continue broadening OpenQASM importer coverage:
-  - add only gates that lower cleanly to supported primitives or have a clear
+- Keep docs aligned while broadening OpenQASM importer compatibility:
+  - add only gates that lower cleanly to supported primitives or have a direct
     QSOP representation;
   - keep coverage above the 75% CI gate.
 
 ## Future Tasks
 
-- Add more OpenQASM syntax compatibility as importer scope grows.
+- Add more finite OpenQASM syntax compatibility with boundary-level examples.
+- Revisit performance-annex items as solver hot paths mature:
+  - residual-state hashing;
+  - stronger component fingerprints;
+  - structured timing/tracing;
+  - specialized residue kernels.
