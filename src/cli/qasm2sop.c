@@ -35,6 +35,8 @@ typedef enum qasm_one_qubit_op {
   QASM_ONE_H,
   QASM_ONE_X,
   QASM_ONE_Y,
+  QASM_ONE_SX,
+  QASM_ONE_SXDG,
 } qasm_one_qubit_op_t;
 
 typedef enum qasm_two_qubit_op {
@@ -643,6 +645,16 @@ static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
          apply_phase(importer, qubit, 4);
 }
 
+static bool apply_sx_decomposition(qasm_importer_t *importer, uint32_t qubit) {
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) &&
+         apply_h(importer, qubit);
+}
+
+static bool apply_sxdg_decomposition(qasm_importer_t *importer, uint32_t qubit) {
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 12) &&
+         apply_h(importer, qubit);
+}
+
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
                                    uint32_t target) {
   return apply_h(importer, target) && apply_cz(importer, control, target) &&
@@ -706,6 +718,10 @@ static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op
     return apply_x_decomposition(importer, qubit);
   case QASM_ONE_Y:
     return apply_y_decomposition(importer, qubit);
+  case QASM_ONE_SX:
+    return apply_sx_decomposition(importer, qubit);
+  case QASM_ONE_SXDG:
+    return apply_sxdg_decomposition(importer, qubit);
   }
   set_error(importer, "internal error: unknown one-qubit operation");
   return false;
@@ -917,6 +933,14 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   if (strcmp(gate, "y") == 0) {
     return apply_one_qubit_operand(importer, rest, QASM_ONE_Y, 0);
+  }
+
+  if (strcmp(gate, "sx") == 0) {
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_SX, 0);
+  }
+
+  if (strcmp(gate, "sxdg") == 0) {
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_SXDG, 0);
   }
 
   if (strcmp(gate, "cz") == 0) {

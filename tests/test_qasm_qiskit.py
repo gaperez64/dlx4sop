@@ -98,15 +98,19 @@ def phase_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     include "qelib1.inc";
     qreg q[2];
     h q;
+    sx q[1];
     p(pi/2) q[0];
     cp(pi/4) q[0], q[1];
+    sxdg q[1];
     cy q[1], q[0];
     """
     circuit = QuantumCircuit(2)
     circuit.h(0)
     circuit.h(1)
+    circuit.sx(1)
     circuit.p(math.pi / 2.0, 0)
     circuit.cp(math.pi / 4.0, 0, 1)
+    circuit.sxdg(1)
     circuit.cy(1, 0)
     return qasm, circuit, [("00", "00"), ("00", "10"), ("11", "01"), ("10", "11")]
 

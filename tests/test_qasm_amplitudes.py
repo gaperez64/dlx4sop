@@ -161,6 +161,8 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
         "h": (inv_sqrt2, inv_sqrt2, inv_sqrt2, -inv_sqrt2),
         "x": (0, 1, 1, 0),
         "y": (0, -1j, 1j, 0),
+        "sx": (0.5 + 0.5j, 0.5 - 0.5j, 0.5 - 0.5j, 0.5 + 0.5j),
+        "sxdg": (0.5 - 0.5j, 0.5 + 0.5j, 0.5 + 0.5j, 0.5 - 0.5j),
         "z": (1, 0, 0, -1),
         "s": (1, 0, 0, 1j),
         "sdg": (1, 0, 0, -1j),
@@ -294,8 +296,10 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             include "qelib1.inc";
             qreg q[2];
             h q;
+            sx q[1];
             p(pi/2) q[0];
             cp(pi/4) q[0], q[1];
+            sxdg q[1];
             cy q[1], q[0];
             """,
             [("00", "00"), ("00", "10"), ("11", "01"), ("10", "11")],

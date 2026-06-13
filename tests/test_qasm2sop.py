@@ -215,6 +215,8 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_p")
+    run_case(exe, source_root, "qasm_sx")
+    run_case(exe, source_root, "qasm_sxdg")
     run_case(exe, source_root, "qasm_rz")
     run_case(exe, source_root, "qasm_rz_quarter")
     run_case(exe, source_root, "qasm_register_unary")

@@ -222,15 +222,17 @@ deliberately small static OpenQASM 2.0 subset:
   of `pi/4`;
 - finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
-- decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
+- decomposition-backed gates `x`, `y`, `sx`, `sxdg`, `cx`, and `cy`, lowered to the
   primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
-and `if` fail with line-numbered diagnostics. The importer stores phase
-coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
-coefficients are even, widens to `Z_16` for half-step global phases such as
-`rz(pi/4)`, treats contradictory fixed boundaries as a valid zero amplitude, and
-then canonicalizes through the normal QSOP parser and writer.
+and `if` fail with line-numbered diagnostics. The importer currently stores
+phase coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
+coefficients are even, and widens to `Z_16` for half-step global phases such as
+`rz(pi/4)`. This is an importer resolution choice, not a core maximum modulus:
+the QSOP format and solver remain parameterized by even modulus `r`.
+Contradictory fixed boundaries become a valid zero amplitude, and generated
+QSOP is canonicalized through the normal parser and writer.
 
 Importer tests include both canonical QSOP golden files and dependency-free
 amplitude checks. The amplitude checks run `qasm2sop` for fixed input/output

@@ -71,10 +71,14 @@ and `ARCHITECTURE.md`.
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.6% line coverage over `src`.
+- Added `sx` and `sxdg` imports:
+  - `sx` lowers as `h; s; h`;
+  - `sxdg` lowers as `h; sdg; h`;
+  - canonical, dependency-free amplitude, and optional Qiskit coverage.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.5% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
 
 ## Current Task
 
