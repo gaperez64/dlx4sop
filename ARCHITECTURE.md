@@ -214,11 +214,13 @@ deliberately small static OpenQASM 2.0 subset:
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - finite `u1(...)` and `p(...)` phase calls for symbolic multiples of `pi/4`;
+- finite `rz(...)` phase calls for symbolic multiples of `pi/2`;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
 - finite controlled phase calls `cu1(...)` and `cp(...)` for symbolic multiples
   of `pi/4`;
+- finite `crz(...)` phase calls for symbolic multiples of `pi/2`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
 - decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
   primitive gate set.

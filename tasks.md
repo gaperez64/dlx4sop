@@ -61,6 +61,16 @@ and `ARCHITECTURE.md`.
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.9% line coverage over `src`.
+- Added finite `rz(...)` and `crz(...)` imports:
+  - symbolic multiples of `pi/2` that are exactly representable over the
+    current `Z_8` QSOP importer;
+  - `rz` lowers to a global constant plus unary phase;
+  - `crz` lowers to a control unary phase plus a labelled quadratic term;
+  - odd `pi/4` multiples fail clearly until a wider modulus importer exists.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.5% line coverage over `src`.
 
 ## Current Task
 

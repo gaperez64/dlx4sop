@@ -72,6 +72,7 @@ typedef struct qasm_importer {
   uint32_t edges_len;
   uint32_t edges_cap;
 
+  uint32_t constant;
   uint32_t nvars;
   uint64_t norm_h;
   const char *input_bits;
@@ -134,6 +135,14 @@ static bool parse_u32_text(const char *text, uint32_t *out) {
   }
   *out = (uint32_t)value;
   return true;
+}
+
+static uint32_t mod8_i64(int64_t value) {
+  int64_t residue = value % 8;
+  if (residue < 0) {
+    residue += 8;
+  }
+  return (uint32_t)residue;
 }
 
 static bool validate_boundary_bits(const char *option, const char *bits, uint32_t nqubits,
@@ -469,9 +478,9 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
   return true;
 }
 
-static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
-                                    const char *prefix, const char *name,
-                                    uint32_t *out_coeff, bool *out_matches) {
+static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate,
+                                    const char *prefix, const char *name, int64_t *out_units,
+                                    bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -499,11 +508,21 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
     set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
-  int64_t residue = units % 8;
-  if (residue < 0) {
-    residue += 8;
+  *out_units = units;
+  return true;
+}
+
+static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
+                                    const char *prefix, const char *name,
+                                    uint32_t *out_coeff, bool *out_matches) {
+  int64_t units = 0;
+  if (!parse_param_phase_units(importer, gate, prefix, name, &units, out_matches)) {
+    return false;
   }
-  *out_coeff = (uint32_t)residue;
+  if (!*out_matches) {
+    return true;
+  }
+  *out_coeff = mod8_i64(units);
   return true;
 }
 
@@ -560,6 +579,23 @@ static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const cha
   return true;
 }
 
+static bool rz_units_for_gate(qasm_importer_t *importer, const char *gate, const char *prefix,
+                              const char *name, int64_t *out_units, bool *out_matches) {
+  if (!parse_param_phase_units(importer, gate, prefix, name, out_units, out_matches)) {
+    return false;
+  }
+  if (*out_matches && *out_units % 2 != 0) {
+    set_error(importer, "unsupported %s phase angle '%s' for Z_8 global phase", name, gate);
+    return false;
+  }
+  return true;
+}
+
+static bool add_constant(qasm_importer_t *importer, uint32_t coeff) {
+  importer->constant = (importer->constant + coeff) % 8U;
+  return true;
+}
+
 static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
   if (coeff % 8U == 0) {
     return true;
@@ -591,6 +627,19 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
     return true;
   }
   return add_edge(importer, importer->current[left], importer->current[right], coeff);
+}
+
+static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
+  const int64_t half_turns = units / 2;
+  return add_constant(importer, mod8_i64(-half_turns)) &&
+         apply_phase(importer, qubit, mod8_i64(2 * half_turns));
+}
+
+static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target,
+                      int64_t units) {
+  const int64_t half_turns = units / 2;
+  return apply_phase(importer, control, mod8_i64(-half_turns)) &&
+         apply_controlled_phase(importer, control, target, mod8_i64(2 * half_turns));
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
@@ -700,6 +749,34 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
   return true;
 }
 
+static bool apply_rz_operand(qasm_importer_t *importer, char *rest, int64_t units) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply_rz(importer, qubit, units);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply_rz(importer, reg->offset + i, units)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op,
                                uint32_t left, uint32_t right, uint32_t phase_coeff) {
   switch (op) {
@@ -759,8 +836,62 @@ static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
   return true;
 }
 
+static bool apply_crz_operands(qasm_importer_t *importer, char *rest, int64_t units) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply_crz(importer, left.qubit, right.qubit, units);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply_crz(importer, left_qubit, right_qubit, units)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
+
+  int64_t rz_units = 0;
+  bool is_rz = false;
+  if (!rz_units_for_gate(importer, gate, "rz(", "rz", &rz_units, &is_rz)) {
+    return false;
+  }
+  if (is_rz) {
+    return apply_rz_operand(importer, rest, rz_units);
+  }
+
+  int64_t crz_units = 0;
+  bool is_crz = false;
+  if (!rz_units_for_gate(importer, gate, "crz(", "crz", &crz_units, &is_crz)) {
+    return false;
+  }
+  if (is_crz) {
+    return apply_crz_operands(importer, rest, crz_units);
+  }
 
   uint32_t phase_coeff = 0;
   bool is_phase = false;
@@ -974,7 +1105,7 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
 
   fprintf(file, "p qsop 8 %" PRIu32 " %" PRIu32 "\n", importer->nvars, importer->edges_len);
   fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
-  fputs("cst 0\n", file);
+  fprintf(file, "cst %" PRIu32 "\n", importer->constant);
 
   for (uint32_t i = 0; i < importer->unary_len; i++) {
     fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", importer->unary[i].v, importer->unary[i].q);

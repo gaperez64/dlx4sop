@@ -118,6 +118,17 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             f"unexpected bad controlled phase result:\n{bad_controlled_phase.stderr}"
         )
 
+    bad_rz = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/4) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_rz.returncode == 0 or "unsupported rz phase angle" not in bad_rz.stderr:
+        raise AssertionError(f"unexpected bad rz result:\n{bad_rz.stderr}")
+
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), "--input"], "missing value"),
@@ -204,11 +215,13 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_p")
+    run_case(exe, source_root, "qasm_rz")
     run_case(exe, source_root, "qasm_register_unary")
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
     )
     run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
+    run_boundary_case(exe, source_root, "qasm_crz", ["--input", "10", "--output", "10"])
     run_boundary_case(
         exe, source_root, "qasm_named_cphase", ["--input", "11", "--output", "11"]
     )

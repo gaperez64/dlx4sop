@@ -67,7 +67,7 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], float]], dict[str,
 
         gate, rest = statement.split(None, 1)
         angle = 0.0
-        for prefix in ("u1", "p", "cu1", "cp"):
+        for prefix in ("u1", "p", "rz", "cu1", "cp", "crz"):
             if gate.startswith(f"{prefix}(") and gate.endswith(")"):
                 angle = parse_angle(gate[len(prefix) + 1 : -1])
                 gate = prefix
@@ -180,6 +180,11 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
             for qubit in operand_qubits(operands[0], regs):
                 apply_one(state, nqubits, qubit, matrix)
             continue
+        if gate == "rz":
+            matrix = (cmath.exp(-0.5j * angle), 0, 0, cmath.exp(0.5j * angle))
+            for qubit in operand_qubits(operands[0], regs):
+                apply_one(state, nqubits, qubit, matrix)
+            continue
         if gate in one_qubit:
             for qubit in operand_qubits(operands[0], regs):
                 apply_one(state, nqubits, qubit, one_qubit[gate])
@@ -197,6 +202,15 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                 apply_controlled_phase(state, nqubits, a, b, controlled_phase_angles[gate])
             elif gate in ("cu1", "cp"):
                 apply_controlled_phase(state, nqubits, a, b, angle)
+            elif gate == "crz":
+                control_bit = 1 << a
+                target_bit = 1 << b
+                for index in range(1 << nqubits):
+                    if (index & control_bit) != 0:
+                        if (index & target_bit) == 0:
+                            state[index] *= cmath.exp(-0.5j * angle)
+                        else:
+                            state[index] *= cmath.exp(0.5j * angle)
             elif gate == "cx":
                 apply_controlled_x(state, nqubits, a, b)
             elif gate == "cy":
@@ -307,6 +321,17 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             cu1(pi/4) q[0], q[1];
             """,
             [("11", "11"), ("11", "10"), ("01", "01"), ("00", "00")],
+        ),
+        (
+            "rz_crz",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q;
+            rz(pi/2) q[0];
+            crz(pi) q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("10", "10"), ("11", "01")],
         ),
         (
             "named_controlled_phase",
