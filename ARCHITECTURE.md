@@ -144,14 +144,17 @@ Current production implementation lives under:
 - `src/solve`: brute force, component decomposition, residual branch-and-sum,
   and reversible residual state.
 - `src/cli`: `sop-check`, `sop-stats`, `sop-solve`, and `qasm2sop`.
+- `tools`: lightweight developer and benchmark scripts.
 
 Tests are split between Python CLI golden tests and C unit tests for residue and
 residual behavior. The default suite also includes QASM-derived solver corpus
-cases that import fixed-boundary circuits, compare all exact backends, and check
-solver stats invariants. The corpus includes GHZ and uniform-superposition
-shapes inspired by the Qymera benchmark demonstration scenarios, expressed as
-local OpenQASM snippets rather than vendored benchmark files. Optional parser
-fuzzing is available as a separate Meson option.
+cases from `tests/qasm_solver_corpus.json` that import fixed-boundary circuits,
+compare all exact backends, and check solver stats invariants. The corpus
+includes GHZ and uniform-superposition shapes inspired by the Qymera benchmark
+demonstration scenarios, repeated-component cases, and small split/caching
+stress cases, expressed as local OpenQASM snippets rather than vendored
+benchmark files. Optional parser fuzzing is available as a separate Meson
+option.
 
 ## Solver Backends
 
@@ -207,6 +210,13 @@ vectors, and applies the parent residual constant once. The backend reports
 internal node, cache hit/miss, and leaf counters through the stats-aware solve
 API and `sop-solve --format stats`.
 
+All solver backends also accept an optional trace callback. `sop-solve --trace
+csv` emits coarse phase rows to stderr while preserving the requested primary
+output on stdout. Current trace phases include brute-force enumeration,
+component labelling, component-cache lookup, component subsolves, convolution,
+branch cache lookup, branch variable selection, residual component splitting,
+and edge-free residue-table leaves.
+
 ## Command-Line Contract
 
 The utilities should stay small and scriptable:
@@ -222,7 +232,7 @@ Currently implemented commands:
 ```text
 sop-check   validate and canonicalize a QSOP file
 sop-stats   print structural statistics as text or JSON
-sop-solve   compute exact residue-count vectors or solver counters
+sop-solve   compute exact residue-count vectors, solver counters, or trace rows
 qasm2sop    import a small static OpenQASM 2.0 subset to canonical QSOP
 ```
 
@@ -272,6 +282,47 @@ Optional Qiskit comparisons reuse the same fixed-boundary approach behind
 `-Dqiskit_tests=true`; they are not part of the default suite because Qiskit is
 an external dependency.
 
+## Benchmarking
+
+`tools/bench_qasm_corpus.py` runs the manifest-backed QASM solver corpus through
+`qasm2sop` and one or more `sop-solve` backends. It emits JSONL by default, with
+CSV available for spreadsheets. Each record includes case and boundary labels,
+source and normalized QSOP hashes, QSOP size, import and solve wall-clock
+timings, backend counters, and optional aggregated trace summaries collected
+from `sop-solve --trace csv`.
+
+The default CI suite includes a one-boundary benchmark smoke test to keep the
+runner working without turning performance measurement into a noisy gate.
+
+## External Translation Notes
+
+ZX support should start as an optional boundary utility rather than a core
+dependency. PyZX documents circuit loading for QASM, Quipper ASCII, `.qc`, and
+qsim formats, circuit-to-graph conversion, and reversible ZX-diagram
+serialization through Quantomatic `.qgraph` JSON via `from_json`/`to_json`
+(https://pyzx.readthedocs.io/en/latest/representations.html). Its graph model
+uses boundary, Z, X, and H-box vertices, rational phases in units of `pi`, and
+simple or Hadamard edges
+(https://pyzx.readthedocs.io/en/latest/graph.html). The most practical first
+`zx2sop` path is therefore PyZX-backed: load `.qgraph` or a supported circuit
+format, extract or convert circuit-like diagrams to OpenQASM, then reuse
+`qasm2sop`. Direct graph-like phase-gadget import can come later.
+
+FeynmanDD's public repository uses OpenQASM circuit files plus a gate-set JSON
+file passed with `-g`, for example `cudd_circuit_bdd -f ...qasm -g
+gate_sets/google.json`
+(https://github.com/cqs-thu/feynman-decision-diagram/blob/master/README.md).
+Its gate-set JSON files define a modulus, primitive gate SOP terms, and named
+complex-gate expansions such as `h`, `t`, `cz`, `cx`, `ccx`, `rz(pi/4)`, and
+`iswap`
+(https://github.com/cqs-thu/feynman-decision-diagram/blob/master/gate_sets/T.json
+and
+https://github.com/cqs-thu/feynman-decision-diagram/blob/master/gate_sets/google.json).
+For compatibility, the natural first target is a `qasm2sop`/benchmark adapter
+that can ingest FeynmanDD benchmark `.qasm` files and, later, emit
+FeynmanDD-compatible OpenQASM plus a matching gate-set JSON for external
+baseline runs.
+
 ## CI And Coverage
 
 CI runs on GitHub Actions with:
@@ -292,11 +343,11 @@ oracle.
 
 ## Forward Direction
 
-The next solver targets are broader QASM-derived regression corpora, sharper
-component and residual-state caching, and structured timing or tracing around
-backend hot paths. New importer work should be driven by gates found in real
-circuit sources and should keep each added gate covered by boundary-level
-examples and amplitude checks.
+The next solver targets are benchmark-driven residual improvements: use trace
+and corpus data to decide whether incremental component metadata, incremental
+hashing, or dancing-cells-style adjacency mutation should come first. New
+importer work should be driven by gates found in real circuit sources and should
+keep each added gate covered by boundary-level examples and amplitude checks.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

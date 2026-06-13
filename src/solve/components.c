@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/residue.h"
+#include "trace.h"
 
 #include <inttypes.h>
 #include <stdarg.h>
@@ -535,6 +536,14 @@ bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_
 bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
                                             uint32_t max_component_vars, qsop_result_t **out,
                                             qsop_solve_stats_t *stats, qsop_error_t *error) {
+  return qsop_solve_components_bruteforce_trace_stats(qsop, max_component_vars, out, stats, NULL,
+                                                      error);
+}
+
+bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
+                                                  uint32_t max_component_vars, qsop_result_t **out,
+                                                  qsop_solve_stats_t *stats,
+                                                  qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -583,6 +592,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
   }
 
   uint32_t ncomponents = 0;
+  const uint64_t label_start = qsop_trace_begin(trace);
   if (!label_components(qsop, rowptr, colind, component, &ncomponents, error)) {
     free(rowptr);
     free(colind);
@@ -592,6 +602,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
     free(tmp);
     return false;
   }
+  qsop_trace_emit_elapsed(trace, "components.label_components", 0, ncomponents, label_start);
 
   acc[0] = 1;
   component_cache_t cache = {0};
@@ -617,7 +628,9 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
       return false;
     }
 
+    const uint64_t lookup_start = qsop_trace_begin(trace);
     const component_cache_entry_t *cached = find_cached_component(&cache, &sub);
+    qsop_trace_emit_elapsed(trace, "components.cache_lookup", 0, cache.len, lookup_start);
     const uint64_t *part_counts = NULL;
     if (cached != NULL) {
       part_counts = cached->counts;
@@ -625,8 +638,10 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
         stats->cache_hits++;
       }
     } else {
-      if (!qsop_solve_bruteforce_stats(&sub, max_component_vars, &part, &part_stats, error) ||
-          !store_cached_component(&cache, &sub, part->counts, error)) {
+      const uint64_t solve_start = qsop_trace_begin(trace);
+      const bool solved = qsop_solve_bruteforce_trace_stats(&sub, max_component_vars, &part,
+                                                            &part_stats, trace, error);
+      if (!solved || !store_cached_component(&cache, &sub, part->counts, error)) {
         free_subinstance(&sub);
         qsop_result_free(part);
         free_component_cache(&cache);
@@ -638,6 +653,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
         free(tmp);
         return false;
       }
+      qsop_trace_emit_elapsed(trace, "components.solve_component", 0, sub.nvars, solve_start);
       part_counts = part->counts;
       if (stats != NULL) {
         stats->cache_misses++;
@@ -645,6 +661,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
       }
     }
 
+    const uint64_t convolve_start = qsop_trace_begin(trace);
     if (!qsop_counts_convolve(qsop->r, tmp, acc, part_counts, error)) {
       free_subinstance(&sub);
       qsop_result_free(part);
@@ -657,6 +674,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
       free(tmp);
       return false;
     }
+    qsop_trace_emit_elapsed(trace, "components.convolution", 0, qsop->r, convolve_start);
 
     memcpy(acc, tmp, (size_t)qsop->r * sizeof(*acc));
     free_subinstance(&sub);

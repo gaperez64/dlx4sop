@@ -204,6 +204,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
         ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
+        ([str(exe), "--trace"], "requires a value"),
+        ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
         ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
         ([str(exe), "--bad"], "unknown option"),
@@ -222,6 +224,42 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
 
 
+def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    expected_stats = source_root / "tests" / "golden" / "solve_branch.stats"
+    completed = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "branch", "--trace", "csv", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"trace run failed\n{completed.stderr}")
+    if completed.stdout != expected_stats.read_text():
+        raise AssertionError(f"trace changed stats output\n{completed.stdout}")
+
+    lines = [line for line in completed.stderr.splitlines() if line]
+    if not lines or lines[0] != "phase,depth,items,elapsed_ns":
+        raise AssertionError(f"missing trace CSV header:\n{completed.stderr}")
+    rows = [line.split(",") for line in lines[1:]]
+    phases = {row[0] for row in rows}
+    expected_phases = {
+        "branch.cache_lookup",
+        "branch.component_split",
+        "branch.select_variable",
+        "branch.edge_free_leaf",
+    }
+    if not expected_phases.issubset(phases):
+        raise AssertionError(f"missing trace phases {expected_phases - phases}:\n{completed.stderr}")
+    for row in rows:
+        if len(row) != 4:
+            raise AssertionError(f"bad trace row: {row}")
+        int(row[1])
+        int(row[2])
+        int(row[3])
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -236,6 +274,7 @@ def main() -> int:
     run_max_vars_guard(exe, source_root)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
+    run_trace_csv(exe, source_root)
     return 0
 
 

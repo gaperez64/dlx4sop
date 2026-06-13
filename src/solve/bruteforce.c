@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/residue.h"
+#include "trace.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -34,14 +35,20 @@ static bool bit_is_set(uint64_t assignment, uint32_t bit) {
   return ((assignment >> bit) & UINT64_C(1)) != 0;
 }
 
-bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars,
-                           qsop_result_t **out, qsop_error_t *error) {
+bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars, qsop_result_t **out,
+                           qsop_error_t *error) {
   return qsop_solve_bruteforce_stats(qsop, max_vars, out, NULL, error);
 }
 
 bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
                                  qsop_result_t **out, qsop_solve_stats_t *stats,
                                  qsop_error_t *error) {
+  return qsop_solve_bruteforce_trace_stats(qsop, max_vars, out, stats, NULL, error);
+}
+
+bool qsop_solve_bruteforce_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
+                                       qsop_result_t **out, qsop_solve_stats_t *stats,
+                                       qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -84,6 +91,7 @@ bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
   if (stats != NULL) {
     stats->leaf_assignments = assignments;
   }
+  const uint64_t enumerate_start = qsop_trace_begin(trace);
   for (uint64_t assignment = 0; assignment < assignments; assignment++) {
     uint32_t phase = qsop->constant;
     for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -98,6 +106,7 @@ bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
     }
     result->counts[phase]++;
   }
+  qsop_trace_emit_elapsed(trace, "brute_force.enumerate", 0, assignments, enumerate_start);
 
   *out = result;
   return true;

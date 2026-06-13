@@ -565,13 +565,14 @@ statistics. `sop-stats` already supports JSON, and `sop-solve --format stats`
 reports backend counters; additional tracing should build on that interface
 rather than adding ad hoc output.
 
-Add:
+Implemented:
 
 ```text
---stats json
---trace csv
---profile-events
+sop-solve --trace csv
+tools/bench_qasm_corpus.py --trace
 ```
+
+Future structured output still needs JSON stats and richer profile events.
 
 Track at least:
 
@@ -649,6 +650,12 @@ A WMC encoding introduces Boolean constraints, auxiliary variables, and weighted
 ---
 
 ## A.20 Make benchmarking a first-class utility
+
+The first lightweight runner is implemented as
+`tools/bench_qasm_corpus.py` over `tests/qasm_solver_corpus.json`. It records
+case metadata, source and normalized QSOP hashes, QSOP size, solver counters,
+wall-clock timing, and optional trace phase summaries. The longer-term baseline
+manifest should still grow toward all external solvers:
 
 Use one manifest format to run all baselines fairly:
 

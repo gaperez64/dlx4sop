@@ -60,18 +60,34 @@ and `ARCHITECTURE.md`.
     variables;
   - added a mirrored three-variable path stats fixture that proves isomorphic
     small components share one cache entry.
+- Completed benchmark and tracing checkpoint:
+  - moved the QASM solver corpus into `tests/qasm_solver_corpus.json` and added
+    repeated-component plus branch-split stress cases;
+  - added `tools/bench_qasm_corpus.py` for JSONL/CSV benchmark records with
+    backend counters, timings, source/QSOP hashes, and optional trace summaries;
+  - added `sop-solve --trace csv` with trace phases for cache lookup, component
+    splitting, branch selection, residue-table leaves, component solves, and
+    convolution.
+- Completed external-format reconnaissance:
+  - PyZX's practical first path is an optional `.qgraph`/circuit loader that
+    converts circuit-like diagrams to OpenQASM and reuses `qasm2sop`;
+  - FeynmanDD's public interface is OpenQASM plus gate-set JSON, so the first
+    compatibility target is benchmark ingestion and later OpenQASM/gate-set
+    export for external baseline runs.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.6% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.7% line coverage over `src`.
 
 ## Current Task
 
-- Continue solver improvements using the current QASM importer and branch cache
-  stats as measurable circuit-derived regressions.
+- Continue solver improvements using the current QASM importer, benchmark
+  runner, trace output, and branch cache stats as measurable circuit-derived
+  regressions.
 - Next likely solver work before tree/rankwidth experiments:
-  - inspect branch cache hit rates on QASM-derived cases when a larger benchmark
-    set exists, then decide whether component-aware residual keys are warranted;
+  - inspect branch cache hit rates and trace phase summaries on the expanded
+    QASM-derived corpus, then decide whether component-aware residual keys are
+    warranted;
   - decide whether split estimates need incremental component metadata or
     whether component splitting is enough for current benchmark scale;
   - keep coverage above the 75% CI gate.
@@ -80,6 +96,11 @@ and `ARCHITECTURE.md`.
 
 - Add more finite OpenQASM syntax compatibility with boundary-level examples:
   - add small compatibility aliases when they reuse existing lowering paths.
+- Prototype external-format boundary utilities:
+  - `zx2sop` as an optional PyZX-backed loader for `.qgraph` and circuit-like
+    ZX diagrams that can be converted to OpenQASM before `qasm2sop`;
+  - FeynmanDD benchmark ingestion from its OpenQASM corpus, then
+    FeynmanDD-compatible OpenQASM plus gate-set JSON export for baseline runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.
 - Revisit performance-annex items as solver hot paths mature:
   - dancing-cells adjacency mutation remains incomplete: the residual backend
@@ -98,5 +119,4 @@ and `ARCHITECTURE.md`.
     min-fill/treewidth/rankwidth/cut-signature estimators or a pluggable
     heuristic interface. See
     [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
-  - structured timing/tracing;
   - specialized residue kernels.

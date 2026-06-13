@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pathlib
+import json
 import subprocess
 import sys
 
@@ -65,7 +66,14 @@ def assert_backend_agreement(sop_solve: pathlib.Path, case: str, boundary: str, 
             )
 
 
-def assert_stats_invariants(sop_solve: pathlib.Path, case: str, boundary: str, qsop: str) -> None:
+def assert_stats_invariants(
+    sop_solve: pathlib.Path,
+    case: str,
+    boundary: str,
+    qsop: str,
+    *,
+    expect_component_cache_hit: bool = False,
+) -> None:
     nvars = qsop_nvars(qsop)
     stats = {
         backend: parse_stats(solve(sop_solve, qsop, backend, "stats")) for backend in BACKENDS
@@ -104,88 +112,43 @@ def assert_stats_invariants(sop_solve: pathlib.Path, case: str, boundary: str, q
             f"{case} {boundary}: cache hits + misses do not match component count"
         )
 
-    if case == "repeated_components" and cache_hits < 1:
+    if expect_component_cache_hit and cache_hits < 1:
         raise AssertionError(f"{case} {boundary}: expected a component cache hit")
 
 
-def run_corpus(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
-    cases = [
-        (
-            "qymera_ghz",
-            """OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[4];
-            h q[0];
-            cx q[0], q[1];
-            cx q[1], q[2];
-            cx q[2], q[3];
-            """,
-            [("0000", "0000"), ("0000", "1111"), ("0000", "0011")],
-        ),
-        (
-            "qymera_uniform_superposition",
-            """OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[4];
-            h q;
-            """,
-            [("0000", "0000"), ("0000", "1111"), ("1010", "0101")],
-        ),
-        (
-            "repeated_components",
-            """OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[2];
-            h q;
-            t q;
-            h q;
-            """,
-            [("00", "00"), ("11", "11")],
-        ),
-        (
-            "entangled_axis_chain",
-            """OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[3];
-            h q;
-            rx(pi/4) q[0];
-            ry(-pi/2) q[1];
-            crz(pi/4) q[0], q[2];
-            cx q[0], q[1];
-            cy q[1], q[2];
-            """,
-            [("000", "000"), ("001", "111"), ("101", "010")],
-        ),
-        (
-            "register_pair_mix",
-            """OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg a[2];
-            qreg b[2];
-            h a;
-            sx b;
-            cp(pi/4) a, b;
-            cx a, b;
-            sxdg b;
-            """,
-            [("0000", "0000"), ("1010", "1111")],
-        ),
-    ]
+def load_cases(path: pathlib.Path) -> list[dict]:
+    return json.loads(path.read_text())
 
-    for case, qasm, boundaries in cases:
-        for input_bits, output_bits in boundaries:
+
+def case_qasm(case: dict) -> str:
+    return "\n".join(case["qasm_lines"]) + "\n"
+
+
+def run_corpus(qasm2sop: pathlib.Path, sop_solve: pathlib.Path, manifest: pathlib.Path) -> None:
+    for case_data in load_cases(manifest):
+        case = case_data["name"]
+        qasm = case_qasm(case_data)
+        for input_bits, output_bits in case_data["boundaries"]:
             boundary = f"{input_bits}->{output_bits}"
             qsop = import_qasm(qasm2sop, qasm, input_bits, output_bits)
             assert_backend_agreement(sop_solve, case, boundary, qsop)
-            assert_stats_invariants(sop_solve, case, boundary, qsop)
+            assert_stats_invariants(
+                sop_solve,
+                case,
+                boundary,
+                qsop,
+                expect_component_cache_hit=case_data.get("expect_component_cache_hit", False),
+            )
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: test_qasm_solver_corpus.py QASM2SOP SOP_SOLVE", file=sys.stderr)
+    if len(sys.argv) not in (3, 4):
+        print("usage: test_qasm_solver_corpus.py QASM2SOP SOP_SOLVE [MANIFEST]", file=sys.stderr)
         return 2
 
-    run_corpus(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]))
+    default_manifest = pathlib.Path(__file__).with_name("qasm_solver_corpus.json")
+    manifest = pathlib.Path(sys.argv[3]) if len(sys.argv) == 4 else default_manifest
+    run_corpus(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), manifest)
     return 0
 
 

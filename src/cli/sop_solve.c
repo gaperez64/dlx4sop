@@ -19,10 +19,20 @@ typedef enum solve_output_format {
   SOLVE_FORMAT_STATS,
 } solve_output_format_t;
 
+typedef enum solve_trace_format {
+  SOLVE_TRACE_NONE,
+  SOLVE_TRACE_CSV,
+} solve_trace_format_t;
+
+typedef struct csv_trace_writer {
+  FILE *file;
+  bool wrote_header;
+} csv_trace_writer_t;
+
 static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch] "
-        "[--max-vars N] [PATH|-]\n",
+        "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
 
@@ -32,8 +42,7 @@ static void print_error(const qsop_error_t *error, const char *fallback_path) {
     path = "<input>";
   }
   if (error->line > 0) {
-    fprintf(stderr, "error: %s:%zu:%zu: %s\n", path, error->line, error->column,
-            error->message);
+    fprintf(stderr, "error: %s:%zu:%zu: %s\n", path, error->line, error->column, error->message);
   } else {
     fprintf(stderr, "error: %s: %s\n", path, error->message);
   }
@@ -51,8 +60,21 @@ static const char *backend_name(solve_backend_t backend) {
   return "unknown";
 }
 
-static bool write_solver_stats(FILE *file, solve_backend_t backend,
-                               const qsop_solve_stats_t *stats, qsop_error_t *error) {
+static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
+  csv_trace_writer_t *writer = user;
+  if (writer == NULL || writer->file == NULL || event == NULL) {
+    return;
+  }
+  if (!writer->wrote_header) {
+    fputs("phase,depth,items,elapsed_ns\n", writer->file);
+    writer->wrote_header = true;
+  }
+  fprintf(writer->file, "%s,%" PRIu32 ",%" PRIu64 ",%" PRIu64 "\n", event->phase, event->depth,
+          event->items, event->elapsed_ns);
+}
+
+static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_solve_stats_t *stats,
+                               qsop_error_t *error) {
   if (file == NULL || stats == NULL) {
     error->path = NULL;
     error->line = 0;
@@ -108,6 +130,7 @@ int main(int argc, char **argv) {
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
+  solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -136,6 +159,20 @@ int main(int argc, char **argv) {
         return 2;
       }
       i++;
+      continue;
+    }
+    if (strcmp(argv[i], "--trace") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --trace requires a value\n", stderr);
+        return 2;
+      }
+      const char *trace_value = argv[++i];
+      if (strcmp(trace_value, "csv") == 0) {
+        trace_format = SOLVE_TRACE_CSV;
+      } else {
+        fprintf(stderr, "error: unsupported trace format '%s'\n", trace_value);
+        return 2;
+      }
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -197,12 +234,23 @@ int main(int argc, char **argv) {
 
   qsop_result_t *result = NULL;
   qsop_solve_stats_t solve_stats = {0};
+  csv_trace_writer_t csv_trace = {
+      .file = stderr,
+  };
+  qsop_solve_trace_t trace = {
+      .emit = trace_format == SOLVE_TRACE_CSV ? write_csv_trace_event : NULL,
+      .user = &csv_trace,
+  };
+  qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
   if (backend == SOLVE_BACKEND_COMPONENTS) {
-    ok = qsop_solve_components_bruteforce_stats(qsop, max_vars, &result, &solve_stats, &error);
+    ok = qsop_solve_components_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats,
+                                                      trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
-    ok = qsop_solve_bruteforce_stats(qsop, max_vars, &result, &solve_stats, &error);
+    ok =
+        qsop_solve_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr, &error);
   } else {
-    ok = qsop_solve_residual_branch_stats(qsop, max_vars, &result, &solve_stats, &error);
+    ok = qsop_solve_residual_branch_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr,
+                                                &error);
   }
   qsop_free(qsop);
   if (!ok) {

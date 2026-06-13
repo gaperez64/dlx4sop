@@ -45,6 +45,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   include indexed qubits,
   whole-register one-qubit operands, and matching whole-register two-qubit
   operands.
+- `tools/bench_qasm_corpus.py`: run the QASM solver corpus through `qasm2sop`
+  and `sop-solve`, emitting JSONL or CSV records with backend counters, wall
+  times, hashes, and optional phase-trace summaries.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, deterministic algebraic invariants for canonicalization and solver
@@ -176,6 +179,13 @@ cache_misses: 6
 leaf_assignments: 6
 ```
 
+Trace coarse backend phases to CSV on stderr while preserving the primary output
+on stdout:
+
+```sh
+build/sop-solve --format stats --backend branch --trace csv tests/golden/solve_branch_cache.qsop
+```
+
 Component stats include local cache behavior:
 
 ```sh
@@ -252,8 +262,17 @@ The `--max-vars` limit applies to whole-instance brute force and residual branch
 solving. For the default `components` backend it applies to each connected
 component.
 
+Run the manifest-backed QASM solver corpus as a lightweight benchmark:
+
+```sh
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
+```
+
 ## Current Direction
 
 The current implementation target is solver improvement using QASM-derived
 instances as regression inputs for backend agreement, component-cache behavior,
-and stats stability.
+trace stability, and benchmark trend tracking. The next external-format work is
+to prototype optional boundary utilities around PyZX `.qgraph`/circuit formats
+and FeynmanDD-compatible OpenQASM plus gate-set JSON.
