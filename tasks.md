@@ -81,6 +81,14 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
+- Added phase-wrapped OpenQASM decompositions:
+  - `y` lowered as `sdg; x; s`;
+  - `cy` lowered as `sdg` on the target, `cx`, then `s` on the target;
+  - boundary-level golden tests cover the expected `i` phase for `y: 0 -> 1`
+    and `cy: 10 -> 11`.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.2% line coverage over `src`.
 
 ## Current Task
 

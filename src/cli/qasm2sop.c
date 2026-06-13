@@ -405,10 +405,21 @@ static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
          apply_h(importer, qubit);
 }
 
+static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
+  return apply_phase(importer, qubit, 6) && apply_x_decomposition(importer, qubit) &&
+         apply_phase(importer, qubit, 2);
+}
+
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
                                    uint32_t target) {
   return apply_h(importer, target) && apply_cz(importer, control, target) &&
          apply_h(importer, target);
+}
+
+static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control,
+                                   uint32_t target) {
+  return apply_phase(importer, target, 6) && apply_cx_decomposition(importer, control, target) &&
+         apply_phase(importer, target, 2);
 }
 
 static bool parse_one_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *out_qubit) {
@@ -472,6 +483,14 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return apply_x_decomposition(importer, qubit);
   }
 
+  if (strcmp(gate, "y") == 0) {
+    uint32_t qubit = 0;
+    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply_y_decomposition(importer, qubit);
+  }
+
   if (strcmp(gate, "cz") == 0) {
     uint32_t left = 0;
     uint32_t right = 0;
@@ -488,6 +507,15 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
       return false;
     }
     return apply_cx_decomposition(importer, control, target);
+  }
+
+  if (strcmp(gate, "cy") == 0) {
+    uint32_t control = 0;
+    uint32_t target = 0;
+    if (!parse_two_qubit_gate(importer, rest, &control, &target)) {
+      return false;
+    }
+    return apply_cy_decomposition(importer, control, target);
   }
 
   if (strcmp(gate, "swap") == 0) {

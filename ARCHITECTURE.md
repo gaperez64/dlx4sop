@@ -211,7 +211,8 @@ deliberately small static OpenQASM 2.0 subset:
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - primitive two-qubit `cz` and `swap`;
-- decomposition-backed gates `x` and `cx`, lowered to the primitive gate set.
+- decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
+  primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
 and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with

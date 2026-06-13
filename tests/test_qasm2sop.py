@@ -128,6 +128,8 @@ def run_decomposed_gates(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     cases = [
         ("qasm_x", ["--input", "0", "--output", "1"]),
         ("qasm_cx", ["--input", "10", "--output", "11"]),
+        ("qasm_y", ["--input", "0", "--output", "1"]),
+        ("qasm_cy", ["--input", "10", "--output", "11"]),
     ]
     for name, options in cases:
         qasm = source_root / "tests" / "golden" / f"{name}.qasm"
