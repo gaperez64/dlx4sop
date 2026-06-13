@@ -41,6 +41,22 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{brute_force.stdout}\n"
         )
 
+    branch = subprocess.run(
+        [str(exe), "--backend", "branch", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch.returncode != 0:
+        raise AssertionError(f"{name}: branch backend failed\n{branch.stderr}")
+    if branch.stdout != expected_text:
+        raise AssertionError(
+            f"{name}: branch residue-vector mismatch\n"
+            f"expected:\n{expected_text}\n"
+            f"actual:\n{branch.stdout}\n"
+        )
+
 
 def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_single.qsop"
@@ -87,6 +103,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--format", "json", str(qsop)], "unsupported format"),
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
+        ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
         ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
         ([str(exe), "--bad"], "unknown option"),

@@ -10,10 +10,11 @@
 typedef enum solve_backend {
   SOLVE_BACKEND_COMPONENTS,
   SOLVE_BACKEND_BRUTE_FORCE,
+  SOLVE_BACKEND_BRANCH,
 } solve_backend_t;
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop-solve [--format residue-vector] [--backend components|brute-force] "
+  fputs("usage: sop-solve [--format residue-vector] [--backend components|brute-force|branch] "
         "[--max-vars N] [PATH|-]\n",
         file);
 }
@@ -87,6 +88,8 @@ int main(int argc, char **argv) {
         backend = SOLVE_BACKEND_COMPONENTS;
       } else if (strcmp(value, "brute-force") == 0) {
         backend = SOLVE_BACKEND_BRUTE_FORCE;
+      } else if (strcmp(value, "branch") == 0) {
+        backend = SOLVE_BACKEND_BRANCH;
       } else {
         fprintf(stderr, "error: unsupported backend '%s'\n", value);
         return 2;
@@ -135,8 +138,10 @@ int main(int argc, char **argv) {
   qsop_result_t *result = NULL;
   if (backend == SOLVE_BACKEND_COMPONENTS) {
     ok = qsop_solve_components_bruteforce(qsop, max_vars, &result, &error);
-  } else {
+  } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
     ok = qsop_solve_bruteforce(qsop, max_vars, &result, &error);
+  } else {
+    ok = qsop_solve_residual_branch(qsop, max_vars, &result, &error);
   }
   qsop_free(qsop);
   if (!ok) {

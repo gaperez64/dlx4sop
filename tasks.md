@@ -63,18 +63,27 @@ This file tracks local project state so work can resume after a pause or stop.
   - `meson compile -C build`
   - `meson test -C build`
   - `tools/check-coverage.sh build-coverage` at 76.3% line coverage over `src`.
+- Implemented the first residual branch-and-sum backend:
+  - `qsop_solve_residual_branch`;
+  - `sop-solve --backend branch`;
+  - recursive residual branching through the reversible trail;
+  - golden tests comparing branch, component, and brute-force backends;
+  - CLI guard coverage for branch backend `--max-vars` refusal.
+- Verified the branch backend checkpoint with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
 
 ## Current Task
 
 - Next implementation target:
-  - Add a first residual branch-and-sum backend:
-    - evaluate active residual state recursively;
-    - use the reversible trail instead of copying at every branch;
-    - compare against brute force and component backend on small examples.
+  - Add a simple branching heuristic and expose lightweight branch-search stats:
+    - pick a higher-impact active variable instead of the first active variable;
+    - track visited residual nodes and leaf assignments internally;
+    - keep CLI output stable unless an explicit stats mode is added.
 
 ## Future Tasks
 
 - Add component decomposition and component-level solve cache.
-- Add simple branching backend and branch heuristics.
+- Add a CLI-visible solver stats mode once the internal counters are stable.
 - Extend tests with algebraic invariants and parser fuzz targets.
 - Add OpenQASM static-subset importer once the QSOP core is stable.

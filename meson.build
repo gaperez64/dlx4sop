@@ -32,6 +32,7 @@ dlx4sop_core = static_library(
     'src/core/qsop_parse.c',
     'src/core/qsop_stats.c',
     'src/core/qsop_write.c',
+    'src/solve/branch.c',
     'src/solve/bruteforce.c',
     'src/solve/components.c',
     'src/solve/residual.c',
