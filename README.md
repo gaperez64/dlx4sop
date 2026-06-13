@@ -246,8 +246,9 @@ The importer emits compact `Z_8` QSOP when possible and widens to `Z_16` for
 half-step global phases such as `rz(pi/4)`.
 It accepts the FeynmanDD-style quadratic subset used by the Google benchmarks,
 including uppercase gate spellings, decimal angle literals for multiples of
-`pi/4`, and `iswap`. Higher-degree gates such as `ccx`, `ccz`, and `cswap`
-currently fail with a quadratization diagnostic rather than being lowered
+`pi/4`, `iswap`, `ccz`, and `ccx`. `ccz` is lowered through a quadratic
+parity-phase transformation, and `ccx` is lowered as `H; CCZ; H` on the target.
+`cswap` still fails with a quadratization diagnostic rather than being lowered
 silently.
 
 Whole-register OpenQASM operands are accepted for supported gates:
@@ -284,6 +285,13 @@ Inspect a local FeynmanDD checkout:
 ```sh
 git clone --depth 1 https://github.com/cqs-thu/feynman-decision-diagram.git /tmp/dlx4sop-feynmandd
 tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-feynmandd/benchmark/exp
+```
+
+Inspect the PyZX QASM benchmark subset used around the rank-width ZX work:
+
+```sh
+git clone --depth 1 https://github.com/zxcalc/pyzx.git /tmp/dlx4sop-pyzx
+tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits/feyn_bench/qasm
 ```
 
 Start from a PyZX/Quantomatic `.qgraph` JSON diagram when PyZX is installed:

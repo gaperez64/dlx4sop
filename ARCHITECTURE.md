@@ -265,17 +265,22 @@ deliberately small static OpenQASM 2.0 subset:
 - finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
 - decomposition-backed gates `x`, `y`, `sx`, `sxdg`, `cx`, and `cy`, lowered
-  to the primitive gate set.
+  to the primitive gate set;
+- three-qubit `ccz`, lowered with the seven-phase parity identity where the
+  two-bit parity phases are emitted directly as quadratic terms and only the
+  three-bit parity phase is computed with CNOTs;
+- three-qubit `ccx`, lowered as `h` on the target, `ccz`, then `h` on the
+  target.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
-and `if` fail with line-numbered diagnostics. Higher-degree gates such as
-`ccx`, `ccz`, and `cswap` currently fail with an explicit quadratization
-diagnostic; they are not native quadratic-labelled SOP until a gadget pass is
-implemented. The importer currently stores phase coefficients internally in
-`Z_16`, emits compact `Z_8` QSOP whenever all coefficients are even, and widens
-to `Z_16` for half-step global phases such as `rz(pi/4)`. This is an importer
-resolution choice, not a core maximum modulus: the QSOP format and solver
-remain parameterized by even modulus `r`.
+and `if` fail with line-numbered diagnostics. Remaining higher-degree gates such
+as `cswap` fail with an explicit quadratization diagnostic; they are not native
+quadratic-labelled SOP until a gadget pass is implemented. The importer
+currently stores phase coefficients internally in `Z_16`, emits compact `Z_8`
+QSOP whenever all coefficients are even, and widens to `Z_16` for half-step
+global phases such as `rz(pi/4)`. This is an importer resolution choice, not a
+core maximum modulus: the QSOP format and solver remain parameterized by even
+modulus `r`.
 Contradictory fixed boundaries become a valid zero amplitude, and generated
 QSOP is canonicalized through the normal parser and writer.
 
@@ -314,6 +319,17 @@ format, extract or convert circuit-like diagrams to OpenQASM, then reuse
 `qasm2sop`. `tools/qgraph2qasm.py` starts this path as an optional PyZX-backed
 adapter. Direct graph-like phase-gadget import can come later.
 
+Kuyanov and Kissinger's low-rank-width ZX simulation work points at PyZX's
+`pyzx/rank_width.py` implementation, including `rw-greedy-linear`,
+`rw-greedy-b2t`, and `rw-flow` routines
+(https://arxiv.org/abs/2603.06764 and
+https://github.com/zxcalc/pyzx/blob/5f5e409/pyzx/rank_width.py). The associated
+structured-circuit benchmarks are the PyZX `circuits` corpus, mainly T-Par
+derived `.qc` files plus a QASM subset. A shallow local checkout at
+`/tmp/dlx4sop-pyzx` currently has 214 `.qc`, 132 `.qasm`, and one `.qgraph`
+benchmark/circuit file under `circuits`; the QASM subset can be scanned now,
+while `.qc`/direct ZX ingestion needs the optional PyZX conversion path.
+
 FeynmanDD's public repository uses OpenQASM circuit files plus a gate-set JSON
 file passed with `-g`, for example `cudd_circuit_bdd -f ...qasm -g
 gate_sets/google.json`
@@ -331,12 +347,17 @@ baseline runs.
 
 The initial local scan uses a shallow FeynmanDD checkout under `/tmp` and
 `tools/scan_feynmandd_qasm.py`. In the `benchmark/exp` subtree, the importer now
-accepts all currently quadratic Google-style cases found in the scan: 92 of 152
-files import, and the remaining 60 fail on `ccz`, which needs a quadratization
-pass before it can become quadratic-labelled SOP. Across the wider non-invalid
-checkout, 166 of 425 QASM files import; the bulk of remaining failures are
-higher-degree reversible circuits, dynamic/classical circuits, or custom-gate
-syntax outside the current static subset.
+accepts all 152 currently quadratic Google-style cases found in the scan. Across
+the wider non-invalid FeynmanDD checkout, 397 of 425 QASM files import; remaining
+failures are `cswap`, dynamic/classical circuits, malformed register names,
+custom-gate syntax outside the current static subset, or malformed Shor output.
+
+The PyZX QASM subset is also useful as an external regression set. In the local
+checkout, `circuits/feyn_bench/qasm` imports 44 of 65 non-invalid QASM files;
+the remaining files are dynamic/classical examples, generic custom-gate syntax,
+or malformed Shor output containing statements such as bare `H ;` and
+multi-operand one-qubit gates. Across all PyZX `circuits` QASM files, 109 of 130
+non-invalid files import with the same remaining categories.
 
 ## CI And Coverage
 

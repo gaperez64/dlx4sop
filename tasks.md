@@ -83,6 +83,21 @@ and `ARCHITECTURE.md`.
   - added `tools/scan_feynmandd_qasm.py`; current scan imports 92/152
     `benchmark/exp` files and all 60 remaining failures are `ccz`
     quadratization cases. Full non-invalid checkout scan imports 166/425 files.
+- Completed CCZ/PyZX benchmark checkpoint:
+  - added `ccz` lowering via a quadratic parity-phase transformation and `ccx`
+    lowering via `h`/`ccz`/`h` on the target;
+  - added dependency-free amplitude and optional Qiskit coverage for `ccz` and
+    `ccx`;
+  - re-scanned FeynmanDD: `benchmark/exp` imports 152/152 files, and the wider
+    non-invalid checkout imports 397/425 files with only five higher-degree
+    `cswap` failures left;
+  - identified Kuyanov/Kissinger's rank-width ZX implementation as PyZX
+    `pyzx/rank_width.py` and cloned PyZX to `/tmp/dlx4sop-pyzx`;
+  - scanned PyZX QASM: `circuits/feyn_bench/qasm` imports 44/65 non-invalid
+    QASM files, while all `circuits` QASM imports 109/130; remaining failures
+    are dynamic/classical examples, generic custom gates, or malformed Shor
+    output. The PyZX corpus also contains 214 `.qc` files and one `.qgraph`
+    file for the optional PyZX-backed conversion path.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
@@ -108,8 +123,10 @@ and `ARCHITECTURE.md`.
 - Prototype external-format boundary utilities:
   - add a real `.qgraph` conversion fixture once PyZX is available locally or in
     an optional test environment;
-  - add CCZ/Toffoli quadratization before treating higher-degree FeynmanDD
-    benchmarks as native quadratic-labelled SOP;
+  - add `.qc`/Quipper conversion through optional PyZX so the structured PyZX
+    benchmark corpus can feed `qasm2sop`;
+  - add `cswap` quadratization if the remaining FeynmanDD RevLib files become
+    relevant;
   - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
     runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.

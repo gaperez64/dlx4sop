@@ -102,6 +102,23 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if mismatched_qregs.returncode == 0 or "matching sizes" not in mismatched_qregs.stderr:
         raise AssertionError(f"unexpected mismatched qreg result:\n{mismatched_qregs.stderr}")
 
+    mismatched_three_qregs = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg a[1];\nqreg b[1];\nqreg c[2];\nccz a, b, c;\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        mismatched_three_qregs.returncode == 0
+        or "three-qubit qreg operands must have matching sizes"
+        not in mismatched_three_qregs.stderr
+    ):
+        raise AssertionError(
+            f"unexpected mismatched three-qreg result:\n{mismatched_three_qregs.stderr}"
+        )
+
     bad_controlled_phase = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ncu1(pi/3) q[0], q[1];\n",

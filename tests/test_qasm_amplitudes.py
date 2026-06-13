@@ -152,6 +152,26 @@ def apply_swap(state: list[complex], nqubits: int, left: int, right: int) -> Non
         state[index], state[other] = state[other], state[index]
 
 
+def apply_ccz(state: list[complex], nqubits: int, first: int, second: int, third: int) -> None:
+    first_bit = 1 << first
+    second_bit = 1 << second
+    third_bit = 1 << third
+    for index in range(1 << nqubits):
+        if (index & first_bit) != 0 and (index & second_bit) != 0 and (index & third_bit) != 0:
+            state[index] *= -1
+
+
+def apply_ccx(state: list[complex], nqubits: int, first: int, second: int, target: int) -> None:
+    first_bit = 1 << first
+    second_bit = 1 << second
+    target_bit = 1 << target
+    for base in range(1 << nqubits):
+        if (base & first_bit) == 0 or (base & second_bit) == 0 or (base & target_bit) != 0:
+            continue
+        other = base | target_bit
+        state[base], state[other] = state[other], state[base]
+
+
 def u3_matrix(theta: float, phi: float, lam: float) -> tuple[complex, complex, complex, complex]:
     return (
         math.cos(theta / 2.0),
@@ -232,6 +252,19 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
         if gate in one_qubit:
             for qubit in operand_qubits(operands[0], regs):
                 apply_one(state, nqubits, qubit, one_qubit[gate])
+            continue
+
+        if gate in ("ccz", "ccx"):
+            first = operand_qubits(operands[0], regs)
+            second = operand_qubits(operands[1], regs)
+            third = operand_qubits(operands[2], regs)
+            if len(first) != len(second) or len(first) != len(third):
+                raise AssertionError("test qreg operands must have matching sizes")
+            for a, b, c in zip(first, second, third):
+                if gate == "ccz":
+                    apply_ccz(state, nqubits, a, b, c)
+                else:
+                    apply_ccx(state, nqubits, a, b, c)
             continue
 
         left = operand_qubits(operands[0], regs)
@@ -412,6 +445,24 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             ctdg q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("11", "11"), ("10", "01")],
+        ),
+        (
+            "ccz_phase",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[3];
+            ccz q[0], q[1], q[2];
+            """,
+            [("111", "111"), ("110", "110"), ("111", "110")],
+        ),
+        (
+            "ccx_flip",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[3];
+            ccx q[0], q[1], q[2];
+            """,
+            [("110", "111"), ("111", "110"), ("010", "010")],
         ),
     ]
 

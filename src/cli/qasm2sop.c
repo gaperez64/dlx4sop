@@ -703,6 +703,18 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
   return add_edge(importer, importer->current[left], importer->current[right], coeff);
 }
 
+static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                                uint32_t coeff) {
+  if (coeff % 16U == 0) {
+    return true;
+  }
+
+  const uint32_t left_var = importer->current[left];
+  const uint32_t right_var = importer->current[right];
+  return add_unary(importer, left_var, coeff) && add_unary(importer, right_var, coeff) &&
+         add_edge(importer, left_var, right_var, mod16_i64(-2 * (int64_t)coeff));
+}
+
 static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
   return add_constant(importer, mod16_i64(-units)) &&
          apply_phase(importer, qubit, mod16_i64(2 * units));
@@ -762,6 +774,24 @@ static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control, 
          apply_phase(importer, target, 4);
 }
 
+static bool apply_ccz_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
+                                    uint32_t third) {
+  return apply_phase(importer, first, 2) && apply_phase(importer, second, 2) &&
+         apply_phase(importer, third, 2) && apply_phase_on_xor2(importer, first, second, 14) &&
+         apply_phase_on_xor2(importer, first, third, 14) &&
+         apply_phase_on_xor2(importer, second, third, 14) &&
+         apply_cx_decomposition(importer, first, third) &&
+         apply_cx_decomposition(importer, second, third) && apply_phase(importer, third, 2) &&
+         apply_cx_decomposition(importer, second, third) &&
+         apply_cx_decomposition(importer, first, third);
+}
+
+static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
+                                    uint32_t target) {
+  return apply_h(importer, target) && apply_ccz_decomposition(importer, first, second, target) &&
+         apply_h(importer, target);
+}
+
 static bool apply_iswap_decomposition(qasm_importer_t *importer, uint32_t left, uint32_t right) {
   if (!apply_cz(importer, left, right)) {
     return false;
@@ -782,6 +812,33 @@ static bool split_two_operands(qasm_importer_t *importer, char *rest, char **lef
   *comma = '\0';
   *left = rest;
   *right = comma + 1;
+  return true;
+}
+
+static bool split_three_operands(qasm_importer_t *importer, char *rest, char **first,
+                                 char **second, char **third) {
+  char *first_comma = strchr(rest, ',');
+  if (first_comma == NULL) {
+    set_error(importer, "three-qubit gate operands must be separated by commas");
+    return false;
+  }
+  *first_comma = '\0';
+
+  char *second_comma = strchr(first_comma + 1, ',');
+  if (second_comma == NULL) {
+    set_error(importer, "three-qubit gate operands must be separated by commas");
+    return false;
+  }
+  *second_comma = '\0';
+
+  if (strchr(second_comma + 1, ',') != NULL) {
+    set_error(importer, "three-qubit gate has too many operands");
+    return false;
+  }
+
+  *first = rest;
+  *second = first_comma + 1;
+  *third = second_comma + 1;
   return true;
 }
 
@@ -1053,6 +1110,50 @@ static bool apply_crz_operands(qasm_importer_t *importer, char *rest, int64_t un
   return true;
 }
 
+typedef bool (*qasm_three_qubit_fn)(qasm_importer_t *importer, uint32_t first, uint32_t second,
+                                    uint32_t third);
+
+static bool apply_three_qubit_operands(qasm_importer_t *importer, char *rest,
+                                       qasm_three_qubit_fn apply) {
+  char *first_text = NULL;
+  char *second_text = NULL;
+  char *third_text = NULL;
+  if (!split_three_operands(importer, rest, &first_text, &second_text, &third_text)) {
+    return false;
+  }
+
+  qasm_operand_t first = {0};
+  qasm_operand_t second = {0};
+  qasm_operand_t third = {0};
+  if (!parse_qubit_or_reg_operand(importer, first_text, &first) ||
+      !parse_qubit_or_reg_operand(importer, second_text, &second) ||
+      !parse_qubit_or_reg_operand(importer, third_text, &third)) {
+    return false;
+  }
+
+  if (!first.is_reg && !second.is_reg && !third.is_reg) {
+    return apply(importer, first.qubit, second.qubit, third.qubit);
+  }
+  if (!first.is_reg || !second.is_reg || !third.is_reg) {
+    set_error(importer, "three-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (first.reg->size != second.reg->size || first.reg->size != third.reg->size) {
+    set_error(importer, "three-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < first.reg->size; i++) {
+    const uint32_t first_qubit = first.reg->offset + i;
+    const uint32_t second_qubit = second.reg->offset + i;
+    const uint32_t third_qubit = third.reg->offset + i;
+    if (!apply(importer, first_qubit, second_qubit, third_qubit)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
 
@@ -1174,7 +1275,15 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return apply_two_qubit_operands(importer, rest, QASM_TWO_ISWAP, 0);
   }
 
-  if (strcmp(gate, "ccx") == 0 || strcmp(gate, "ccz") == 0 || strcmp(gate, "cswap") == 0) {
+  if (strcmp(gate, "ccz") == 0) {
+    return apply_three_qubit_operands(importer, rest, apply_ccz_decomposition);
+  }
+
+  if (strcmp(gate, "ccx") == 0) {
+    return apply_three_qubit_operands(importer, rest, apply_ccx_decomposition);
+  }
+
+  if (strcmp(gate, "cswap") == 0) {
     set_error(importer, "higher-degree OpenQASM operation '%s' needs quadratization", gate);
     return false;
   }
