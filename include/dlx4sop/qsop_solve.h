@@ -19,12 +19,27 @@ typedef struct qsop_solve_stats {
   uint64_t cache_hits;
   uint64_t cache_misses;
   uint64_t table_entries;
+  uint64_t max_table_entries;
+  uint64_t signature_entries;
+  uint64_t max_signature_entries;
   uint64_t join_pairs;
+  uint64_t join_signature_pairs;
   uint32_t components;
   uint32_t decomposition_width;
 } qsop_solve_stats_t;
 
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
+
+typedef enum qsop_rankwidth_generator {
+  QSOP_RANKWIDTH_GENERATOR_LINEAR,
+  QSOP_RANKWIDTH_GENERATOR_BALANCED,
+  QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
+} qsop_rankwidth_generator_t;
+
+typedef enum qsop_rankwidth_solve_mode {
+  QSOP_RANKWIDTH_SOLVE_COUNT_TABLE,
+  QSOP_RANKWIDTH_SOLVE_FOURIER,
+} qsop_rankwidth_solve_mode_t;
 
 typedef enum qsop_branch_heuristic {
   QSOP_BRANCH_HEURISTIC_SPLIT,
@@ -91,7 +106,17 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);
 
+bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
+                                           qsop_rankwidth_generator_t generator,
+                                           qsop_rankwidth_decomposition_t **out,
+                                           qsop_error_t *error);
+
 void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposition);
+
+bool qsop_solve_rankwidth_mode_trace_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       const qsop_rankwidth_decomposition_t *decomposition,

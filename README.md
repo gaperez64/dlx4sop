@@ -38,8 +38,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     cache, residual component splitting, balanced split tie-breaks, and a
     residue-table fast path once no active quadratic edges remain. Experimental
     variable-choice heuristics can be selected with `--branch-heuristic`.
-  - `rankwidth`: experimental explicit-decomposition backend for sign-edge
-    QSOPs, using the direct boundary-signature/residue count-table DP.
+  - `rankwidth`: experimental sign-edge QSOP backend over explicit or generated
+    decompositions, using boundary-signature tables in either residue-count or
+    exact Fourier mode.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -163,6 +164,9 @@ build/sop-solve --backend brute-force tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --branch-heuristic treewidth tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --branch-heuristic linear-rankwidth tests/golden/solve_labelled.qsop
+build/sop-solve --backend rankwidth tests/golden/solve_sign_path.qsop
+build/sop-solve --backend rankwidth --rankwidth-generate min-fill tests/golden/solve_sign_path.qsop
+build/sop-solve --backend rankwidth --rankwidth-mode fourier tests/golden/solve_sign_path.qsop
 build/sop-solve --backend rankwidth --rankwidth-decomposition tests/golden/solve_sign_path.rwdec tests/golden/solve_sign_path.qsop
 ```
 
@@ -198,9 +202,12 @@ l <node> <variable>
 j <node> <left-child> <right-child>
 ```
 
-The initial backend validates that the root covers every QSOP variable exactly
-once. It currently supports sign-only quadratic coefficients and mask-backed
-instances up to the solver variable guard.
+Without `--rankwidth-decomposition`, `sop-solve --backend rankwidth` generates a
+linear decomposition. `--rankwidth-generate balanced|min-fill` selects generated
+balanced input-order or min-fill-order decompositions. `--rankwidth-mode fourier`
+uses the exact modular-DFT variant. The backend currently supports sign-only
+quadratic coefficients and mask-backed instances up to the solver variable
+guard.
 
 The branch cache counters expose repeated residual states when they occur. For
 example, the small triangle fixture revisits one residual:
@@ -314,28 +321,34 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --for
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --trace --format summary --top 8 --top-metric search_nodes
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --branch-heuristic linear-rankwidth --trace --format summary --top 8 --top-metric search_nodes
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-mode fourier --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
 ```
 
 Build a temporary external benchmark manifest for the same runner:
 
 ```sh
-tools/build_external_qasm_manifest.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits --include-qc --qc2qasm tools/qc2qasm.py --max-vars 24 --output /tmp/pyzx-qc-manifest.json
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest /tmp/pyzx-qc-manifest.json --backend components --backend branch --trace --format summary --top 5 --top-metric leaf_assignments
+WORKDIR="${WORKDIR:-external-benchmarks}"
+git clone --depth 1 https://github.com/zxcalc/pyzx.git "$WORKDIR/pyzx"
+tools/build_external_qasm_manifest.py build/qasm2sop "$WORKDIR/pyzx/circuits" --include-qc --qc2qasm tools/qc2qasm.py --max-vars 24 --output "$WORKDIR/pyzx-qc-manifest.json"
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest "$WORKDIR/pyzx-qc-manifest.json" --backend components --backend branch --trace --format summary --top 5 --top-metric leaf_assignments
 ```
 
 Inspect a local FeynmanDD checkout:
 
 ```sh
-git clone --depth 1 https://github.com/cqs-thu/feynman-decision-diagram.git /tmp/dlx4sop-feynmandd
-tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-feynmandd/benchmark/exp
+WORKDIR="${WORKDIR:-external-benchmarks}"
+git clone --depth 1 https://github.com/cqs-thu/feynman-decision-diagram.git "$WORKDIR/feynmandd"
+tools/scan_feynmandd_qasm.py build/qasm2sop "$WORKDIR/feynmandd/benchmark/exp"
 ```
 
 Inspect generated MQT Bench circuits without making MQT a project dependency:
 
 ```sh
-git clone --depth 1 https://github.com/munich-quantum-toolkit/bench.git /tmp/dlx4sop-mqtbench
-tools/scan_mqt_bench.py build/qasm2sop --mqt-source /tmp/dlx4sop-mqtbench --benchmarks default --sizes 3
-tools/scan_mqt_bench.py build/qasm2sop --mqt-source /tmp/dlx4sop-mqtbench --benchmarks all --sizes 3 --levels indep --format json
+WORKDIR="${WORKDIR:-external-benchmarks}"
+git clone --depth 1 https://github.com/munich-quantum-toolkit/bench.git "$WORKDIR/mqt-bench"
+tools/scan_mqt_bench.py build/qasm2sop --mqt-source "$WORKDIR/mqt-bench" --benchmarks default --sizes 3
+tools/scan_mqt_bench.py build/qasm2sop --mqt-source "$WORKDIR/mqt-bench" --benchmarks all --sizes 3 --levels indep --format json
 ```
 
 The scanner strips terminal measurements by default because `qasm2sop` imports
@@ -346,14 +359,15 @@ unsupported and are reported as scan categories.
 Inspect the PyZX QASM benchmark subset used around the rank-width ZX work:
 
 ```sh
-git clone --depth 1 https://github.com/zxcalc/pyzx.git /tmp/dlx4sop-pyzx
-tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits/feyn_bench/qasm
+WORKDIR="${WORKDIR:-external-benchmarks}"
+git clone --depth 1 https://github.com/zxcalc/pyzx.git "$WORKDIR/pyzx"
+tools/scan_feynmandd_qasm.py build/qasm2sop "$WORKDIR/pyzx/circuits/feyn_bench/qasm"
 ```
 
 Translate a PyZX/T-Par `.qc` circuit through OpenQASM:
 
 ```sh
-tools/qc2qasm.py /tmp/dlx4sop-pyzx/circuits/Arithmetic_and_Toffoli/tof_3_tpar.qc | build/qasm2sop -
+tools/qc2qasm.py "$WORKDIR/pyzx/circuits/Arithmetic_and_Toffoli/tof_3_tpar.qc" | build/qasm2sop -
 ```
 
 Start from a PyZX/Quantomatic `.qgraph` JSON diagram when PyZX is installed:

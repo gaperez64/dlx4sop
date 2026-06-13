@@ -223,20 +223,55 @@ solvers.
 
 ### Rankwidth Count-Table DP
 
-`qsop_solve_rankwidth_trace_stats` is the first decomposition-based backend. It
-implements the direct count-table dynamic program from arXiv:2605.29944 over an
-explicit rooted binary rank decomposition. Tables are sparse maps keyed by a
-boundary signature, represented as a GF(2) bit mask over the outside vertices,
-and a residue modulo `r`. Leaves add the two assignments of one QSOP variable.
-Join nodes combine child states, restrict/xor the child boundary signatures to
-the parent outside set, add the sign cross-term determined by representative
-child signatures, and accumulate residue-count vectors.
+`qsop_solve_rankwidth_mode_trace_stats` is the first decomposition-based
+backend. Its default count-table mode implements the direct dynamic program from
+arXiv:2605.29944 over a rooted binary rank decomposition. Tables are sparse maps
+keyed by a boundary signature, represented as a GF(2) bit mask over the outside
+vertices, and a residue modulo `r`. Leaves add the two assignments of one QSOP
+variable. Join nodes combine child states, restrict/xor the child boundary
+signatures to the parent outside set, add the sign cross-term determined by
+representative child signatures, and accumulate residue-count vectors.
 
-The initial implementation is deliberately narrow: it requires sign-only
-quadratic coefficients, mask-backed instances under the solver variable guard,
-and a hand-supplied decomposition file. It reports decomposition width, total
-table entries, and join-pair count through `sop-solve --format stats`. Fourier
-mode batching and decomposition construction remain future work.
+The backend can read an explicit decomposition file or generate one internally:
+linear input order, balanced input order, or min-fill order with a balanced
+tree. It is deliberately narrow: it requires sign-only quadratic coefficients
+and mask-backed instances under the solver variable guard. It reports
+decomposition width, total and maximum table entries, total and maximum
+signature entries, residue-pair joins, and signature-pair joins through
+`sop-solve --format stats`.
+
+The `QSOP_RANKWIDTH_SOLVE_FOURIER` mode is an exact modular-DFT variant. It
+chooses a 64-bit NTT prime `p = 1 mod r` larger than the assignment count, keeps
+one value per boundary signature per Fourier mode modulo `p`, and inverts the
+transform at the root. Under the existing 63-variable guard, recovered counts
+are exact whenever such a prime is found.
+
+The labelled-QSOP rankwidth extension should not use ordinary rankwidth of the
+unlabelled support graph as its primary parameter. The deferred parameter from
+the June 2026 QSOP models note is labelled cut-signature width. For a labelled
+coefficient matrix `Q` over `Z_r` and a cut `X|Y`, define the directed signature
+set
+
+```text
+Sigma_X_to_Y(Q) = { x_X^T Q[X,Y] : x_X in {0,1}^X } subset of Z_r^Y.
+```
+
+Because row and column subset-sum sets can have different cardinality over
+`Z_r`, the cut size is
+
+```text
+s_Q(X|Y) = max(|Sigma_X_to_Y(Q)|, |Sigma_Y_to_X(Q)|)
+lambda_Q(X|Y) = ceil(log2 s_Q(X|Y)).
+```
+
+For a branch decomposition `T`, the labelled width is the maximum
+`lambda_Q(X_e | V \ X_e)` over decomposition cuts. This reduces to ordinary
+GF(2) cut-rank for sign-edge QSOPs, where the signatures are exactly the binary
+row space scaled by `r/2`. This distinction matters because gadgetizing labelled
+edges into sign edges can preserve treewidth while destroying rankwidth. A
+future labelled backend should therefore key tables by labelled signature IDs,
+with representative assignments used to precompute parent signatures and join
+cross phases; the current backend intentionally stays sign-only.
 
 The decomposition text format is:
 
@@ -254,7 +289,8 @@ csv` emits coarse phase rows to stderr while preserving the requested primary
 output on stdout. Current trace phases include brute-force enumeration,
 component labelling, component-cache lookup, component subsolves, convolution,
 branch cache lookup, branch variable selection, residual component splitting,
-edge-free residue-table leaves, and rankwidth leaf/join table construction.
+edge-free residue-table leaves, rankwidth leaf/join-map/join construction, and
+rankwidth Fourier leaf/join-map/join construction.
 
 ## Command-Line Contract
 
@@ -377,10 +413,10 @@ Kuyanov and Kissinger's low-rank-width ZX simulation work points at PyZX's
 (https://arxiv.org/abs/2603.06764 and
 https://github.com/zxcalc/pyzx/blob/5f5e409/pyzx/rank_width.py). The associated
 structured-circuit benchmarks are the PyZX `circuits` corpus, mainly T-Par
-derived `.qc` files plus a QASM subset. A shallow local checkout at
-`/tmp/dlx4sop-pyzx` currently has 214 `.qc`, 132 `.qasm`, and one `.qgraph`
-benchmark/circuit file under `circuits`; the QASM subset can be scanned now,
-while the `.qc` circuit subset can be translated through `tools/qc2qasm.py`.
+derived `.qc` files plus a QASM subset. A shallow PyZX checkout inspected during
+development had 214 `.qc`, 132 `.qasm`, and one `.qgraph` benchmark/circuit file
+under `circuits`; the QASM subset can be scanned now, while the `.qc` circuit
+subset can be translated through `tools/qc2qasm.py`.
 Direct `.qgraph` ZX ingestion still needs the optional PyZX conversion path or a
 future native graph importer.
 
@@ -399,12 +435,12 @@ that can ingest FeynmanDD benchmark `.qasm` files and, later, emit
 FeynmanDD-compatible OpenQASM plus a matching gate-set JSON for external
 baseline runs.
 
-The initial local scan uses a shallow FeynmanDD checkout under `/tmp` and
-`tools/scan_feynmandd_qasm.py`. In the `benchmark/exp` subtree, the importer now
-accepts all 152 currently quadratic Google-style cases found in the scan. Across
-the wider non-invalid FeynmanDD checkout, 402 of 425 QASM files import; remaining
-failures are dynamic/classical circuits, malformed register names, custom-gate
-syntax outside the current static subset, or malformed Shor output.
+The initial local scan used a shallow FeynmanDD checkout and
+`tools/scan_feynmandd_qasm.py`. In the `benchmark/exp` subtree, the importer
+now accepts all 152 currently quadratic Google-style cases found in the scan.
+Across the wider non-invalid FeynmanDD checkout, 402 of 425 QASM files import;
+remaining failures are dynamic/classical circuits, malformed register names,
+custom-gate syntax outside the current static subset, or malformed Shor output.
 
 The PyZX QASM subset is also useful as an external regression set. In the local
 checkout, `circuits/feyn_bench/qasm` imports 44 of 65 non-invalid QASM files;
@@ -426,14 +462,14 @@ in its source tree. `tools/scan_mqt_bench.py` keeps that dependency optional:
 it can use an installed `mqt.bench` package or a local checkout supplied with
 `--mqt-source`, exports generated circuits with Qiskit's QASM2 dumper, strips
 terminal measurements by default for strong-simulation amplitude imports, and
-then classifies `qasm2sop` outcomes. A shallow local checkout at
-`/tmp/dlx4sop-mqtbench` currently gives 7/8 imports on the default size-3
-target-independent subset; the miss is `wstate`, whose generated `ry` angle is
-not a finite `pi/4` multiple. Across the default size-3/4 algorithm and
-target-independent subset, 23 of 32 generated cases import after direct
-eighth-turn phase support. A broader size-3/4 target-independent sweep imports
-16 generated cases and groups the rest into generation constraints, QASM2 dump
-limitations, custom-gate syntax, and unsupported non-finite angles.
+then classifies `qasm2sop` outcomes. A shallow MQT Bench checkout inspected
+during development gave 7/8 imports on the default size-3 target-independent
+subset; the miss is `wstate`, whose generated `ry` angle is not a finite `pi/4`
+multiple. Across the default size-3/4 algorithm and target-independent subset,
+23 of 32 generated cases import after direct eighth-turn phase support. A
+broader size-3/4 target-independent sweep imports 16 generated cases and groups
+the rest into generation constraints, QASM2 dump limitations, custom-gate
+syntax, and unsupported non-finite angles.
 
 ## CI And Coverage
 
@@ -455,23 +491,24 @@ oracle.
 
 ## Forward Direction
 
-The next solver targets are benchmark-driven width work. The 2026 arXiv paper
-"Quadratic Sums-of-Powers for Fixed-Parameter Tractable Quantum-Circuit
-Simulation" (arXiv:2605.29944) gives the target rank-decomposition dynamic
-program: process a rooted rank-decomposition of the SOP variable graph from
-leaves to root; table keys are boundary signatures in the row space of each
-cut over GF(2), plus residues; joins combine child signatures and add the
-cross-term determined by those signatures. A later Fourier-mode variant reduces
-the residue factor in joins. Implementing that should be a separate
-`rankwidth` backend, distinct from the current residual branch backend and its
-heuristics.
+The next solver targets are benchmark-driven width work. The current
+`rankwidth` backend now has sign-only count-table and exact Fourier checkpoints
+from the 2026 arXiv paper "Quadratic Sums-of-Powers for Fixed-Parameter
+Tractable Quantum-Circuit Simulation" (arXiv:2605.29944). The next backend
+milestones are benchmarking generated decompositions on imported sign-only
+circuits, improving decomposition quality, replacing linear signature lookups
+with indexed maps when traces justify it, and broadening exact Fourier support
+if non-default moduli expose NTT-prime limitations.
 
-Before the decomposition backend exists, branch heuristic experiments should
-use trace and corpus data to decide whether treewidth min-fill, local
-cut-rank/linear-rankwidth proxies, incremental component metadata, incremental
-hashing, or dancing-cells-style adjacency mutation should come first. New
-importer work should be driven by gates found in real circuit sources and should
-keep each added gate covered by boundary-level examples and amplitude checks.
+Branch heuristic experiments should keep using trace and corpus data to decide
+whether treewidth min-fill, local cut-rank/linear-rankwidth proxies,
+incremental component metadata, incremental hashing, or dancing-cells-style
+adjacency mutation should come first. New importer work should be driven by
+gates found in real circuit sources and should keep each added gate covered by
+boundary-level examples and amplitude checks. Labelled rankwidth work is
+deferred until sign-only decomposition machinery is measurable on a broader
+benchmark set, and should use labelled cut-signature width rather than ordinary
+support-graph rankwidth.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver. The

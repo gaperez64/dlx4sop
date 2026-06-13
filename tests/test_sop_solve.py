@@ -3,6 +3,7 @@
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 
 def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
@@ -204,12 +205,17 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
         ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
-        ([str(exe), "--backend", "rankwidth", str(qsop)], "requires --rankwidth-decomposition"),
         ([str(exe), "--rankwidth-decomposition"], "requires a path"),
         (
             [str(exe), "--rankwidth-decomposition", str(qsop), str(qsop)],
             "requires --backend rankwidth",
         ),
+        ([str(exe), "--rankwidth-generate"], "requires a value"),
+        ([str(exe), "--rankwidth-generate", "bad", str(qsop)], "unsupported rankwidth generator"),
+        ([str(exe), "--rankwidth-generate", "linear", str(qsop)], "requires --backend rankwidth"),
+        ([str(exe), "--rankwidth-mode"], "requires a value"),
+        ([str(exe), "--rankwidth-mode", "bad", str(qsop)], "unsupported rankwidth mode"),
+        ([str(exe), "--rankwidth-mode", "fourier", str(qsop)], "requires --backend rankwidth"),
         ([str(exe), "--branch-heuristic"], "requires a value"),
         ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
         ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
@@ -233,6 +239,53 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
 
 
+def assert_rankwidth_matches(
+    exe: pathlib.Path,
+    qsop: pathlib.Path,
+    expected_stdout: str,
+    *extra_args: str,
+) -> None:
+    completed = subprocess.run(
+        [str(exe), "--backend", "rankwidth", *extra_args, str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0 or completed.stdout != expected_stdout:
+        raise AssertionError(
+            f"rankwidth solve mismatch for {extra_args}\n{completed.stdout}\n{completed.stderr}"
+        )
+
+
+def assert_bad_rankwidth_decomposition(
+    exe: pathlib.Path,
+    qsop: pathlib.Path,
+    directory: pathlib.Path,
+    name: str,
+    text: str,
+    expected_error: str,
+) -> None:
+    path = directory / f"{name}.rwdec"
+    path.write_text(text)
+    completed = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(path),
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode == 0 or expected_error not in completed.stderr:
+        raise AssertionError(f"unexpected rankwidth validation result for {name}\n{completed.stderr}")
+
+
 def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_sign_path.qsop"
     decomposition = source_root / "tests" / "golden" / "solve_sign_path.rwdec"
@@ -246,22 +299,26 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if expected.returncode != 0:
         raise AssertionError(f"brute force solve failed\n{expected.stderr}")
 
-    completed = subprocess.run(
-        [
-            str(exe),
-            "--backend",
-            "rankwidth",
-            "--rankwidth-decomposition",
-            str(decomposition),
-            str(qsop),
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    assert_rankwidth_matches(
+        exe,
+        qsop,
+        expected.stdout,
+        "--rankwidth-decomposition",
+        str(decomposition),
     )
-    if completed.returncode != 0 or completed.stdout != expected.stdout:
-        raise AssertionError(f"rankwidth solve mismatch\n{completed.stdout}\n{completed.stderr}")
+    assert_rankwidth_matches(exe, qsop, expected.stdout)
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "balanced")
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill")
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
+    assert_rankwidth_matches(
+        exe,
+        qsop,
+        expected.stdout,
+        "--rankwidth-generate",
+        "min-fill",
+        "--rankwidth-mode",
+        "fourier",
+    )
 
     stats = subprocess.run(
         [
@@ -281,12 +338,41 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     expected_stats = {
         "backend: rankwidth",
+        "rankwidth_mode: count-table",
+        "rankwidth_decomposition: explicit",
         "decomposition_width: 1",
         "table_entries:",
+        "max_table_entries:",
+        "signature_entries:",
+        "max_signature_entries:",
         "join_pairs:",
+        "join_signature_pairs:",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
+
+    fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        fourier_stats.returncode != 0
+        or "rankwidth_mode: fourier" not in fourier_stats.stdout
+        or "rankwidth_decomposition: linear" not in fourier_stats.stdout
+    ):
+        raise AssertionError(f"rankwidth Fourier stats failed\n{fourier_stats.stdout}\n{fourier_stats.stderr}")
 
     traced = subprocess.run(
         [
@@ -306,8 +392,39 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if traced.returncode != 0 or "rankwidth.leaf" not in traced.stderr or "rankwidth.join" not in traced.stderr:
+    if (
+        traced.returncode != 0
+        or "rankwidth.leaf" not in traced.stderr
+        or "rankwidth.join_map" not in traced.stderr
+        or "rankwidth.join" not in traced.stderr
+    ):
         raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
+
+    fourier_traced = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--trace",
+            "csv",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        fourier_traced.returncode != 0
+        or "rankwidth.fourier_leaf" not in fourier_traced.stderr
+        or "rankwidth.fourier_join_map" not in fourier_traced.stderr
+        or "rankwidth.fourier_join" not in fourier_traced.stderr
+    ):
+        raise AssertionError(f"rankwidth Fourier trace failed\n{fourier_traced.stdout}\n{fourier_traced.stderr}")
 
     malformed = subprocess.run(
         [
@@ -325,6 +442,84 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if malformed.returncode == 0 or str(qsop) not in malformed.stderr or "expected header" not in malformed.stderr:
         raise AssertionError(f"rankwidth malformed decomposition diagnostic failed\n{malformed.stderr}")
+
+    combined = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(decomposition),
+            "--rankwidth-generate",
+            "balanced",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if combined.returncode == 0 or "cannot be combined" not in combined.stderr:
+        raise AssertionError(f"rankwidth accepted explicit and generated decompositions\n{combined.stderr}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = pathlib.Path(tmp)
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "duplicate_var",
+            "p rwdec 3 5 4\nl 0 0\nl 1 0\nl 2 2\nj 3 0 1\nj 4 3 2\n",
+            "more than once",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "missing_var",
+            "p rwdec 3 3 2\nl 0 0\nl 1 1\nj 2 0 1\n",
+            "root does not cover every variable",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "cycle",
+            "p rwdec 3 5 4\nl 0 0\nl 1 1\nl 2 2\nj 3 0 4\nj 4 3 2\n",
+            "contains a cycle",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "overlap",
+            "p rwdec 3 5 4\nl 0 0\nl 1 1\nl 2 2\nj 3 0 1\nj 4 3 0\n",
+            "children are not disjoint",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "undefined",
+            "p rwdec 3 5 4\nl 0 0\nl 1 1\nl 2 2\nj 4 3 2\n",
+            "references undefined node",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "bad_child",
+            "p rwdec 3 4 3\nl 0 0\nl 1 1\nl 2 2\nj 3 0 5\n",
+            "references node outside range",
+        )
+        assert_bad_rankwidth_decomposition(
+            exe,
+            qsop,
+            directory,
+            "mismatch",
+            "p rwdec 4 1 0\nl 0 0\n",
+            "variable count does not match QSOP",
+        )
 
     labelled = source_root / "tests" / "golden" / "solve_labelled.qsop"
     labelled_decomposition = source_root / "tests" / "golden" / "solve_labelled.rwdec"

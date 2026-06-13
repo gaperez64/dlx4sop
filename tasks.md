@@ -77,7 +77,7 @@ and `ARCHITECTURE.md`.
 - Completed qgraph/FeynmanDD starter checkpoint:
   - added optional PyZX-backed `tools/qgraph2qasm.py` for `.qgraph` JSON to
     OpenQASM extraction when PyZX can extract a circuit;
-  - cloned FeynmanDD to `/tmp/dlx4sop-feynmandd` for local corpus inspection;
+  - inspected a shallow FeynmanDD checkout for local corpus coverage;
   - added uppercase gate spelling, decimal `pi/4`-multiple angle, and `iswap`
     support to `qasm2sop`;
   - added `tools/scan_feynmandd_qasm.py`; current scan imports 92/152
@@ -93,7 +93,7 @@ and `ARCHITECTURE.md`.
     non-invalid checkout imports 402/425 files with no remaining higher-degree
     failures;
   - identified Kuyanov/Kissinger's rank-width ZX implementation as PyZX
-    `pyzx/rank_width.py` and cloned PyZX to `/tmp/dlx4sop-pyzx`;
+    `pyzx/rank_width.py` and inspected the PyZX benchmark corpus;
   - scanned PyZX QASM: `circuits/feyn_bench/qasm` imports 44/65 non-invalid
     QASM files, while all `circuits` QASM imports 109/130; remaining failures
     are dynamic/classical examples, generic custom gates, or malformed Shor
@@ -114,7 +114,7 @@ and `ARCHITECTURE.md`.
   - `tools/check-coverage.sh build-coverage` at 78.0% line coverage over `src`.
 - Completed MQT Bench reconnaissance checkpoint:
   - pushed the previous local branch state to `origin/main` before starting;
-  - cloned Munich Quantum Toolkit Bench to `/tmp/dlx4sop-mqtbench`;
+  - inspected a shallow Munich Quantum Toolkit Bench checkout;
   - found that its source tree generates circuits through the `mqt.bench`
     Python package and Qiskit exporters rather than vendoring a flat QASM
     corpus;
@@ -231,6 +231,20 @@ and `ARCHITECTURE.md`.
   - added `sop-stats` width diagnostics for mask-backed instances:
     min-fill width, min-fill fill-edge count, and natural-order linear
     cut-rank.
+- Completed sign-only rankwidth hardening checkpoint:
+  - added generated rankwidth decompositions: linear input order, balanced input
+    order, and min-fill order with a balanced tree;
+  - made `sop-solve --backend rankwidth` usable without an explicit `.rwdec`
+    file, while preserving explicit decomposition input;
+  - added stronger `.rwdec` validation coverage for duplicate variables,
+    missing coverage, cycles, overlapping children, undefined nodes, bad child
+    ids, and variable-count mismatches;
+  - precomputed rankwidth join maps per signature pair, avoiding repeated
+    cross-edge parity scans for each residue-entry pair;
+  - added exact Fourier mode via `--rankwidth-mode fourier`, using a modular DFT
+    over a 64-bit NTT prime;
+  - extended rankwidth stats and traces with maximum table size, signature
+    counts, join-map phases, and importer-fed benchmark support.
 
 ## Current Task
 
@@ -241,12 +255,10 @@ and `ARCHITECTURE.md`.
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
-  - extend the `rankwidth` backend beyond the first sign-only/mask-backed DP:
-    add stronger decomposition validation/error tests, decide the labelled-edge
-    signature generalization, and add Fourier-mode batching once the count-table
-    backend is stable;
-  - add decomposition builders or importers after the explicit format has enough
-    golden coverage;
+  - benchmark the sign-only `rankwidth` backend on imported corpus slices using
+    generated decompositions and both count-table/Fourier modes;
+  - improve generated decomposition quality using the table-growth traces before
+    changing the solver core again;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;
@@ -285,8 +297,16 @@ and `ARCHITECTURE.md`.
     policies, but not explicit decomposition-aware treewidth/rankwidth
     estimators or a full pluggable heuristic interface. See
     [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
-  - rankwidth decomposition solver: implement a new backend based on
-    arXiv:2605.29944, with rooted rank-decomposition input, sparse
-    boundary-signature/residue tables, join cross-term precomputation, and
-    Fourier-mode batching once the count-table version is correct.
+  - rankwidth decomposition solver: continue the sign-only backend based on
+    arXiv:2605.29944 with better generated decompositions, indexed signature
+    maps if traces justify them, optional broader exact Fourier support for
+    awkward moduli, and larger imported sign-only benchmark coverage.
+  - labelled rankwidth is deliberately deferred while the sign-only backend is
+    benchmarked. The June 2026 QSOP models note identifies the right future
+    parameter as labelled cut-signature width, not ordinary rankwidth of the
+    unlabelled support graph: for a cut `X|Y`, use the finite-ring subset-sum
+    signature sets `Sigma_X_to_Y(Q) = {x_X^T Q[X,Y]}` and `Sigma_Y_to_X(Q)`,
+    set `s_Q` to the larger cardinality, and use `ceil(log2 s_Q)` as the cut
+    width. See
+    [Rankwidth Count-Table DP](ARCHITECTURE.md#rankwidth-count-table-dp).
   - specialized residue kernels.

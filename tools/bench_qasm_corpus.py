@@ -11,8 +11,11 @@ import time
 from typing import TextIO
 
 
-BACKENDS = ("components", "brute-force", "branch")
+BACKENDS = ("components", "brute-force", "branch", "rankwidth")
+DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
+RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill")
+RANKWIDTH_MODES = ("count-table", "fourier")
 TOP_METRICS = (
     "solve_elapsed_ns",
     "import_elapsed_ns",
@@ -21,6 +24,13 @@ TOP_METRICS = (
     "cache_hits",
     "cache_misses",
     "components",
+    "decomposition_width",
+    "table_entries",
+    "max_table_entries",
+    "signature_entries",
+    "max_signature_entries",
+    "join_pairs",
+    "join_signature_pairs",
 )
 CSV_FIELDS = [
     "case",
@@ -29,6 +39,8 @@ CSV_FIELDS = [
     "output",
     "backend",
     "branch_heuristic",
+    "rankwidth_mode",
+    "rankwidth_decomposition",
     "r",
     "nvars",
     "nedges",
@@ -39,6 +51,13 @@ CSV_FIELDS = [
     "cache_hits",
     "cache_misses",
     "components",
+    "decomposition_width",
+    "table_entries",
+    "max_table_entries",
+    "signature_entries",
+    "max_signature_entries",
+    "join_pairs",
+    "join_signature_pairs",
     "qasm_sha256",
     "qsop_sha256",
     "trace_summary",
@@ -91,7 +110,7 @@ def parse_stats(text: str) -> dict[str, int | str]:
         if not line:
             continue
         key, value = line.split(": ", 1)
-        stats[key] = value if key in {"backend", "branch_heuristic"} else int(value)
+        stats[key] = value if key in {"backend", "branch_heuristic", "rankwidth_mode", "rankwidth_decomposition"} else int(value)
     return stats
 
 
@@ -123,6 +142,15 @@ def add_counter(total: dict[str, int], key: str, value: int | str | None) -> Non
         total[key] = total.get(key, 0) + value
 
 
+def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
+    if not isinstance(value, int):
+        return
+    if key in {"decomposition_width", "max_table_entries", "max_signature_entries"}:
+        total[key] = max(total.get(key, 0), value)
+    else:
+        add_counter(total, key, value)
+
+
 def summarize_records(records: list[dict]) -> dict[str, dict]:
     summary: dict[str, dict] = {}
     for record in records:
@@ -143,7 +171,7 @@ def summarize_records(records: list[dict]) -> dict[str, dict]:
 
         stats_total = entry["stats"]
         for key, value in record["stats"].items():
-            add_counter(stats_total, key, value)
+            add_stat(stats_total, key, value)
 
         trace_total = entry["trace"]
         for phase, values in record["trace"].items():
@@ -199,7 +227,7 @@ def iter_case_boundaries(cases: list[dict], limit: int | None):
 
 def benchmark(args: argparse.Namespace) -> list[dict]:
     cases = load_cases(args.manifest)
-    backends = args.backends or list(BACKENDS)
+    backends = args.backends or list(DEFAULT_BACKENDS)
     records: list[dict] = []
 
     for case, qasm, input_bits, output_bits in iter_case_boundaries(cases, args.limit):
@@ -222,8 +250,20 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                 cmd += ["--trace", "csv"]
             if backend == "branch" and args.branch_heuristic != "split":
                 cmd += ["--branch-heuristic", args.branch_heuristic]
+            if backend == "rankwidth":
+                cmd += [
+                    "--rankwidth-generate",
+                    args.rankwidth_generate,
+                    "--rankwidth-mode",
+                    args.rankwidth_mode,
+                ]
             cmd.append("-")
-            stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
+            try:
+                stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
+            except RuntimeError as exc:
+                if args.skip_unsupported and backend == "rankwidth" and "sign-only" in str(exc):
+                    continue
+                raise
             stats = parse_stats(stats_text)
             trace = parse_trace_csv(trace_text) if args.trace else {}
             records.append(
@@ -234,6 +274,8 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                     "output": output_bits,
                     "backend": backend,
                     "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
+                    "rankwidth_mode": args.rankwidth_mode if backend == "rankwidth" else "",
+                    "rankwidth_decomposition": args.rankwidth_generate if backend == "rankwidth" else "",
                     **header,
                     "import_elapsed_ns": import_elapsed_ns,
                     "solve_elapsed_ns": solve_elapsed_ns,
@@ -257,7 +299,20 @@ def write_csv(records: list[dict], file: TextIO) -> None:
     for record in records:
         stats = record["stats"]
         row = {field: record.get(field, "") for field in CSV_FIELDS}
-        for key in ("search_nodes", "leaf_assignments", "cache_hits", "cache_misses", "components"):
+        for key in (
+            "search_nodes",
+            "leaf_assignments",
+            "cache_hits",
+            "cache_misses",
+            "components",
+            "decomposition_width",
+            "table_entries",
+            "max_table_entries",
+            "signature_entries",
+            "max_signature_entries",
+            "join_pairs",
+            "join_signature_pairs",
+        ):
             row[key] = stats.get(key, "")
         row["trace_summary"] = trace_summary_text(record["trace"])
         writer.writerow(row)
@@ -302,6 +357,12 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" leaf_assignments={stats['leaf_assignments']}"
             if "components" in stats:
                 line += f" components={stats['components']}"
+            if "decomposition_width" in stats:
+                line += f" width={stats['decomposition_width']}"
+            if "max_table_entries" in stats:
+                line += f" max_table={stats['max_table_entries']}"
+            if "max_signature_entries" in stats:
+                line += f" max_signatures={stats['max_signature_entries']}"
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
             trace_phase = dominant_trace_phase(record)
@@ -320,7 +381,20 @@ def write_summary(records: list[dict], args: argparse.Namespace, file: TextIO) -
         print(f"  records: {entry['records']}", file=file)
         print(f"  import_elapsed_ns: {entry['import_elapsed_ns']}", file=file)
         print(f"  solve_elapsed_ns: {entry['solve_elapsed_ns']}", file=file)
-        for key in ("search_nodes", "leaf_assignments", "components", "cache_hits", "cache_misses"):
+        for key in (
+            "search_nodes",
+            "leaf_assignments",
+            "components",
+            "cache_hits",
+            "cache_misses",
+            "decomposition_width",
+            "table_entries",
+            "max_table_entries",
+            "signature_entries",
+            "max_signature_entries",
+            "join_pairs",
+            "join_signature_pairs",
+        ):
             if key in stats:
                 print(f"  {key}: {stats[key]}", file=file)
         if "cache_hits" in stats or "cache_misses" in stats:
@@ -362,10 +436,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
+        "--skip-unsupported",
+        action="store_true",
+        help="Skip rankwidth records rejected by the current sign-only backend.",
+    )
+    parser.add_argument(
         "--branch-heuristic",
         choices=BRANCH_HEURISTICS,
         default="split",
         help="Variable-choice heuristic used by the branch backend.",
+    )
+    parser.add_argument(
+        "--rankwidth-generate",
+        choices=RANKWIDTH_GENERATORS,
+        default="linear",
+        help="Generated decomposition used by the rankwidth backend.",
+    )
+    parser.add_argument(
+        "--rankwidth-mode",
+        choices=RANKWIDTH_MODES,
+        default="count-table",
+        help="Solve mode used by the rankwidth backend.",
     )
     parser.add_argument(
         "--top",
