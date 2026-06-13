@@ -249,7 +249,7 @@ deliberately small static OpenQASM 2.0 subset:
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - finite `u1(...)` and `p(...)` phase calls for symbolic or decimal multiples
-  of `pi/4`;
+  of `pi/8`;
 - finite `rz(...)` phase calls for symbolic or decimal multiples of `pi/4`;
 - finite `rx(...)` and `ry(...)` axis rotations for symbolic multiples of
   `pi/4` or decimal equivalents;
@@ -261,7 +261,7 @@ deliberately small static OpenQASM 2.0 subset:
 - primitive two-qubit `cz` and `swap`;
 - primitive two-qubit `iswap`, lowered to `cz`, `swap`, and `s` phases;
 - finite controlled phase calls `cu1(...)` and `cp(...)` for symbolic multiples
-  of `pi/4`;
+  of `pi/8`;
 - finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
 - decomposition-backed gates `x`, `y`, `sx`, `sxdg`, `cx`, and `cy`, lowered
@@ -278,8 +278,9 @@ Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
 and `if` fail with line-numbered diagnostics. The importer currently stores
 phase coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
 coefficients are even, and widens to `Z_16` for half-step global phases such as
-`rz(pi/4)`. This is an importer resolution choice, not a core maximum modulus:
-the QSOP format and solver remain parameterized by even modulus `r`.
+`rz(pi/4)` and direct eighth-turn phase gates such as `p(pi/8)` or `cp(pi/8)`.
+This is an importer resolution choice, not a core maximum modulus: the QSOP
+format and solver remain parameterized by even modulus `r`.
 Contradictory fixed boundaries become a valid zero amplitude, and generated
 QSOP is canonicalized through the normal parser and writer.
 
@@ -379,8 +380,10 @@ terminal measurements by default for strong-simulation amplitude imports, and
 then classifies `qasm2sop` outcomes. A shallow local checkout at
 `/tmp/dlx4sop-mqtbench` currently gives 7/8 imports on the default size-3
 target-independent subset; the miss is `wstate`, whose generated `ry` angle is
-not a finite `pi/4` multiple. A broader size-3 target-independent sweep imports
-8 generated cases and groups the rest into generation constraints, QASM2 dump
+not a finite `pi/4` multiple. Across the default size-3/4 algorithm and
+target-independent subset, 23 of 32 generated cases import after direct
+eighth-turn phase support. A broader size-3/4 target-independent sweep imports
+16 generated cases and groups the rest into generation constraints, QASM2 dump
 limitations, custom-gate syntax, and unsupported non-finite angles.
 
 ## CI And Coverage

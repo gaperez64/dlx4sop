@@ -146,6 +146,17 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if bad_rz.returncode == 0 or "unsupported rz phase angle" not in bad_rz.stderr:
         raise AssertionError(f"unexpected bad rz result:\n{bad_rz.stderr}")
 
+    bad_rz_eighth = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/8) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_rz_eighth.returncode == 0 or "unsupported rz phase angle" not in bad_rz_eighth.stderr:
+        raise AssertionError(f"unexpected bad eighth-turn rz result:\n{bad_rz_eighth.stderr}")
+
     bad_rx = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nrx(pi/3) q[0];\n",
@@ -289,6 +300,7 @@ def main() -> int:
     run_boundary_case(
         exe, source_root, "qasm_register_cp", ["--input", "1010", "--output", "1010"]
     )
+    run_boundary_case(exe, source_root, "qasm_phase_eighth", ["--input", "11", "--output", "11"])
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)

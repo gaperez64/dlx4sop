@@ -386,7 +386,9 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             h q;
             sx q[1];
             p(pi/2) q[0];
+            p(pi/8) q[1];
             cp(pi/4) q[0], q[1];
+            cp(-7*pi/8) q[1], q[0];
             sxdg q[1];
             cy q[1], q[0];
             """,

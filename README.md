@@ -38,9 +38,10 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     cache, residual component splitting, and a residue-table fast path once no
     active quadratic edges remain.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
-  with explicit fixed input/output bitstrings, finite `u1`/`p`/`rz` phase
-  calls, finite `rx`/`ry` axis rotations, finite `u2`/`u3` calls,
-  controlled-phase calls, named controlled phase gates, and a few
+  with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
+  to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
+  axis rotations, finite `u2`/`u3` calls, controlled-phase calls up to `pi/8`,
+  named controlled phase gates, and a few
   decomposition-backed standard gates including `sx`/`sxdg`. Supported operands
   include indexed qubits,
   whole-register one-qubit operands, and matching whole-register two-qubit
@@ -248,7 +249,8 @@ The `--input` and `--output` bitstrings are ordered by flattened `qreg`
 declaration order. Omitted boundaries default to all-zero bits, matching the
 original 0-to-0 amplitude behavior.
 The importer emits compact `Z_8` QSOP when possible and widens to `Z_16` for
-half-step global phases such as `rz(pi/4)`.
+half-step global phases such as `rz(pi/4)` and eighth-turn phase gates such as
+`cp(pi/8)`.
 It accepts the FeynmanDD-style quadratic subset used by the Google benchmarks,
 including uppercase gate spellings, decimal angle literals for multiples of
 `pi/4`, `iswap`, `ccz`, `ccx`, and `cswap`. `ccz` is lowered through a quadratic

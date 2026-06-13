@@ -154,7 +154,8 @@ static uint32_t mod16_i64(int64_t value) {
   return (uint32_t)residue;
 }
 
-static bool parse_numeric_pi_over_four_units(const char *expr, int64_t *out_units) {
+static bool parse_numeric_pi_units(const char *expr, uint64_t unit_denominator,
+                                   int64_t *out_units) {
   errno = 0;
   char *end = NULL;
   const double value = strtod(expr, &end);
@@ -162,7 +163,7 @@ static bool parse_numeric_pi_over_four_units(const char *expr, int64_t *out_unit
     return false;
   }
 
-  const double units = value / 0.78539816339744830962;
+  const double units = value / (3.14159265358979323846 / (double)unit_denominator);
   const int64_t rounded = units >= 0.0 ? (int64_t)(units + 0.5) : (int64_t)(units - 0.5);
   double diff = units - (double)rounded;
   if (diff < 0.0) {
@@ -440,7 +441,7 @@ static uint32_t named_phase_coeff_for_gate(const char *gate) {
   return UINT32_MAX;
 }
 
-static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
+static bool parse_pi_units(const char *expr, uint64_t unit_denominator, int64_t *out_units) {
   const char *p = expr;
   int64_t sign = 1;
   if (*p == '-') {
@@ -467,13 +468,13 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
       p++;
     } while (isdigit((unsigned char)*p));
     if (*p != '*') {
-      return parse_numeric_pi_over_four_units(expr, out_units);
+      return parse_numeric_pi_units(expr, unit_denominator, out_units);
     }
     p++;
   }
 
   if (strncmp(p, "pi", 2) != 0) {
-    return parse_numeric_pi_over_four_units(expr, out_units);
+    return parse_numeric_pi_units(expr, unit_denominator, out_units);
   }
   p += 2;
 
@@ -497,11 +498,11 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
     return false;
   }
 
-  if (denominator != 1U && denominator != 2U && denominator != 4U) {
+  if (denominator == 0U || unit_denominator % denominator != 0U) {
     return false;
   }
 
-  const uint64_t scale = 4U / denominator;
+  const uint64_t scale = unit_denominator / denominator;
   if (multiplier > (uint64_t)INT64_MAX / scale) {
     return false;
   }
@@ -509,8 +510,18 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
   return true;
 }
 
-static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate, const char *prefix,
-                                    const char *name, int64_t *out_units, bool *out_matches) {
+static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
+  return parse_pi_units(expr, 4U, out_units);
+}
+
+static bool parse_pi_over_eight_units(const char *expr, int64_t *out_units) {
+  return parse_pi_units(expr, 8U, out_units);
+}
+
+static bool parse_param_angle_units(qasm_importer_t *importer, const char *gate,
+                                    const char *prefix, const char *name,
+                                    int64_t *out_units, bool *out_matches,
+                                    bool (*parse_angle)(const char *, int64_t *)) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -534,7 +545,7 @@ static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate,
   expr[expr_len] = '\0';
 
   int64_t units = 0;
-  if (!parse_pi_over_four_units(expr, &units)) {
+  if (!parse_angle(expr, &units)) {
     set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
@@ -542,16 +553,23 @@ static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
+static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate, const char *prefix,
+                                    const char *name, int64_t *out_units, bool *out_matches) {
+  return parse_param_angle_units(importer, gate, prefix, name, out_units, out_matches,
+                                 parse_pi_over_four_units);
+}
+
 static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate, const char *prefix,
                                     const char *name, uint32_t *out_coeff, bool *out_matches) {
   int64_t units = 0;
-  if (!parse_param_phase_units(importer, gate, prefix, name, &units, out_matches)) {
+  if (!parse_param_angle_units(importer, gate, prefix, name, &units, out_matches,
+                               parse_pi_over_eight_units)) {
     return false;
   }
   if (!*out_matches) {
     return true;
   }
-  *out_coeff = mod16_i64(2 * units);
+  *out_coeff = mod16_i64(units);
   return true;
 }
 

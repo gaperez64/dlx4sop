@@ -129,6 +129,21 @@ and `ARCHITECTURE.md`.
     size-3 `indep` benchmark names import 8 generated cases, with remaining
     cases grouped as generation constraints, QASM2 dump limitations,
     custom-gate syntax, or unsupported angles.
+- Completed MQT eighth-turn phase checkpoint:
+  - extended exact `u1`/`p` and `cu1`/`cp` import to direct `pi/8` phase
+    coefficients over the existing `Z_16` importer representation;
+  - kept `rz`/`crz` and axis rotations at `pi/4` resolution because their
+    global phases or decompositions need a deliberate finer-modulus path before
+    `pi/8` is safe;
+  - added golden, dependency-free amplitude, negative-resolution, and optional
+    Qiskit coverage;
+  - improved the local MQT default size-3/4 `alg,indep` scan from 18/32 to
+    23/32 imports; the remaining default misses are algorithm-level custom-gate
+    syntax and `wstate` non-finite `ry` angles;
+  - latest verification:
+    `meson test -C build --print-errorlogs`,
+    `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`, and
+    `tools/check-coverage.sh build-coverage` at 77.9% line coverage over `src`.
 
 ## Current Task
 
