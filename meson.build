@@ -126,3 +126,17 @@ if python3.found()
     depends: [sop_check, sop_solve],
   )
 endif
+
+if get_option('build_fuzzers')
+  fuzz_qsop_parse = executable(
+    'fuzz-qsop-parse',
+    'tests/fuzz/fuzz_qsop_parse.c',
+    dependencies: dlx4sop_core_dep,
+    install: false,
+  )
+  test(
+    'fuzz parser smoke',
+    fuzz_qsop_parse,
+    args: files('tests/golden/labelled_raw.qsop'),
+  )
+endif

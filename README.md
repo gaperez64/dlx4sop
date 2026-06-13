@@ -57,6 +57,14 @@ tools/check-coverage.sh build-coverage
 The GitHub Actions workflow runs the normal Meson test suite and this coverage
 gate on every push.
 
+Optional parser fuzz targets are kept outside the normal CI path:
+
+```sh
+meson setup build-fuzz -Dbuild_fuzzers=true
+meson test -C build-fuzz --print-errorlogs
+build-fuzz/fuzz-qsop-parse tests/golden/labelled_raw.qsop
+```
+
 ## Usage Examples
 
 Canonicalize a raw labelled QSOP:
@@ -162,4 +170,4 @@ component.
 
 ## Current Direction
 
-The next implementation target is stronger algebraic tests and parser fuzzing.
+The next implementation target is a static OpenQASM subset importer.

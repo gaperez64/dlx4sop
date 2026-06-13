@@ -42,13 +42,23 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
+- Added optional parser fuzz target:
+  - `tests/fuzz/fuzz_qsop_parse.c` with libFuzzer-compatible entry point;
+  - standalone replay mode for corpus files and stdin;
+  - parser plus canonical writer idempotence oracle;
+  - Meson target behind `-Dbuild_fuzzers=true`, outside normal CI.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `meson setup --wipe build-fuzz -Dbuild_fuzzers=true`
+  - `meson test -C build-fuzz --print-errorlogs`
 
 ## Current Task
 
-- Add parser fuzz targets:
-  - keep fuzz targets optional and outside the normal CI path initially;
-  - reuse existing parser/canonical writer checks as the fuzz oracle where practical.
+- Add OpenQASM static-subset importer:
+  - start with a minimal static OpenQASM 2 subset;
+  - reject unsupported dynamic/control-flow features clearly;
+  - emit canonical QSOP for a very small finite gate set.
 
 ## Future Tasks
 
-- Add OpenQASM static-subset importer once the QSOP core is stable.
+- Extend OpenQASM importer coverage beyond the initial finite gate set.

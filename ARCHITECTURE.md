@@ -209,12 +209,14 @@ CI runs on GitHub Actions with:
 The coverage gate is intended to keep CLI and core behavior covered while the
 solver is still small enough for cheap exact tests.
 
+Parser fuzz targets are available behind `-Dbuild_fuzzers=true`. They are not
+part of the normal CI path initially; the current parser target replays arbitrary
+bytes through the QSOP parser and uses canonical writer idempotence as its oracle.
+
 ## Forward Direction
 
 Likely next solver-facing targets are:
 
-- stronger algebraic invariant tests;
-- parser fuzz targets;
 - a static OpenQASM subset importer once the QSOP core stabilizes.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
