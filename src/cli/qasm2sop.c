@@ -538,6 +538,13 @@ static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
 static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
                                             uint32_t *out_coeff,
                                             bool *out_is_controlled_phase) {
+  const uint32_t named_coeff = named_phase_coeff_for_gate(gate + 1);
+  if (gate[0] == 'c' && named_coeff != UINT32_MAX) {
+    *out_coeff = named_coeff;
+    *out_is_controlled_phase = true;
+    return true;
+  }
+
   bool matches = false;
   if (!parse_param_phase_coeff(importer, gate, "cu1(", "cu1", out_coeff, &matches)) {
     return false;

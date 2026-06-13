@@ -167,6 +167,12 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
         "t": (1, 0, 0, cmath.exp(1j * math.pi / 4.0)),
         "tdg": (1, 0, 0, cmath.exp(-1j * math.pi / 4.0)),
     }
+    controlled_phase_angles = {
+        "cs": math.pi / 2.0,
+        "ct": math.pi / 4.0,
+        "csdg": -math.pi / 2.0,
+        "ctdg": -math.pi / 4.0,
+    }
 
     for gate, operands, angle in gates:
         if gate in ("u1", "p"):
@@ -187,6 +193,8 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
         for a, b in zip(left, right):
             if gate == "cz":
                 apply_controlled_phase(state, nqubits, a, b, math.pi)
+            elif gate in controlled_phase_angles:
+                apply_controlled_phase(state, nqubits, a, b, controlled_phase_angles[gate])
             elif gate in ("cu1", "cp"):
                 apply_controlled_phase(state, nqubits, a, b, angle)
             elif gate == "cx":
@@ -299,6 +307,17 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             cu1(pi/4) q[0], q[1];
             """,
             [("11", "11"), ("11", "10"), ("01", "01"), ("00", "00")],
+        ),
+        (
+            "named_controlled_phase",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q;
+            cs q[0], q[1];
+            ctdg q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("11", "11"), ("10", "01")],
         ),
     ]
 

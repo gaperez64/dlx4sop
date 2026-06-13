@@ -52,6 +52,15 @@ and `ARCHITECTURE.md`.
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
+- Added named controlled phase imports:
+  - `cs`, `ct`, `csdg`, and `ctdg`;
+  - direct lowering through the same labelled quadratic path as `cp(...)`;
+  - canonical, dependency-free amplitude, and optional Qiskit coverage for the
+    available Qiskit named controlled phase gates.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.9% line coverage over `src`.
 
 ## Current Task
 
