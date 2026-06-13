@@ -64,13 +64,23 @@ Completed implementation history has been flushed into `README.md`.
   - `id` as a no-op after operand validation;
   - `swap` as a wire-state permutation;
   - golden test covering `id` and `swap`.
+- Added explicit input/output boundary options to `qasm2sop`:
+  - `--input BITS` and `--output BITS`;
+  - omitted boundaries default to all-zero bits;
+  - boundary pins are emitted explicitly and contradictory fixed boundaries
+    produce a valid zero-amplitude QSOP;
+  - golden and CLI tests cover nonzero boundaries, zero boundaries, and option
+    validation.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 75.9% line coverage over `src`.
 
 ## Current Task
 
-- Add explicit input/output boundary options to `qasm2sop`:
-  - accept fixed bitstrings for current default 0-to-0 behavior;
-  - keep all boundary handling explicit in generated QSOP pins.
+- Extend OpenQASM importer coverage beyond direct finite gates:
+  - start with small decompositions into already supported primitive gates;
+  - keep coverage above the 75% CI gate.
 
 ## Future Tasks
 
-- Extend OpenQASM importer coverage beyond direct finite gates.
+- Add more OpenQASM syntax compatibility as importer scope grows.

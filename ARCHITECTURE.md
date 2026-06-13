@@ -200,8 +200,10 @@ qasm2sop    import a small static OpenQASM 2.0 subset to canonical QSOP
 
 ## OpenQASM Import
 
-The first importer slice is `qasm2sop`. It assumes the default 0-to-0 amplitude
-and supports a deliberately small static OpenQASM 2.0 subset:
+The first importer slice is `qasm2sop`. It supports explicit fixed
+input/output bitstrings through `--input` and `--output`, defaulting omitted
+boundaries to the original all-zero 0-to-0 amplitude behavior. It accepts a
+deliberately small static OpenQASM 2.0 subset:
 
 - `OPENQASM 2.0`;
 - `include` directives, ignored after syntax recognition;
@@ -212,8 +214,8 @@ and supports a deliberately small static OpenQASM 2.0 subset:
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
 and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with
-boundary pins internally, then canonicalizes it through the normal QSOP parser
-and writer.
+boundary pins internally, treats contradictory fixed boundaries as a valid zero
+amplitude, then canonicalizes through the normal QSOP parser and writer.
 
 ## CI And Coverage
 
@@ -235,7 +237,8 @@ bytes through the QSOP parser and uses canonical writer idempotence as its oracl
 
 Likely next solver-facing targets are:
 
-- explicit input/output boundary options for `qasm2sop`.
+- broader OpenQASM importer coverage through decompositions into the currently
+  supported primitive gates.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

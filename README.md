@@ -33,7 +33,8 @@ normalization rules, and backend design notes.
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
-- `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP.
+- `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
+  with explicit fixed input/output bitstrings.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, and deterministic algebraic invariants for canonicalization and solver
@@ -157,6 +158,7 @@ Import a small OpenQASM 2.0 circuit into canonical QSOP:
 
 ```sh
 build/qasm2sop tests/golden/qasm_hth.qasm
+build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 ```
 
 Output:
@@ -168,6 +170,10 @@ cst 0
 
 u 0 1
 ```
+
+The `--input` and `--output` bitstrings are ordered by flattened `qreg`
+declaration order. Omitted boundaries default to all-zero bits, matching the
+original 0-to-0 amplitude behavior.
 
 Read from stdin:
 
@@ -187,5 +193,5 @@ component.
 
 ## Current Direction
 
-The next implementation target is explicit input/output boundary options for
-`qasm2sop`.
+The next implementation target is broader OpenQASM importer coverage through
+small decompositions into the currently supported primitive gates.

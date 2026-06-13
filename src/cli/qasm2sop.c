@@ -52,6 +52,8 @@ typedef struct qasm_importer {
 
   uint32_t nvars;
   uint64_t norm_h;
+  const char *input_bits;
+  const char *output_bits;
   bool have_openqasm;
   bool saw_gate;
 } qasm_importer_t;
@@ -64,7 +66,7 @@ static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
 }
 
 static void print_usage(FILE *file) {
-  fputs("usage: qasm2sop [PATH|-]\n", file);
+  fputs("usage: qasm2sop [--input BITS] [--output BITS] [PATH|-]\n", file);
 }
 
 static char *trim(char *text) {
@@ -110,6 +112,33 @@ static bool parse_u32_text(const char *text, uint32_t *out) {
   }
   *out = (uint32_t)value;
   return true;
+}
+
+static bool validate_boundary_bits(const char *option, const char *bits, uint32_t nqubits,
+                                   char *error, size_t error_size) {
+  if (bits == NULL) {
+    return true;
+  }
+
+  for (const char *p = bits; *p != '\0'; p++) {
+    if (*p != '0' && *p != '1') {
+      snprintf(error, error_size, "%s bitstring must contain only 0 or 1", option);
+      return false;
+    }
+  }
+
+  const size_t len = strlen(bits);
+  if (len != (size_t)nqubits) {
+    snprintf(error, error_size, "%s bitstring length %zu does not match %" PRIu32
+                                " OpenQASM qubits",
+             option, len, nqubits);
+    return false;
+  }
+  return true;
+}
+
+static uint32_t boundary_bit(const char *bits, uint32_t index) {
+  return bits == NULL ? 0U : (uint32_t)(bits[index] - '0');
 }
 
 static bool reserve_regs(qasm_importer_t *importer, size_t needed) {
@@ -537,7 +566,61 @@ static bool parse_qasm(FILE *input, const char *path, qasm_importer_t *importer)
   return ok;
 }
 
+static bool write_zero_qsop(FILE *file, uint64_t norm_h) {
+  fprintf(file, "p qsop 8 1 0\n");
+  fprintf(file, "n %" PRIu64 "\n", norm_h);
+  fputs("cst 0\n\n", file);
+  fputs("u 0 4\n", file);
+  return !ferror(file);
+}
+
+static bool pin_boundary_variable(int8_t *pins, uint32_t var, uint32_t value,
+                                  bool *conflict) {
+  if (pins[var] != -1 && pins[var] != (int8_t)value) {
+    *conflict = true;
+    return false;
+  }
+  pins[var] = (int8_t)value;
+  return true;
+}
+
+static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_pins,
+                                  bool *out_conflict) {
+  const size_t pin_count = importer->nvars == 0 ? 1U : importer->nvars;
+  int8_t *pins = malloc(pin_count * sizeof(*pins));
+  if (pins == NULL) {
+    return false;
+  }
+  for (size_t i = 0; i < pin_count; i++) {
+    pins[i] = -1;
+  }
+
+  bool conflict = false;
+  for (uint32_t q = 0; q < importer->nqubits && !conflict; q++) {
+    const uint32_t value = boundary_bit(importer->input_bits, q);
+    pin_boundary_variable(pins, q, value, &conflict);
+  }
+  for (uint32_t q = 0; q < importer->nqubits && !conflict; q++) {
+    const uint32_t value = boundary_bit(importer->output_bits, q);
+    pin_boundary_variable(pins, importer->current[q], value, &conflict);
+  }
+
+  *out_pins = pins;
+  *out_conflict = conflict;
+  return true;
+}
+
 static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
+  int8_t *pins = NULL;
+  bool boundary_conflict = false;
+  if (!collect_boundary_pins(importer, &pins, &boundary_conflict)) {
+    return false;
+  }
+  if (boundary_conflict) {
+    free(pins);
+    return write_zero_qsop(file, importer->norm_h);
+  }
+
   fprintf(file, "p qsop 8 %" PRIu32 " %" PRIu32 "\n", importer->nvars, importer->edges_len);
   fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
   fputs("cst 0\n", file);
@@ -549,13 +632,13 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
     fprintf(file, "q %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u,
             importer->edges[i].v, importer->edges[i].q);
   }
-  for (uint32_t q = 0; q < importer->nqubits; q++) {
-    fprintf(file, "f %" PRIu32 " 0\n", q);
-  }
-  for (uint32_t q = 0; q < importer->nqubits; q++) {
-    fprintf(file, "f %" PRIu32 " 0\n", importer->current[q]);
+  for (uint32_t v = 0; v < importer->nvars; v++) {
+    if (pins[v] != -1) {
+      fprintf(file, "f %" PRIu32 " %d\n", v, pins[v]);
+    }
   }
 
+  free(pins);
   return !ferror(file);
 }
 
@@ -605,10 +688,58 @@ static void print_qsop_error(const qsop_error_t *error) {
 
 int main(int argc, char **argv) {
   const char *input_path = NULL;
+  const char *input_bits = NULL;
+  const char *output_bits = NULL;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
       return 0;
+    }
+    if (strcmp(argv[i], "--input") == 0) {
+      if (input_bits != NULL) {
+        fputs("error: duplicate --input option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      if (i + 1 >= argc) {
+        fputs("error: missing value for --input\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      input_bits = argv[++i];
+      continue;
+    }
+    if (strncmp(argv[i], "--input=", strlen("--input=")) == 0) {
+      if (input_bits != NULL) {
+        fputs("error: duplicate --input option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      input_bits = argv[i] + strlen("--input=");
+      continue;
+    }
+    if (strcmp(argv[i], "--output") == 0) {
+      if (output_bits != NULL) {
+        fputs("error: duplicate --output option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      if (i + 1 >= argc) {
+        fputs("error: missing value for --output\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      output_bits = argv[++i];
+      continue;
+    }
+    if (strncmp(argv[i], "--output=", strlen("--output=")) == 0) {
+      if (output_bits != NULL) {
+        fputs("error: duplicate --output option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      output_bits = argv[i] + strlen("--output=");
+      continue;
     }
     if (argv[i][0] == '-' && strcmp(argv[i], "-") != 0) {
       fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
@@ -635,6 +766,8 @@ int main(int argc, char **argv) {
   }
 
   qasm_importer_t importer = {0};
+  importer.input_bits = input_bits;
+  importer.output_bits = output_bits;
   bool ok = parse_qasm(input, diagnostic_path, &importer);
   if (input != stdin) {
     fclose(input);
@@ -643,6 +776,16 @@ int main(int argc, char **argv) {
     fprintf(stderr, "error: %s:%zu: %s\n", diagnostic_path, importer.line_no, importer.error);
     free_importer(&importer);
     return 1;
+  }
+
+  char boundary_error[256] = {0};
+  if (!validate_boundary_bits("--input", input_bits, importer.nqubits, boundary_error,
+                              sizeof(boundary_error)) ||
+      !validate_boundary_bits("--output", output_bits, importer.nqubits, boundary_error,
+                              sizeof(boundary_error))) {
+    fprintf(stderr, "error: %s\n", boundary_error);
+    free_importer(&importer);
+    return 2;
   }
 
   qsop_error_t error = {0};

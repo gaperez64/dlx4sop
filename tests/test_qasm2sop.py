@@ -64,6 +64,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
+        ([str(exe), "--input"], "missing value"),
         ([str(exe), str(qasm), str(qasm)], "at most one input"),
         ([str(exe), str(source_root / "tests" / "golden" / "missing.qasm")], "No such file"),
     ]
@@ -79,6 +80,50 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
 
 
+def run_boundary_options(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qasm = source_root / "tests" / "golden" / "qasm_h_boundary.qasm"
+    expected = source_root / "tests" / "golden" / "qasm_h_boundary.expected"
+
+    completed = subprocess.run(
+        [str(exe), "--input", "1", "--output=1", str(qasm)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0 or completed.stdout != expected.read_text():
+        raise AssertionError(f"unexpected boundary import:\n{completed.stdout}\n{completed.stderr}")
+
+    zero_qasm = "OPENQASM 2.0;\nqreg q[1];\nid q[0];\n"
+    zero_expected = "p qsop 8 1 0\nn 0\ncst 0\n\nu 0 4\n"
+    zero_result = subprocess.run(
+        [str(exe), "--input=0", "--output", "1", "-"],
+        input=zero_qasm,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if zero_result.returncode != 0 or zero_result.stdout != zero_expected:
+        raise AssertionError(f"unexpected zero-boundary import:\n{zero_result.stdout}\n{zero_result.stderr}")
+
+    boundary_errors = [
+        ([str(exe), "--input", "00", str(qasm)], "length 2 does not match 1"),
+        ([str(exe), "--output", "2", str(qasm)], "must contain only 0 or 1"),
+        ([str(exe), "--input", "0", "--input=0", str(qasm)], "duplicate --input"),
+    ]
+    for cmd, expected_error in boundary_errors:
+        failed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if failed.returncode == 0 or expected_error not in failed.stderr:
+            raise AssertionError(f"unexpected boundary error for {cmd}:\n{failed.stderr}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_qasm2sop.py QASM2SOP SOURCE_ROOT", file=sys.stderr)
@@ -90,6 +135,7 @@ def main() -> int:
     run_case(exe, source_root, "qasm_cz")
     run_case(exe, source_root, "qasm_swap_id")
     run_cli_paths(exe, source_root)
+    run_boundary_options(exe, source_root)
     return 0
 
 
