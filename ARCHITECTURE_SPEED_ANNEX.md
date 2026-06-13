@@ -1,758 +1,147 @@
-# Annex A: Performance Direction
+# Architecture Speed Annex
 
-This annex records performance-oriented design constraints and future directions
-that are intentionally more speculative than the command-line contract in
-`ARCHITECTURE.md`. The main principle remains: keep the hot path as a dense,
-integer-only, coefficient-labelled graph problem, and push parsing, conversion,
-provenance, and competitor interoperability to separate Unix-style utilities.
+This annex keeps performance ideas that are still useful but not yet part of the
+stable command-line contract. Historical benchmark snapshots and completed
+implementation notes belong in commit history, not here.
 
-The annex assumes the implemented core architecture described in
-`ARCHITECTURE.md`: C23, Meson, small command-line tools, exact finite-modulus
-quadratic SOPs, and two internal QSOP modes:
+## Priority Order
 
-- **sign mode**, where each quadratic coefficient is either `0` or `r/2`;
-- **labelled mode**, where each quadratic coefficient is an arbitrary residue in `Z_r`.
+The current performance roadmap is:
 
-Native degree greater than 2 remains out of scope for the current solver.
-Higher-degree gates such as `CCZ` and Toffoli should be compiled into
-constant-size labelled quadratic gadgets before solving.
+1. Rerun importer-fed local and external corpora with the widened rankwidth
+   backend, especially cases with large cut signatures.
+2. Improve decomposition quality before adding more branch-local heuristics.
+3. Compare branch heuristics only when traces show the cache and split machinery
+   is being exercised on a representative corpus.
+4. Add incremental residual hashing if full-state hashing appears in hot traces.
+5. Consider dancing-cells-style linked mutation only if active-edge traversal or
+   undo costs dominate.
+6. Add specialized residue kernels and CPU dispatch after solver shape is
+   stable.
+7. Implement labelled rankwidth once the sign-only decomposition pipeline and
+   benchmark story are strong enough.
 
----
+## Reversible Mutation And Dancing Cells
 
-## A.1 Make QSOP the executable IR
+The branch solver already uses reversible residual mutation. The state has
+checkpoints, undo, active variables, active edges, active degrees, immutable
+incident-edge lists, residual component splitting, and residual memoization.
 
-The native executable representation should be the normalized quadratic SOP itself, not CNF, not a Qiskit object, not a generic tensor-network object, and not a generic graph library object.
+The missing dancing-cells step is a linked deletion/reinsertion representation
+for active incidence. It should not be added just for elegance. It is worth doing
+only if traces show that repeatedly walking inactive incident entries or undoing
+large local mutations is a real bottleneck.
 
-The import/export pipeline should be:
+The desired invariant is unchanged: branch assignment should mutate only local
+state, record exactly what changed, and restore the residual by replaying the
+trail backwards.
 
-```text
-OpenQASM / MQT / ZX / FeynmanDD / benchmark formats
-    -> importer
-    -> normalized QSOP
-    -> sop-check / sop-stats / sop-solve
-    -> optional exporters to WMC / FeynmanDD / ZX / QASM
-```
+## Hashing And Cache Direction
 
-This keeps the solver close to the object used by the FPT algorithms. External formats should be treated as boundary formats, not as internal dependencies.
+The residual branch solver has deterministic fingerprints plus exact comparison
+inside cache buckets. That makes repeated residuals and cache-hit likelihood
+visible.
 
-The attached tensor-network-to-WMC note motivates a similar separation: circuits are first represented as a gate-level open tensor network, where wire segments are binary indices, gates are local tensors, and boundary indices are fixed for amplitudes. For `dlx4sop`, the corresponding internal object should be the normalized QSOP obtained after compiling those local gates.
+Still-open hashing work:
 
----
+- maintain an incremental Zobrist-style residual hash through reversible
+  mutation;
+- keep exact equality checks after hash lookup;
+- separate whole-residual cache keys from future component-local residual cache
+  keys;
+- report enough cache statistics to compare heuristic changes.
 
-## A.2 Keep two hot modes: `sign` and `labelled`
+Incremental hashing should be measured against the current full-state
+fingerprint before it is made more complicated.
 
-Labelled QSOP support should not erase the fast Clifford+T path.
+## Width Heuristics
 
-Use one normalized data model, but dispatch hot kernels according to mode:
+The implemented branch heuristics are ordering policies. They do not replace a
+decomposition backend.
 
-```text
-sign mode:
-    q_ij in {0, r/2}
-    binary edge support
-    GF(2) bitsets
-    parity signatures
-    fastest Clifford+T path
+Near-term experiments should focus on:
 
-labelled mode:
-    q_ij in Z_r
-    coefficient-labelled edges
-    mod-r signatures
-    compact Toffoli, CCZ, CS, CT, sqrt(CZ), finite RZZ support
-```
+- decomposition builders for sign-only rankwidth DP;
+- min-fill and cut-rank split choices;
+- trace summaries that report width, table sizes, join counts, cache hits, and
+  wall time on the same manifest;
+- clear separation between branch variable ordering and decomposition
+  construction.
 
-The loader should automatically downgrade a labelled instance to sign mode when every normalized quadratic coefficient is either `0` or `r/2`.
+Treewidth-style scoring is useful as a cheap proxy when it predicts fewer
+residual components or smaller decomposition tables. Rankwidth-style scoring is
+more directly aligned with the decomposition DP, but is more expensive to
+evaluate.
 
-This is important because sign mode can use extremely compact bit-parallel operations, while labelled mode needs small modular coefficients and larger boundary signatures.
+## Residue And Count Arithmetic
 
----
+Residues live modulo `r`; counts are exact assignment cardinalities. The hot path
+should continue to use fixed-width integers when safe, and only switch to CRT or
+another exact multiword representation when the final histogram cannot fit.
 
-## A.3 Keep the core arithmetic integer-only
+Future arithmetic work:
 
-Internally, represent
+- specialize common moduli such as `2`, `4`, `8`, `16`, and `24`;
+- keep count-table and Fourier modes behind the same result contract;
+- consider multi-prime Fourier only if it beats count-table plus CRT on real
+  widened benchmarks;
+- keep arbitrary-precision libraries out of hot DP tables unless there is no
+  fixed-width or CRT alternative.
 
-\[
-S = \sum_x \omega_r^{Q(x)}
-\]
+## Import And Export Boundary
 
-as a residue-count vector:
+Importers should preserve enough provenance for debugging, but the solver should
+see normalized QSOP only. External IDs, framework objects, and corpus-specific
+metadata should stay in manifests or sidecar files.
 
-```c
-count[0], count[1], ..., count[r - 1]
-```
+Future import work that affects performance:
 
-where `count[a]` is the number of assignments contributing phase exponent `a mod r`.
+- configurable quadratization strategies for gates such as `CCZ`;
+- qgraph/qc/ZX translation that records when a diagram remains quadratic;
+- importer diagnostics that distinguish unsupported syntax from genuinely
+  non-quadratic phase structure.
 
-Then
+## Labelled Rankwidth
 
-\[
-S = \sum_{a=0}^{r-1} \texttt{count[a]}\,\omega_r^a.
-\]
+The labelled rankwidth solver should generalize sign-only cut signatures from
+GF(2) parity rows to `Z_r` labelled boundary signatures. The relevant target
+width is recorded in `ARCHITECTURE.md`.
 
-All hot operations become integer operations:
+Open implementation questions:
 
-```text
-phase = (phase + delta) mod r
-count_table[new_phase] += count_table[old_phase]
-```
+- compact interning of labelled signatures;
+- join formulas for arbitrary edge labels;
+- decomposition heuristics that estimate labelled cut-signature growth;
+- benchmarks that actually require labelled interactions rather than only
+  sign-edge structure.
 
-Complex floating-point numbers should only appear in final display, approximate export, or compatibility layers. The exact solver result should remain:
+## Instrumentation
 
-```text
-normalization exponent h
-constant phase c
-residue-count vector over Z_r
-```
+Benchmark tooling should make solver changes comparable without requiring a
+human to inspect verbose traces.
 
-Recommended primitive types:
+Useful stable metrics:
 
-```c
-typedef uint16_t qsop_mod_t;
-typedef uint16_t qsop_coeff_t;
-typedef uint32_t qsop_var_t;
-typedef uint32_t qsop_edge_t;
-```
+- imported/skipped/error counts by corpus;
+- variables, terms, components, and modulus;
+- branch internal nodes, leaves, cache hits, and cache misses;
+- rankwidth decomposition width, table entries, signature entries, and join
+  counts;
+- elapsed time and selected backend configuration.
 
-Use specialized kernels for common moduli:
+A structured JSON trace format is useful once the metric set settles. Until
+then, concise stats output and manifest-based scripts are enough.
 
-```text
-r = 2, 4, 8, 16, 24
-```
+## Tests
 
-and a generic fallback for other even moduli.
+Default CI should stay lean. Heavy corpus sweeps and framework comparisons are
+valuable but should be opt-in unless they become cheap enough for every push.
 
----
+Coverage should continue to include:
 
-## A.4 Use structure-of-arrays layout
-
-Avoid pointer-heavy object graphs. They are difficult to vectorize and unfriendly to cache locality.
-
-Prefer dense arrays:
-
-```c
-qsop_var_t edge_u[M];
-qsop_var_t edge_v[M];
-qsop_coeff_t edge_q[M];
-
-qsop_coeff_t unary_b[N];
-bool active_var[N];
-bool active_edge[M];
-
-uint64_t adj_head[N + 1];
-qsop_var_t adj_other[2 * M];
-qsop_edge_t adj_edge_id[2 * M];
-```
-
-For sign mode, `edge_q` can be omitted, ignored, or stored as a constant implicit value `r/2`.
-
-For labelled mode, every adjacency entry should carry an `edge_id`; the coefficient should live once in `edge_q[edge_id]`.
-
-The first implementation should already follow this layout, because retrofitting SIMD and fast hashing onto pointer-heavy code is expensive.
-
----
-
-## A.5 Keep reversible mutation central
-
-The residual branch backend already mutates in place and records enough state to
-undo branches. As the solver grows, new simplifications should keep this
-discipline instead of reintroducing full residual copies.
-
-The current residual state also stores immutable incident-edge lists, keeps
-trailed active-degree metadata, and uses local adjacency for branch mutation and
-residual split estimates. This is a step toward dancing-cells-style locality,
-but it is not yet linked-cell deletion/reinsertion: active state is still
-represented by flags plus the reversible trail.
-
-Suggested trail kinds:
-
-```c
-typedef enum {
-    QSOP_TRAIL_SET_UNARY,
-    QSOP_TRAIL_SET_CONSTANT,
-    QSOP_TRAIL_DEACTIVATE_VAR,
-    QSOP_TRAIL_DEACTIVATE_EDGE,
-    QSOP_TRAIL_SET_EDGE_LABEL,
-    QSOP_TRAIL_HASH_XOR,
-    QSOP_TRAIL_COMPONENT_MARK
-} qsop_trail_kind_t;
-```
-
-A trail entry should store enough information to undo one mutation:
-
-```c
-typedef struct {
-    qsop_trail_kind_t kind;
-    uint32_t index;
-    uint64_t old_value;
-} qsop_trail_entry_t;
-```
-
-Branching on a labelled QSOP variable `v` has a simple local update:
-
-```text
-x_v = 0:
-    delete v and all active incident edges
-
-x_v = 1:
-    c += b[v] mod r
-    for each active neighbor u of v:
-        b[u] += q[v,u] mod r
-    delete v and all active incident edges
-```
-
-That update is naturally compatible with a dancing-cells design: mutate only
-local cells, record mutations, and undo them in reverse order.
-
----
-
-## A.6 Make incremental hashing part of mutation
-
-Memoization should remain a first-class solver feature, not a later wrapper. The
-component backend owns a local canonical component cache with compact entry
-fingerprints for fast rejection. The residual branch backend now exposes a
-deterministic full-state fingerprint and uses it to filter a bucketed
-branch-local exact memo cache. Incremental hash maintenance is still future
-work.
-
-Use a Zobrist-style incremental hash over the active residual state:
-
-```text
-hash ^= H_var_active[v]
-hash ^= H_unary[v][old_b]
-hash ^= H_unary[v][new_b]
-hash ^= H_edge_active[e]
-hash ^= H_edge_label[e][old_q]
-hash ^= H_edge_label[e][new_q]
-hash ^= H_const[old_c]
-hash ^= H_const[new_c]
-```
-
-This gives cheap hash updates for reversible mutation:
-
-- unary changes: `O(1)`;
-- constant changes: `O(1)`;
-- deleting a vertex: `O(deg(v))`;
-- changing an edge label: `O(1)`.
-
-Maintain at least two cache layers:
-
-```text
-global residual cache:
-    active graph + unary labels + edge labels + constant + modulus
-
-component cache:
-    connected component state + local unary labels + boundary state
-```
-
-Component-level caching is especially important because variable branching often splits the active graph.
-
----
-
-## A.7 Use layered canonical fingerprints
-
-Hash equality is not enough for high cache hit rates. However, full graph isomorphism is too expensive as a default hot-path operation.
-
-Use layered fingerprints:
-
-```text
-level 0:
-    component-cache fingerprint; residual-state fingerprint; later,
-    incremental Zobrist hash
-
-level 1:
-    sorted active degree / unary / label summaries
-
-level 2:
-    canonical relabelling for small components; exhaustive relabelling for
-    component-cache keys up to five variables is implemented today
-
-level 3:
-    optional graph-canonicalization backend later
-```
-
-Correctness should not depend on recognizing isomorphic residuals. Stronger canonicalization should only improve memoization.
-
----
-
-## A.8 Separate external IDs from solver IDs
-
-Input formats have heterogeneous identifiers: OpenQASM qubits, MQT layouts, PyZX node IDs, FeynmanDD variables, WMC variables, and benchmark labels.
-
-Do not let these identifiers reach the hot solver.
-
-Use separate ID layers:
-
-```text
-external IDs
-    -> import map
-    -> stable dense IR IDs
-    -> normalized solver IDs
-    -> width/order optimized solver IDs
-```
-
-The solver should see only dense integer IDs.
-
-Optional provenance should be stored outside the hot input, for example:
-
-```text
-instance.sop
-instance.sop.meta
-```
-
-where `.sop.meta` records source gates, source spans, qubit maps, auxiliary variables, and gadget origins.
-
----
-
-## A.9 Normalize aggressively at load time
-
-The parser and `sop-check` utility canonicalize instances before solving.
-
-Perform at least:
-
-```text
-remove zero unary coefficients
-combine duplicate q-edges modulo r
-fold self-loops q(v,v) into unary b[v]
-apply fixed pins
-delete isolated variables using closed forms
-split disconnected components
-detect sign-only mode
-sort adjacency lists
-renumber variables by a chosen heuristic order
-```
-
-Some of these are implemented today by parser normalization; the remaining
-items are future speed work. All of them improve later components: hashing,
-memoization, component decomposition, width heuristics, and SIMD kernels.
-
-The residual branch backend now handles the edge-free case directly by
-collapsing active independent unary variables into a residue-count table. This
-is a first solver-side form of isolated-variable deletion after branching.
-The branch selector also skips isolated active variables while active quadratic
-edges remain, leaving them for the edge-free residue-table path.
-When the active residual graph splits, the branch backend now solves active
-components separately and convolves their residue-count vectors before applying
-the parent residual constant.
-
----
-
-## A.10 Make width heuristics pluggable
-
-Do not hard-code a single branching heuristic such as maximum degree.
-
-The branch backend currently exposes a small fixed menu through
-`--branch-heuristic`: the default split heuristic, a min-fill treewidth proxy,
-and a local GF(2) cut-rank proxy. This is enough for benchmark comparisons, but
-the next step should be a proper heuristic interface:
-
-```c
-typedef struct {
-    int64_t (*score_var)(const qsop_state_t *state,
-                         qsop_var_t v,
-                         void *ctx);
-    void (*on_branch)(const qsop_state_t *state,
-                      qsop_var_t v,
-                      uint8_t value,
-                      void *ctx);
-    void (*on_backtrack)(const qsop_state_t *state,
-                         void *ctx);
-} qsop_heuristic_t;
-```
-
-Useful scoring functions:
-
-```text
-degree
-weighted degree
-min-fill estimate
-component split score
-treewidth proxy
-rankwidth / cut-signature proxy
-cache-hit likelihood
-label entropy around the variable
-estimated residue-table cost
-```
-
-The important architectural decision is to keep treewidth and labelled rankwidth estimates visible in the solver API.
-
----
-
-## A.11 Build residue-table kernels for SIMD
-
-Even the scalar implementation should use layouts that can be vectorized later.
-
-Use padded residue tables:
-
-```c
-uint64_t count[QSOP_R_PADDED];
-```
-
-where `QSOP_R_PADDED` rounds the modulus up to a SIMD-friendly lane count.
-
-Common kernels:
-
-```text
-phase shift:
-    out[(i + delta) mod r] += in[i]
-
-component merge:
-    cyclic convolution modulo r
-
-boundary-signature update:
-    add local phase and merge equal signatures
-
-rankwidth-table update:
-    merge child tables indexed by labelled signatures
-```
-
-For small fixed moduli, specialize aggressively:
-
-```text
-r = 8:
-    one cache-line-sized table in many cases
-
-r = 16:
-    power-of-two masking for residues
-
-r = 24:
-    common for some finite gate libraries, but not a power of two
-```
-
-The generic kernel should be clean C23. Architecture-specific kernels can be selected at runtime.
-
----
-
-## A.12 Add CPU-feature dispatch early
-
-Hide architecture-specific code behind a single kernel table:
-
-```c
-typedef struct {
-    void (*shift)(...);
-    void (*convolve)(...);
-    void (*merge_signatures)(...);
-    void (*rank_update)(...);
-} qsop_kernel_table_t;
-
-qsop_kernel_table_t qsop_select_kernels(void);
-```
-
-Potential backends:
-
-```text
-scalar
-portable SIMD
-AVX2
-AVX-512
-NEON
-```
-
-Only scalar needs to exist initially. The API boundary should exist from the beginning so optimized kernels do not leak throughout the solver.
-
----
-
-## A.13 Keep import/export utilities outside the solver
-
-The solver should read normalized QSOP and write exact QSOP results. It should not know about Qiskit, PyZX, Ganak, FeynmanDD, or MQT internals.
-
-Suggested Unix-style tools:
-
-```text
-qasm2sop
-mqt2sop
-zx2sop
-sop-check
-sop-stats
-sop-solve
-sop2wmc
-sop2feyndd
-sop2zx
-sop-bench
-```
-
-This keeps `sop-solve` small, profileable, dependency-free, and suitable for low-level optimization.
-
----
-
-## A.14 Keep provenance out of the hot path
-
-Provenance is useful for debugging and benchmarking, but it should not slow down solving.
-
-Use sidecar metadata:
-
-```text
-example.sop
-example.sop.meta
-```
-
-The sidecar may contain:
-
-```text
-source file
-source gate IDs
-source qubit names
-boundary mapping
-auxiliary variables introduced by gadgets
-Toffoli/CCZ gadget expansion records
-normalization history
-export hints
-```
-
-The solver should not parse or carry this metadata unless explicitly requested.
-
----
-
-## A.15 Make gate gadgets strategy-selectable
-
-Do not hard-code one expansion for Toffoli, CCZ, or controlled phase gates.
-
-Expose compiler strategies:
-
-```text
-toffoli=compact-labelled
-toffoli=sign-only-parity
-toffoli=decompose-clifford-t
-toffoli=preserve-for-export
-```
-
-Different targets prefer different expansions:
-
-```text
-native labelled QSOP solver:
-    compact-labelled
-
-native sign-only solver:
-    sign-only-parity
-
-ZX export:
-    decompose or emit phase-gadget form
-
-WMC export:
-    direct Boolean constraints or quadratized form
-
-FeynmanDD export:
-    preserve Toffoli if the chosen gate-set file supports it
-```
-
-This is important for fair benchmarking because the best representation for `dlx4sop` may not be the best representation for Ganak, FeynmanDD, MQT, or ZX tools.
-
----
-
-## A.16 Separate fast counts from certified exact counts
-
-Define result-count backends early:
-
-```text
-small exact counts:
-    uint64_t / uint128_t
-
-large exact counts:
-    arbitrary precision integers
-
-CRT counts:
-    several machine-prime moduli with reconstruction
-
-final amplitude:
-    cyclotomic residue vector + normalization exponent
-```
-
-Benchmark mode can use fixed-width counters when safe. Certified mode can use big integers or CRT reconstruction.
-
-Do not mix this policy with the solver logic. It should be a replaceable arithmetic backend.
-
----
-
-## A.17 Keep instrumentation structured
-
-Performance comparisons will be unreliable unless the tool emits structured
-statistics. `sop-stats` already supports JSON, and `sop-solve --format stats`
-reports backend counters; additional tracing should build on that interface
-rather than adding ad hoc output.
-
-Implemented:
-
-```text
-sop-solve --trace csv
-tools/bench_qasm_corpus.py --trace
-```
-
-Future structured output still needs JSON stats and richer profile events.
-
-Track at least:
-
-```text
-input variables
-active variables after normalization
-quadratic terms
-modulus
-mode: sign or labelled
-components discovered
-cache lookups
-cache hits
-branch nodes
-maximum recursion depth
-time in simplify / branch / cache / hash / components / kernels
-estimated treewidth
-estimated labelled signature width
-residue table sizes
-normalization exponent h
-result residue support size
-```
-
-These statistics should be machine-readable and stable enough for plotting in papers.
-
----
-
-## A.18 Test algebraic invariants, not only examples
-
-Tests should protect optimization work.
-
-Use property-style tests for:
-
-```text
-normalization preserves value
-pinning preserves value
-component split equals cyclic convolution/product
-duplicate q-edge accumulation is correct
-self-loop folding is correct
-sign mode and labelled mode agree on sign-only instances
-compact CCZ gadget equals truth table
-compact Toffoli gadget equals truth table
-cache hit returns the same residue vector
-branching on any variable gives the same result
-renumbering variables preserves the value
-```
-
-Also include cross-tool tests:
-
-```text
-OpenQASM -> SOP -> native solve
-OpenQASM -> SOP -> WMC -> Ganak
-OpenQASM -> SOP -> FeynmanDD export
-OpenQASM -> SOP -> ZX export
-```
-
-The attached WMC note validates examples by comparing direct tensor-network contraction, WMC results, and Qiskit statevector results. The same philosophy should be used here, but with QSOP as the central IR.
-
----
-
-## A.19 Do not reduce to WMC inside the native solver
-
-`sop2wmc` is important for comparison, but WMC should remain an export target.
-
-The native solver should not internally translate to CNF or WMC. Its potential advantage is that it preserves the finite-modulus quadratic phase structure directly:
-
-```text
-quadratic residues
-labelled cut signatures
-component factorization
-cyclotomic residue counts
-```
-
-A WMC encoding introduces Boolean constraints, auxiliary variables, and weighted literals. That is useful for baselines and verification, but it can obscure cancellations and graph/rankwidth structure that the native solver can exploit directly.
-
----
-
-## A.20 Make benchmarking a first-class utility
-
-The first lightweight runner is implemented as
-`tools/bench_qasm_corpus.py` over `tests/qasm_solver_corpus.json`. It records
-case metadata, source and normalized QSOP hashes, QSOP size, solver counters,
-wall-clock timing, and optional trace phase summaries. The longer-term baseline
-manifest should still grow toward all external solvers:
-
-Use one manifest format to run all baselines fairly:
-
-```yaml
-name: qft_20
-source: circuits/qft_20.qasm
-amplitude:
-  input: 00000000000000000000
-  output: 00000000000000000000
-transforms:
-  - qasm2sop --gate-set clifford-t
-  - sop-normalize
-solvers:
-  - sop-solve --mode auto
-  - sop2wmc | ganak
-  - sop2feyndd | feyndd
-  - sop2zx | pyzx-baseline
-```
-
-The benchmark runner should record:
-
-```text
-source hash
-normalized SOP hash
-tool versions
-compiler flags
-CPU model
-SIMD backend
-wall time
-CPU time
-peak RSS
-solver stats JSON
-result hash
-```
-
-This avoids accidental unfairness between the native solver and external baselines.
-
----
-
-## A.21 Keep the hot libraries small
-
-Separate the project into libraries with clear dependency boundaries:
-
-```text
-libqsop_ir:
-    parsing, validation, normalization
-
-libqsop_solve:
-    hot solver, no external dependencies
-
-libqsop_width:
-    treewidth/rankwidth/signature heuristics
-
-libqsop_export:
-    WMC, FeynmanDD, ZX, QASM exporters
-
-tools/*:
-    small Unix-style executables
-```
-
-Use opaque public structs:
-
-```c
-typedef struct qsop_state qsop_state_t;
-```
-
-but keep internal data in dense arrays.
-
-This preserves freedom to change memory layout later without breaking the utility APIs.
-
----
-
-## A.22 Priority order
-
-The recommended implementation order is:
-
-```text
-1. Dense normalized QSOP IR
-2. Sign/labelled mode detection
-3. Integer residue-vector result type
-4. Reversible dancing-cells trail
-5. Incremental Zobrist hashing
-6. Component decomposition
-7. Simple pluggable branch heuristic interface
-8. Scalar residue kernels with SIMD-friendly layout
-9. Structured stats output
-10. OpenQASM -> QSOP importer
-11. SOP -> WMC exporter
-12. Compact CCZ/Toffoli labelled gadgets
-13. Benchmark manifest runner
-14. Optional SIMD kernels
-15. Labelled rankwidth/signature-width backend
-```
-
-The guiding rule is:
-
-> Keep the hot path as a dense integer-labelled graph problem. Push QASM parsing, MQT quirks, ZX JSON, WMC CNF, FeynmanDD compatibility, provenance, pretty-printing, and plotting to the edges of the Unix pipeline.
+- parser and canonical writer behavior;
+- backend agreement on small examples;
+- residual undo and cache invariants;
+- importer-fed corpus smoke tests;
+- rankwidth large-count paths;
+- the configured coverage threshold.

@@ -1,430 +1,69 @@
 # dlx4sop Task Tracker
 
-This file tracks local project state so work can resume after a pause or stop.
-Completed implementation history is kept in Git and summarized in `README.md`
-and `ARCHITECTURE.md`.
+This file records the current local project state and near-term tasks. Completed
+history is intentionally kept in Git, README, and architecture notes rather
+than repeated here.
 
-## Previous Tasks
+## Current State
 
-- Pushed importer and documentation work through `7abd6b5` to `origin/main`.
-- Latest importer additions:
-  - exact finite `rz(...)`/`crz(...)` imports, with `Z_16` documented as
-    importer resolution rather than a core modulus ceiling;
-  - `sx`/`sxdg` imports with canonical, amplitude, and optional Qiskit coverage;
-  - finite `rx(...)`/`ry(...)` imports for symbolic multiples of `pi/4`, lowered
-    through existing `rz`, phase, and Hadamard primitives.
-- Latest completed verification:
-  - `meson test -C build --print-errorlogs`
-  - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 76.9% line coverage over `src`.
-- Completed solver-pivot checkpoint:
-  - added a default QASM-derived solver corpus that compares all exact backends
-    and checks stats invariants on fixed-boundary circuit instances;
-  - did not find a local Qymera pointer or public benchmark artifact to vendor,
-    but added Qymera-inspired GHZ and uniform-superposition corpus cases;
-  - added component-cache fingerprints for fast rejection before exact
-    subinstance comparison;
-  - updated README and architecture notes for the solver-focused direction.
-- Completed residual branch checkpoint:
-  - added an edge-free residue-table fast path for active independent unary
-    variables;
-  - taught the branch selector to skip isolated variables while active
-    quadratic edges remain;
-  - reduced the `solve_labelled` branch stats search from 7 to 3 nodes while
-    preserving the same represented leaf assignments.
-- Completed residual-state hashing checkpoint:
-  - added deterministic residual fingerprints over the active graph, active
-    unary labels, constant, modulus, and immutable edge labels;
-  - added an exact branch-local residual memo cache filtered by those
-    fingerprints and exposed `cache_hits`/`cache_misses` for the branch backend;
-  - added a small branch-cache golden fixture and QASM corpus accounting checks
-    so repeated residuals and cache-hit likelihood are visible.
-- Completed residual adjacency and importer checkpoint:
-  - added immutable residual incident-edge lists and switched branch mutation,
-    active-degree queries, and split estimates to local adjacency traversal;
-  - added finite `u2(...)` and `u3(...)` imports for symbolic multiples of
-    `pi/4`, with golden, dependency-free amplitude, and optional Qiskit coverage.
-- Completed residual degree and cache lookup checkpoint:
-  - added trailed active-degree metadata so branch heuristic degree queries are
-    O(1) while checkpoint undo remains exact;
-  - replaced branch residual-cache linear scans with fingerprint buckets while
-    preserving exact key comparison before reuse.
-- Completed residual branch component-splitting checkpoint:
-  - added active-component labelling over the mutable residual graph;
-  - taught the branch backend to solve disconnected active residual components
-    separately, convolve their counts, and shift by the parent residual
-    constant once.
-- Completed small-component canonicalization checkpoint:
-  - replaced the two-variable one-edge component relabelling special case with
-    exhaustive component-cache canonicalization for components up to five
-    variables;
-  - added a mirrored three-variable path stats fixture that proves isomorphic
-    small components share one cache entry.
-- Completed benchmark and tracing checkpoint:
-  - moved the QASM solver corpus into `tests/qasm_solver_corpus.json` and added
-    repeated-component plus branch-split stress cases;
-  - added `tools/bench_qasm_corpus.py` for JSONL/CSV benchmark records with
-    backend counters, timings, source/QSOP hashes, and optional trace summaries;
-  - added `sop-solve --trace csv` with trace phases for cache lookup, component
-    splitting, branch selection, residue-table leaves, component solves, and
-    convolution.
-- Completed external-format reconnaissance:
-  - PyZX's practical first path is an optional `.qgraph`/circuit loader that
-    converts circuit-like diagrams to OpenQASM and reuses `qasm2sop`;
-  - FeynmanDD's public interface is OpenQASM plus gate-set JSON, so the first
-    compatibility target is benchmark ingestion and later OpenQASM/gate-set
-    export for external baseline runs.
-- Completed qgraph/FeynmanDD starter checkpoint:
-  - added optional PyZX-backed `tools/qgraph2qasm.py` for `.qgraph` JSON to
-    OpenQASM extraction when PyZX can extract a circuit;
-  - inspected a shallow FeynmanDD checkout for local corpus coverage;
-  - added uppercase gate spelling, decimal `pi/4`-multiple angle, and `iswap`
-    support to `qasm2sop`;
-  - added `tools/scan_feynmandd_qasm.py`; current scan imports 92/152
-    `benchmark/exp` files and all 60 remaining failures are `ccz`
-    quadratization cases. Full non-invalid checkout scan imports 166/425 files.
-- Completed higher-degree QASM/PyZX benchmark checkpoint:
-  - added `ccz` lowering via a quadratic parity-phase transformation and `ccx`
-    lowering via `h`/`ccz`/`h` on the target;
-  - added `cswap` lowering via `cx`/`ccx`/`cx`;
-  - added dependency-free amplitude and optional Qiskit coverage for `ccz`,
-    `ccx`, and `cswap`;
-  - re-scanned FeynmanDD: `benchmark/exp` imports 152/152 files, and the wider
-    non-invalid checkout imports 402/425 files with no remaining higher-degree
-    failures;
-  - identified Kuyanov/Kissinger's rank-width ZX implementation as PyZX
-    `pyzx/rank_width.py` and inspected the PyZX benchmark corpus;
-  - scanned PyZX QASM: `circuits/feyn_bench/qasm` imports 44/65 non-invalid
-    QASM files, while all `circuits` QASM imports 109/130; remaining failures
-    are dynamic/classical examples, generic custom gates, or malformed Shor
-    output. The PyZX corpus also contains 214 `.qc` files and one `.qgraph`
-    file for the optional PyZX-backed conversion path.
-- Completed dependency-free `.qc` bridge checkpoint:
-  - added `tools/qc2qasm.py`, mirroring PyZX's `.qc` parser rules for one-qubit
-    gates, `cnot`, `swap`, multi-arity `tof`, and multi-target `Z`/`Zd`;
-  - added a Meson smoke test that verifies translation and import through
-    `qasm2sop`;
-  - translated 203/214 local PyZX `.qc` files syntactically; the remaining 11
-    are ten empty `.qc` files and one malformed Shor file;
-  - sampled translated `tof_3_tpar.qc`, `grover_5.qc`, and `ham15-low.qc`, and
-    all imported through `qasm2sop`.
-- Latest local verification:
-  - `meson test -C build --print-errorlogs`
-  - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 78.0% line coverage over `src`.
-- Completed MQT Bench reconnaissance checkpoint:
-  - pushed the previous local branch state to `origin/main` before starting;
-  - inspected a shallow Munich Quantum Toolkit Bench checkout;
-  - found that its source tree generates circuits through the `mqt.bench`
-    Python package and Qiskit exporters rather than vendoring a flat QASM
-    corpus;
-  - added optional `tools/scan_mqt_bench.py`, which can use an installed
-    package or local checkout, export generated QASM2, strip terminal
-    measurements for strong-simulation imports, and classify `qasm2sop`
-    outcomes;
-  - added a lean Meson smoke test for the scanner without making MQT a CI
-    dependency;
-  - current local scan results: default size-3 `indep` subset imports 7/8
-    generated cases, with `wstate` blocked by a non-`pi/4` `ry` angle; all
-    size-3 `indep` benchmark names import 8 generated cases, with remaining
-    cases grouped as generation constraints, QASM2 dump limitations,
-    custom-gate syntax, or unsupported angles.
-- Completed MQT eighth-turn phase checkpoint:
-  - extended exact `u1`/`p` and `cu1`/`cp` import to direct `pi/8` phase
-    coefficients over the existing `Z_16` importer representation;
-  - kept `rz`/`crz` and axis rotations at `pi/4` resolution because their
-    global phases or decompositions need a deliberate finer-modulus path before
-    `pi/8` is safe;
-  - added golden, dependency-free amplitude, negative-resolution, and optional
-    Qiskit coverage;
-  - improved the local MQT default size-3/4 `alg,indep` scan from 18/32 to
-    23/32 imports; the remaining default misses are algorithm-level custom-gate
-    syntax and `wstate` non-finite `ry` angles;
-  - latest verification:
-    `meson test -C build --print-errorlogs`,
-    `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`, and
-    `tools/check-coverage.sh build-coverage` at 78.0% line coverage over `src`.
-- Completed solver benchmark summary checkpoint:
-  - added aggregate summary output to `tools/bench_qasm_corpus.py` so cache hit
-    rates and trace phase totals are visible without post-processing JSONL;
-  - added a lean Meson smoke test for the new summary mode;
-  - expanded `tests/qasm_solver_corpus.json` with bounded MQT-derived
-    straight-line cases (`bv`, QFT-entangled size 3/4, and QPE-inexact size 4)
-    that import through `qasm2sop` and stay cheap enough for all exact backends;
-  - kept MQT `qwalk` out of the default correctness corpus because the imported
-    QSOP has 96 variables after Toffoli lowering and exceeds the default exact
-    solver guard;
-  - current local summary for components+branch with traces over the expanded
-    manifest: 32 case-boundaries, component cache hit rate 26/(26+43)=0.377,
-    branch residual cache hit rate 0/(0+267)=0.000, branch leaves 477 versus
-    component leaves 707.
-- Completed external branch-cache measurement checkpoint:
-  - added `tools/build_external_qasm_manifest.py` to materialize temporary
-    benchmark manifests from external QASM roots and optional `.qc`
-    translations after checking `qasm2sop` importability and an explicit
-    solver variable guard;
-  - added `--max-vars` pass-through to `tools/bench_qasm_corpus.py` so external
-    runs can state their solver guard;
-  - current size-gated external results:
-    - FeynmanDD `benchmark/exp` imports 152 files, but the smallest all-zero
-      boundary QSOP has 76 variables, so none fit the 24/32/40 branch-summary
-      guard;
-    - PyZX `feyn_bench/qasm` imports 44 files, but only one fits a 40-variable
-      guard and that branch run timed out at 30 seconds;
-    - PyZX translated `.qc` under a 24-variable guard emits 20 cases and 20
-      boundaries: branch cache hit rate 0/(0+26)=0.000, component cache hit
-      rate 17/(17+20)=0.459;
-    - MQT generated default size-3/4 `alg,indep` under a 24-variable guard
-      emits 20 cases and 20 boundaries: branch cache hit rate 0/(0+56)=0.000,
-      component cache hit rate 24/(24+30)=0.444;
-    - combined checked-in + MQT + PyZX `.qc` branch-solvable slice has 52 cases
-      and 72 boundaries: branch cache hit rate 0/(0+349)=0.000, component cache
-      hit rate 67/(67+93)=0.419.
-- Completed branch trace ranking checkpoint:
-  - added `--top` and `--top-metric` to `tools/bench_qasm_corpus.py` summary
-    output so worst case-boundaries can be ranked by stable counters such as
-    `search_nodes` or `leaf_assignments`;
-  - trace-enabled top rows now include the dominant trace phase, keeping branch
-    heuristic inspection visible without post-processing JSONL;
-  - current checked-in branch ranking by `search_nodes` is led by
-    `mqt_qftentangled_indep_4` boundaries at 27-35 search nodes, followed by
-    `register_pair_mix` at 23 search nodes and `entangled_axis_chain` at 18
-    search nodes; all still have zero branch cache hits.
-- Completed balanced branch split checkpoint:
-  - added `qsop_residual_split_without_var`, which reports both split count and
-    largest remaining component size for candidate branch variables;
-  - refined branch variable selection to prefer material reductions in the
-    largest remaining component before degree/unary tie breaks, while ignoring
-    one-variable balance changes that regressed paired length-5 path cases;
-  - checked-in QASM corpus branch summary improved from 267 to 211 search nodes
-    and from 477 to 469 leaf assignments, with `mqt_qftentangled_indep_4`
-    dropping from up to 35 nodes to 15;
-  - combined checked-in + MQT + PyZX `.qc` branch-solvable slice improved from
-    349 to 281 branch search nodes and from 803 to 783 leaf assignments, with
-    branch cache hits still at zero.
-- Pushed `fcc1ea6` (`Tune branch split heuristic`) to `origin/main`.
-- Started width-heuristic and rankwidth-backend checkpoint:
-  - confirmed the target paper is arXiv:2605.29944, "Quadratic
-    Sums-of-Powers for Fixed-Parameter Tractable Quantum-Circuit Simulation";
-  - added experimental branch variable-choice policies:
-    `--branch-heuristic split|treewidth|linear-rankwidth`;
-  - `treewidth` uses active-graph min-fill, while `linear-rankwidth` uses a
-    local GF(2) cut-rank proxy from a candidate's active neighbors to the rest
-    of the active residual graph;
-  - default `split` remains the best current checked-in corpus baseline at 211
-    branch search nodes; `treewidth` currently gets 413 nodes with 77 cache hits
-    and fewer leaves, while `linear-rankwidth` gets 247 nodes and zero cache
-    hits;
-  - on the combined checked-in + MQT + PyZX `.qc` branch-solvable slice, `split`
-    remains best at 281 search nodes, while `treewidth` gets 527 nodes with 102
-    cache hits and `linear-rankwidth` gets 329 nodes with zero cache hits. These
-    are experimental comparators, not new defaults.
-- Completed first explicit rankwidth backend checkpoint:
-  - added `sop-solve --backend rankwidth --rankwidth-decomposition PATH`;
-  - defined a minimal `.rwdec` text format with `p rwdec`, leaf `l`, and join
-    `j` records;
-  - implemented the direct sparse count-table DP over boundary signatures and
-    residues for sign-only QSOPs, with trace phases for leaf and join table
-    construction;
-  - added a hand-written path decomposition fixture and tests comparing the
-    rankwidth backend against brute force;
-  - initially added `sop-stats` width diagnostics for mask-backed instances:
-    min-fill width, min-fill fill-edge count, and natural-order linear
-    cut-rank.
-- Completed sign-only rankwidth hardening checkpoint:
-  - added generated rankwidth decompositions: linear input order, balanced input
-    order, and min-fill order with a balanced tree;
-  - made `sop-solve --backend rankwidth` usable without an explicit `.rwdec`
-    file, while preserving explicit decomposition input;
-  - added stronger `.rwdec` validation coverage for duplicate variables,
-    missing coverage, cycles, overlapping children, undefined nodes, bad child
-    ids, and variable-count mismatches;
-  - precomputed rankwidth join maps per signature pair, avoiding repeated
-    cross-edge parity scans for each residue-entry pair;
-  - added exact Fourier mode via `--rankwidth-mode fourier`, using a modular DFT
-    over a 64-bit NTT prime;
-  - extended rankwidth stats and traces with maximum table size, signature
-    counts, join-map phases, and importer-fed benchmark support.
-- Completed first rankwidth benchmark decision pass:
-  - checked the built-in QASM solver corpus and a combined external
-    branch-solvable manifest with `--skip-unsupported`, comparing generated
-    `linear`, `balanced`, and `min-fill` decompositions in count-table and
-    Fourier modes;
-  - built-in count-table summary over 27 sign-only records:
-    `linear` reached width 3, max table 32, and 472 join-signature pairs;
-    `balanced` reached width 2, max table 24, and 560 join-signature pairs;
-    `min-fill` reached width 2, max table 24, and 438 join-signature pairs;
-  - external count-table summary over 65 sign-only records:
-    `linear` reached width 3, max table 32, and 589 join-signature pairs;
-    `balanced` reached width 2, max table 24, and 685 join-signature pairs;
-    `min-fill` reached width 2, max table 24, and 563 join-signature pairs;
-  - Fourier mode showed the same ordering on signature growth: `linear` reached
-    max table 128 from max signature count 8, while both `balanced` and
-    `min-fill` stayed at max table 64 from max signature count 4; `min-fill`
-    had the lowest total table entries and join-signature pairs on both corpus
-    slices;
-  - decision: improve generated decomposition quality next. Indexed signature
-    maps remain deferred because these runs have small max signature counts
-    (4-8), and the trace is already more sensitive to decomposition shape than
-    to join-map lookup overhead.
-- Completed cut-aware min-fill decomposition checkpoint:
-  - added `--rankwidth-generate min-fill-cut`, which keeps the min-fill variable
-    order but chooses recursive split points by minimizing the maximum GF(2)
-    child cut-rank, with balance as a tie-breaker;
-  - kept the generator orthogonal to `--rankwidth-mode`, so both count-table and
-    Fourier can use `min-fill-cut`;
-  - checked-in rankwidth count-table summary over 27 sign-only records improved
-    from max table 24, table entries 803, and 438 join-signature pairs with
-    `min-fill` to max table 16, table entries 741, and 319 join-signature pairs
-    with `min-fill-cut`;
-  - combined importer-fed rankwidth count-table summary over 65 sign-only
-    records improved from max table 24, table entries 1066, and 563
-    join-signature pairs with `min-fill` to max table 16, table entries 1003,
-    and 436 join-signature pairs with `min-fill-cut`;
-  - Fourier mode saw the same structural reduction: max table dropped from 64
-    to 32 on both slices, with lower total table entries and join-signature
-    pairs. Wall-clock timings remain noisy at this corpus size, so structural
-    counters are the decision signal for now.
-- Completed rankwidth benchmark sweep tooling checkpoint:
-  - extended `tools/bench_qasm_corpus.py` so repeated `--rankwidth-generate`
-    and `--rankwidth-mode` flags expand into multiple rankwidth configurations;
-  - added `--rankwidth-sweep` to run every generated decomposition and
-    count-table/Fourier mode combination in one benchmark command;
-  - changed summary and top-record output to group rankwidth records by
-    decomposition and mode, avoiding accidental aggregation across solver
-    configurations.
-- Completed first larger external rankwidth sweep:
-  - added `--strip-terminal-measurements` to
-    `tools/build_external_qasm_manifest.py`, allowing benchmark ingestion to
-    drop `creg` declarations and final `measure` statements while still
-    rejecting mid-circuit dynamic control such as `if` and `reset`;
-  - added `--inline-simple-gates` to the same manifest builder so static
-    non-parameterized OpenQASM gate macros can be expanded at the benchmark
-    boundary when their bodies use supported operations;
-  - with terminal-measurement stripping, the 63-variable PyZX QASM-only
-    manifest from the available external checkout improved from 27 to 32
-    importable fixed-boundary cases;
-  - with terminal-measurement stripping plus simple-gate inlining, the
-    63-variable PyZX QASM-only manifest improves to 33 importable
-    fixed-boundary cases; macro-heavy adder sources also become importable but
-    exceed the current rankwidth variable guard;
-  - with terminal-measurement stripping, simple-gate inlining, and `.qc`
-    translation enabled, the 63-variable PyZX QASM/QC manifest improves from
-    39 to 45 importable fixed-boundary cases out of 344 source files, with 276
-    rejected by the variable guard and 23 skipped for other import or
-    source-shape reasons;
-  - rankwidth accepted 37 of those 45 cases as current sign-only instances,
-    including examples with 51-63 imported QSOP variables;
-  - on this larger PyZX rankwidth-compatible slice, linear generated
-    decompositions beat the min-fill variants: `linear` reached width 3 and
-    max table 64, while `min-fill-cut` reached width 5 and max table 256 and
-    plain `min-fill` reached width 6 and max table 512;
-  - Fourier was competitive on this larger slice: `linear` Fourier had the
-    lowest aggregate solve time in the sweep, while `linear` count-table had
-    fewer total table entries. This means the small-corpus count-table
-    conclusion is not universal once residue-pair joins grow;
-  - rebuilding the FeynmanDD `benchmark/exp` manifest with the then-current
-    63-variable guard emitted no cases because all 152 importable sources
-    exceeded the old mask-backed rankwidth limit.
-- Completed first bitset-backed width diagnostics checkpoint:
-  - extended `sop-stats` min-fill width, fill-edge count, and natural linear
-    cut-rank diagnostics beyond the old 63-variable mask limit using bitset
-    rows;
-  - added a 66-variable path regression test proving large text and JSON stats
-    keep width diagnostics available;
-  - verified a larger FeynmanDD-derived import can now be inspected by
-    `sop-stats` above 63 variables.
-- Completed first beyond-63 rankwidth solve checkpoint:
-  - extracted shared bitset helpers and kept `sop-stats` on the bitset-backed
-    large-width path;
-  - ported rankwidth decomposition variable sets, adjacency rows, cut-rank
-    checks, generated min-fill/min-fill-cut helpers, boundary signatures, and
-    representative assignments from one-word masks to dynamic bitsets;
-  - interned boundary signatures to integer IDs so rankwidth table keys stay
-    compact while signatures themselves can span multiple words;
-  - added checked `uint64_t` residue-count arithmetic for the existing
-    brute-force, branch, components, and small rankwidth fast paths, so overflow
-    reports an error instead of wrapping;
-  - added a CRT-backed rankwidth count-table path for instances with at least
-    64 variables. It runs the sparse DP modulo several 64-bit primes and
-    reconstructs only the final residue histogram as decimal strings;
-  - added a 64-variable rankwidth regression where the modulus is 16 but the
-    residue-0 count is `2^64`, plus a branch overflow diagnostic check for the
-    same instance.
+- Branch: `main`, tracking `origin/main`.
+- Latest pushed checkpoint: `b20ecdc` (`Lift rankwidth variable cap`).
+- Core utilities implemented: `sop-check`, `sop-stats`, `sop-solve`, `qasm2sop`.
+- Boundary tools implemented: QASM corpus benchmark runner, external manifest
+  builder, PyZX/T-Par `.qc` translator, starter `.qgraph` translator, FeynmanDD
+  scanner, and optional MQT Bench scanner.
+- Solver status:
+  - `components` remains the default exact backend.
+  - `branch` has residual mutation, residual fingerprints, memo cache stats,
+    component splitting, edge-free residue-table leaves, and experimental
+    `split|treewidth|linear-rankwidth` variable heuristics.
+  - `rankwidth` handles sign-edge QSOPs with generated or explicit
+    decompositions, interned bitset signatures, count-table mode, CRT-backed
+    large assignment counts, and small-instance Fourier mode.
+- Importer status:
+  - OpenQASM support covers the static finite subset used by the checked-in
+    corpus and many PyZX/FeynmanDD/MQT cases.
+  - Terminal-measurement stripping and simple-gate inlining are available in
+    the external manifest builder.
+  - `.qc` benchmark files can be translated through `tools/qc2qasm.py`.
+- Last validation before this doc cleanup:
+  - `meson test -C build --print-errorlogs`: 17/17 passing.
+  - `tools/check-coverage.sh build-coverage`: 78.1% line coverage.
 
 ## Current Task
 
-- Continue width-driven solver improvements using the current QASM importer,
-  benchmark runner, trace output, branch heuristic selection, and branch cache
-  stats as measurable circuit-derived regressions.
-- Next likely solver work:
-  - rerun PyZX/FeynmanDD/MQT sign-only rankwidth manifests with `--max-vars`
-    above 63 to measure how much of the external corpus the bitset/CRT path now
-    handles;
-  - compare CRT count-table timing against the small-instance `uint64_t` path on
-    cases below 64 variables to quantify overhead and confirm the fast path
-    remains the default;
-  - decide whether Fourier needs a multi-prime CRT variant or should remain a
-    small-instance comparison mode;
-  - use ranked branch summaries to tune remaining hard cases, now led by
-    `register_pair_mix`, `entangled_axis_chain`, and the reduced
-    `mqt_qftentangled_indep_4` cases;
-  - use rankwidth sweeps, not a single generator, as the generated-decomposition
-    baseline: `min-fill-cut` is best on the small checked-in slice, while
-    `linear` is currently best on the larger PyZX-compatible slice;
-  - rerun external sign-only manifest slices with the rankwidth sweep before
-    changing rankwidth defaults;
-  - improve generated decomposition quality using rankwidth table-growth traces
-    before changing the solver core again;
-  - deprioritize additional branch-cache machinery until we have realistic
-    residual-repetition cases, since the checked-in plus branch-solvable
-    external slice still shows no branch-cache hits;
-  - decide whether split estimates need incremental component metadata or
-    whether component splitting is enough for current benchmark scale;
-  - keep coverage above the 75% CI gate.
+- Keep README short and user-facing.
+- Keep `tasks.md` focused on current and future work.
+- Keep architecture docs focused on durable design constraints and future
+  nonimplemented work, not implementation history.
 
-## Future Tasks
+## Next Steps
 
-- Add more finite OpenQASM syntax compatibility with boundary-level examples:
-  - add small compatibility aliases when they reuse existing lowering paths.
-- Prototype external-format boundary utilities:
-  - add a real `.qgraph` conversion fixture once PyZX is available locally or in
-    an optional test environment;
-  - decide whether Quipper conversion still needs optional PyZX support beyond
-    the dependency-free `.qc` bridge;
-  - use `tools/scan_mqt_bench.py` to identify MQT cases that only need importer
-    syntax support versus cases outside finite quadratic SOP scope;
-  - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
-    runs.
-- Expand optional Qiskit comparison coverage as importer scope grows.
-- Revisit performance-annex items as solver hot paths mature:
-  - dancing-cells adjacency mutation remains incomplete: the residual backend
-    has reversible mutation, immutable incidence lists, and trailed active
-    degrees, but not linked-cell deletion/reinsertion or incremental component
-    metadata. See
-    [solver backends](ARCHITECTURE.md#solver-backends) and
-    [A.5](ARCHITECTURE_SPEED_ANNEX.md#a5-keep-reversible-mutation-central).
-  - hashing/caching remains partly incomplete: branch-local exact residual
-    caching is implemented, but incremental Zobrist updates on the mutation
-    trail and layered canonical residual fingerprints are still future work.
-    See [A.6](ARCHITECTURE_SPEED_ANNEX.md#a6-make-incremental-hashing-part-of-mutation)
-    and [A.7](ARCHITECTURE_SPEED_ANNEX.md#a7-use-layered-canonical-fingerprints).
-  - tree/rankwidth heuristics remain future work: current branch scoring uses
-    split count by default and now has experimental min-fill and local cut-rank
-    policies, but not explicit decomposition-aware treewidth/rankwidth
-    estimators or a full pluggable heuristic interface. See
-    [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
-  - rankwidth decomposition solver: continue the sign-only backend based on
-    arXiv:2605.29944 with better generated decompositions first, indexed
-    signature maps only after larger traces justify them, optional broader
-    exact Fourier support for awkward moduli, and larger imported sign-only
-    benchmark coverage.
-  - labelled rankwidth is deliberately deferred while the sign-only backend is
-    benchmarked. The June 2026 QSOP models note identifies the right future
-    parameter as labelled cut-signature width, not ordinary rankwidth of the
-    unlabelled support graph: for a cut `X|Y`, use the finite-ring subset-sum
-    signature sets `Sigma_X_to_Y(Q) = {x_X^T Q[X,Y]}` and `Sigma_Y_to_X(Q)`,
-    set `s_Q` to the larger cardinality, and use `ceil(log2 s_Q)` as the cut
-    width. See
-    [Rankwidth Count-Table DP](ARCHITECTURE.md#rankwidth-count-table-dp).
-  - specialized residue kernels.
+- Rerun PyZX/FeynmanDD/MQT sign-only rankwidth manifests with `--max-vars`
+  above 63 to measure how much of the larger external corpus the bitset/CRT
+  path now handles.
+- Compare rankwidth count-table fast path versus CRT path below 64 variables to
+  quantify overhead and verify the default path remains cheap.
+- Use rankwidth sweeps before changing generated-decomposition defaults; recent
+  evidence differs between small checked-in cases and larger PyZX-derived
+  cases.
+- Decide whether Fourier should stay a small-instance comparison mode or gain a
+  multi-prime CRT variant.
+- Continue branch heuristic work only from benchmark evidence; current branch
+  cache hit rates on realistic slices are low, so additional cache machinery is
+  secondary.
+- Keep coverage above the 75% CI gate.
+
+## Deferred Work
+
+- Better generated rankwidth decompositions and decomposition-aware heuristics.
+- Labelled rankwidth based on labelled cut-signature width, not ordinary
+  support-graph rankwidth. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#labelled-rankwidth-direction).
+- Incremental residual hashing and richer canonical residual fingerprints.
+- Dancing-cells-style linked mutation if traces show active-edge flag traversal
+  is a bottleneck.
+- Specialized residue/count kernels and optional CPU-feature dispatch.
+- More importer syntax support driven by real benchmark misses.
+- Optional exporters for external baselines such as FeynmanDD gate-set JSON or
+  WMC encodings.
