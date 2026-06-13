@@ -262,8 +262,8 @@ level 1:
     sorted active degree / unary / label summaries
 
 level 2:
-    canonical relabelling for small components; two-variable one-edge
-    components are implemented today
+    canonical relabelling for small components; exhaustive relabelling for
+    component-cache keys up to five variables is implemented today
 
 level 3:
     optional graph-canonicalization backend later

@@ -172,11 +172,12 @@ each connected component.
 
 The backend owns a local component cache keyed by the deterministic component
 subinstance data. Cache entries carry a compact fingerprint for quick rejection
-before exact key comparison. Two-variable one-edge components are canonically
-relabelled by unary labels before lookup, so mirrored copies reuse the same
-cached result. Repeated components reuse cached residue-count vectors before
-convolution. `sop-solve --format stats --backend components` reports component
-count, cache hits, cache misses, and brute-force leaves solved on cache misses.
+before exact key comparison. Components up to five variables are exhaustively
+relabelled before lookup, so mirrored or otherwise isomorphic small components
+reuse the same cached result. Repeated components reuse cached residue-count
+vectors before convolution. `sop-solve --format stats --backend components`
+reports component count, cache hits, cache misses, and brute-force leaves solved
+on cache misses.
 
 ### Residual Branch-And-Sum
 

@@ -24,8 +24,6 @@ and `ARCHITECTURE.md`.
     but added Qymera-inspired GHZ and uniform-superposition corpus cases;
   - added component-cache fingerprints for fast rejection before exact
     subinstance comparison;
-  - added two-variable one-edge component relabelling so mirrored components can
-    share cache entries;
   - updated README and architecture notes for the solver-focused direction.
 - Completed residual branch checkpoint:
   - added an edge-free residue-table fast path for active independent unary
@@ -56,10 +54,16 @@ and `ARCHITECTURE.md`.
   - taught the branch backend to solve disconnected active residual components
     separately, convolve their counts, and shift by the parent residual
     constant once.
+- Completed small-component canonicalization checkpoint:
+  - replaced the two-variable one-edge component relabelling special case with
+    exhaustive component-cache canonicalization for components up to five
+    variables;
+  - added a mirrored three-variable path stats fixture that proves isomorphic
+    small components share one cache entry.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.3% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.6% line coverage over `src`.
 
 ## Current Task
 
@@ -70,7 +74,6 @@ and `ARCHITECTURE.md`.
     set exists, then decide whether component-aware residual keys are warranted;
   - decide whether split estimates need incremental component metadata or
     whether component splitting is enough for current benchmark scale;
-  - keep small-component canonical relabelling scoped to cases proven by stats;
   - keep coverage above the 75% CI gate.
 
 ## Future Tasks
@@ -95,6 +98,5 @@ and `ARCHITECTURE.md`.
     min-fill/treewidth/rankwidth/cut-signature estimators or a pluggable
     heuristic interface. See
     [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
-  - broader small-component canonical relabelling;
   - structured timing/tracing;
   - specialized residue kernels.

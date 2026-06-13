@@ -141,6 +141,17 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             ],
             source_root / "tests" / "golden" / "solve_mirrored_components.stats",
         ),
+        (
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
+                "components",
+                str(source_root / "tests" / "golden" / "solve_mirrored_path_components.qsop"),
+            ],
+            source_root / "tests" / "golden" / "solve_mirrored_path_components.stats",
+        ),
     ]
 
     for cmd, expected_path in cases:
@@ -221,6 +232,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_single")
     run_solve(exe, source_root, "solve_labelled")
     run_solve(exe, source_root, "solve_disconnected")
+    run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)

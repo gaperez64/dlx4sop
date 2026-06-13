@@ -30,8 +30,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `sop-solve`: compute exact residue-count vectors or solver stats with one of
   three backends:
   - `components` (default): decompose connected components, cache repeated
-    component solves with small-component relabelling and fingerprinted cache
-    lookup, and brute-force each cache miss;
+    component solves with exhaustive relabelling for components up to five
+    variables plus fingerprinted cache lookup, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic, a bucketed fingerprinted residual memo
@@ -190,6 +190,21 @@ components: 2
 cache_hits: 1
 cache_misses: 1
 leaf_assignments: 4
+```
+
+Mirrored small components can also share cache entries after canonical
+relabelling:
+
+```sh
+build/sop-solve --format stats --backend components tests/golden/solve_mirrored_path_components.qsop
+```
+
+```text
+backend: components
+components: 2
+cache_hits: 1
+cache_misses: 1
+leaf_assignments: 8
 ```
 
 Import a small OpenQASM 2.0 circuit into canonical QSOP:
