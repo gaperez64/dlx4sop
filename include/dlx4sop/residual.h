@@ -37,6 +37,9 @@ uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v);
 
 uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v);
 
+bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                          uint32_t *out, qsop_error_t *error);
+
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v);
 
 bool qsop_residual_edge_active(const qsop_residual_t *residual, uint32_t e);

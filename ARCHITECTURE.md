@@ -174,9 +174,10 @@ count, cache hits, cache misses, and brute-force leaves solved on cache misses.
 recursively branches on active variables. A reversible trail supports checkpoints
 and undo without copying the full residual state at every branch.
 
-The current branch heuristic picks an active variable using active degree with a
-unary-label tiebreak. The backend reports internal node and leaf counters through
-the stats-aware solve API and `sop-solve --format stats`.
+The current branch heuristic first estimates how many active residual components
+would remain after removing each candidate variable. It then uses active degree
+and unary-label presence as tie breakers. The backend reports internal node and
+leaf counters through the stats-aware solve API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 
@@ -212,7 +213,6 @@ solver is still small enough for cheap exact tests.
 
 Likely next solver-facing targets are:
 
-- branch heuristics that account for component splits after assignment;
 - stronger algebraic invariant tests;
 - parser fuzz targets;
 - a static OpenQASM subset importer once the QSOP core stabilizes.

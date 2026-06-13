@@ -376,6 +376,76 @@ uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v
   return degree;
 }
 
+bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                          uint32_t *out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residual component output");
+    return false;
+  }
+  *out = 0;
+
+  if (residual == NULL) {
+    set_error(error, "internal error: null residual state");
+    return false;
+  }
+  if (removed >= residual->nvars) {
+    set_error(error, "removed variable is outside residual range");
+    return false;
+  }
+  if (residual->active_var[removed] == 0) {
+    set_error(error, "removed variable must be active");
+    return false;
+  }
+
+  uint8_t *visited = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*visited));
+  uint32_t *queue = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*queue));
+  if (visited == NULL || queue == NULL) {
+    free(visited);
+    free(queue);
+    set_error(error, "out of memory while estimating residual components");
+    return false;
+  }
+
+  uint32_t components = 0;
+  for (uint32_t start = 0; start < residual->nvars; start++) {
+    if (start == removed || residual->active_var[start] == 0 || visited[start] != 0) {
+      continue;
+    }
+
+    components++;
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    visited[start] = 1;
+    queue[tail++] = start;
+    while (head < tail) {
+      const uint32_t v = queue[head++];
+      for (uint32_t e = 0; e < residual->nedges; e++) {
+        if (residual->active_edge[e] == 0 || residual->edge_u[e] == removed ||
+            residual->edge_v[e] == removed) {
+          continue;
+        }
+
+        uint32_t other = UINT32_MAX;
+        if (residual->edge_u[e] == v) {
+          other = residual->edge_v[e];
+        } else if (residual->edge_v[e] == v) {
+          other = residual->edge_u[e];
+        }
+
+        if (other != UINT32_MAX && residual->active_var[other] != 0 && visited[other] == 0) {
+          visited[other] = 1;
+          queue[tail++] = other;
+        }
+      }
+    }
+  }
+
+  free(visited);
+  free(queue);
+  *out = components;
+  return true;
+}
+
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v) {
   return residual != NULL && v < residual->nvars && residual->active_var[v] != 0;
 }

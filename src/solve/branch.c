@@ -27,28 +27,42 @@ typedef struct branch_search_stats {
   uint64_t leaves;
 } branch_search_stats_t;
 
-static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out) {
+static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out,
+                              qsop_error_t *error) {
   const uint32_t nvars = qsop_residual_nvars(residual);
   bool found = false;
   uint32_t best_var = 0;
-  uint32_t best_score = 0;
+  uint32_t best_components = 0;
+  uint32_t best_degree = 0;
+  bool best_has_unary = false;
 
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_residual_var_active(residual, v)) {
+      uint32_t components = 0;
+      if (!qsop_residual_components_without_var(residual, v, &components, error)) {
+        return false;
+      }
       const uint32_t degree = qsop_residual_active_degree(residual, v);
-      const uint32_t score = degree * 2U + (qsop_residual_unary(residual, v) != 0 ? 1U : 0U);
-      if (!found || score > best_score) {
+      const bool has_unary = qsop_residual_unary(residual, v) != 0;
+      if (!found || components > best_components ||
+          (components == best_components && degree > best_degree) ||
+          (components == best_components && degree == best_degree && has_unary && !best_has_unary)) {
         found = true;
         best_var = v;
-        best_score = score;
+        best_components = components;
+        best_degree = degree;
+        best_has_unary = has_unary;
       }
     }
   }
 
-  if (found) {
-    *out = best_var;
+  if (!found) {
+    set_error(error, "residual active-var count disagrees with active flags");
+    return false;
   }
-  return found;
+
+  *out = best_var;
+  return true;
 }
 
 static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
@@ -61,8 +75,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
   }
 
   uint32_t v = 0;
-  if (!choose_branch_var(residual, &v)) {
-    set_error(error, "residual active-var count disagrees with active flags");
+  if (!choose_branch_var(residual, &v, error)) {
     return false;
   }
 

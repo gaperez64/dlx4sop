@@ -27,15 +27,20 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 75.6% line coverage over `src`.
+- Implemented split-aware branch selection:
+  - residual helper to estimate active component count after removing a candidate variable;
+  - branch selector now prioritizes split count, then active degree, then unary-label presence;
+  - residual unit tests for articulation, non-articulation, post-branch, and inactive-variable cases.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
 
 ## Current Task
 
-- Add sharper branch heuristics that account for component splits after assignment:
-  - estimate residual component impact after candidate assignments;
-  - keep heuristic cost bounded for small exact solves;
-  - compare against current degree/unary heuristic on golden examples.
+- Extend tests with algebraic invariants and parser fuzz targets:
+  - start with deterministic algebraic invariant tests for canonicalization and solver agreement;
+  - keep fuzz targets optional until the normal CI path remains lean.
 
 ## Future Tasks
 
-- Extend tests with algebraic invariants and parser fuzz targets.
 - Add OpenQASM static-subset importer once the QSOP core is stable.

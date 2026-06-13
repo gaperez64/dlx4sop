@@ -31,7 +31,8 @@ normalization rules, and backend design notes.
   - `components` (default): decompose connected components, cache repeated
     component solves, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
-  - `branch`: recursive residual branch-and-sum using a reversible trail.
+  - `branch`: recursive residual branch-and-sum using a reversible trail and a
+    split-aware variable heuristic.
 
 The test suite also covers reusable residue-vector helpers and the mutable
 residual state used by the branch backend.
@@ -160,6 +161,4 @@ component.
 
 ## Current Direction
 
-The next implementation target is sharper branch heuristics that account for
-component splits after assignment. After that, the near-term work is stronger
-algebraic tests and parser fuzzing.
+The next implementation target is stronger algebraic tests and parser fuzzing.

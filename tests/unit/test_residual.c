@@ -188,6 +188,50 @@ static int test_nested_undo(void) {
   return result;
 }
 
+static int test_component_split_estimate(void) {
+  qsop_error_t error = {0};
+  qsop_instance_t qsop = fixture_instance();
+  qsop_residual_t *residual = NULL;
+  if (!qsop_residual_create(&qsop, &residual, &error)) {
+    fprintf(stderr, "create failed: %s\n", error.message);
+    return 1;
+  }
+
+  uint32_t components = 0;
+  if (!qsop_residual_components_without_var(residual, 0, &components, &error) ||
+      expect_u32("split remove0", components, 1) != 0 ||
+      !qsop_residual_components_without_var(residual, 1, &components, &error) ||
+      expect_u32("split remove1", components, 2) != 0 ||
+      !qsop_residual_components_without_var(residual, 2, &components, &error) ||
+      expect_u32("split remove2", components, 1) != 0) {
+    fprintf(stderr, "component split estimate failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+
+  if (!qsop_residual_branch(residual, 1, 0, &error)) {
+    fprintf(stderr, "branch for split estimate failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  if (!qsop_residual_components_without_var(residual, 0, &components, &error) ||
+      expect_u32("post-branch split remove0", components, 1) != 0 ||
+      !qsop_residual_components_without_var(residual, 2, &components, &error) ||
+      expect_u32("post-branch split remove2", components, 1) != 0) {
+    fprintf(stderr, "post-branch component split estimate failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  if (qsop_residual_components_without_var(residual, 1, &components, &error)) {
+    fprintf(stderr, "inactive split estimate unexpectedly succeeded\n");
+    qsop_residual_free(residual);
+    return 1;
+  }
+
+  qsop_residual_free(residual);
+  return 0;
+}
+
 static int test_invalid_branch(void) {
   qsop_error_t error = {0};
   qsop_instance_t qsop = fixture_instance();
@@ -230,6 +274,9 @@ int main(void) {
     return 1;
   }
   if (test_nested_undo() != 0) {
+    return 1;
+  }
+  if (test_component_split_estimate() != 0) {
     return 1;
   }
   if (test_invalid_branch() != 0) {
