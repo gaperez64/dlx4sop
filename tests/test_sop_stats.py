@@ -75,6 +75,49 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
 
 
+def run_large_width_diagnostics(exe: pathlib.Path) -> None:
+    nvars = 66
+    lines = ["p qsop-sign 8 66 65", "n 0", "cst 0", ""]
+    lines.extend(f"e {v} {v + 1}" for v in range(nvars - 1))
+    qsop = "\n".join(lines) + "\n"
+    completed = subprocess.run(
+        [str(exe), "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_parts = {
+        "variables: 66",
+        "quadratic_terms: 65",
+        "components: 1",
+        "max_degree: 2",
+        "width_diagnostics: available",
+        "min_fill_width: 1",
+        "min_fill_edges: 0",
+        "linear_cut_rank: 1",
+    }
+    if completed.returncode != 0 or not expected_parts.issubset(set(completed.stdout.splitlines())):
+        raise AssertionError(f"large width diagnostics failed\n{completed.stdout}\n{completed.stderr}")
+
+    json_result = subprocess.run(
+        [str(exe), "--format", "json", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        json_result.returncode != 0
+        or '"variables":66' not in json_result.stdout
+        or '"width_diagnostics_available":true' not in json_result.stdout
+        or '"linear_cut_rank":1' not in json_result.stdout
+    ):
+        raise AssertionError(f"large JSON width diagnostics failed\n{json_result.stdout}\n{json_result.stderr}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_stats.py SOP_STATS SOURCE_ROOT", file=sys.stderr)
@@ -87,6 +130,7 @@ def main() -> int:
     run_stats(exe, source_root, ["--format", "json"], "stats_labelled.json")
     run_stats(exe, source_root, ["--format", "text"], "stats_labelled.text")
     run_cli_paths(exe, source_root)
+    run_large_width_diagnostics(exe)
     return 0
 
 

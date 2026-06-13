@@ -40,7 +40,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     variable-choice heuristics can be selected with `--branch-heuristic`.
   - `rankwidth`: experimental sign-edge QSOP backend over explicit or generated
     decompositions, using boundary-signature tables in either residue-count or
-    exact Fourier mode.
+    exact Fourier mode. Generated decompositions include linear, balanced,
+    min-fill, and min-fill with cut-rank-aware recursive splits.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -57,7 +58,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `tools/build_external_qasm_manifest.py`: build a
   `qasm_solver_corpus.json`-compatible manifest from external QASM roots, and
   optionally translated `.qc` files, after checking importability and an
-  explicit solver variable guard.
+  explicit solver variable guard. It can also strip terminal measurements from
+  QASM inputs and inline simple non-parameterized gate definitions for
+  strong-simulation benchmark imports.
 - `tools/qgraph2qasm.py`: optional PyZX-backed starter utility for translating
   PyZX/Quantomatic `.qgraph` JSON diagrams to OpenQASM when PyZX can extract a
   circuit.
@@ -166,7 +169,9 @@ build/sop-solve --backend branch --branch-heuristic treewidth tests/golden/solve
 build/sop-solve --backend branch --branch-heuristic linear-rankwidth tests/golden/solve_labelled.qsop
 build/sop-solve --backend rankwidth tests/golden/solve_sign_path.qsop
 build/sop-solve --backend rankwidth --rankwidth-generate min-fill tests/golden/solve_sign_path.qsop
+build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut tests/golden/solve_sign_path.qsop
 build/sop-solve --backend rankwidth --rankwidth-mode fourier tests/golden/solve_sign_path.qsop
+build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode fourier tests/golden/solve_sign_path.qsop
 build/sop-solve --backend rankwidth --rankwidth-decomposition tests/golden/solve_sign_path.rwdec tests/golden/solve_sign_path.qsop
 ```
 
@@ -203,11 +208,12 @@ j <node> <left-child> <right-child>
 ```
 
 Without `--rankwidth-decomposition`, `sop-solve --backend rankwidth` generates a
-linear decomposition. `--rankwidth-generate balanced|min-fill` selects generated
-balanced input-order or min-fill-order decompositions. `--rankwidth-mode fourier`
-uses the exact modular-DFT variant. The backend currently supports sign-only
-quadratic coefficients and mask-backed instances up to the solver variable
-guard.
+linear decomposition. `--rankwidth-generate balanced|min-fill|min-fill-cut`
+selects generated balanced input-order, min-fill-order, or min-fill-order with
+cut-rank-aware recursive split decompositions. `--rankwidth-mode fourier` uses
+the exact modular-DFT variant and can be combined with any generated
+decomposition. The backend currently supports sign-only quadratic coefficients
+and mask-backed instances up to the solver variable guard.
 
 The branch cache counters expose repeated residual states when they occur. For
 example, the small triangle fixture revisits one residual:
@@ -322,7 +328,9 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components -
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --trace --format summary --top 8 --top-metric search_nodes
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --branch-heuristic linear-rankwidth --trace --format summary --top 8 --top-metric search_nodes
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-mode fourier --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
 ```
 
 Build a temporary external benchmark manifest for the same runner:
@@ -330,8 +338,10 @@ Build a temporary external benchmark manifest for the same runner:
 ```sh
 WORKDIR="${WORKDIR:-external-benchmarks}"
 git clone --depth 1 https://github.com/zxcalc/pyzx.git "$WORKDIR/pyzx"
-tools/build_external_qasm_manifest.py build/qasm2sop "$WORKDIR/pyzx/circuits" --include-qc --qc2qasm tools/qc2qasm.py --max-vars 24 --output "$WORKDIR/pyzx-qc-manifest.json"
+tools/build_external_qasm_manifest.py build/qasm2sop "$WORKDIR/pyzx/circuits" --include-qc --qc2qasm tools/qc2qasm.py --strip-terminal-measurements --inline-simple-gates --max-vars 24 --output "$WORKDIR/pyzx-qc-manifest.json"
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest "$WORKDIR/pyzx-qc-manifest.json" --backend components --backend branch --trace --format summary --top 5 --top-metric leaf_assignments
+tools/build_external_qasm_manifest.py build/qasm2sop "$WORKDIR/pyzx/circuits" --include-qc --qc2qasm tools/qc2qasm.py --strip-terminal-measurements --inline-simple-gates --max-vars 63 --output "$WORKDIR/pyzx-rankwidth-manifest.json"
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest "$WORKDIR/pyzx-rankwidth-manifest.json" --backend rankwidth --rankwidth-sweep --max-vars 63 --skip-unsupported --trace --format summary --top 8 --top-metric max_table_entries
 ```
 
 Inspect a local FeynmanDD checkout:

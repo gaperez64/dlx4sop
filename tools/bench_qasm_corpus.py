@@ -14,7 +14,7 @@ from typing import TextIO
 BACKENDS = ("components", "brute-force", "branch", "rankwidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
-RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill")
+RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TOP_METRICS = (
     "solve_elapsed_ns",
@@ -160,12 +160,32 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         add_counter(total, key, value)
 
 
-def summarize_records(records: list[dict]) -> dict[str, dict]:
-    summary: dict[str, dict] = {}
+def record_summary_key(record: dict) -> tuple[str, str, str]:
+    return (
+        record["backend"],
+        record["branch_heuristic"],
+        f"{record['rankwidth_decomposition']}:{record['rankwidth_mode']}",
+    )
+
+
+def format_summary_key(key: tuple[str, str, str]) -> list[str]:
+    backend, branch_heuristic, rankwidth_config = key
+    lines = [f"backend: {backend}"]
+    if backend == "branch" and branch_heuristic:
+        lines.append(f"  branch_heuristic: {branch_heuristic}")
+    if backend == "rankwidth" and rankwidth_config != ":":
+        decomposition, mode = rankwidth_config.split(":", 1)
+        lines.append(f"  rankwidth_decomposition: {decomposition}")
+        lines.append(f"  rankwidth_mode: {mode}")
+    return lines
+
+
+def summarize_records(records: list[dict]) -> dict[tuple[str, str, str], dict]:
+    summary: dict[tuple[str, str, str], dict] = {}
     for record in records:
-        backend = record["backend"]
+        key = record_summary_key(record)
         entry = summary.setdefault(
-            backend,
+            key,
             {
                 "records": 0,
                 "solve_elapsed_ns": 0,
@@ -179,8 +199,8 @@ def summarize_records(records: list[dict]) -> dict[str, dict]:
         entry["import_elapsed_ns"] += record["import_elapsed_ns"]
 
         stats_total = entry["stats"]
-        for key, value in record["stats"].items():
-            add_stat(stats_total, key, value)
+        for stat_key, value in record["stats"].items():
+            add_stat(stats_total, stat_key, value)
 
         trace_total = entry["trace"]
         for phase, values in record["trace"].items():
@@ -234,6 +254,24 @@ def iter_case_boundaries(cases: list[dict], limit: int | None):
             yield case["name"], qasm, input_bits, output_bits
 
 
+def iter_backend_configs(args: argparse.Namespace, backend: str):
+    if backend == "rankwidth":
+        for generator in args.rankwidth_generators:
+            for mode in args.rankwidth_modes:
+                yield {
+                    "rankwidth_generate": generator,
+                    "rankwidth_mode": mode,
+                    "branch_heuristic": "",
+                }
+        return
+
+    yield {
+        "rankwidth_generate": "",
+        "rankwidth_mode": "",
+        "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
+    }
+
+
 def benchmark(args: argparse.Namespace) -> list[dict]:
     cases = load_cases(args.manifest)
     backends = args.backends or list(DEFAULT_BACKENDS)
@@ -246,54 +284,55 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
         )
         header = qsop_header(qsop)
         for backend in backends:
-            cmd = [
-                str(args.sop_solve),
-                "--backend",
-                backend,
-                "--format",
-                "stats",
-                "--max-vars",
-                str(args.max_vars),
-            ]
-            if args.trace:
-                cmd += ["--trace", "csv"]
-            if backend == "branch" and args.branch_heuristic != "split":
-                cmd += ["--branch-heuristic", args.branch_heuristic]
-            if backend == "rankwidth":
-                cmd += [
-                    "--rankwidth-generate",
-                    args.rankwidth_generate,
-                    "--rankwidth-mode",
-                    args.rankwidth_mode,
+            for config in iter_backend_configs(args, backend):
+                cmd = [
+                    str(args.sop_solve),
+                    "--backend",
+                    backend,
+                    "--format",
+                    "stats",
+                    "--max-vars",
+                    str(args.max_vars),
                 ]
-            cmd.append("-")
-            try:
-                stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
-            except RuntimeError as exc:
-                if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
-                    continue
-                raise
-            stats = parse_stats(stats_text)
-            trace = parse_trace_csv(trace_text) if args.trace else {}
-            records.append(
-                {
-                    "case": case,
-                    "boundary": f"{input_bits}->{output_bits}",
-                    "input": input_bits,
-                    "output": output_bits,
-                    "backend": backend,
-                    "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
-                    "rankwidth_mode": args.rankwidth_mode if backend == "rankwidth" else "",
-                    "rankwidth_decomposition": args.rankwidth_generate if backend == "rankwidth" else "",
-                    **header,
-                    "import_elapsed_ns": import_elapsed_ns,
-                    "solve_elapsed_ns": solve_elapsed_ns,
-                    "qasm_sha256": sha256_text(qasm),
-                    "qsop_sha256": sha256_text(qsop),
-                    "stats": stats,
-                    "trace": trace,
-                }
-            )
+                if args.trace:
+                    cmd += ["--trace", "csv"]
+                if backend == "branch" and config["branch_heuristic"] != "split":
+                    cmd += ["--branch-heuristic", config["branch_heuristic"]]
+                if backend == "rankwidth":
+                    cmd += [
+                        "--rankwidth-generate",
+                        config["rankwidth_generate"],
+                        "--rankwidth-mode",
+                        config["rankwidth_mode"],
+                    ]
+                cmd.append("-")
+                try:
+                    stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
+                except RuntimeError as exc:
+                    if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
+                        continue
+                    raise
+                stats = parse_stats(stats_text)
+                trace = parse_trace_csv(trace_text) if args.trace else {}
+                records.append(
+                    {
+                        "case": case,
+                        "boundary": f"{input_bits}->{output_bits}",
+                        "input": input_bits,
+                        "output": output_bits,
+                        "backend": backend,
+                        "branch_heuristic": config["branch_heuristic"],
+                        "rankwidth_mode": config["rankwidth_mode"],
+                        "rankwidth_decomposition": config["rankwidth_generate"],
+                        **header,
+                        "import_elapsed_ns": import_elapsed_ns,
+                        "solve_elapsed_ns": solve_elapsed_ns,
+                        "qasm_sha256": sha256_text(qasm),
+                        "qsop_sha256": sha256_text(qsop),
+                        "stats": stats,
+                        "trace": trace,
+                    }
+                )
     return records
 
 
@@ -332,11 +371,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
         return
 
     print(f"top_records_by_{args.top_metric}:", file=file)
-    for backend in sorted({record["backend"] for record in records}):
+    for key in sorted({record_summary_key(record) for record in records}):
         backend_records = [
             record
             for record in records
-            if record["backend"] == backend and record_has_metric(record, args.top_metric)
+            if record_summary_key(record) == key and record_has_metric(record, args.top_metric)
         ]
         ranked = sorted(
             backend_records,
@@ -348,7 +387,9 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             ),
             reverse=True,
         )
-        print(f"  backend: {backend}", file=file)
+        print(f"  {format_summary_key(key)[0]}", file=file)
+        for line in format_summary_key(key)[1:]:
+            print(f"  {line}", file=file)
         if not ranked:
             print("    no records report this metric", file=file)
             continue
@@ -383,10 +424,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
 def write_summary(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
     print(f"records: {len(records)}", file=file)
     summary = summarize_records(records)
-    for backend in sorted(summary):
-        entry = summary[backend]
+    for key in sorted(summary):
+        entry = summary[key]
         stats = entry["stats"]
-        print(f"backend: {backend}", file=file)
+        for line in format_summary_key(key):
+            print(line, file=file)
         print(f"  records: {entry['records']}", file=file)
         print(f"  import_elapsed_ns: {entry['import_elapsed_ns']}", file=file)
         print(f"  solve_elapsed_ns: {entry['solve_elapsed_ns']}", file=file)
@@ -457,15 +499,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--rankwidth-generate",
+        dest="rankwidth_generators",
+        action="append",
         choices=RANKWIDTH_GENERATORS,
-        default="linear",
-        help="Generated decomposition used by the rankwidth backend.",
+        help="Generated decomposition used by the rankwidth backend. May be repeated.",
     )
     parser.add_argument(
         "--rankwidth-mode",
+        dest="rankwidth_modes",
+        action="append",
         choices=RANKWIDTH_MODES,
-        default="count-table",
-        help="Solve mode used by the rankwidth backend.",
+        help="Solve mode used by the rankwidth backend. May be repeated.",
+    )
+    parser.add_argument(
+        "--rankwidth-sweep",
+        action="store_true",
+        help="Benchmark all rankwidth generator and solve-mode combinations.",
     )
     parser.add_argument(
         "--top",
@@ -486,6 +535,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--max-vars must be non-negative")
     if args.top < 0:
         parser.error("--top must be non-negative")
+    if args.rankwidth_sweep:
+        args.rankwidth_generators = list(RANKWIDTH_GENERATORS)
+        args.rankwidth_modes = list(RANKWIDTH_MODES)
+    else:
+        args.rankwidth_generators = args.rankwidth_generators or ["linear"]
+        args.rankwidth_modes = args.rankwidth_modes or ["count-table"]
     return args
 
 

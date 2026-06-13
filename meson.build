@@ -217,6 +217,7 @@ if python3.found()
       '--limit',
       '1',
       '--trace',
+      '--rankwidth-sweep',
       '--format',
       'summary',
       '--top',

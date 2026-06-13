@@ -75,6 +75,115 @@ def load_source(path: pathlib.Path, qc2qasm: pathlib.Path | None) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def starts_with_keyword(text: str, keyword: str) -> bool:
+    return text == keyword or text.startswith(f"{keyword} ") or text.startswith(f"{keyword}\t")
+
+
+def strip_terminal_measurements(qasm: str) -> str:
+    stripped_lines: list[str] = []
+    saw_measurement = False
+    for raw in qasm.splitlines():
+        statement = strip_line_comment(raw)
+        if not statement:
+            stripped_lines.append(raw)
+            continue
+        if starts_with_keyword(statement, "if") or starts_with_keyword(statement, "reset"):
+            raise RuntimeError("cannot strip dynamic OpenQASM with if/reset")
+        if starts_with_keyword(statement, "creg") or starts_with_keyword(statement, "measure"):
+            if starts_with_keyword(statement, "measure"):
+                saw_measurement = True
+            continue
+        if saw_measurement and not starts_with_keyword(statement, "barrier"):
+            raise RuntimeError("cannot strip non-terminal measurement")
+        stripped_lines.append(raw)
+    return "\n".join(stripped_lines).rstrip("\n") + "\n"
+
+
+def parse_csv_operands(text: str) -> list[str]:
+    return [chunk.strip() for chunk in text.split(",") if chunk.strip()]
+
+
+def parse_gate_definition(header: str) -> tuple[str, list[str]]:
+    declaration = header.split("{", 1)[0].strip()
+    parts = declaration.split(None, 2)
+    if len(parts) < 2 or parts[0] != "gate":
+        raise RuntimeError("invalid simple gate definition")
+    name = parts[1]
+    if "(" in name or ")" in name:
+        raise RuntimeError("parameterized gate definitions cannot be inlined")
+    formals = parse_csv_operands(parts[2]) if len(parts) == 3 else []
+    return name, formals
+
+
+def gate_body_statements(text: str) -> list[str]:
+    return [chunk.strip() for chunk in text.split(";") if chunk.strip()]
+
+
+def inline_simple_gates(qasm: str) -> str:
+    macros: dict[str, tuple[list[str], list[str]]] = {}
+    output: list[str] = []
+    lines = qasm.splitlines()
+    i = 0
+
+    def expand_statement(statement: str, depth: int = 0) -> list[str]:
+        if depth > 16:
+            raise RuntimeError("simple gate expansion is too deep")
+        if not statement.endswith(";"):
+            statement = statement + ";"
+        bare = statement[:-1].strip()
+        if not bare:
+            return []
+        op, _, operand_text = bare.partition(" ")
+        if op not in macros:
+            return [statement]
+        formals, body = macros[op]
+        actuals = parse_csv_operands(operand_text)
+        if len(actuals) != len(formals):
+            raise RuntimeError(f"gate {op} expects {len(formals)} operands, got {len(actuals)}")
+        mapping = dict(zip(formals, actuals, strict=True))
+        expanded: list[str] = []
+        for body_statement in body:
+            body_op, _, body_operand_text = body_statement.partition(" ")
+            operands = parse_csv_operands(body_operand_text)
+            rewritten_operands = [mapping.get(operand, operand) for operand in operands]
+            rewritten = body_op
+            if rewritten_operands:
+                rewritten += " " + ",".join(rewritten_operands)
+            rewritten += ";"
+            expanded.extend(expand_statement(rewritten, depth + 1))
+        return expanded
+
+    while i < len(lines):
+        raw = lines[i]
+        statement = strip_line_comment(raw)
+        if not starts_with_keyword(statement, "gate"):
+            if statement:
+                output.extend(expand_statement(statement))
+            else:
+                output.append(raw)
+            i += 1
+            continue
+
+        collected = [statement]
+        while "}" not in collected[-1]:
+            i += 1
+            if i >= len(lines):
+                raise RuntimeError("unterminated simple gate definition")
+            collected.append(strip_line_comment(lines[i]))
+        definition = "\n".join(collected)
+        if "(" in definition.split("{", 1)[0]:
+            raise RuntimeError("parameterized gate definitions cannot be inlined")
+        before, after_open = definition.split("{", 1)
+        body_text, _, after_close = after_open.partition("}")
+        if after_close.strip():
+            raise RuntimeError("simple gate definition has trailing text after '}'")
+        name, formals = parse_gate_definition(before + "{")
+        macros[name] = (formals, gate_body_statements(body_text))
+        i += 1
+
+    return "\n".join(output).rstrip("\n") + "\n"
+
+
 def boundary_pairs(nqubits: int, mode: str) -> list[list[str]]:
     zero = "0" * nqubits
     one = "1" * nqubits
@@ -153,6 +262,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--qc2qasm", type=pathlib.Path, help="translator used when --include-qc is set")
     parser.add_argument("--include-qc", action="store_true")
     parser.add_argument("--include-invalid", action="store_true")
+    parser.add_argument(
+        "--strip-terminal-measurements",
+        action="store_true",
+        help="drop creg declarations and terminal measure statements for strong-simulation imports",
+    )
+    parser.add_argument(
+        "--inline-simple-gates",
+        action="store_true",
+        help="inline non-parameterized OpenQASM gate definitions for benchmark ingestion",
+    )
     parser.add_argument("--source-prefix", default="external")
     parser.add_argument("--limit", type=int, help="limit source files before import filtering")
     parser.add_argument("--max-cases", type=int, help="limit emitted manifest cases")
@@ -189,6 +308,10 @@ def main(argv: list[str]) -> int:
             break
         try:
             qasm = load_source(path, args.qc2qasm)
+            if args.inline_simple_gates:
+                qasm = inline_simple_gates(qasm)
+            if args.strip_terminal_measurements:
+                qasm = strip_terminal_measurements(qasm)
             nqubits = qasm_qubits(qasm)
             boundaries = boundary_pairs(nqubits, args.boundaries)
             case, status = build_case(

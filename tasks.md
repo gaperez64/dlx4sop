@@ -267,6 +267,76 @@ and `ARCHITECTURE.md`.
     maps remain deferred because these runs have small max signature counts
     (4-8), and the trace is already more sensitive to decomposition shape than
     to join-map lookup overhead.
+- Completed cut-aware min-fill decomposition checkpoint:
+  - added `--rankwidth-generate min-fill-cut`, which keeps the min-fill variable
+    order but chooses recursive split points by minimizing the maximum GF(2)
+    child cut-rank, with balance as a tie-breaker;
+  - kept the generator orthogonal to `--rankwidth-mode`, so both count-table and
+    Fourier can use `min-fill-cut`;
+  - checked-in rankwidth count-table summary over 27 sign-only records improved
+    from max table 24, table entries 803, and 438 join-signature pairs with
+    `min-fill` to max table 16, table entries 741, and 319 join-signature pairs
+    with `min-fill-cut`;
+  - combined importer-fed rankwidth count-table summary over 65 sign-only
+    records improved from max table 24, table entries 1066, and 563
+    join-signature pairs with `min-fill` to max table 16, table entries 1003,
+    and 436 join-signature pairs with `min-fill-cut`;
+  - Fourier mode saw the same structural reduction: max table dropped from 64
+    to 32 on both slices, with lower total table entries and join-signature
+    pairs. Wall-clock timings remain noisy at this corpus size, so structural
+    counters are the decision signal for now.
+- Completed rankwidth benchmark sweep tooling checkpoint:
+  - extended `tools/bench_qasm_corpus.py` so repeated `--rankwidth-generate`
+    and `--rankwidth-mode` flags expand into multiple rankwidth configurations;
+  - added `--rankwidth-sweep` to run every generated decomposition and
+    count-table/Fourier mode combination in one benchmark command;
+  - changed summary and top-record output to group rankwidth records by
+    decomposition and mode, avoiding accidental aggregation across solver
+    configurations.
+- Completed first larger external rankwidth sweep:
+  - added `--strip-terminal-measurements` to
+    `tools/build_external_qasm_manifest.py`, allowing benchmark ingestion to
+    drop `creg` declarations and final `measure` statements while still
+    rejecting mid-circuit dynamic control such as `if` and `reset`;
+  - added `--inline-simple-gates` to the same manifest builder so static
+    non-parameterized OpenQASM gate macros can be expanded at the benchmark
+    boundary when their bodies use supported operations;
+  - with terminal-measurement stripping, the 63-variable PyZX QASM-only
+    manifest from the available external checkout improved from 27 to 32
+    importable fixed-boundary cases;
+  - with terminal-measurement stripping plus simple-gate inlining, the
+    63-variable PyZX QASM-only manifest improves to 33 importable
+    fixed-boundary cases; macro-heavy adder sources also become importable but
+    exceed the current rankwidth variable guard;
+  - with terminal-measurement stripping, simple-gate inlining, and `.qc`
+    translation enabled, the 63-variable PyZX QASM/QC manifest improves from
+    39 to 45 importable fixed-boundary cases out of 344 source files, with 276
+    rejected by the variable guard and 23 skipped for other import or
+    source-shape reasons;
+  - rankwidth accepted 37 of those 45 cases as current sign-only instances,
+    including examples with 51-63 imported QSOP variables;
+  - on this larger PyZX rankwidth-compatible slice, linear generated
+    decompositions beat the min-fill variants: `linear` reached width 3 and
+    max table 64, while `min-fill-cut` reached width 5 and max table 256 and
+    plain `min-fill` reached width 6 and max table 512;
+  - Fourier was competitive on this larger slice: `linear` Fourier had the
+    lowest aggregate solve time in the sweep, while `linear` count-table had
+    fewer total table entries. This means the small-corpus count-table
+    conclusion is not universal once residue-pair joins grow;
+  - rebuilding the FeynmanDD `benchmark/exp` manifest with the same 63-variable
+    guard emitted no cases because all 152 importable sources exceeded the
+    current mask-backed rankwidth limit.
+- Completed first bitset-backed width diagnostics checkpoint:
+  - extended `sop-stats` min-fill width, fill-edge count, and natural linear
+    cut-rank diagnostics beyond the old 63-variable mask limit using bitset
+    rows;
+  - added a 66-variable path regression test proving large text and JSON stats
+    keep width diagnostics available;
+  - verified a larger FeynmanDD-derived import can now be inspected by
+    `sop-stats` above 63 variables. Exact `sop-solve --backend rankwidth`
+    still remains capped because residue-count outputs are stored as
+    `uint64_t`; full beyond-63 solving needs arbitrary-precision counts or a
+    CRT-backed result representation in addition to bitset signatures.
 
 ## Current Task
 
@@ -277,10 +347,13 @@ and `ARCHITECTURE.md`.
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
-  - improve generated decomposition quality using the rankwidth table-growth
-    traces before changing the solver core again;
-  - use min-fill as the generated-decomposition baseline in near-term
-    rankwidth benchmark comparisons;
+  - use rankwidth sweeps, not a single generator, as the generated-decomposition
+    baseline: `min-fill-cut` is best on the small checked-in slice, while
+    `linear` is currently best on the larger PyZX-compatible slice;
+  - rerun external sign-only manifest slices with the rankwidth sweep before
+    changing rankwidth defaults or optimizing table internals;
+  - improve generated decomposition quality using rankwidth table-growth traces
+    before changing the solver core again;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;

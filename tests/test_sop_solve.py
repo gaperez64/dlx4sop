@@ -309,6 +309,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     assert_rankwidth_matches(exe, qsop, expected.stdout)
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "balanced")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill")
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill-cut")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
     assert_rankwidth_matches(
         exe,
@@ -316,6 +317,15 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         expected.stdout,
         "--rankwidth-generate",
         "min-fill",
+        "--rankwidth-mode",
+        "fourier",
+    )
+    assert_rankwidth_matches(
+        exe,
+        qsop,
+        expected.stdout,
+        "--rankwidth-generate",
+        "min-fill-cut",
         "--rankwidth-mode",
         "fourier",
     )
@@ -373,6 +383,28 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "rankwidth_decomposition: linear" not in fourier_stats.stdout
     ):
         raise AssertionError(f"rankwidth Fourier stats failed\n{fourier_stats.stdout}\n{fourier_stats.stderr}")
+
+    cut_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "min-fill-cut",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        cut_stats.returncode != 0
+        or "rankwidth_decomposition: min-fill-cut" not in cut_stats.stdout
+    ):
+        raise AssertionError(f"rankwidth min-fill-cut stats failed\n{cut_stats.stdout}\n{cut_stats.stderr}")
 
     traced = subprocess.run(
         [

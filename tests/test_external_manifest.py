@@ -14,6 +14,27 @@ h q[0];
 cx q[0], q[1];
 """
 
+MEASURED_QASM_SAMPLE = """OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0], q[1];
+measure q -> c;
+"""
+
+SIMPLE_GATE_QASM_SAMPLE = """OPENQASM 2.0;
+include "qelib1.inc";
+gate makebell a,b {
+h a;
+cx a,b;
+}
+qreg q[2];
+creg c[2];
+makebell q[0],q[1];
+measure q -> c;
+"""
+
 
 QC_SAMPLE = """.v a b
 BEGIN
@@ -58,6 +79,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         (root / "bell.qasm").write_text(QASM_SAMPLE, encoding="utf-8")
+        (root / "measured.qasm").write_text(MEASURED_QASM_SAMPLE, encoding="utf-8")
+        (root / "macro.qasm").write_text(SIMPLE_GATE_QASM_SAMPLE, encoding="utf-8")
         (root / "small.qc").write_text(QC_SAMPLE, encoding="utf-8")
         (root / "bad.qasm").write_text("OPENQASM 2.0;\nqreg q[1];\nu1(pi/3) q[0];\n", encoding="utf-8")
 
@@ -72,6 +95,39 @@ def main() -> int:
         )
         if len(qasm_cases) != 1 or len(qasm_cases[0]["boundaries"]) != 2:
             raise AssertionError(f"unexpected QASM manifest:\n{qasm_cases}\n{qasm_report}")
+
+        stripped_cases, stripped_report = run_manifest(
+            builder,
+            qasm2sop,
+            str(root),
+            "--source-prefix",
+            "smoke",
+            "--strip-terminal-measurements",
+        )
+        measured = [case for case in stripped_cases if case["name"].endswith("measured")]
+        if len(stripped_cases) != 2 or len(measured) != 1:
+            raise AssertionError(f"unexpected stripped manifest:\n{stripped_cases}\n{stripped_report}")
+        measured_qasm = "\n".join(measured[0]["qasm_lines"])
+        if "creg" in measured_qasm or "measure" in measured_qasm:
+            raise AssertionError(f"measured QASM was not stripped:\n{measured_qasm}")
+
+        inlined_cases, inlined_report = run_manifest(
+            builder,
+            qasm2sop,
+            str(root),
+            "--source-prefix",
+            "smoke",
+            "--strip-terminal-measurements",
+            "--inline-simple-gates",
+        )
+        macro = [case for case in inlined_cases if case["name"].endswith("macro")]
+        if len(inlined_cases) != 3 or len(macro) != 1:
+            raise AssertionError(f"unexpected inlined manifest:\n{inlined_cases}\n{inlined_report}")
+        macro_qasm = "\n".join(macro[0]["qasm_lines"])
+        if "gate" in macro_qasm or "makebell" in macro_qasm or "measure" in macro_qasm:
+            raise AssertionError(f"macro QASM was not inlined and stripped:\n{macro_qasm}")
+        if "h q[0];" not in macro_qasm or "cx q[0],q[1];" not in macro_qasm:
+            raise AssertionError(f"macro QASM missing expanded body:\n{macro_qasm}")
 
         qc_cases, qc_report = run_manifest(
             builder,

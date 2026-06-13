@@ -131,6 +131,10 @@ static uint32_t first_set_bit_u64(uint64_t value) {
   return bit;
 }
 
+static uint64_t *adjacency_masks(const qsop_instance_t *qsop, qsop_error_t *error);
+static uint32_t cut_rank(uint32_t nvars, const uint64_t *adj, uint64_t left, uint64_t right,
+                         qsop_error_t *error);
+
 static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error) {
   if (needed <= table->cap) {
     return true;
@@ -639,6 +643,88 @@ static uint32_t build_balanced_nodes(qsop_rankwidth_decomposition_t *decompositi
   return node;
 }
 
+static uint64_t range_mask(const uint64_t *prefix_masks, uint32_t begin, uint32_t end) {
+  return prefix_masks[end] & ~prefix_masks[begin];
+}
+
+static bool choose_cut_rank_split(uint32_t nvars, const uint64_t *adj,
+                                  const uint64_t *prefix_masks, uint32_t begin, uint32_t end,
+                                  uint32_t *out, qsop_error_t *error) {
+  const uint64_t all = all_vars_mask(nvars);
+  bool found = false;
+  uint32_t best_split = begin + 1U;
+  uint32_t best_rank = UINT32_MAX;
+  uint32_t best_balance = UINT32_MAX;
+  uint32_t best_rank_sum = UINT32_MAX;
+
+  for (uint32_t split = begin + 1U; split < end; split++) {
+    const uint64_t left = range_mask(prefix_masks, begin, split);
+    const uint64_t right = range_mask(prefix_masks, split, end);
+    const uint32_t left_rank = cut_rank(nvars, adj, left, all & ~left, error);
+    if (left_rank == UINT32_MAX) {
+      return false;
+    }
+    const uint32_t right_rank = cut_rank(nvars, adj, right, all & ~right, error);
+    if (right_rank == UINT32_MAX) {
+      return false;
+    }
+    const uint32_t rank = left_rank > right_rank ? left_rank : right_rank;
+    const uint32_t rank_sum = left_rank + right_rank;
+    const uint32_t left_size = split - begin;
+    const uint32_t right_size = end - split;
+    const uint32_t balance =
+        left_size > right_size ? left_size - right_size : right_size - left_size;
+
+    if (!found || rank < best_rank ||
+        (rank == best_rank && balance < best_balance) ||
+        (rank == best_rank && balance == best_balance && rank_sum < best_rank_sum)) {
+      found = true;
+      best_split = split;
+      best_rank = rank;
+      best_balance = balance;
+      best_rank_sum = rank_sum;
+    }
+  }
+
+  *out = best_split;
+  return true;
+}
+
+static uint32_t build_cut_rank_nodes(qsop_rankwidth_decomposition_t *decomposition,
+                                     const uint32_t *leaf_nodes,
+                                     const uint64_t *prefix_masks, const uint64_t *adj,
+                                     uint32_t begin, uint32_t end, uint32_t *next_join,
+                                     qsop_error_t *error) {
+  if (end - begin == 1U) {
+    return leaf_nodes[begin];
+  }
+
+  uint32_t split = 0;
+  if (!choose_cut_rank_split(decomposition->nvars, adj, prefix_masks, begin, end, &split,
+                             error)) {
+    return UINT32_MAX;
+  }
+  const uint32_t left =
+      build_cut_rank_nodes(decomposition, leaf_nodes, prefix_masks, adj, begin, split,
+                           next_join, error);
+  if (left == UINT32_MAX) {
+    return UINT32_MAX;
+  }
+  const uint32_t right =
+      build_cut_rank_nodes(decomposition, leaf_nodes, prefix_masks, adj, split, end,
+                           next_join, error);
+  if (right == UINT32_MAX) {
+    return UINT32_MAX;
+  }
+  const uint32_t node = (*next_join)++;
+  decomposition->nodes[node] = (rw_node_t){
+      .kind = RW_NODE_JOIN,
+      .left = left,
+      .right = right,
+  };
+  return node;
+}
+
 bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_generator_t generator,
                                            qsop_rankwidth_decomposition_t **out,
@@ -671,7 +757,8 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
   for (uint32_t v = 0; v < qsop->nvars; v++) {
     order[v] = v;
   }
-  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL &&
+  if ((generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL ||
+       generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT) &&
       !make_min_fill_order(qsop, order, error)) {
     free(order);
     free(leaf_nodes);
@@ -679,11 +766,23 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     return false;
   }
 
+  uint64_t *adj = NULL;
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && qsop->nvars > 1U) {
+    adj = adjacency_masks(qsop, error);
+    if (adj == NULL) {
+      free(order);
+      free(leaf_nodes);
+      free(decomposition);
+      return false;
+    }
+  }
+
   decomposition->nvars = qsop->nvars;
   decomposition->nnodes = 2U * qsop->nvars - 1U;
   decomposition->nodes = calloc(decomposition->nnodes, sizeof(*decomposition->nodes));
   decomposition->postorder = calloc(decomposition->nnodes, sizeof(*decomposition->postorder));
   if (decomposition->nodes == NULL || decomposition->postorder == NULL) {
+    free(adj);
     free(order);
     free(leaf_nodes);
     qsop_rankwidth_decomposition_free(decomposition);
@@ -714,12 +813,29 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       current = node;
     }
     decomposition->root = current;
+  } else if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT) {
+    uint64_t prefix_masks[64] = {0};
+    for (uint32_t i = 0; i < qsop->nvars; i++) {
+      prefix_masks[i + 1U] = prefix_masks[i] | bit_for_var(order[i]);
+    }
+
+    uint32_t next_join = qsop->nvars;
+    decomposition->root = build_cut_rank_nodes(decomposition, leaf_nodes, prefix_masks, adj, 0,
+                                               qsop->nvars, &next_join, error);
+    if (decomposition->root == UINT32_MAX) {
+      free(adj);
+      free(order);
+      free(leaf_nodes);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
   } else {
     uint32_t next_join = qsop->nvars;
     decomposition->root =
         build_balanced_nodes(decomposition, leaf_nodes, 0, qsop->nvars, &next_join);
   }
 
+  free(adj);
   free(order);
   free(leaf_nodes);
   if (!validate_decomposition(decomposition, error)) {

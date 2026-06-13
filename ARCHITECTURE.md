@@ -233,12 +233,15 @@ signatures to the parent outside set, add the sign cross-term determined by
 representative child signatures, and accumulate residue-count vectors.
 
 The backend can read an explicit decomposition file or generate one internally:
-linear input order, balanced input order, or min-fill order with a balanced
-tree. It is deliberately narrow: it requires sign-only quadratic coefficients
-and mask-backed instances under the solver variable guard. It reports
-decomposition width, total and maximum table entries, total and maximum
-signature entries, residue-pair joins, and signature-pair joins through
-`sop-solve --format stats`.
+linear input order, balanced input order, min-fill order with a balanced tree,
+or min-fill order with recursive split points chosen by a GF(2) cut-rank score.
+The cut-aware splitter keeps the min-fill elimination order but, for each
+contiguous range, chooses the child split that minimizes the maximum child
+cut-rank and then prefers balanced splits. It is deliberately narrow: it
+requires sign-only quadratic coefficients and mask-backed instances under the
+solver variable guard. It reports decomposition width, total and maximum table
+entries, total and maximum signature entries, residue-pair joins, and
+signature-pair joins through `sop-solve --format stats`.
 
 The `QSOP_RANKWIDTH_SOLVE_FOURIER` mode is an exact modular-DFT variant. It
 chooses a 64-bit NTT prime `p = 1 mod r` larger than the assignment count, keeps
@@ -380,14 +383,38 @@ and trace phase event/item/elapsed totals. It can also rank the largest
 case-boundary records per backend by a selected metric such as branch search
 nodes, leaf assignments, cache misses, or wall-clock time; trace-enabled ranked
 rows include the dominant trace phase for that record.
+For rankwidth experiments, repeated `--rankwidth-generate` and
+`--rankwidth-mode` flags expand into multiple configuration records, and
+`--rankwidth-sweep` runs all generated decomposition and solve-mode
+combinations with separate summary blocks.
 `tools/build_external_qasm_manifest.py` materializes compatible manifests from
 external QASM roots and optional `.qc` translations by first checking
 `qasm2sop` importability for selected fixed-boundary amplitudes and filtering
-out cases above an explicit solver variable guard.
+out cases above an explicit solver variable guard. For strong-simulation
+benchmark ingestion, it can explicitly strip `creg` declarations and terminal
+`measure` statements before import; it still rejects mid-circuit dynamic
+control such as `if` or `reset`. It can also inline simple non-parameterized
+OpenQASM gate definitions as a boundary preprocessing step when those macro
+bodies are made only of supported static operations.
+
+`sop-stats` width diagnostics use a 64-bit mask fast path on small instances
+and a bitset-backed path on larger instances. This lets external benchmark
+imports above 63 variables be inspected for min-fill width, fill-edge count, and
+linear cut-rank even though exact solver result counts are still limited by the
+current `uint64_t` residue-count representation.
 
 The default CI suite includes one-boundary benchmark smoke tests to keep the
 runner and summary format working without turning performance measurement into
 a noisy gate.
+
+Current rankwidth benchmark evidence is corpus-dependent. On the small
+checked-in sign-only slice, `min-fill-cut` reduces table growth versus the older
+generated decompositions. On the larger PyZX-derived rankwidth-compatible slice,
+plain linear decompositions currently have lower width and smaller maximum
+tables than the min-fill variants. Count-table mode is structurally lighter on
+small cases, while Fourier can be faster on larger cases where residue-pair
+joins dominate. Rankwidth defaults should therefore be changed only after
+sweeping generator and mode combinations on the target corpus.
 
 ## External Translation Notes
 
@@ -495,10 +522,11 @@ The next solver targets are benchmark-driven width work. The current
 `rankwidth` backend now has sign-only count-table and exact Fourier checkpoints
 from the 2026 arXiv paper "Quadratic Sums-of-Powers for Fixed-Parameter
 Tractable Quantum-Circuit Simulation" (arXiv:2605.29944). The next backend
-milestones are benchmarking generated decompositions on imported sign-only
-circuits, improving decomposition quality, replacing linear signature lookups
-with indexed maps when traces justify it, and broadening exact Fourier support
-if non-default moduli expose NTT-prime limitations.
+milestones are broadening imported sign-only benchmark coverage, improving
+decomposition quality beyond min-fill and cut-rank split heuristics, replacing
+linear signature lookups with indexed maps when traces justify it, and
+broadening exact Fourier support if non-default moduli expose NTT-prime
+limitations.
 
 Branch heuristic experiments should keep using trace and corpus data to decide
 whether treewidth min-fill, local cut-rank/linear-rankwidth proxies,
