@@ -183,8 +183,25 @@ static bool shift_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_
   return true;
 }
 
+static void add_saturating_u64(uint64_t *dst, uint64_t value) {
+  if (UINT64_MAX - *dst < value) {
+    *dst = UINT64_MAX;
+  } else {
+    *dst += value;
+  }
+}
+
 bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                       qsop_result_t **out, qsop_error_t *error) {
+  return qsop_solve_components_bruteforce_stats(qsop, max_component_vars, out, NULL, error);
+}
+
+bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
+                                            uint32_t max_component_vars, qsop_result_t **out,
+                                            qsop_solve_stats_t *stats, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -241,11 +258,18 @@ bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_
   }
 
   acc[0] = 1;
+  if (stats != NULL) {
+    stats->components = ncomponents;
+    if (ncomponents == 0) {
+      stats->leaf_assignments = 1;
+    }
+  }
   for (uint32_t c = 0; c < ncomponents; c++) {
     qsop_instance_t sub = {0};
     qsop_result_t *part = NULL;
+    qsop_solve_stats_t part_stats = {0};
     if (!build_subinstance(qsop, component, c, &sub, error) ||
-        !qsop_solve_bruteforce(&sub, max_component_vars, &part, error) ||
+        !qsop_solve_bruteforce_stats(&sub, max_component_vars, &part, &part_stats, error) ||
         !qsop_counts_convolve(qsop->r, tmp, acc, part->counts, error)) {
       free_subinstance(&sub);
       qsop_result_free(part);
@@ -256,6 +280,9 @@ bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_
       free(acc);
       free(tmp);
       return false;
+    }
+    if (stats != NULL) {
+      add_saturating_u64(&stats->leaf_assignments, part_stats.leaf_assignments);
     }
     memcpy(acc, tmp, (size_t)qsop->r * sizeof(*acc));
     free_subinstance(&sub);

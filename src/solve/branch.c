@@ -84,6 +84,15 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 
 bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                                 qsop_result_t **out, qsop_error_t *error) {
+  return qsop_solve_residual_branch_stats(qsop, max_vars, out, NULL, error);
+}
+
+bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_vars,
+                                      qsop_result_t **out, qsop_solve_stats_t *stats,
+                                      qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -117,11 +126,15 @@ bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
 
-  branch_search_stats_t stats = {0};
-  if (!branch_sum_rec(residual, result->counts, &stats, error)) {
+  branch_search_stats_t search = {0};
+  if (!branch_sum_rec(residual, result->counts, &search, error)) {
     qsop_result_free(result);
     qsop_residual_free(residual);
     return false;
+  }
+  if (stats != NULL) {
+    stats->search_nodes = search.nodes;
+    stats->leaf_assignments = search.leaves;
   }
 
   qsop_residual_free(residual);

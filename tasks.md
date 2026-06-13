@@ -11,17 +11,24 @@ Completed implementation history has been flushed into `README.md`.
   rules, and backend design notes into `ARCHITECTURE.md`.
 - Copied `.github/FUNDING.yml` from `gaperez64/acacia-bonsai`, including the
   `buy_me_a_coffee: gaperez64` entry.
+- Implemented `sop-solve --format stats`:
+  - additive stats-aware solver entry points;
+  - branch `search_nodes` and `leaf_assignments`;
+  - component count and component subproblem leaf work;
+  - golden CLI tests for branch and component stats output.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.2% line coverage over `src`.
 
 ## Current Task
 
-- Add a CLI-visible solver stats mode:
-  - expose backend, node, leaf, and component counters where available;
-  - keep residue-vector output as the default stable format;
-  - cover stats output with small golden CLI tests.
+- Add component-level solve cache:
+  - cache repeated component QSOP solves before residue-vector convolution;
+  - define a deterministic component key compatible with canonical QSOP data;
+  - keep cache ownership local to the component backend until reuse patterns are clearer.
 
 ## Future Tasks
 
-- Add component-level solve cache.
 - Add sharper branch heuristics that account for component splits after assignment.
 - Extend tests with algebraic invariants and parser fuzz targets.
 - Add OpenQASM static-subset importer once the QSOP core is stable.

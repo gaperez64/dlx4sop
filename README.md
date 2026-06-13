@@ -26,7 +26,8 @@ normalization rules, and backend design notes.
 
 - `sop-check`: parse, validate, normalize, and write canonical QSOP.
 - `sop-stats`: print structural statistics in text or JSON.
-- `sop-solve`: compute exact residue-count vectors with one of three backends:
+- `sop-solve`: compute exact residue-count vectors or solver stats with one of
+  three backends:
   - `components` (default): decompose connected components and brute-force each component;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail.
@@ -110,6 +111,20 @@ n 4
 counts 0 0 1 1 1 0 1 0
 ```
 
+Print backend-specific solver counters instead of the residue vector:
+
+```sh
+build/sop-solve --format stats --backend branch tests/golden/solve_labelled.qsop
+```
+
+Output:
+
+```text
+backend: branch
+search_nodes: 7
+leaf_assignments: 4
+```
+
 Read from stdin:
 
 ```sh
@@ -128,7 +143,6 @@ component.
 
 ## Current Direction
 
-The next implementation target is a CLI-visible solver stats mode for
-`sop-solve`, using the internal counters already present in the branch backend.
-After that, the near-term solver work is component-level caching and sharper
-branching heuristics.
+The next implementation target is component-level solve caching. After that, the
+near-term solver work is sharper branching heuristics, stronger algebraic tests,
+and parser fuzzing.

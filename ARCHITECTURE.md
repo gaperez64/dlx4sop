@@ -170,8 +170,8 @@ recursively branches on active variables. A reversible trail supports checkpoint
 and undo without copying the full residual state at every branch.
 
 The current branch heuristic picks an active variable using active degree with a
-unary-label tiebreak. Internal node and leaf counters are present for a future
-CLI-visible solver stats mode.
+unary-label tiebreak. The backend reports internal node and leaf counters through
+the stats-aware solve API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 
@@ -188,7 +188,7 @@ Currently implemented commands:
 ```text
 sop-check   validate and canonicalize a QSOP file
 sop-stats   print structural statistics as text or JSON
-sop-solve   compute exact residue-count vectors
+sop-solve   compute exact residue-count vectors or solver counters
 ```
 
 ## CI And Coverage
@@ -205,9 +205,7 @@ solver is still small enough for cheap exact tests.
 
 ## Forward Direction
 
-The next solver-facing step is a CLI-visible stats mode for `sop-solve` that can
-report backend choice and available search counters. After that, likely targets
-are:
+Likely next solver-facing targets are:
 
 - component-level solve caching;
 - branch heuristics that account for component splits after assignment;

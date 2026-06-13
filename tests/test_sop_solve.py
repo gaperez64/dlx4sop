@@ -73,6 +73,51 @@ def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected diagnostic:\n{completed.stderr}")
 
 
+def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    cases = [
+        (
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
+                "branch",
+                str(source_root / "tests" / "golden" / "solve_labelled.qsop"),
+            ],
+            source_root / "tests" / "golden" / "solve_branch.stats",
+        ),
+        (
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
+                "components",
+                str(source_root / "tests" / "golden" / "solve_disconnected.qsop"),
+            ],
+            source_root / "tests" / "golden" / "solve_components.stats",
+        ),
+    ]
+
+    for cmd, expected_path in cases:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"solver stats failed for {cmd}\n{completed.stderr}")
+        expected_text = expected_path.read_text()
+        if completed.stdout != expected_text:
+            raise AssertionError(
+                f"solver stats mismatch for {cmd}\n"
+                f"expected:\n{expected_text}\n"
+                f"actual:\n{completed.stdout}\n"
+            )
+
+
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_single.qsop"
     expected = source_root / "tests" / "golden" / "solve_single.expected"
@@ -133,6 +178,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_labelled")
     run_solve(exe, source_root, "solve_disconnected")
     run_max_vars_guard(exe, source_root)
+    run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
     return 0
 

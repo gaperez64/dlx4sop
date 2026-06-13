@@ -36,6 +36,15 @@ static bool bit_is_set(uint64_t assignment, uint32_t bit) {
 
 bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars,
                            qsop_result_t **out, qsop_error_t *error) {
+  return qsop_solve_bruteforce_stats(qsop, max_vars, out, NULL, error);
+}
+
+bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
+                                 qsop_result_t **out, qsop_solve_stats_t *stats,
+                                 qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -72,6 +81,9 @@ bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars,
   }
 
   const uint64_t assignments = UINT64_C(1) << qsop->nvars;
+  if (stats != NULL) {
+    stats->leaf_assignments = assignments;
+  }
   for (uint64_t assignment = 0; assignment < assignments; assignment++) {
     uint32_t phase = qsop->constant;
     for (uint32_t v = 0; v < qsop->nvars; v++) {

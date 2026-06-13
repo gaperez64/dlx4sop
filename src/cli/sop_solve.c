@@ -2,6 +2,7 @@
 #include "dlx4sop/qsop_solve.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,8 +14,14 @@ typedef enum solve_backend {
   SOLVE_BACKEND_BRANCH,
 } solve_backend_t;
 
+typedef enum solve_output_format {
+  SOLVE_FORMAT_RESIDUE_VECTOR,
+  SOLVE_FORMAT_STATS,
+} solve_output_format_t;
+
 static void print_usage(FILE *file) {
-  fputs("usage: sop-solve [--format residue-vector] [--backend components|brute-force|branch] "
+  fputs("usage: sop-solve [--format residue-vector|stats] "
+        "[--backend components|brute-force|branch] "
         "[--max-vars N] [PATH|-]\n",
         file);
 }
@@ -30,6 +37,50 @@ static void print_error(const qsop_error_t *error, const char *fallback_path) {
   } else {
     fprintf(stderr, "error: %s: %s\n", path, error->message);
   }
+}
+
+static const char *backend_name(solve_backend_t backend) {
+  switch (backend) {
+  case SOLVE_BACKEND_COMPONENTS:
+    return "components";
+  case SOLVE_BACKEND_BRUTE_FORCE:
+    return "brute-force";
+  case SOLVE_BACKEND_BRANCH:
+    return "branch";
+  }
+  return "unknown";
+}
+
+static bool write_solver_stats(FILE *file, solve_backend_t backend,
+                               const qsop_solve_stats_t *stats, qsop_error_t *error) {
+  if (file == NULL || stats == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "internal error: null solver-stats write argument");
+    return false;
+  }
+
+  fprintf(file, "backend: %s\n", backend_name(backend));
+  if (backend == SOLVE_BACKEND_COMPONENTS) {
+    fprintf(file, "components: %" PRIu32 "\n", stats->components);
+    fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+  } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
+    fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+  } else {
+    fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
+    fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+  }
+
+  if (ferror(file)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
 }
 
 static bool parse_max_vars(const char *text, uint32_t *out) {
@@ -52,6 +103,7 @@ int main(int argc, char **argv) {
   const char *input_path = NULL;
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
+  solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -63,10 +115,14 @@ int main(int argc, char **argv) {
         fputs("error: --format requires a value\n", stderr);
         return 2;
       }
-      const char *format = argv[++i];
-      if (strcmp(format, "residue-vector") != 0) {
-        fprintf(stderr, "error: unsupported format '%s'\n", format);
-        return 2;
+      const char *format_value = argv[++i];
+      if (strcmp(format_value, "residue-vector") != 0) {
+        if (strcmp(format_value, "stats") == 0) {
+          format = SOLVE_FORMAT_STATS;
+        } else {
+          fprintf(stderr, "error: unsupported format '%s'\n", format_value);
+          return 2;
+        }
       }
       continue;
     }
@@ -136,12 +192,13 @@ int main(int argc, char **argv) {
   }
 
   qsop_result_t *result = NULL;
+  qsop_solve_stats_t solve_stats = {0};
   if (backend == SOLVE_BACKEND_COMPONENTS) {
-    ok = qsop_solve_components_bruteforce(qsop, max_vars, &result, &error);
+    ok = qsop_solve_components_bruteforce_stats(qsop, max_vars, &result, &solve_stats, &error);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
-    ok = qsop_solve_bruteforce(qsop, max_vars, &result, &error);
+    ok = qsop_solve_bruteforce_stats(qsop, max_vars, &result, &solve_stats, &error);
   } else {
-    ok = qsop_solve_residual_branch(qsop, max_vars, &result, &error);
+    ok = qsop_solve_residual_branch_stats(qsop, max_vars, &result, &solve_stats, &error);
   }
   qsop_free(qsop);
   if (!ok) {
@@ -149,7 +206,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  ok = qsop_result_write_residue_vector(stdout, result, &error);
+  if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
+    ok = qsop_result_write_residue_vector(stdout, result, &error);
+  } else {
+    ok = write_solver_stats(stdout, backend, &solve_stats, &error);
+  }
   qsop_result_free(result);
   if (!ok) {
     print_error(&error, "<stdout>");
