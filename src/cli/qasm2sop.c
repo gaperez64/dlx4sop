@@ -29,6 +29,14 @@ typedef struct qasm_edge {
   uint32_t q;
 } qasm_edge_t;
 
+typedef enum qasm_one_qubit_op {
+  QASM_ONE_ID,
+  QASM_ONE_PHASE,
+  QASM_ONE_H,
+  QASM_ONE_X,
+  QASM_ONE_Y,
+} qasm_one_qubit_op_t;
+
 typedef struct qasm_importer {
   const char *path;
   size_t line_no;
@@ -543,15 +551,6 @@ static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control,
          apply_phase(importer, target, 2);
 }
 
-static bool parse_one_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *out_qubit) {
-  uint32_t qubit = 0;
-  if (!parse_qref(importer, rest, &qubit)) {
-    return false;
-  }
-  *out_qubit = qubit;
-  return true;
-}
-
 static bool parse_two_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *left,
                                  uint32_t *right) {
   char *comma = strchr(rest, ',');
@@ -571,6 +570,53 @@ static bool parse_two_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t
   return true;
 }
 
+static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op,
+                               uint32_t qubit, uint32_t phase_coeff) {
+  switch (op) {
+  case QASM_ONE_ID:
+    return true;
+  case QASM_ONE_PHASE:
+    return apply_phase(importer, qubit, phase_coeff);
+  case QASM_ONE_H:
+    return apply_h(importer, qubit);
+  case QASM_ONE_X:
+    return apply_x_decomposition(importer, qubit);
+  case QASM_ONE_Y:
+    return apply_y_decomposition(importer, qubit);
+  }
+  set_error(importer, "internal error: unknown one-qubit operation");
+  return false;
+}
+
+static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
+                                    qasm_one_qubit_op_t op, uint32_t phase_coeff) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply_one_qubit_op(importer, op, qubit, phase_coeff);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply_one_qubit_op(importer, op, reg->offset + i, phase_coeff)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
 
@@ -580,40 +626,23 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_phase) {
-    uint32_t qubit = 0;
-    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
-      return false;
-    }
-    return apply_phase(importer, qubit, phase_coeff);
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_PHASE, phase_coeff);
   }
 
   if (strcmp(gate, "h") == 0) {
-    uint32_t qubit = 0;
-    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
-      return false;
-    }
-    return apply_h(importer, qubit);
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_H, 0);
   }
 
   if (strcmp(gate, "id") == 0) {
-    uint32_t qubit = 0;
-    return parse_one_qubit_gate(importer, rest, &qubit);
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_ID, 0);
   }
 
   if (strcmp(gate, "x") == 0) {
-    uint32_t qubit = 0;
-    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
-      return false;
-    }
-    return apply_x_decomposition(importer, qubit);
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_X, 0);
   }
 
   if (strcmp(gate, "y") == 0) {
-    uint32_t qubit = 0;
-    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
-      return false;
-    }
-    return apply_y_decomposition(importer, qubit);
+    return apply_one_qubit_operand(importer, rest, QASM_ONE_Y, 0);
   }
 
   if (strcmp(gate, "cz") == 0) {

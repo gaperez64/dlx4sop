@@ -97,6 +97,13 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
+- Added whole-register one-qubit operands:
+  - supported one-qubit gates now accept either `q[i]` or `q`;
+  - register operands apply the gate to each qubit in declaration order;
+  - golden coverage for `h q; u1(pi/4) q; h q;`.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
 
 ## Current Task
 

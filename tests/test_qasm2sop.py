@@ -168,6 +168,7 @@ def main() -> int:
     run_case(exe, source_root, "qasm_swap_id")
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
+    run_case(exe, source_root, "qasm_register_unary")
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)
