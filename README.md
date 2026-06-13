@@ -34,8 +34,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     lookup, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
-    split-aware variable heuristic, with a residue-table fast path once no
-    active quadratic edges remain.
+    split-aware variable heuristic, a fingerprinted residual memo cache, and a
+    residue-table fast path once no active quadratic edges remain.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p`/`rz` phase
   calls, finite `rx`/`ry` axis rotations, controlled-phase calls, named
@@ -153,8 +153,25 @@ Output:
 
 ```text
 backend: branch
-search_nodes: 7
+search_nodes: 3
+cache_hits: 0
+cache_misses: 3
 leaf_assignments: 4
+```
+
+The branch cache counters expose repeated residual states when they occur. For
+example, the small triangle fixture revisits one residual:
+
+```sh
+build/sop-solve --format stats --backend branch tests/golden/solve_branch_cache.qsop
+```
+
+```text
+backend: branch
+search_nodes: 7
+cache_hits: 1
+cache_misses: 6
+leaf_assignments: 6
 ```
 
 Component stats include local cache behavior:

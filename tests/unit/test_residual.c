@@ -11,6 +11,15 @@ static int expect_u32(const char *name, uint32_t actual, uint32_t expected) {
   return 0;
 }
 
+static int expect_u64(const char *name, uint64_t actual, uint64_t expected) {
+  if (actual != expected) {
+    fprintf(stderr, "%s: expected %llu got %llu\n", name, (unsigned long long)expected,
+            (unsigned long long)actual);
+    return 1;
+  }
+  return 0;
+}
+
 static int expect_bool(const char *name, bool actual, bool expected) {
   if (actual != expected) {
     fprintf(stderr, "%s: expected %s got %s\n", name, expected ? "true" : "false",
@@ -188,6 +197,53 @@ static int test_nested_undo(void) {
   return result;
 }
 
+static int test_fingerprint_undo(void) {
+  qsop_error_t error = {0};
+  qsop_instance_t qsop = fixture_instance();
+  qsop_residual_t *residual = NULL;
+  qsop_residual_t *same = NULL;
+  if (!qsop_residual_create(&qsop, &residual, &error) ||
+      !qsop_residual_create(&qsop, &same, &error)) {
+    fprintf(stderr, "create failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    qsop_residual_free(same);
+    return 1;
+  }
+
+  const uint64_t initial = qsop_residual_fingerprint(residual);
+  if (expect_u64("same residual fingerprint", qsop_residual_fingerprint(same), initial) != 0) {
+    qsop_residual_free(residual);
+    qsop_residual_free(same);
+    return 1;
+  }
+
+  const size_t checkpoint = qsop_residual_checkpoint(residual);
+  if (!qsop_residual_branch(residual, 1, 1, &error)) {
+    fprintf(stderr, "branch for fingerprint failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    qsop_residual_free(same);
+    return 1;
+  }
+  if (qsop_residual_fingerprint(residual) == initial) {
+    fprintf(stderr, "branched fingerprint did not change\n");
+    qsop_residual_free(residual);
+    qsop_residual_free(same);
+    return 1;
+  }
+  if (!qsop_residual_undo(residual, checkpoint, &error)) {
+    fprintf(stderr, "undo fingerprint failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    qsop_residual_free(same);
+    return 1;
+  }
+
+  const int result =
+      expect_u64("undo residual fingerprint", qsop_residual_fingerprint(residual), initial);
+  qsop_residual_free(residual);
+  qsop_residual_free(same);
+  return result;
+}
+
 static int test_component_split_estimate(void) {
   qsop_error_t error = {0};
   qsop_instance_t qsop = fixture_instance();
@@ -274,6 +330,9 @@ int main(void) {
     return 1;
   }
   if (test_nested_undo() != 0) {
+    return 1;
+  }
+  if (test_fingerprint_undo() != 0) {
     return 1;
   }
   if (test_component_split_estimate() != 0) {

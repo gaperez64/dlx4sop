@@ -56,6 +56,14 @@ static uint32_t add_mod(uint32_t a, uint32_t b, uint32_t r) {
   return (uint32_t)(((uint64_t)a + b) % r);
 }
 
+static uint64_t fingerprint_u64(uint64_t fingerprint, uint64_t value) {
+  fingerprint ^= value;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= value >> 32U;
+  fingerprint *= UINT64_C(1099511628211);
+  return fingerprint;
+}
+
 static bool reserve_trail(qsop_residual_t *residual, size_t needed, qsop_error_t *error) {
   if (needed <= residual->trail_cap) {
     return true;
@@ -359,6 +367,35 @@ uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v) {
     return 0;
   }
   return residual->unary[v];
+}
+
+uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
+  if (residual == NULL) {
+    return 0;
+  }
+
+  uint64_t fingerprint = UINT64_C(1469598103934665603);
+  fingerprint = fingerprint_u64(fingerprint, residual->r);
+  fingerprint = fingerprint_u64(fingerprint, residual->nvars);
+  fingerprint = fingerprint_u64(fingerprint, residual->nedges);
+  fingerprint = fingerprint_u64(fingerprint, residual->constant);
+  fingerprint = fingerprint_u64(fingerprint, residual->active_vars);
+  fingerprint = fingerprint_u64(fingerprint, residual->active_edges);
+
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    fingerprint = fingerprint_u64(fingerprint, residual->active_var[v]);
+    fingerprint =
+        fingerprint_u64(fingerprint, residual->active_var[v] == 0 ? 0 : residual->unary[v]);
+  }
+
+  for (uint32_t e = 0; e < residual->nedges; e++) {
+    fingerprint = fingerprint_u64(fingerprint, residual->edge_u[e]);
+    fingerprint = fingerprint_u64(fingerprint, residual->edge_v[e]);
+    fingerprint = fingerprint_u64(fingerprint, residual->edge_q[e]);
+    fingerprint = fingerprint_u64(fingerprint, residual->active_edge[e]);
+  }
+
+  return fingerprint;
 }
 
 uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v) {

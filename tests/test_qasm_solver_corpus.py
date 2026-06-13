@@ -82,6 +82,13 @@ def assert_stats_invariants(sop_solve: pathlib.Path, case: str, boundary: str, q
         raise AssertionError(
             f"{case} {boundary}: branch leaves {branch_leaves} exceed brute {brute_leaves}"
         )
+    branch_nodes = stats["branch"]["search_nodes"]
+    branch_cache_hits = stats["branch"]["cache_hits"]
+    branch_cache_misses = stats["branch"]["cache_misses"]
+    if branch_cache_hits + branch_cache_misses != branch_nodes:
+        raise AssertionError(
+            f"{case} {boundary}: branch cache hits + misses do not match search nodes"
+        )
 
     component_leaves = stats["components"]["leaf_assignments"]
     if component_leaves > brute_leaves:

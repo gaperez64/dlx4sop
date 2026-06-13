@@ -184,14 +184,19 @@ count, cache hits, cache misses, and brute-force leaves solved on cache misses.
 recursively branches on active variables. A reversible trail supports checkpoints
 and undo without copying the full residual state at every branch.
 
+Residual states expose a deterministic fingerprint over the active graph,
+constant, and active unary labels. The branch backend owns a local exact memo
+cache keyed by that fingerprint plus full active-state comparison, so cache
+hits reuse residue-count vectors without depending on hash uniqueness.
+
 The current branch heuristic ignores isolated active variables while quadratic
 edges remain, then estimates how many active residual components would remain
 after removing each interacting candidate variable. It uses active degree and
 unary-label presence as tie breakers. When a branch leaves no active quadratic
 edges, the backend collapses the remaining independent unary variables with a
 residue-table update instead of branching through each isolated variable. The
-backend reports internal node and leaf counters through the stats-aware solve
-API and `sop-solve --format stats`.
+backend reports internal node, cache hit/miss, and leaf counters through the
+stats-aware solve API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 

@@ -201,9 +201,10 @@ local cells, record mutations, and undo them in reverse order.
 ## A.6 Make incremental hashing part of mutation
 
 Memoization should remain a first-class solver feature, not a later wrapper. The
-component backend already owns a local canonical component cache with compact
-entry fingerprints for fast rejection; residual-state hashing is still future
-work.
+component backend owns a local canonical component cache with compact entry
+fingerprints for fast rejection. The residual branch backend now exposes a
+deterministic full-state fingerprint and uses it to filter a branch-local exact
+memo cache. Incremental hash maintenance is still future work.
 
 Use a Zobrist-style incremental hash over the active residual state:
 
@@ -247,7 +248,8 @@ Use layered fingerprints:
 
 ```text
 level 0:
-    component-cache fingerprint; later, incremental Zobrist hash
+    component-cache fingerprint; residual-state fingerprint; later,
+    incremental Zobrist hash
 
 level 1:
     sorted active degree / unary / label summaries

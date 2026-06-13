@@ -72,6 +72,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend,
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
   } else {
     fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
+    fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
+    fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
   }
 
