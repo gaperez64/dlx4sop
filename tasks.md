@@ -6,15 +6,13 @@ and `ARCHITECTURE.md`.
 
 ## Previous Tasks
 
-- Pushed importer and documentation work through `13f706b` to `origin/main`.
-- Local commits not yet pushed:
-  - `2c29bac` adds exact finite `rz(...)`/`crz(...)` imports and documents that
-    `Z_16` is importer resolution, not a core modulus ceiling.
-  - `f0bf99b` adds `sx`/`sxdg` imports and matching canonical, amplitude, and
-    optional Qiskit coverage.
-  - The current checkpoint adds finite `rx(...)`/`ry(...)` imports for symbolic
-    multiples of `pi/4`, lowered through existing `rz`, phase, and Hadamard
-    primitives.
+- Pushed importer and documentation work through `e2bf71b` to `origin/main`.
+- Latest importer additions:
+  - exact finite `rz(...)`/`crz(...)` imports, with `Z_16` documented as
+    importer resolution rather than a core modulus ceiling;
+  - `sx`/`sxdg` imports with canonical, amplitude, and optional Qiskit coverage;
+  - finite `rx(...)`/`ry(...)` imports for symbolic multiples of `pi/4`, lowered
+    through existing `rz`, phase, and Hadamard primitives.
 - Latest completed verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
@@ -26,8 +24,9 @@ and `ARCHITECTURE.md`.
   - add only gates that lower cleanly to supported primitives or have a direct
     QSOP representation;
   - keep coverage above the 75% CI gate.
-- Next likely importer work: decide whether to add multi-parameter finite
-  `u2(...)`/`u3(...)` parsing or stay with smaller aliases first.
+- Next likely work: pivot back to solver improvements using the current QASM
+  importer as a circuit source for boundary-level solver regressions and
+  backend stats.
 
 ## Future Tasks
 
