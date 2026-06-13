@@ -22,25 +22,46 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
   va_end(args);
 }
 
-static bool first_active_var(const qsop_residual_t *residual, uint32_t *out) {
+typedef struct branch_search_stats {
+  uint64_t nodes;
+  uint64_t leaves;
+} branch_search_stats_t;
+
+static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out) {
   const uint32_t nvars = qsop_residual_nvars(residual);
+  bool found = false;
+  uint32_t best_var = 0;
+  uint32_t best_score = 0;
+
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_residual_var_active(residual, v)) {
-      *out = v;
-      return true;
+      const uint32_t degree = qsop_residual_active_degree(residual, v);
+      const uint32_t score = degree * 2U + (qsop_residual_unary(residual, v) != 0 ? 1U : 0U);
+      if (!found || score > best_score) {
+        found = true;
+        best_var = v;
+        best_score = score;
+      }
     }
   }
-  return false;
+
+  if (found) {
+    *out = best_var;
+  }
+  return found;
 }
 
-static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts, qsop_error_t *error) {
+static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
+                           branch_search_stats_t *stats, qsop_error_t *error) {
+  stats->nodes++;
   if (qsop_residual_active_vars(residual) == 0) {
+    stats->leaves++;
     counts[qsop_residual_constant(residual)]++;
     return true;
   }
 
   uint32_t v = 0;
-  if (!first_active_var(residual, &v)) {
+  if (!choose_branch_var(residual, &v)) {
     set_error(error, "residual active-var count disagrees with active flags");
     return false;
   }
@@ -50,7 +71,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts, qsop_err
     if (!qsop_residual_branch(residual, v, value, error)) {
       return false;
     }
-    if (!branch_sum_rec(residual, counts, error)) {
+    if (!branch_sum_rec(residual, counts, stats, error)) {
       return false;
     }
     if (!qsop_residual_undo(residual, checkpoint, error)) {
@@ -96,7 +117,8 @@ bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
 
-  if (!branch_sum_rec(residual, result->counts, error)) {
+  branch_search_stats_t stats = {0};
+  if (!branch_sum_rec(residual, result->counts, &stats, error)) {
     qsop_result_free(result);
     qsop_residual_free(residual);
     return false;

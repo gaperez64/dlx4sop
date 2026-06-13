@@ -361,6 +361,21 @@ uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v) {
   return residual->unary[v];
 }
 
+uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v) {
+  if (residual == NULL || v >= residual->nvars || residual->active_var[v] == 0) {
+    return 0;
+  }
+
+  uint32_t degree = 0;
+  for (uint32_t e = 0; e < residual->nedges; e++) {
+    if (residual->active_edge[e] != 0 &&
+        (residual->edge_u[e] == v || residual->edge_v[e] == v)) {
+      degree++;
+    }
+  }
+  return degree;
+}
+
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v) {
   return residual != NULL && v < residual->nvars && residual->active_var[v] != 0;
 }

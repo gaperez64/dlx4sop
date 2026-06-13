@@ -50,6 +50,10 @@ static int expect_initial_state(qsop_residual_t *residual) {
       expect_u32("unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
       expect_u32("unary1", qsop_residual_unary(residual, 1), 2) != 0 ||
       expect_u32("unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
+      expect_u32("degree0", qsop_residual_active_degree(residual, 0), 1) != 0 ||
+      expect_u32("degree1", qsop_residual_active_degree(residual, 1), 2) != 0 ||
+      expect_u32("degree2", qsop_residual_active_degree(residual, 2), 1) != 0 ||
+      expect_u32("degree3", qsop_residual_active_degree(residual, 3), 0) != 0 ||
       expect_bool("var0", qsop_residual_var_active(residual, 0), true) != 0 ||
       expect_bool("var1", qsop_residual_var_active(residual, 1), true) != 0 ||
       expect_bool("var2", qsop_residual_var_active(residual, 2), true) != 0 ||
@@ -80,6 +84,9 @@ static int test_branch_zero_undo(void) {
       expect_u32("zero constant", qsop_residual_constant(residual), 7) != 0 ||
       expect_u32("zero unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
       expect_u32("zero unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
+      expect_u32("zero degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
+      expect_u32("zero degree1", qsop_residual_active_degree(residual, 1), 0) != 0 ||
+      expect_u32("zero degree2", qsop_residual_active_degree(residual, 2), 0) != 0 ||
       expect_bool("zero var1", qsop_residual_var_active(residual, 1), false) != 0 ||
       expect_bool("zero edge0", qsop_residual_edge_active(residual, 0), false) != 0 ||
       expect_bool("zero edge1", qsop_residual_edge_active(residual, 1), false) != 0) {
@@ -117,6 +124,9 @@ static int test_branch_one_undo(void) {
       expect_u32("one constant", qsop_residual_constant(residual), 1) != 0 ||
       expect_u32("one unary0", qsop_residual_unary(residual, 0), 5) != 0 ||
       expect_u32("one unary2", qsop_residual_unary(residual, 2), 0) != 0 ||
+      expect_u32("one degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
+      expect_u32("one degree1", qsop_residual_active_degree(residual, 1), 0) != 0 ||
+      expect_u32("one degree2", qsop_residual_active_degree(residual, 2), 0) != 0 ||
       expect_bool("one var1", qsop_residual_var_active(residual, 1), false) != 0 ||
       expect_bool("one edge0", qsop_residual_edge_active(residual, 0), false) != 0 ||
       expect_bool("one edge1", qsop_residual_edge_active(residual, 1), false) != 0) {

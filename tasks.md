@@ -72,18 +72,26 @@ This file tracks local project state so work can resume after a pause or stop.
 - Verified the branch backend checkpoint with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
+- Added a first branch-selection heuristic and internal branch-search counters:
+  - residual active-degree accessor;
+  - branch variable selection by active degree with unary-label tiebreak;
+  - internal recursive node and leaf counters for later stats reporting;
+  - residual unit coverage for active-degree behavior before and after branching.
+- Verified the heuristic checkpoint with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.5% line coverage over `src`.
 
 ## Current Task
 
 - Next implementation target:
-  - Add a simple branching heuristic and expose lightweight branch-search stats:
-    - pick a higher-impact active variable instead of the first active variable;
-    - track visited residual nodes and leaf assignments internally;
-    - keep CLI output stable unless an explicit stats mode is added.
+  - Add a CLI-visible solver stats mode:
+    - expose backend, node, leaf, and component counters where available;
+    - keep residue-vector output as the default stable format;
+    - cover stats output with small golden CLI tests.
 
 ## Future Tasks
 
 - Add component decomposition and component-level solve cache.
-- Add a CLI-visible solver stats mode once the internal counters are stable.
+- Add sharper branch heuristics that account for component splits after assignment.
 - Extend tests with algebraic invariants and parser fuzz targets.
 - Add OpenQASM static-subset importer once the QSOP core is stable.
