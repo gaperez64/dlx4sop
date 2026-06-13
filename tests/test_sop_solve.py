@@ -97,6 +97,17 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             ],
             source_root / "tests" / "golden" / "solve_components.stats",
         ),
+        (
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
+                "components",
+                str(source_root / "tests" / "golden" / "solve_repeated_components.qsop"),
+            ],
+            source_root / "tests" / "golden" / "solve_repeated_components.stats",
+        ),
     ]
 
     for cmd, expected_path in cases:

@@ -163,6 +163,11 @@ This is the default `sop-solve` backend because disconnected instances can be
 much cheaper than whole-instance enumeration. The `--max-vars` guard applies to
 each connected component.
 
+The backend owns a local component cache keyed by the deterministic component
+subinstance data. Repeated components reuse cached residue-count vectors before
+convolution. `sop-solve --format stats --backend components` reports component
+count, cache hits, cache misses, and brute-force leaves solved on cache misses.
+
 ### Residual Branch-And-Sum
 
 `qsop_solve_residual_branch` builds a mutable residual copy of the QSOP and
@@ -207,7 +212,6 @@ solver is still small enough for cheap exact tests.
 
 Likely next solver-facing targets are:
 
-- component-level solve caching;
 - branch heuristics that account for component splits after assignment;
 - stronger algebraic invariant tests;
 - parser fuzz targets;

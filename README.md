@@ -28,7 +28,8 @@ normalization rules, and backend design notes.
 - `sop-stats`: print structural statistics in text or JSON.
 - `sop-solve`: compute exact residue-count vectors or solver stats with one of
   three backends:
-  - `components` (default): decompose connected components and brute-force each component;
+  - `components` (default): decompose connected components, cache repeated
+    component solves, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail.
 
@@ -125,6 +126,22 @@ search_nodes: 7
 leaf_assignments: 4
 ```
 
+Component stats include local cache behavior:
+
+```sh
+build/sop-solve --format stats --backend components tests/golden/solve_repeated_components.qsop
+```
+
+Output:
+
+```text
+backend: components
+components: 2
+cache_hits: 1
+cache_misses: 1
+leaf_assignments: 4
+```
+
 Read from stdin:
 
 ```sh
@@ -143,6 +160,6 @@ component.
 
 ## Current Direction
 
-The next implementation target is component-level solve caching. After that, the
-near-term solver work is sharper branching heuristics, stronger algebraic tests,
-and parser fuzzing.
+The next implementation target is sharper branch heuristics that account for
+component splits after assignment. After that, the near-term work is stronger
+algebraic tests and parser fuzzing.

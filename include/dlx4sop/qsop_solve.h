@@ -16,6 +16,8 @@ typedef struct qsop_result {
 typedef struct qsop_solve_stats {
   uint64_t search_nodes;
   uint64_t leaf_assignments;
+  uint64_t cache_hits;
+  uint64_t cache_misses;
   uint32_t components;
 } qsop_solve_stats_t;
 

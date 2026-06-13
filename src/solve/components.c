@@ -106,6 +106,127 @@ static void free_subinstance(qsop_instance_t *sub) {
   free(sub->edge_q);
 }
 
+typedef struct component_cache_entry {
+  qsop_instance_t key;
+  uint64_t *counts;
+} component_cache_entry_t;
+
+typedef struct component_cache {
+  component_cache_entry_t *entries;
+  size_t len;
+  size_t cap;
+} component_cache_t;
+
+static void free_component_cache(component_cache_t *cache) {
+  if (cache == NULL) {
+    return;
+  }
+
+  for (size_t i = 0; i < cache->len; i++) {
+    free_subinstance(&cache->entries[i].key);
+    free(cache->entries[i].counts);
+  }
+  free(cache->entries);
+  *cache = (component_cache_t){0};
+}
+
+static bool same_u32_array(const uint32_t *a, const uint32_t *b, uint32_t len) {
+  return len == 0 || memcmp(a, b, (size_t)len * sizeof(*a)) == 0;
+}
+
+static bool same_component_key(const qsop_instance_t *a, const qsop_instance_t *b) {
+  return a->r == b->r && a->nvars == b->nvars && a->norm_h == b->norm_h &&
+         a->constant == b->constant && a->mode == b->mode && a->nedges == b->nedges &&
+         same_u32_array(a->unary, b->unary, a->nvars) &&
+         same_u32_array(a->edge_u, b->edge_u, a->nedges) &&
+         same_u32_array(a->edge_v, b->edge_v, a->nedges) &&
+         same_u32_array(a->edge_q, b->edge_q, a->nedges);
+}
+
+static component_cache_entry_t *find_cached_component(component_cache_t *cache,
+                                                      const qsop_instance_t *key) {
+  for (size_t i = 0; i < cache->len; i++) {
+    if (same_component_key(&cache->entries[i].key, key)) {
+      return &cache->entries[i];
+    }
+  }
+  return NULL;
+}
+
+static bool copy_component_key(const qsop_instance_t *src, qsop_instance_t *dst,
+                               qsop_error_t *error) {
+  *dst = (qsop_instance_t){
+      .r = src->r,
+      .nvars = src->nvars,
+      .norm_h = src->norm_h,
+      .constant = src->constant,
+      .mode = src->mode,
+      .nedges = src->nedges,
+  };
+
+  dst->unary = malloc((src->nvars == 0 ? 1U : src->nvars) * sizeof(*dst->unary));
+  dst->edge_u = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_u));
+  dst->edge_v = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_v));
+  dst->edge_q = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_q));
+  if (dst->unary == NULL || dst->edge_u == NULL || dst->edge_v == NULL || dst->edge_q == NULL) {
+    free_subinstance(dst);
+    set_error(error, "out of memory while copying component cache key");
+    return false;
+  }
+
+  memcpy(dst->unary, src->unary, (size_t)src->nvars * sizeof(*dst->unary));
+  memcpy(dst->edge_u, src->edge_u, (size_t)src->nedges * sizeof(*dst->edge_u));
+  memcpy(dst->edge_v, src->edge_v, (size_t)src->nedges * sizeof(*dst->edge_v));
+  memcpy(dst->edge_q, src->edge_q, (size_t)src->nedges * sizeof(*dst->edge_q));
+  return true;
+}
+
+static bool reserve_component_cache(component_cache_t *cache, size_t needed,
+                                    qsop_error_t *error) {
+  if (needed <= cache->cap) {
+    return true;
+  }
+
+  size_t new_cap = cache->cap == 0 ? 4U : cache->cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "component cache is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+
+  component_cache_entry_t *entries = realloc(cache->entries, new_cap * sizeof(*entries));
+  if (entries == NULL) {
+    set_error(error, "out of memory while growing component cache");
+    return false;
+  }
+  cache->entries = entries;
+  cache->cap = new_cap;
+  return true;
+}
+
+static bool store_cached_component(component_cache_t *cache, const qsop_instance_t *key,
+                                   const uint64_t *counts, qsop_error_t *error) {
+  if (!reserve_component_cache(cache, cache->len + 1U, error)) {
+    return false;
+  }
+
+  component_cache_entry_t *entry = &cache->entries[cache->len];
+  *entry = (component_cache_entry_t){0};
+  if (!copy_component_key(key, &entry->key, error) ||
+      !qsop_counts_alloc(key->r, &entry->counts, error)) {
+    free_subinstance(&entry->key);
+    free(entry->counts);
+    *entry = (component_cache_entry_t){0};
+    return false;
+  }
+
+  memcpy(entry->counts, counts, (size_t)key->r * sizeof(*entry->counts));
+  cache->len++;
+  return true;
+}
+
 static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *component,
                               uint32_t wanted, qsop_instance_t *sub, qsop_error_t *error) {
   uint32_t *map = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*map));
@@ -258,6 +379,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
   }
 
   acc[0] = 1;
+  component_cache_t cache = {0};
   if (stats != NULL) {
     stats->components = ncomponents;
     if (ncomponents == 0) {
@@ -268,11 +390,9 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
     qsop_instance_t sub = {0};
     qsop_result_t *part = NULL;
     qsop_solve_stats_t part_stats = {0};
-    if (!build_subinstance(qsop, component, c, &sub, error) ||
-        !qsop_solve_bruteforce_stats(&sub, max_component_vars, &part, &part_stats, error) ||
-        !qsop_counts_convolve(qsop->r, tmp, acc, part->counts, error)) {
+    if (!build_subinstance(qsop, component, c, &sub, error)) {
       free_subinstance(&sub);
-      qsop_result_free(part);
+      free_component_cache(&cache);
       free(rowptr);
       free(colind);
       free(component);
@@ -281,15 +401,55 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
       free(tmp);
       return false;
     }
-    if (stats != NULL) {
-      add_saturating_u64(&stats->leaf_assignments, part_stats.leaf_assignments);
+
+    const component_cache_entry_t *cached = find_cached_component(&cache, &sub);
+    const uint64_t *part_counts = NULL;
+    if (cached != NULL) {
+      part_counts = cached->counts;
+      if (stats != NULL) {
+        stats->cache_hits++;
+      }
+    } else {
+      if (!qsop_solve_bruteforce_stats(&sub, max_component_vars, &part, &part_stats, error) ||
+          !store_cached_component(&cache, &sub, part->counts, error)) {
+        free_subinstance(&sub);
+        qsop_result_free(part);
+        free_component_cache(&cache);
+        free(rowptr);
+        free(colind);
+        free(component);
+        qsop_result_free(result);
+        free(acc);
+        free(tmp);
+        return false;
+      }
+      part_counts = part->counts;
+      if (stats != NULL) {
+        stats->cache_misses++;
+        add_saturating_u64(&stats->leaf_assignments, part_stats.leaf_assignments);
+      }
     }
+
+    if (!qsop_counts_convolve(qsop->r, tmp, acc, part_counts, error)) {
+      free_subinstance(&sub);
+      qsop_result_free(part);
+      free_component_cache(&cache);
+      free(rowptr);
+      free(colind);
+      free(component);
+      qsop_result_free(result);
+      free(acc);
+      free(tmp);
+      return false;
+    }
+
     memcpy(acc, tmp, (size_t)qsop->r * sizeof(*acc));
     free_subinstance(&sub);
     qsop_result_free(part);
   }
 
   if (!shift_counts(qsop->r, result->counts, acc, qsop->constant, error)) {
+    free_component_cache(&cache);
     free(rowptr);
     free(colind);
     free(component);
@@ -302,6 +462,7 @@ bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
   free(rowptr);
   free(colind);
   free(component);
+  free_component_cache(&cache);
   free(acc);
   free(tmp);
   *out = result;

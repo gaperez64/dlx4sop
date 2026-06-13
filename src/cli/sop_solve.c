@@ -65,6 +65,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend,
   fprintf(file, "backend: %s\n", backend_name(backend));
   if (backend == SOLVE_BACKEND_COMPONENTS) {
     fprintf(file, "components: %" PRIu32 "\n", stats->components);
+    fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
+    fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
