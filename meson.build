@@ -81,6 +81,7 @@ if python3.found()
       sop_check.full_path(),
       meson.current_source_dir(),
     ],
+    depends: sop_check,
   )
   test(
     'sop-solve golden',
@@ -90,6 +91,7 @@ if python3.found()
       sop_solve.full_path(),
       meson.current_source_dir(),
     ],
+    depends: sop_solve,
   )
   test(
     'sop-stats golden',
@@ -99,5 +101,6 @@ if python3.found()
       sop_stats.full_path(),
       meson.current_source_dir(),
     ],
+    depends: sop_stats,
   )
 endif

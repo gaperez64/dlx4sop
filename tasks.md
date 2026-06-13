@@ -42,9 +42,16 @@ This file tracks local project state so work can resume after a pause or stop.
   - cyclic convolution modulo `r`;
   - C unit tests for residue arithmetic.
 - Refactored brute-force result allocation to use the shared residue helper.
+- Added a lightweight CI workflow:
+  - normal Meson configure/test;
+  - coverage build using Meson `b_coverage=true`;
+  - `gcovr` line coverage gate over production `src` code.
+- Added `tools/check-coverage.sh` with a default 75% line coverage threshold.
+- Expanded CLI tests for help, stdin, error paths, and output handling to keep the coverage gate meaningful.
 - Verified current local work with:
   - `meson compile -C build`
   - `meson test -C build`
+  - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
 
 ## Current Task
 

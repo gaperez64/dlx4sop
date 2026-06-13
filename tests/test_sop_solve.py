@@ -41,6 +41,52 @@ def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected diagnostic:\n{completed.stderr}")
 
 
+def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qsop = source_root / "tests" / "golden" / "solve_single.qsop"
+    expected = source_root / "tests" / "golden" / "solve_single.expected"
+
+    help_result = subprocess.run(
+        [str(exe), "--help"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if help_result.returncode != 0 or "usage: sop-solve" not in help_result.stdout:
+        raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
+
+    stdin_result = subprocess.run(
+        [str(exe), "-"],
+        input=qsop.read_text(),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if stdin_result.returncode != 0 or stdin_result.stdout != expected.read_text():
+        raise AssertionError(f"unexpected stdin result:\n{stdin_result.stdout}\n{stdin_result.stderr}")
+
+    error_cases = [
+        ([str(exe), "--format"], "requires a value"),
+        ([str(exe), "--format", "json", str(qsop)], "unsupported format"),
+        ([str(exe), "--max-vars"], "requires a non-negative"),
+        ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
+        ([str(exe), "--bad"], "unknown option"),
+        ([str(exe), str(qsop), str(qsop)], "at most one input"),
+        ([str(exe), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
+    ]
+    for cmd, expected_error in error_cases:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode == 0 or expected_error not in completed.stderr:
+            raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -51,6 +97,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_single")
     run_solve(exe, source_root, "solve_labelled")
     run_max_vars_guard(exe, source_root)
+    run_cli_paths(exe, source_root)
     return 0
 
 
