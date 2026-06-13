@@ -37,6 +37,19 @@ typedef enum qasm_one_qubit_op {
   QASM_ONE_Y,
 } qasm_one_qubit_op_t;
 
+typedef enum qasm_two_qubit_op {
+  QASM_TWO_CZ,
+  QASM_TWO_CX,
+  QASM_TWO_CY,
+  QASM_TWO_SWAP,
+} qasm_two_qubit_op_t;
+
+typedef struct qasm_operand {
+  bool is_reg;
+  uint32_t qubit;
+  qasm_reg_t *reg;
+} qasm_operand_t;
+
 typedef struct qasm_importer {
   const char *path;
   size_t line_no;
@@ -551,22 +564,41 @@ static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control,
          apply_phase(importer, target, 2);
 }
 
-static bool parse_two_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *left,
-                                 uint32_t *right) {
+static bool split_two_operands(qasm_importer_t *importer, char *rest, char **left,
+                               char **right) {
   char *comma = strchr(rest, ',');
   if (comma == NULL) {
     set_error(importer, "two-qubit gate operands must be separated by comma");
     return false;
   }
   *comma = '\0';
+  *left = rest;
+  *right = comma + 1;
+  return true;
+}
 
-  uint32_t a = 0;
-  uint32_t b = 0;
-  if (!parse_qref(importer, rest, &a) || !parse_qref(importer, comma + 1, &b)) {
+static bool parse_qubit_or_reg_operand(qasm_importer_t *importer, char *text,
+                                       qasm_operand_t *out) {
+  text = trim(text);
+  if (strchr(text, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, text, &qubit)) {
+      return false;
+    }
+    *out = (qasm_operand_t){.is_reg = false, .qubit = qubit, .reg = NULL};
+    return true;
+  }
+
+  if (!valid_identifier(text)) {
+    set_error(importer, "invalid qreg name '%s'", text);
     return false;
   }
-  *left = a;
-  *right = b;
+  qasm_reg_t *reg = find_reg(importer, text);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", text);
+    return false;
+  }
+  *out = (qasm_operand_t){.is_reg = true, .qubit = 0, .reg = reg};
   return true;
 }
 
@@ -617,6 +649,63 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
   return true;
 }
 
+static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op,
+                               uint32_t left, uint32_t right) {
+  switch (op) {
+  case QASM_TWO_CZ:
+    return apply_cz(importer, left, right);
+  case QASM_TWO_CX:
+    return apply_cx_decomposition(importer, left, right);
+  case QASM_TWO_CY:
+    return apply_cy_decomposition(importer, left, right);
+  case QASM_TWO_SWAP: {
+    const uint32_t tmp = importer->current[left];
+    importer->current[left] = importer->current[right];
+    importer->current[right] = tmp;
+    return true;
+  }
+  }
+  set_error(importer, "internal error: unknown two-qubit operation");
+  return false;
+}
+
+static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
+                                     qasm_two_qubit_op_t op) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply_two_qubit_op(importer, op, left.qubit, right.qubit);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply_two_qubit_op(importer, op, left_qubit, right_qubit)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
 
@@ -646,42 +735,19 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
 
   if (strcmp(gate, "cz") == 0) {
-    uint32_t left = 0;
-    uint32_t right = 0;
-    if (!parse_two_qubit_gate(importer, rest, &left, &right)) {
-      return false;
-    }
-    return apply_cz(importer, left, right);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CZ);
   }
 
   if (strcmp(gate, "cx") == 0) {
-    uint32_t control = 0;
-    uint32_t target = 0;
-    if (!parse_two_qubit_gate(importer, rest, &control, &target)) {
-      return false;
-    }
-    return apply_cx_decomposition(importer, control, target);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CX);
   }
 
   if (strcmp(gate, "cy") == 0) {
-    uint32_t control = 0;
-    uint32_t target = 0;
-    if (!parse_two_qubit_gate(importer, rest, &control, &target)) {
-      return false;
-    }
-    return apply_cy_decomposition(importer, control, target);
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CY);
   }
 
   if (strcmp(gate, "swap") == 0) {
-    uint32_t left = 0;
-    uint32_t right = 0;
-    if (!parse_two_qubit_gate(importer, rest, &left, &right)) {
-      return false;
-    }
-    const uint32_t tmp = importer->current[left];
-    importer->current[left] = importer->current[right];
-    importer->current[right] = tmp;
-    return true;
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP);
   }
 
   set_error(importer, "unsupported OpenQASM operation '%s'", gate);

@@ -26,6 +26,24 @@ def run_case(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
         )
 
 
+def run_boundary_case(
+    exe: pathlib.Path, source_root: pathlib.Path, name: str, options: list[str]
+) -> None:
+    qasm = source_root / "tests" / "golden" / f"{name}.qasm"
+    expected = source_root / "tests" / "golden" / f"{name}.expected"
+    completed = subprocess.run(
+        [str(exe), *options, str(qasm)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0 or completed.stdout != expected.read_text():
+        raise AssertionError(
+            f"{name}: unexpected boundary import\n{completed.stdout}\n{completed.stderr}"
+        )
+
+
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qasm = source_root / "tests" / "golden" / "qasm_hth.qasm"
     expected = source_root / "tests" / "golden" / "qasm_hth.expected"
@@ -72,6 +90,17 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if bad_phase.returncode == 0 or "unsupported u1 phase angle" not in bad_phase.stderr:
         raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
+
+    mismatched_qregs = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg a[1];\nqreg b[2];\ncx a, b;\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if mismatched_qregs.returncode == 0 or "matching sizes" not in mismatched_qregs.stderr:
+        raise AssertionError(f"unexpected mismatched qreg result:\n{mismatched_qregs.stderr}")
 
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
@@ -143,17 +172,7 @@ def run_decomposed_gates(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ("qasm_cy", ["--input", "10", "--output", "11"]),
     ]
     for name, options in cases:
-        qasm = source_root / "tests" / "golden" / f"{name}.qasm"
-        expected = source_root / "tests" / "golden" / f"{name}.expected"
-        completed = subprocess.run(
-            [str(exe), *options, str(qasm)],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if completed.returncode != 0 or completed.stdout != expected.read_text():
-            raise AssertionError(f"{name}: unexpected decomposed gate import\n{completed.stdout}\n{completed.stderr}")
+        run_boundary_case(exe, source_root, name, options)
 
 
 def main() -> int:
@@ -169,6 +188,9 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_register_unary")
+    run_boundary_case(
+        exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
+    )
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)

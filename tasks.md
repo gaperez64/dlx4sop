@@ -104,6 +104,14 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
+- Added matching whole-register two-qubit operands:
+  - supported two-qubit gates now accept indexed pairs or same-size qreg pairs;
+  - qreg pairs apply gates elementwise in declaration order;
+  - mismatched qreg sizes fail with diagnostics;
+  - boundary-level golden coverage for `cx a, b`.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.6% line coverage over `src`.
 
 ## Current Task
 

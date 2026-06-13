@@ -212,6 +212,7 @@ deliberately small static OpenQASM 2.0 subset:
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - finite `u1(...)` phase calls for symbolic multiples of `pi/4`;
 - indexed or whole-register operands for supported one-qubit gates;
+- indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
 - decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
   primitive gate set.
