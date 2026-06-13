@@ -111,7 +111,7 @@ and `ARCHITECTURE.md`.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.9% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 78.0% line coverage over `src`.
 - Completed MQT Bench reconnaissance checkpoint:
   - pushed the previous local branch state to `origin/main` before starting;
   - cloned Munich Quantum Toolkit Bench to `/tmp/dlx4sop-mqtbench`;
@@ -143,7 +143,21 @@ and `ARCHITECTURE.md`.
   - latest verification:
     `meson test -C build --print-errorlogs`,
     `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`, and
-    `tools/check-coverage.sh build-coverage` at 77.9% line coverage over `src`.
+    `tools/check-coverage.sh build-coverage` at 78.0% line coverage over `src`.
+- Completed solver benchmark summary checkpoint:
+  - added aggregate summary output to `tools/bench_qasm_corpus.py` so cache hit
+    rates and trace phase totals are visible without post-processing JSONL;
+  - added a lean Meson smoke test for the new summary mode;
+  - expanded `tests/qasm_solver_corpus.json` with bounded MQT-derived
+    straight-line cases (`bv`, QFT-entangled size 3/4, and QPE-inexact size 4)
+    that import through `qasm2sop` and stay cheap enough for all exact backends;
+  - kept MQT `qwalk` out of the default correctness corpus because the imported
+    QSOP has 96 variables after Toffoli lowering and exceeds the default exact
+    solver guard;
+  - current local summary for components+branch with traces over the expanded
+    manifest: 32 case-boundaries, component cache hit rate 26/(26+43)=0.377,
+    branch residual cache hit rate 0/(0+267)=0.000, branch leaves 477 versus
+    component leaves 707.
 
 ## Current Task
 
@@ -151,9 +165,11 @@ and `ARCHITECTURE.md`.
   runner, trace output, and branch cache stats as measurable circuit-derived
   regressions.
 - Next likely solver work before tree/rankwidth experiments:
-  - inspect branch cache hit rates and trace phase summaries on the expanded
-    QASM-derived corpus, then decide whether component-aware residual keys are
-    warranted;
+  - inspect branch trace summaries per case to tune variable ordering and split
+    behavior before adding more branch-cache machinery;
+  - look for or construct residual-repetition circuit cases before investing in
+    component-aware residual keys, since the current imported corpus shows no
+    branch-cache hits;
   - decide whether split estimates need incremental component metadata or
     whether component splitting is enough for current benchmark scale;
   - keep coverage above the 75% CI gate.

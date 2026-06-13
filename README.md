@@ -47,8 +47,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   whole-register one-qubit operands, and matching whole-register two-qubit
   operands.
 - `tools/bench_qasm_corpus.py`: run the QASM solver corpus through `qasm2sop`
-  and `sop-solve`, emitting JSONL or CSV records with backend counters, wall
-  times, hashes, and optional phase-trace summaries.
+  and `sop-solve`, emitting JSONL, CSV, or aggregate summary output with backend
+  counters, wall times, hashes, cache hit rates, and optional phase-trace
+  summaries.
 - `tools/qgraph2qasm.py`: optional PyZX-backed starter utility for translating
   PyZX/Quantomatic `.qgraph` JSON diagrams to OpenQASM when PyZX can extract a
   circuit.
@@ -284,6 +285,7 @@ Run the manifest-backed QASM solver corpus as a lightweight benchmark:
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 ```
 
 Inspect a local FeynmanDD checkout:

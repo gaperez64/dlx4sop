@@ -107,6 +107,51 @@ def trace_summary_text(trace: dict[str, dict[str, int]]) -> str:
     )
 
 
+def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
+    if isinstance(value, int):
+        total[key] = total.get(key, 0) + value
+
+
+def summarize_records(records: list[dict]) -> dict[str, dict]:
+    summary: dict[str, dict] = {}
+    for record in records:
+        backend = record["backend"]
+        entry = summary.setdefault(
+            backend,
+            {
+                "records": 0,
+                "solve_elapsed_ns": 0,
+                "import_elapsed_ns": 0,
+                "stats": {},
+                "trace": {},
+            },
+        )
+        entry["records"] += 1
+        entry["solve_elapsed_ns"] += record["solve_elapsed_ns"]
+        entry["import_elapsed_ns"] += record["import_elapsed_ns"]
+
+        stats_total = entry["stats"]
+        for key, value in record["stats"].items():
+            add_counter(stats_total, key, value)
+
+        trace_total = entry["trace"]
+        for phase, values in record["trace"].items():
+            phase_total = trace_total.setdefault(phase, {"events": 0, "items": 0, "elapsed_ns": 0})
+            phase_total["events"] += values["events"]
+            phase_total["items"] += values["items"]
+            phase_total["elapsed_ns"] += values["elapsed_ns"]
+    return summary
+
+
+def cache_hit_rate(stats: dict[str, int]) -> str:
+    hits = stats.get("cache_hits", 0)
+    misses = stats.get("cache_misses", 0)
+    total = hits + misses
+    if total == 0:
+        return "n/a"
+    return f"{hits / total:.3f}"
+
+
 def iter_case_boundaries(cases: list[dict], limit: int | None):
     seen = 0
     for case in cases:
@@ -173,6 +218,34 @@ def write_csv(records: list[dict], file: TextIO) -> None:
         writer.writerow(row)
 
 
+def write_summary(records: list[dict], file: TextIO) -> None:
+    print(f"records: {len(records)}", file=file)
+    summary = summarize_records(records)
+    for backend in sorted(summary):
+        entry = summary[backend]
+        stats = entry["stats"]
+        print(f"backend: {backend}", file=file)
+        print(f"  records: {entry['records']}", file=file)
+        print(f"  import_elapsed_ns: {entry['import_elapsed_ns']}", file=file)
+        print(f"  solve_elapsed_ns: {entry['solve_elapsed_ns']}", file=file)
+        for key in ("search_nodes", "leaf_assignments", "components", "cache_hits", "cache_misses"):
+            if key in stats:
+                print(f"  {key}: {stats[key]}", file=file)
+        if "cache_hits" in stats or "cache_misses" in stats:
+            print(f"  cache_hit_rate: {cache_hit_rate(stats)}", file=file)
+
+        trace = entry["trace"]
+        if trace:
+            print("  trace:", file=file)
+            for phase in sorted(trace):
+                values = trace[phase]
+                print(
+                    f"    {phase}: events={values['events']} "
+                    f"items={values['items']} elapsed_ns={values['elapsed_ns']}",
+                    file=file,
+                )
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     source_root = pathlib.Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Benchmark the QASM solver corpus.")
@@ -191,7 +264,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         choices=BACKENDS,
         help="Backend to benchmark. May be repeated; defaults to all backends.",
     )
-    parser.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
+    parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     args = parser.parse_args(argv)
@@ -210,8 +283,10 @@ def main(argv: list[str]) -> int:
 
     if args.format == "jsonl":
         write_jsonl(records, sys.stdout)
-    else:
+    elif args.format == "csv":
         write_csv(records, sys.stdout)
+    else:
+        write_summary(records, sys.stdout)
     return 0
 
 

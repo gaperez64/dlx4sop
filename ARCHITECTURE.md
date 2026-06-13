@@ -296,13 +296,16 @@ an external dependency.
 
 `tools/bench_qasm_corpus.py` runs the manifest-backed QASM solver corpus through
 `qasm2sop` and one or more `sop-solve` backends. It emits JSONL by default, with
-CSV available for spreadsheets. Each record includes case and boundary labels,
-source and normalized QSOP hashes, QSOP size, import and solve wall-clock
-timings, backend counters, and optional aggregated trace summaries collected
-from `sop-solve --trace csv`.
+CSV available for spreadsheets and a text summary for quick cache/trace
+inspection. Each record includes case and boundary labels, source and normalized
+QSOP hashes, QSOP size, import and solve wall-clock timings, backend counters,
+and optional aggregated trace summaries collected from `sop-solve --trace csv`.
+The summary mode aggregates per-backend cache hit rates, leaf/search counters,
+and trace phase event/item/elapsed totals.
 
-The default CI suite includes a one-boundary benchmark smoke test to keep the
-runner working without turning performance measurement into a noisy gate.
+The default CI suite includes one-boundary benchmark smoke tests to keep the
+runner and summary format working without turning performance measurement into
+a noisy gate.
 
 ## External Translation Notes
 
