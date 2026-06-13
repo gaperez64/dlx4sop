@@ -792,6 +792,13 @@ static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, u
          apply_h(importer, target);
 }
 
+static bool apply_cswap_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t left,
+                                      uint32_t right) {
+  return apply_cx_decomposition(importer, right, left) &&
+         apply_ccx_decomposition(importer, control, left, right) &&
+         apply_cx_decomposition(importer, right, left);
+}
+
 static bool apply_iswap_decomposition(qasm_importer_t *importer, uint32_t left, uint32_t right) {
   if (!apply_cz(importer, left, right)) {
     return false;
@@ -1284,8 +1291,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
 
   if (strcmp(gate, "cswap") == 0) {
-    set_error(importer, "higher-degree OpenQASM operation '%s' needs quadratization", gate);
-    return false;
+    return apply_three_qubit_operands(importer, rest, apply_cswap_decomposition);
   }
 
   set_error(importer, "unsupported OpenQASM operation '%s'", gate);

@@ -270,17 +270,16 @@ deliberately small static OpenQASM 2.0 subset:
   two-bit parity phases are emitted directly as quadratic terms and only the
   three-bit parity phase is computed with CNOTs;
 - three-qubit `ccx`, lowered as `h` on the target, `ccz`, then `h` on the
-  target.
+  target;
+- three-qubit `cswap`, lowered as `cx right,left`, `ccx control,left,right`,
+  then `cx right,left`.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
-and `if` fail with line-numbered diagnostics. Remaining higher-degree gates such
-as `cswap` fail with an explicit quadratization diagnostic; they are not native
-quadratic-labelled SOP until a gadget pass is implemented. The importer
-currently stores phase coefficients internally in `Z_16`, emits compact `Z_8`
-QSOP whenever all coefficients are even, and widens to `Z_16` for half-step
-global phases such as `rz(pi/4)`. This is an importer resolution choice, not a
-core maximum modulus: the QSOP format and solver remain parameterized by even
-modulus `r`.
+and `if` fail with line-numbered diagnostics. The importer currently stores
+phase coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
+coefficients are even, and widens to `Z_16` for half-step global phases such as
+`rz(pi/4)`. This is an importer resolution choice, not a core maximum modulus:
+the QSOP format and solver remain parameterized by even modulus `r`.
 Contradictory fixed boundaries become a valid zero amplitude, and generated
 QSOP is canonicalized through the normal parser and writer.
 
@@ -348,9 +347,9 @@ baseline runs.
 The initial local scan uses a shallow FeynmanDD checkout under `/tmp` and
 `tools/scan_feynmandd_qasm.py`. In the `benchmark/exp` subtree, the importer now
 accepts all 152 currently quadratic Google-style cases found in the scan. Across
-the wider non-invalid FeynmanDD checkout, 397 of 425 QASM files import; remaining
-failures are `cswap`, dynamic/classical circuits, malformed register names,
-custom-gate syntax outside the current static subset, or malformed Shor output.
+the wider non-invalid FeynmanDD checkout, 402 of 425 QASM files import; remaining
+failures are dynamic/classical circuits, malformed register names, custom-gate
+syntax outside the current static subset, or malformed Shor output.
 
 The PyZX QASM subset is also useful as an external regression set. In the local
 checkout, `circuits/feyn_bench/qasm` imports 44 of 65 non-invalid QASM files;

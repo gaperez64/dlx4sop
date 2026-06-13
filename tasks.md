@@ -83,14 +83,15 @@ and `ARCHITECTURE.md`.
   - added `tools/scan_feynmandd_qasm.py`; current scan imports 92/152
     `benchmark/exp` files and all 60 remaining failures are `ccz`
     quadratization cases. Full non-invalid checkout scan imports 166/425 files.
-- Completed CCZ/PyZX benchmark checkpoint:
+- Completed higher-degree QASM/PyZX benchmark checkpoint:
   - added `ccz` lowering via a quadratic parity-phase transformation and `ccx`
     lowering via `h`/`ccz`/`h` on the target;
-  - added dependency-free amplitude and optional Qiskit coverage for `ccz` and
-    `ccx`;
+  - added `cswap` lowering via `cx`/`ccx`/`cx`;
+  - added dependency-free amplitude and optional Qiskit coverage for `ccz`,
+    `ccx`, and `cswap`;
   - re-scanned FeynmanDD: `benchmark/exp` imports 152/152 files, and the wider
-    non-invalid checkout imports 397/425 files with only five higher-degree
-    `cswap` failures left;
+    non-invalid checkout imports 402/425 files with no remaining higher-degree
+    failures;
   - identified Kuyanov/Kissinger's rank-width ZX implementation as PyZX
     `pyzx/rank_width.py` and cloned PyZX to `/tmp/dlx4sop-pyzx`;
   - scanned PyZX QASM: `circuits/feyn_bench/qasm` imports 44/65 non-invalid
@@ -101,7 +102,7 @@ and `ARCHITECTURE.md`.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.7% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.8% line coverage over `src`.
 
 ## Current Task
 
@@ -125,8 +126,6 @@ and `ARCHITECTURE.md`.
     an optional test environment;
   - add `.qc`/Quipper conversion through optional PyZX so the structured PyZX
     benchmark corpus can feed `qasm2sop`;
-  - add `cswap` quadratization if the remaining FeynmanDD RevLib files become
-    relevant;
   - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
     runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.

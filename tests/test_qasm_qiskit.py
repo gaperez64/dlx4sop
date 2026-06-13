@@ -216,6 +216,19 @@ def three_qubit_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     return qasm, circuit, [("111", "110"), ("110", "111"), ("010", "010")]
 
 
+def cswap_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
+    qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[3];
+    cswap q[0], q[1], q[2];
+    """
+    circuit = QuantumCircuit(3)
+    circuit.cx(2, 1)
+    circuit.ccx(0, 1, 2)
+    circuit.cx(2, 1)
+    return qasm, circuit, [("101", "110"), ("110", "101"), ("001", "001")]
+
+
 def run_qiskit_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
     for case_name, (qasm, circuit, boundaries) in {
         "bell": bell_case(),
@@ -226,6 +239,7 @@ def run_qiskit_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
         "axis_rotation": axis_rotation_case(),
         "u_gates": u_gates_case(),
         "three_qubit": three_qubit_case(),
+        "cswap": cswap_case(),
     }.items():
         for input_bits, output_bits in boundaries:
             expected = qiskit_amplitude(circuit, input_bits, output_bits)

@@ -172,6 +172,17 @@ def apply_ccx(state: list[complex], nqubits: int, first: int, second: int, targe
         state[base], state[other] = state[other], state[base]
 
 
+def apply_cswap(state: list[complex], nqubits: int, control: int, left: int, right: int) -> None:
+    control_bit = 1 << control
+    left_bit = 1 << left
+    right_bit = 1 << right
+    for index in range(1 << nqubits):
+        if (index & control_bit) == 0 or (index & left_bit) != 0 or (index & right_bit) == 0:
+            continue
+        other = (index | left_bit) & ~right_bit
+        state[index], state[other] = state[other], state[index]
+
+
 def u3_matrix(theta: float, phi: float, lam: float) -> tuple[complex, complex, complex, complex]:
     return (
         math.cos(theta / 2.0),
@@ -254,7 +265,7 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                 apply_one(state, nqubits, qubit, one_qubit[gate])
             continue
 
-        if gate in ("ccz", "ccx"):
+        if gate in ("ccz", "ccx", "cswap"):
             first = operand_qubits(operands[0], regs)
             second = operand_qubits(operands[1], regs)
             third = operand_qubits(operands[2], regs)
@@ -263,8 +274,10 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
             for a, b, c in zip(first, second, third):
                 if gate == "ccz":
                     apply_ccz(state, nqubits, a, b, c)
-                else:
+                elif gate == "ccx":
                     apply_ccx(state, nqubits, a, b, c)
+                else:
+                    apply_cswap(state, nqubits, a, b, c)
             continue
 
         left = operand_qubits(operands[0], regs)
@@ -463,6 +476,15 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             ccx q[0], q[1], q[2];
             """,
             [("110", "111"), ("111", "110"), ("010", "010")],
+        ),
+        (
+            "cswap",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[3];
+            cswap q[0], q[1], q[2];
+            """,
+            [("101", "110"), ("110", "101"), ("001", "001"), ("100", "100")],
         ),
     ]
 

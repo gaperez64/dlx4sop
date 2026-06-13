@@ -246,10 +246,9 @@ The importer emits compact `Z_8` QSOP when possible and widens to `Z_16` for
 half-step global phases such as `rz(pi/4)`.
 It accepts the FeynmanDD-style quadratic subset used by the Google benchmarks,
 including uppercase gate spellings, decimal angle literals for multiples of
-`pi/4`, `iswap`, `ccz`, and `ccx`. `ccz` is lowered through a quadratic
+`pi/4`, `iswap`, `ccz`, `ccx`, and `cswap`. `ccz` is lowered through a quadratic
 parity-phase transformation, and `ccx` is lowered as `H; CCZ; H` on the target.
-`cswap` still fails with a quadratization diagnostic rather than being lowered
-silently.
+`cswap` is lowered as `CX; CCX; CX`.
 
 Whole-register OpenQASM operands are accepted for supported gates:
 
