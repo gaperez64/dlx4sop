@@ -32,6 +32,7 @@ typedef struct csv_trace_writer {
 static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch] "
+        "[--branch-heuristic split|treewidth|linear-rankwidth] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -56,6 +57,18 @@ static const char *backend_name(solve_backend_t backend) {
     return "brute-force";
   case SOLVE_BACKEND_BRANCH:
     return "branch";
+  }
+  return "unknown";
+}
+
+static const char *branch_heuristic_name(qsop_branch_heuristic_t heuristic) {
+  switch (heuristic) {
+  case QSOP_BRANCH_HEURISTIC_SPLIT:
+    return "split";
+  case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
+    return "treewidth";
+  case QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH:
+    return "linear-rankwidth";
   }
   return "unknown";
 }
@@ -129,6 +142,8 @@ int main(int argc, char **argv) {
   const char *input_path = NULL;
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
+  qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
+  bool branch_heuristic_set = false;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -175,6 +190,25 @@ int main(int argc, char **argv) {
       }
       continue;
     }
+    if (strcmp(argv[i], "--branch-heuristic") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-heuristic requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "split") == 0) {
+        branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
+      } else if (strcmp(value, "treewidth") == 0) {
+        branch_heuristic = QSOP_BRANCH_HEURISTIC_TREEWIDTH;
+      } else if (strcmp(value, "linear-rankwidth") == 0) {
+        branch_heuristic = QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH;
+      } else {
+        fprintf(stderr, "error: unsupported branch heuristic '%s'\n", value);
+        return 2;
+      }
+      branch_heuristic_set = true;
+      continue;
+    }
     if (strcmp(argv[i], "--backend") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --backend requires a value\n", stderr);
@@ -208,6 +242,10 @@ int main(int argc, char **argv) {
       return 2;
     }
     input_path = argv[i];
+  }
+  if (branch_heuristic_set && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --branch-heuristic requires --backend branch\n", stderr);
+    return 2;
   }
 
   FILE *input = stdin;
@@ -249,8 +287,8 @@ int main(int argc, char **argv) {
     ok =
         qsop_solve_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr, &error);
   } else {
-    ok = qsop_solve_residual_branch_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr,
-                                                &error);
+    ok = qsop_solve_residual_branch_heuristic_trace_stats(
+        qsop, max_vars, branch_heuristic, &result, &solve_stats, trace_ptr, &error);
   }
   qsop_free(qsop);
   if (!ok) {
@@ -262,6 +300,9 @@ int main(int argc, char **argv) {
     ok = qsop_result_write_residue_vector(stdout, result, &error);
   } else {
     ok = write_solver_stats(stdout, backend, &solve_stats, &error);
+    if (ok && backend == SOLVE_BACKEND_BRANCH && branch_heuristic_set) {
+      printf("branch_heuristic: %s\n", branch_heuristic_name(branch_heuristic));
+    }
   }
   qsop_result_free(result);
   if (!ok) {

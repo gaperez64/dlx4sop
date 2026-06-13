@@ -213,6 +213,14 @@ their residue-count vectors, and applies the parent residual constant once. The
 backend reports internal node, cache hit/miss, and leaf counters through the
 stats-aware solve API and `sop-solve --format stats`.
 
+`sop-solve --backend branch --branch-heuristic ...` exposes experimental
+variable-choice policies for benchmarking. `split` is the default described
+above. `treewidth` uses a min-fill estimate on the active residual graph.
+`linear-rankwidth` uses a local GF(2) cut-rank proxy between the active
+neighbors of a candidate and the rest of the active graph. These are heuristic
+ordering policies for the residual branch backend, not decomposition-based
+solvers.
+
 All solver backends also accept an optional trace callback. `sop-solve --trace
 csv` emits coarse phase rows to stderr while preserving the requested primary
 output on stdout. Current trace phases include brute-force enumeration,
@@ -419,8 +427,20 @@ oracle.
 
 ## Forward Direction
 
-The next solver targets are benchmark-driven residual improvements: use trace
-and corpus data to decide whether incremental component metadata, incremental
+The next solver targets are benchmark-driven width work. The 2026 arXiv paper
+"Quadratic Sums-of-Powers for Fixed-Parameter Tractable Quantum-Circuit
+Simulation" (arXiv:2605.29944) gives the target rank-decomposition dynamic
+program: process a rooted rank-decomposition of the SOP variable graph from
+leaves to root; table keys are boundary signatures in the row space of each
+cut over GF(2), plus residues; joins combine child signatures and add the
+cross-term determined by those signatures. A later Fourier-mode variant reduces
+the residue factor in joins. Implementing that should be a separate
+`rankwidth` backend, distinct from the current residual branch backend and its
+heuristics.
+
+Before the decomposition backend exists, branch heuristic experiments should
+use trace and corpus data to decide whether treewidth min-fill, local
+cut-rank/linear-rankwidth proxies, incremental component metadata, incremental
 hashing, or dancing-cells-style adjacency mutation should come first. New
 importer work should be driven by gates found in real circuit sources and should
 keep each added gate covered by boundary-level examples and amplitude checks.

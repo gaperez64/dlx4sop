@@ -36,7 +36,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic, a bucketed fingerprinted residual memo
     cache, residual component splitting, balanced split tie-breaks, and a
-    residue-table fast path once no active quadratic edges remain.
+    residue-table fast path once no active quadratic edges remain. Experimental
+    variable-choice heuristics can be selected with `--branch-heuristic`.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -154,6 +155,8 @@ Solve a QSOP and print residue counts modulo `r`:
 build/sop-solve tests/golden/solve_labelled.qsop
 build/sop-solve --backend brute-force tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch tests/golden/solve_labelled.qsop
+build/sop-solve --backend branch --branch-heuristic treewidth tests/golden/solve_labelled.qsop
+build/sop-solve --backend branch --branch-heuristic linear-rankwidth tests/golden/solve_labelled.qsop
 ```
 
 Output:
@@ -291,6 +294,7 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --trace --format summary --top 8 --top-metric search_nodes
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --branch-heuristic linear-rankwidth --trace --format summary --top 8 --top-metric search_nodes
 ```
 
 Build a temporary external benchmark manifest for the same runner:

@@ -255,16 +255,26 @@ static int test_component_split_estimate(void) {
 
   uint32_t components = 0;
   uint32_t largest = 0;
+  uint64_t fill = 0;
+  uint32_t cut_rank = 0;
   if (!qsop_residual_components_without_var(residual, 0, &components, &error) ||
       expect_u32("split remove0", components, 1) != 0 ||
       !qsop_residual_split_without_var(residual, 0, &components, &largest, &error) ||
       expect_u32("split size remove0 components", components, 1) != 0 ||
       expect_u32("split size remove0 largest", largest, 2) != 0 ||
+      !qsop_residual_fill_edges_without_var(residual, 0, &fill, &error) ||
+      expect_u64("fill remove0", fill, 0) != 0 ||
+      !qsop_residual_neighbor_cut_rank(residual, 0, &cut_rank, &error) ||
+      expect_u32("cut-rank remove0", cut_rank, 1) != 0 ||
       !qsop_residual_components_without_var(residual, 1, &components, &error) ||
       expect_u32("split remove1", components, 2) != 0 ||
       !qsop_residual_split_without_var(residual, 1, &components, &largest, &error) ||
       expect_u32("split size remove1 components", components, 2) != 0 ||
       expect_u32("split size remove1 largest", largest, 1) != 0 ||
+      !qsop_residual_fill_edges_without_var(residual, 1, &fill, &error) ||
+      expect_u64("fill remove1", fill, 1) != 0 ||
+      !qsop_residual_neighbor_cut_rank(residual, 1, &cut_rank, &error) ||
+      expect_u32("cut-rank remove1", cut_rank, 0) != 0 ||
       !qsop_residual_components_without_var(residual, 2, &components, &error) ||
       expect_u32("split remove2", components, 1) != 0) {
     fprintf(stderr, "component split estimate failed: %s\n", error.message);
@@ -294,6 +304,10 @@ static int test_component_split_estimate(void) {
       !qsop_residual_split_without_var(residual, 0, &components, &largest, &error) ||
       expect_u32("post-branch split size remove0 components", components, 1) != 0 ||
       expect_u32("post-branch split size remove0 largest", largest, 1) != 0 ||
+      !qsop_residual_fill_edges_without_var(residual, 0, &fill, &error) ||
+      expect_u64("post-branch fill remove0", fill, 0) != 0 ||
+      !qsop_residual_neighbor_cut_rank(residual, 0, &cut_rank, &error) ||
+      expect_u32("post-branch cut-rank remove0", cut_rank, 0) != 0 ||
       !qsop_residual_components_without_var(residual, 2, &components, &error) ||
       expect_u32("post-branch split remove2", components, 1) != 0) {
     fprintf(stderr, "post-branch component split estimate failed: %s\n", error.message);

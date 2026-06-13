@@ -202,16 +202,36 @@ and `ARCHITECTURE.md`.
   - combined checked-in + MQT + PyZX `.qc` branch-solvable slice improved from
     349 to 281 branch search nodes and from 803 to 783 leaf assignments, with
     branch cache hits still at zero.
+- Pushed `fcc1ea6` (`Tune branch split heuristic`) to `origin/main`.
+- Started width-heuristic and rankwidth-backend checkpoint:
+  - confirmed the target paper is arXiv:2605.29944, "Quadratic
+    Sums-of-Powers for Fixed-Parameter Tractable Quantum-Circuit Simulation";
+  - added experimental branch variable-choice policies:
+    `--branch-heuristic split|treewidth|linear-rankwidth`;
+  - `treewidth` uses active-graph min-fill, while `linear-rankwidth` uses a
+    local GF(2) cut-rank proxy from a candidate's active neighbors to the rest
+    of the active residual graph;
+  - default `split` remains the best current checked-in corpus baseline at 211
+    branch search nodes; `treewidth` currently gets 413 nodes with 77 cache hits
+    and fewer leaves, while `linear-rankwidth` gets 247 nodes and zero cache
+    hits;
+  - on the combined checked-in + MQT + PyZX `.qc` branch-solvable slice, `split`
+    remains best at 281 search nodes, while `treewidth` gets 527 nodes with 102
+    cache hits and `linear-rankwidth` gets 329 nodes with zero cache hits. These
+    are experimental comparators, not new defaults.
 
 ## Current Task
 
-- Continue solver improvements using the current QASM importer, benchmark
-  runner, trace output, and branch cache stats as measurable circuit-derived
-  regressions.
-- Next likely solver work before tree/rankwidth experiments:
+- Continue width-driven solver improvements using the current QASM importer,
+  benchmark runner, trace output, branch heuristic selection, and branch cache
+  stats as measurable circuit-derived regressions.
+- Next likely solver work:
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
+  - design the real `rankwidth` backend around explicit decomposition input,
+    boundary-signature tables, rank-decomposition joins, and later Fourier-mode
+    batching;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;
@@ -246,8 +266,12 @@ and `ARCHITECTURE.md`.
     See [A.6](ARCHITECTURE_SPEED_ANNEX.md#a6-make-incremental-hashing-part-of-mutation)
     and [A.7](ARCHITECTURE_SPEED_ANNEX.md#a7-use-layered-canonical-fingerprints).
   - tree/rankwidth heuristics remain future work: current branch scoring uses
-    split count, active degree, and unary-label tie breaks, but not explicit
-    min-fill/treewidth/rankwidth/cut-signature estimators or a pluggable
-    heuristic interface. See
+    split count by default and now has experimental min-fill and local cut-rank
+    policies, but not explicit decomposition-aware treewidth/rankwidth
+    estimators or a full pluggable heuristic interface. See
     [A.10](ARCHITECTURE_SPEED_ANNEX.md#a10-make-width-heuristics-pluggable).
+  - rankwidth decomposition solver: implement a new backend based on
+    arXiv:2605.29944, with rooted rank-decomposition input, sparse
+    boundary-signature/residue tables, join cross-term precomputation, and
+    Fourier-mode batching once the count-table version is correct.
   - specialized residue kernels.

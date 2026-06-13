@@ -21,6 +21,12 @@ typedef struct qsop_solve_stats {
   uint32_t components;
 } qsop_solve_stats_t;
 
+typedef enum qsop_branch_heuristic {
+  QSOP_BRANCH_HEURISTIC_SPLIT,
+  QSOP_BRANCH_HEURISTIC_TREEWIDTH,
+  QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH,
+} qsop_branch_heuristic_t;
+
 typedef struct qsop_solve_trace_event {
   const char *phase;
   uint32_t depth;
@@ -70,6 +76,11 @@ bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_
 bool qsop_solve_residual_branch_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
                                             qsop_result_t **out, qsop_solve_stats_t *stats,
                                             qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_residual_branch_heuristic_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
 
 bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, qsop_error_t *error);
 

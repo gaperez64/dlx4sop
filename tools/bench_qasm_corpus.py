@@ -12,6 +12,7 @@ from typing import TextIO
 
 
 BACKENDS = ("components", "brute-force", "branch")
+BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
 TOP_METRICS = (
     "solve_elapsed_ns",
     "import_elapsed_ns",
@@ -27,6 +28,7 @@ CSV_FIELDS = [
     "input",
     "output",
     "backend",
+    "branch_heuristic",
     "r",
     "nvars",
     "nedges",
@@ -89,7 +91,7 @@ def parse_stats(text: str) -> dict[str, int | str]:
         if not line:
             continue
         key, value = line.split(": ", 1)
-        stats[key] = value if key == "backend" else int(value)
+        stats[key] = value if key in {"backend", "branch_heuristic"} else int(value)
     return stats
 
 
@@ -218,6 +220,8 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
             ]
             if args.trace:
                 cmd += ["--trace", "csv"]
+            if backend == "branch" and args.branch_heuristic != "split":
+                cmd += ["--branch-heuristic", args.branch_heuristic]
             cmd.append("-")
             stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
             stats = parse_stats(stats_text)
@@ -229,6 +233,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                     "input": input_bits,
                     "output": output_bits,
                     "backend": backend,
+                    "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
                     **header,
                     "import_elapsed_ns": import_elapsed_ns,
                     "solve_elapsed_ns": solve_elapsed_ns,
@@ -356,6 +361,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
+    parser.add_argument(
+        "--branch-heuristic",
+        choices=BRANCH_HEURISTICS,
+        default="split",
+        help="Variable-choice heuristic used by the branch backend.",
+    )
     parser.add_argument(
         "--top",
         type=int,

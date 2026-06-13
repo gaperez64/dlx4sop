@@ -339,7 +339,10 @@ the parent residual constant.
 
 Do not hard-code a single branching heuristic such as maximum degree.
 
-Expose a small heuristic interface:
+The branch backend currently exposes a small fixed menu through
+`--branch-heuristic`: the default split heuristic, a min-fill treewidth proxy,
+and a local GF(2) cut-rank proxy. This is enough for benchmark comparisons, but
+the next step should be a proper heuristic interface:
 
 ```c
 typedef struct {

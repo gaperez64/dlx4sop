@@ -658,6 +658,200 @@ bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint3
   return qsop_residual_split_without_var(residual, removed, out, &largest, error);
 }
 
+static bool validate_active_variable(const qsop_residual_t *residual, uint32_t v,
+                                     const char *what, qsop_error_t *error) {
+  if (residual == NULL) {
+    set_error(error, "internal error: null residual state");
+    return false;
+  }
+  if (v >= residual->nvars) {
+    set_error(error, "%s variable is outside residual range", what);
+    return false;
+  }
+  if (residual->active_var[v] == 0) {
+    set_error(error, "%s variable must be active", what);
+    return false;
+  }
+  return true;
+}
+
+static bool residual_active_edge_between(const qsop_residual_t *residual, uint32_t left,
+                                         uint32_t right) {
+  for (uint32_t i = residual->incident_offset[left]; i < residual->incident_offset[left + 1U];
+       i++) {
+    const uint32_t e = residual->incident_edge[i];
+    if (residual->active_edge[e] != 0 &&
+        ((residual->edge_u[e] == left && residual->edge_v[e] == right) ||
+         (residual->edge_u[e] == right && residual->edge_v[e] == left))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool residual_active_neighbors(const qsop_residual_t *residual, uint32_t v,
+                                      uint32_t *neighbors, uint8_t *is_neighbor,
+                                      uint32_t *nneighbors) {
+  *nneighbors = 0;
+  for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U]; i++) {
+    const uint32_t e = residual->incident_edge[i];
+    if (residual->active_edge[e] == 0) {
+      continue;
+    }
+    const uint32_t other = residual->edge_u[e] == v ? residual->edge_v[e] : residual->edge_u[e];
+    if (other != v && residual->active_var[other] != 0 && is_neighbor[other] == 0) {
+      is_neighbor[other] = 1;
+      neighbors[(*nneighbors)++] = other;
+    }
+  }
+  return true;
+}
+
+bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                          uint64_t *out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residual fill output");
+    return false;
+  }
+  *out = 0;
+  if (!validate_active_variable(residual, removed, "removed", error)) {
+    return false;
+  }
+
+  uint32_t *neighbors = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*neighbors));
+  uint8_t *is_neighbor = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*is_neighbor));
+  if (neighbors == NULL || is_neighbor == NULL) {
+    free(neighbors);
+    free(is_neighbor);
+    set_error(error, "out of memory while estimating residual fill");
+    return false;
+  }
+
+  uint32_t nneighbors = 0;
+  residual_active_neighbors(residual, removed, neighbors, is_neighbor, &nneighbors);
+  uint64_t fill = 0;
+  for (uint32_t i = 0; i < nneighbors; i++) {
+    for (uint32_t j = i + 1U; j < nneighbors; j++) {
+      if (!residual_active_edge_between(residual, neighbors[i], neighbors[j])) {
+        fill++;
+      }
+    }
+  }
+
+  free(neighbors);
+  free(is_neighbor);
+  *out = fill;
+  return true;
+}
+
+static uint32_t gf2_rank(uint64_t *rows, uint32_t nrows, uint32_t ncols, uint32_t nwords) {
+  uint32_t rank = 0;
+  for (uint32_t col = 0; col < ncols && rank < nrows; col++) {
+    const uint32_t word = col / 64U;
+    const uint64_t mask = UINT64_C(1) << (col % 64U);
+    uint32_t pivot = rank;
+    while (pivot < nrows && (rows[(size_t)pivot * nwords + word] & mask) == 0) {
+      pivot++;
+    }
+    if (pivot == nrows) {
+      continue;
+    }
+    if (pivot != rank) {
+      for (uint32_t w = 0; w < nwords; w++) {
+        const size_t a = (size_t)rank * nwords + w;
+        const size_t b = (size_t)pivot * nwords + w;
+        const uint64_t tmp = rows[a];
+        rows[a] = rows[b];
+        rows[b] = tmp;
+      }
+    }
+    for (uint32_t row = 0; row < nrows; row++) {
+      if (row == rank || (rows[(size_t)row * nwords + word] & mask) == 0) {
+        continue;
+      }
+      for (uint32_t w = 0; w < nwords; w++) {
+        rows[(size_t)row * nwords + w] ^= rows[(size_t)rank * nwords + w];
+      }
+    }
+    rank++;
+  }
+  return rank;
+}
+
+bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v, uint32_t *out,
+                                     qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residual cut-rank output");
+    return false;
+  }
+  *out = 0;
+  if (!validate_active_variable(residual, v, "rankwidth heuristic", error)) {
+    return false;
+  }
+
+  uint32_t *neighbors = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*neighbors));
+  uint8_t *is_neighbor = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*is_neighbor));
+  uint32_t *col_index = malloc((residual->nvars == 0 ? 1U : residual->nvars) * sizeof(*col_index));
+  if (neighbors == NULL || is_neighbor == NULL || col_index == NULL) {
+    free(neighbors);
+    free(is_neighbor);
+    free(col_index);
+    set_error(error, "out of memory while estimating residual cut-rank");
+    return false;
+  }
+
+  uint32_t nneighbors = 0;
+  residual_active_neighbors(residual, v, neighbors, is_neighbor, &nneighbors);
+  for (uint32_t i = 0; i < residual->nvars; i++) {
+    col_index[i] = UINT32_MAX;
+  }
+  uint32_t ncols = 0;
+  for (uint32_t u = 0; u < residual->nvars; u++) {
+    if (u != v && residual->active_var[u] != 0 && is_neighbor[u] == 0) {
+      col_index[u] = ncols++;
+    }
+  }
+
+  if (nneighbors == 0 || ncols == 0) {
+    free(neighbors);
+    free(is_neighbor);
+    free(col_index);
+    return true;
+  }
+
+  const uint32_t nwords = (ncols + 63U) / 64U;
+  uint64_t *rows = calloc((size_t)nneighbors * nwords, sizeof(*rows));
+  if (rows == NULL) {
+    free(neighbors);
+    free(is_neighbor);
+    free(col_index);
+    set_error(error, "out of memory while allocating residual cut-rank matrix");
+    return false;
+  }
+
+  for (uint32_t row = 0; row < nneighbors; row++) {
+    const uint32_t u = neighbors[row];
+    for (uint32_t i = residual->incident_offset[u]; i < residual->incident_offset[u + 1U]; i++) {
+      const uint32_t e = residual->incident_edge[i];
+      if (residual->active_edge[e] == 0) {
+        continue;
+      }
+      const uint32_t other = residual->edge_u[e] == u ? residual->edge_v[e] : residual->edge_u[e];
+      if (other < residual->nvars && col_index[other] != UINT32_MAX) {
+        const uint32_t col = col_index[other];
+        rows[(size_t)row * nwords + col / 64U] |= UINT64_C(1) << (col % 64U);
+      }
+    }
+  }
+
+  *out = gf2_rank(rows, nneighbors, ncols, nwords);
+  free(rows);
+  free(neighbors);
+  free(is_neighbor);
+  free(col_index);
+  return true;
+}
+
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v) {
   return residual != NULL && v < residual->nvars && residual->active_var[v] != 0;
 }

@@ -60,6 +60,7 @@ typedef struct branch_search_stats {
   uint64_t *tmp;
   residual_cache_t cache;
   qsop_solve_trace_t *trace;
+  qsop_branch_heuristic_t heuristic;
   uint32_t depth;
 } branch_search_stats_t;
 
@@ -460,16 +461,54 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   return true;
 }
 
-static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out, qsop_error_t *error) {
+typedef struct branch_candidate {
+  uint32_t var;
+  uint32_t components;
+  uint32_t largest_component;
+  uint32_t degree;
+  uint64_t fill_edges;
+  uint32_t cut_rank;
+  bool has_unary;
+} branch_candidate_t;
+
+static bool split_candidate_better(const branch_candidate_t *candidate,
+                                   const branch_candidate_t *best) {
   /* One-variable balance gains can add component subsolves without reducing current corpus search. */
   const uint32_t min_balance_gain = 2;
+  const bool materially_better_balance =
+      best->largest_component >= min_balance_gain &&
+      candidate->largest_component <= best->largest_component - min_balance_gain;
+  return candidate->components > best->components ||
+         (candidate->components == best->components && materially_better_balance) ||
+         (candidate->components == best->components &&
+          candidate->largest_component == best->largest_component &&
+          candidate->degree > best->degree) ||
+         (candidate->components == best->components &&
+          candidate->largest_component == best->largest_component &&
+          candidate->degree == best->degree && candidate->has_unary && !best->has_unary);
+}
+
+static bool branch_candidate_better(qsop_branch_heuristic_t heuristic,
+                                    const branch_candidate_t *candidate,
+                                    const branch_candidate_t *best) {
+  switch (heuristic) {
+  case QSOP_BRANCH_HEURISTIC_SPLIT:
+    return split_candidate_better(candidate, best);
+  case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
+    return candidate->fill_edges < best->fill_edges ||
+           (candidate->fill_edges == best->fill_edges && split_candidate_better(candidate, best));
+  case QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH:
+    return candidate->cut_rank < best->cut_rank ||
+           (candidate->cut_rank == best->cut_rank && split_candidate_better(candidate, best));
+  }
+  return split_candidate_better(candidate, best);
+}
+
+static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuristic_t heuristic,
+                              uint32_t *out, qsop_error_t *error) {
   const uint32_t nvars = qsop_residual_nvars(residual);
   bool found = false;
-  uint32_t best_var = 0;
-  uint32_t best_components = 0;
-  uint32_t best_largest_component = UINT32_MAX;
-  uint32_t best_degree = 0;
-  bool best_has_unary = false;
+  branch_candidate_t best = {0};
 
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_residual_var_active(residual, v)) {
@@ -482,23 +521,24 @@ static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out, qs
       if (!qsop_residual_split_without_var(residual, v, &components, &largest_component, error)) {
         return false;
       }
-      const bool has_unary = qsop_residual_unary(residual, v) != 0;
-      const bool materially_better_balance =
-          best_largest_component >= min_balance_gain &&
-          largest_component <= best_largest_component - min_balance_gain;
-      if (!found || components > best_components ||
-          (components == best_components && materially_better_balance) ||
-          (components == best_components && largest_component == best_largest_component &&
-           degree > best_degree) ||
-          (components == best_components && largest_component == best_largest_component &&
-           degree == best_degree && has_unary &&
-           !best_has_unary)) {
+      branch_candidate_t candidate = {
+          .var = v,
+          .components = components,
+          .largest_component = largest_component,
+          .degree = degree,
+          .has_unary = qsop_residual_unary(residual, v) != 0,
+      };
+      if (heuristic == QSOP_BRANCH_HEURISTIC_TREEWIDTH &&
+          !qsop_residual_fill_edges_without_var(residual, v, &candidate.fill_edges, error)) {
+        return false;
+      }
+      if (heuristic == QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH &&
+          !qsop_residual_neighbor_cut_rank(residual, v, &candidate.cut_rank, error)) {
+        return false;
+      }
+      if (!found || branch_candidate_better(heuristic, &candidate, &best)) {
         found = true;
-        best_var = v;
-        best_components = components;
-        best_largest_component = largest_component;
-        best_degree = degree;
-        best_has_unary = has_unary;
+        best = candidate;
       }
     }
   }
@@ -508,7 +548,7 @@ static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out, qs
     return false;
   }
 
-  *out = best_var;
+  *out = best.var;
   return true;
 }
 
@@ -576,7 +616,7 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
 
   uint32_t v = 0;
   const uint64_t select_start = qsop_trace_begin(stats->trace);
-  if (!choose_branch_var(residual, &v, error)) {
+  if (!choose_branch_var(residual, stats->heuristic, &v, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(stats->trace, "branch.select_variable", stats->depth, v, select_start);
@@ -648,6 +688,14 @@ bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_
 bool qsop_solve_residual_branch_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
                                             qsop_result_t **out, qsop_solve_stats_t *stats,
                                             qsop_solve_trace_t *trace, qsop_error_t *error) {
+  return qsop_solve_residual_branch_heuristic_trace_stats(
+      qsop, max_vars, QSOP_BRANCH_HEURISTIC_SPLIT, out, stats, trace, error);
+}
+
+bool qsop_solve_residual_branch_heuristic_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -686,6 +734,7 @@ bool qsop_solve_residual_branch_trace_stats(const qsop_instance_t *qsop, uint32_
 
   branch_search_stats_t search = {
       .trace = trace,
+      .heuristic = heuristic,
   };
   if (!qsop_counts_alloc(qsop->r, &search.work, error) ||
       !qsop_counts_alloc(qsop->r, &search.tmp, error)) {

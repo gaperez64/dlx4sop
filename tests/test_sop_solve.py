@@ -204,6 +204,9 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
         ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
+        ([str(exe), "--branch-heuristic"], "requires a value"),
+        ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
+        ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
         ([str(exe), "--trace"], "requires a value"),
         ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
@@ -222,6 +225,51 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         )
         if completed.returncode == 0 or expected_error not in completed.stderr:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
+
+
+def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    expected = subprocess.run(
+        [str(exe), "--backend", "branch", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if expected.returncode != 0:
+        raise AssertionError(f"default branch solve failed\n{expected.stderr}")
+
+    for heuristic in ["treewidth", "linear-rankwidth"]:
+        completed = subprocess.run(
+            [str(exe), "--backend", "branch", "--branch-heuristic", heuristic, str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0 or completed.stdout != expected.stdout:
+            raise AssertionError(
+                f"{heuristic} branch solve mismatch\n{completed.stdout}\n{completed.stderr}"
+            )
+
+        stats = subprocess.run(
+            [
+                str(exe),
+                "--format",
+                "stats",
+                "--backend",
+                "branch",
+                "--branch-heuristic",
+                heuristic,
+                str(qsop),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if stats.returncode != 0 or f"branch_heuristic: {heuristic}" not in stats.stdout:
+            raise AssertionError(f"{heuristic} stats missing heuristic\n{stats.stdout}\n{stats.stderr}")
 
 
 def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
@@ -274,6 +322,7 @@ def main() -> int:
     run_max_vars_guard(exe, source_root)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
+    run_branch_heuristics(exe, source_root)
     run_trace_csv(exe, source_root)
     return 0
 
