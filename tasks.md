@@ -42,6 +42,16 @@ and `ARCHITECTURE.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
+- Added optional Qiskit amplitude comparisons:
+  - new Meson option `-Dqiskit_tests=true`;
+  - compares fixed-boundary `qasm2sop + sop-solve` amplitudes against Qiskit
+    `Statevector` for representative supported circuits;
+  - kept outside the default suite because Qiskit is an external dependency.
+- Verified with:
+  - `meson setup --wipe build-qiskit -Dqiskit_tests=true`
+  - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
 
 ## Current Task
 
@@ -54,8 +64,7 @@ and `ARCHITECTURE.md`.
 
 - Add more finite OpenQASM syntax compatibility with boundary-level examples.
 - Add small compatibility aliases when they reuse existing lowering paths.
-- Add optional Qiskit comparison tests behind an explicit dependency gate,
-  reusing the same fixed-boundary amplitude cases.
+- Expand optional Qiskit comparison coverage as importer scope grows.
 - Revisit performance-annex items as solver hot paths mature:
   - residual-state hashing;
   - stronger component fingerprints;

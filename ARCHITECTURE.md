@@ -231,6 +231,9 @@ Importer tests include both canonical QSOP golden files and dependency-free
 amplitude checks. The amplitude checks run `qasm2sop` for fixed input/output
 boundaries, solve the resulting QSOP with `sop-solve`, and compare against a
 small Python state-vector simulator for the supported static subset.
+Optional Qiskit comparisons reuse the same fixed-boundary approach behind
+`-Dqiskit_tests=true`; they are not part of the default suite because Qiskit is
+an external dependency.
 
 ## CI And Coverage
 
@@ -244,9 +247,11 @@ CI runs on GitHub Actions with:
 The coverage gate is intended to keep CLI and core behavior covered while the
 solver is still small enough for cheap exact tests.
 
-Parser fuzz targets are available behind `-Dbuild_fuzzers=true`. They are not
-part of the normal CI path initially; the current parser target replays arbitrary
-bytes through the QSOP parser and uses canonical writer idempotence as its oracle.
+Parser fuzz targets are available behind `-Dbuild_fuzzers=true`. Optional
+Qiskit comparisons are available behind `-Dqiskit_tests=true`. Neither is part
+of the normal CI path initially; the current parser target replays arbitrary
+bytes through the QSOP parser and uses canonical writer idempotence as its
+oracle.
 
 ## Forward Direction
 

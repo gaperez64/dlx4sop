@@ -71,6 +71,15 @@ meson test -C build-fuzz --print-errorlogs
 build-fuzz/fuzz-qsop-parse tests/golden/labelled_raw.qsop
 ```
 
+Optional Qiskit comparisons are also kept outside the normal CI path. They
+compare fixed-boundary `qasm2sop + sop-solve` amplitudes against Qiskit
+`Statevector` for the supported static subset:
+
+```sh
+meson setup build-qiskit -Dqiskit_tests=true
+meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs
+```
+
 ## Usage Examples
 
 Canonicalize a raw labelled QSOP:
