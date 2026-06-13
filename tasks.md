@@ -60,13 +60,17 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 75.2% line coverage over `src`.
+- Extended direct OpenQASM static gate support:
+  - `id` as a no-op after operand validation;
+  - `swap` as a wire-state permutation;
+  - golden test covering `id` and `swap`.
 
 ## Current Task
 
-- Extend OpenQASM importer coverage beyond the initial finite gate set:
-  - add more static Clifford gates where the QSOP mapping is direct;
-  - keep unsupported dynamic behavior explicit.
+- Add explicit input/output boundary options to `qasm2sop`:
+  - accept fixed bitstrings for current default 0-to-0 behavior;
+  - keep all boundary handling explicit in generated QSOP pins.
 
 ## Future Tasks
 
-- Add explicit input/output boundary options to `qasm2sop`.
+- Extend OpenQASM importer coverage beyond direct finite gates.

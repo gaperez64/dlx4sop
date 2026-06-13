@@ -88,6 +88,7 @@ def main() -> int:
     source_root = pathlib.Path(sys.argv[2])
     run_case(exe, source_root, "qasm_hth")
     run_case(exe, source_root, "qasm_cz")
+    run_case(exe, source_root, "qasm_swap_id")
     run_cli_paths(exe, source_root)
     return 0
 

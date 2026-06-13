@@ -187,5 +187,5 @@ component.
 
 ## Current Direction
 
-The next implementation target is extending the OpenQASM importer beyond the
-initial `h`, finite phase, and `cz` gate subset.
+The next implementation target is explicit input/output boundary options for
+`qasm2sop`.

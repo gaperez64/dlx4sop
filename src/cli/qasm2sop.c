@@ -407,6 +407,11 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return true;
   }
 
+  if (strcmp(gate, "id") == 0) {
+    uint32_t qubit = 0;
+    return parse_one_qubit_gate(importer, rest, &qubit);
+  }
+
   if (strcmp(gate, "cz") == 0) {
     uint32_t left = 0;
     uint32_t right = 0;
@@ -414,6 +419,18 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
       return false;
     }
     return add_edge(importer, importer->current[left], importer->current[right], 4);
+  }
+
+  if (strcmp(gate, "swap") == 0) {
+    uint32_t left = 0;
+    uint32_t right = 0;
+    if (!parse_two_qubit_gate(importer, rest, &left, &right)) {
+      return false;
+    }
+    const uint32_t tmp = importer->current[left];
+    importer->current[left] = importer->current[right];
+    importer->current[right] = tmp;
+    return true;
   }
 
   set_error(importer, "unsupported OpenQASM operation '%s'", gate);
