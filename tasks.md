@@ -46,6 +46,16 @@ and `ARCHITECTURE.md`.
     active-degree queries, and split estimates to local adjacency traversal;
   - added finite `u2(...)` and `u3(...)` imports for symbolic multiples of
     `pi/4`, with golden, dependency-free amplitude, and optional Qiskit coverage.
+- Completed residual degree and cache lookup checkpoint:
+  - added trailed active-degree metadata so branch heuristic degree queries are
+    O(1) while checkpoint undo remains exact;
+  - replaced branch residual-cache linear scans with fingerprint buckets while
+    preserving exact key comparison before reuse.
+- Completed residual branch component-splitting checkpoint:
+  - added active-component labelling over the mutable residual graph;
+  - taught the branch backend to solve disconnected active residual components
+    separately, convolve their counts, and shift by the parent residual
+    constant once.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
@@ -56,10 +66,10 @@ and `ARCHITECTURE.md`.
 - Continue solver improvements using the current QASM importer and branch cache
   stats as measurable circuit-derived regressions.
 - Next likely solver work before tree/rankwidth experiments:
-  - decide whether residual active-degree counts should become trailed
-    incremental metadata on top of the new incidence lists;
-  - inspect branch cache hit rates on QASM-derived cases and decide whether the
-    residual cache needs bucketed lookup or component-aware residual keys;
+  - inspect branch cache hit rates on QASM-derived cases when a larger benchmark
+    set exists, then decide whether component-aware residual keys are warranted;
+  - decide whether split estimates need incremental component metadata or
+    whether component splitting is enough for current benchmark scale;
   - keep small-component canonical relabelling scoped to cases proven by stats;
   - keep coverage above the 75% CI gate.
 
@@ -70,8 +80,9 @@ and `ARCHITECTURE.md`.
 - Expand optional Qiskit comparison coverage as importer scope grows.
 - Revisit performance-annex items as solver hot paths mature:
   - dancing-cells adjacency mutation remains incomplete: the residual backend
-    has reversible mutation and immutable incidence lists, but not linked-cell
-    deletion/reinsertion or incremental active-degree/component metadata. See
+    has reversible mutation, immutable incidence lists, and trailed active
+    degrees, but not linked-cell deletion/reinsertion or incremental component
+    metadata. See
     [solver backends](ARCHITECTURE.md#solver-backends) and
     [A.5](ARCHITECTURE_SPEED_ANNEX.md#a5-keep-reversible-mutation-central).
   - hashing/caching remains partly incomplete: branch-local exact residual

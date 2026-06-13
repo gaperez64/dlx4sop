@@ -9,6 +9,7 @@ typedef enum trail_kind {
   TRAIL_SET_CONSTANT,
   TRAIL_SET_ACTIVE_VAR,
   TRAIL_SET_ACTIVE_EDGE,
+  TRAIL_SET_ACTIVE_DEGREE,
 } trail_kind_t;
 
 typedef struct trail_entry {
@@ -29,6 +30,7 @@ struct qsop_residual {
   uint32_t *edge_q;
   uint32_t *incident_offset;
   uint32_t *incident_edge;
+  uint32_t *active_degree;
   uint8_t *active_var;
   uint8_t *active_edge;
   uint32_t active_vars;
@@ -152,14 +154,37 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
   if (residual->active_edge[e] == next) {
     return true;
   }
-  if (!push_trail(residual, TRAIL_SET_ACTIVE_EDGE, e, residual->active_edge[e], error)) {
+
+  const uint32_t u = residual->edge_u[e];
+  const uint32_t v = residual->edge_v[e];
+  const bool self_loop = u == v;
+  const size_t trail_entries = self_loop ? 2U : 3U;
+  if (!active && (residual->active_degree[u] == 0 ||
+                  (!self_loop && residual->active_degree[v] == 0))) {
+    set_error(error, "internal error: residual degree underflow");
     return false;
   }
+  if (!reserve_trail(residual, residual->trail_len + trail_entries, error) ||
+      !push_trail(residual, TRAIL_SET_ACTIVE_EDGE, e, residual->active_edge[e], error) ||
+      !push_trail(residual, TRAIL_SET_ACTIVE_DEGREE, u, residual->active_degree[u], error) ||
+      (!self_loop &&
+       !push_trail(residual, TRAIL_SET_ACTIVE_DEGREE, v, residual->active_degree[v], error))) {
+    return false;
+  }
+
   residual->active_edge[e] = next;
   if (active) {
     residual->active_edges++;
+    residual->active_degree[u]++;
+    if (!self_loop) {
+      residual->active_degree[v]++;
+    }
   } else {
     residual->active_edges--;
+    residual->active_degree[u]--;
+    if (!self_loop) {
+      residual->active_degree[v]--;
+    }
   }
   return true;
 }
@@ -170,8 +195,11 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
   residual->incident_edge =
       malloc((residual->nedges == 0 ? 1U : (size_t)residual->nedges * 2U) *
              sizeof(*residual->incident_edge));
+  residual->active_degree =
+      calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*residual->active_degree));
   uint32_t *cursor = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*cursor));
-  if (residual->incident_offset == NULL || residual->incident_edge == NULL || cursor == NULL) {
+  if (residual->incident_offset == NULL || residual->incident_edge == NULL ||
+      residual->active_degree == NULL || cursor == NULL) {
     free(cursor);
     set_error(error, "out of memory while building residual incidence lists");
     return false;
@@ -181,8 +209,10 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
     const uint32_t u = residual->edge_u[e];
     const uint32_t v = residual->edge_v[e];
     residual->incident_offset[u + 1U]++;
+    residual->active_degree[u]++;
     if (v != u) {
       residual->incident_offset[v + 1U]++;
+      residual->active_degree[v]++;
     }
   }
   for (uint32_t v = 1; v <= residual->nvars; v++) {
@@ -269,6 +299,7 @@ void qsop_residual_free(qsop_residual_t *residual) {
   free(residual->edge_q);
   free(residual->incident_offset);
   free(residual->incident_edge);
+  free(residual->active_degree);
   free(residual->active_var);
   free(residual->active_edge);
   free(residual->trail);
@@ -322,6 +353,9 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
       }
       break;
     }
+    case TRAIL_SET_ACTIVE_DEGREE:
+      residual->active_degree[entry.index] = (uint32_t)entry.old_value;
+      break;
     }
   }
 
@@ -415,6 +449,27 @@ uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v) {
   return residual->unary[v];
 }
 
+uint32_t qsop_residual_edge_u(const qsop_residual_t *residual, uint32_t e) {
+  if (residual == NULL || e >= residual->nedges) {
+    return 0;
+  }
+  return residual->edge_u[e];
+}
+
+uint32_t qsop_residual_edge_v(const qsop_residual_t *residual, uint32_t e) {
+  if (residual == NULL || e >= residual->nedges) {
+    return 0;
+  }
+  return residual->edge_v[e];
+}
+
+uint32_t qsop_residual_edge_q(const qsop_residual_t *residual, uint32_t e) {
+  if (residual == NULL || e >= residual->nedges) {
+    return 0;
+  }
+  return residual->edge_q[e];
+}
+
 uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
   if (residual == NULL) {
     return 0;
@@ -448,15 +503,70 @@ uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v
   if (residual == NULL || v >= residual->nvars || residual->active_var[v] == 0) {
     return 0;
   }
+  return residual->active_degree[v];
+}
 
-  uint32_t degree = 0;
-  for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U]; i++) {
-    const uint32_t e = residual->incident_edge[i];
-    if (residual->active_edge[e] != 0) {
-      degree++;
-    }
+bool qsop_residual_active_components(const qsop_residual_t *residual, uint32_t *component,
+                                     uint32_t *ncomponents, qsop_error_t *error) {
+  if (component == NULL || ncomponents == NULL) {
+    set_error(error, "internal error: null residual component output");
+    return false;
   }
-  return degree;
+  *ncomponents = 0;
+
+  if (residual == NULL) {
+    set_error(error, "internal error: null residual state");
+    return false;
+  }
+
+  uint32_t *queue = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*queue));
+  if (queue == NULL) {
+    set_error(error, "out of memory while labelling residual components");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    component[v] = UINT32_MAX;
+  }
+
+  uint32_t count = 0;
+  for (uint32_t start = 0; start < residual->nvars; start++) {
+    if (residual->active_var[start] == 0 || component[start] != UINT32_MAX) {
+      continue;
+    }
+
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    component[start] = count;
+    queue[tail++] = start;
+    while (head < tail) {
+      const uint32_t v = queue[head++];
+      for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U];
+           i++) {
+        const uint32_t e = residual->incident_edge[i];
+        if (residual->active_edge[e] == 0) {
+          continue;
+        }
+
+        uint32_t other = UINT32_MAX;
+        if (residual->edge_u[e] == v) {
+          other = residual->edge_v[e];
+        } else if (residual->edge_v[e] == v) {
+          other = residual->edge_u[e];
+        }
+        if (other != UINT32_MAX && residual->active_var[other] != 0 &&
+            component[other] == UINT32_MAX) {
+          component[other] = count;
+          queue[tail++] = other;
+        }
+      }
+    }
+    count++;
+  }
+
+  free(queue);
+  *ncomponents = count;
+  return true;
 }
 
 bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,

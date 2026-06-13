@@ -34,8 +34,9 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     lookup, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
-    split-aware variable heuristic, a fingerprinted residual memo cache, and a
-    residue-table fast path once no active quadratic edges remain.
+    split-aware variable heuristic, a bucketed fingerprinted residual memo
+    cache, residual component splitting, and a residue-table fast path once no
+    active quadratic edges remain.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p`/`rz` phase
   calls, finite `rx`/`ry` axis rotations, finite `u2`/`u3` calls,

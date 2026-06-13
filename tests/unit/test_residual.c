@@ -265,6 +265,18 @@ static int test_component_split_estimate(void) {
     return 1;
   }
 
+  uint32_t labels[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+  uint32_t ncomponents = 0;
+  if (!qsop_residual_active_components(residual, labels, &ncomponents, &error) ||
+      expect_u32("initial active components", ncomponents, 1) != 0 ||
+      expect_u32("initial label0", labels[0], 0) != 0 ||
+      expect_u32("initial label1", labels[1], 0) != 0 ||
+      expect_u32("initial label2", labels[2], 0) != 0) {
+    fprintf(stderr, "initial active component labels failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+
   if (!qsop_residual_branch(residual, 1, 0, &error)) {
     fprintf(stderr, "branch for split estimate failed: %s\n", error.message);
     qsop_residual_free(residual);
@@ -275,6 +287,14 @@ static int test_component_split_estimate(void) {
       !qsop_residual_components_without_var(residual, 2, &components, &error) ||
       expect_u32("post-branch split remove2", components, 1) != 0) {
     fprintf(stderr, "post-branch component split estimate failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  if (!qsop_residual_active_components(residual, labels, &ncomponents, &error) ||
+      expect_u32("post-branch active components", ncomponents, 2) != 0 ||
+      expect_u32("post-branch inactive label", labels[1], UINT32_MAX) != 0 ||
+      labels[0] == UINT32_MAX || labels[2] == UINT32_MAX || labels[0] == labels[2]) {
+    fprintf(stderr, "post-branch active component labels failed: %s\n", error.message);
     qsop_residual_free(residual);
     return 1;
   }

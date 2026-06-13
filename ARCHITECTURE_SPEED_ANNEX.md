@@ -156,11 +156,11 @@ The residual branch backend already mutates in place and records enough state to
 undo branches. As the solver grows, new simplifications should keep this
 discipline instead of reintroducing full residual copies.
 
-The current residual state also stores immutable incident-edge lists and uses
-them for branch mutation, degree queries, and residual split estimates. This is
-a step toward dancing-cells-style locality, but it is not yet linked-cell
-deletion/reinsertion: active state is still represented by flags plus the
-reversible trail.
+The current residual state also stores immutable incident-edge lists, keeps
+trailed active-degree metadata, and uses local adjacency for branch mutation and
+residual split estimates. This is a step toward dancing-cells-style locality,
+but it is not yet linked-cell deletion/reinsertion: active state is still
+represented by flags plus the reversible trail.
 
 Suggested trail kinds:
 
@@ -209,8 +209,9 @@ local cells, record mutations, and undo them in reverse order.
 Memoization should remain a first-class solver feature, not a later wrapper. The
 component backend owns a local canonical component cache with compact entry
 fingerprints for fast rejection. The residual branch backend now exposes a
-deterministic full-state fingerprint and uses it to filter a branch-local exact
-memo cache. Incremental hash maintenance is still future work.
+deterministic full-state fingerprint and uses it to filter a bucketed
+branch-local exact memo cache. Incremental hash maintenance is still future
+work.
 
 Use a Zobrist-style incremental hash over the active residual state:
 
@@ -328,6 +329,9 @@ collapsing active independent unary variables into a residue-count table. This
 is a first solver-side form of isolated-variable deletion after branching.
 The branch selector also skips isolated active variables while active quadratic
 edges remain, leaving them for the edge-free residue-table path.
+When the active residual graph splits, the branch backend now solves active
+components separately and convolves their residue-count vectors before applying
+the parent residual constant.
 
 ---
 

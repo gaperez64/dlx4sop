@@ -185,23 +185,26 @@ recursively branches on active variables. A reversible trail supports checkpoint
 and undo without copying the full residual state at every branch.
 
 The residual stores immutable per-variable incident-edge lists, so branch
-mutation, active-degree queries, and split estimates walk local adjacency
-instead of scanning every edge for each active variable. Active edge and variable
-state still uses the reversible trail.
+mutation and split estimates walk local adjacency instead of scanning every edge
+for each active variable. Active edge, active variable, and active-degree state
+use the reversible trail; active-degree queries are O(1).
 
 Residual states expose a deterministic fingerprint over the active graph,
-constant, and active unary labels. The branch backend owns a local exact memo
-cache keyed by that fingerprint plus full active-state comparison, so cache
-hits reuse residue-count vectors without depending on hash uniqueness.
+constant, and active unary labels. The branch backend owns a local bucketed
+exact memo cache keyed by that fingerprint plus full active-state comparison, so
+cache hits reuse residue-count vectors without depending on hash uniqueness.
 
 The current branch heuristic ignores isolated active variables while quadratic
 edges remain, then estimates how many active residual components would remain
 after removing each interacting candidate variable. It uses active degree and
 unary-label presence as tie breakers. When a branch leaves no active quadratic
 edges, the backend collapses the remaining independent unary variables with a
-residue-table update instead of branching through each isolated variable. The
-backend reports internal node, cache hit/miss, and leaf counters through the
-stats-aware solve API and `sop-solve --format stats`.
+residue-table update instead of branching through each isolated variable. When a
+residual graph splits into multiple active components, the backend solves each
+component as a zero-constant residual subproblem, convolves their residue-count
+vectors, and applies the parent residual constant once. The backend reports
+internal node, cache hit/miss, and leaf counters through the stats-aware solve
+API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 

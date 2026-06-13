@@ -39,12 +39,15 @@ typedef struct residual_cache_key {
 typedef struct residual_cache_entry {
   residual_cache_key_t key;
   uint64_t *counts;
+  size_t next;
 } residual_cache_entry_t;
 
 typedef struct residual_cache {
   residual_cache_entry_t *entries;
+  size_t *buckets;
   size_t len;
   size_t cap;
+  size_t bucket_count;
 } residual_cache_t;
 
 typedef struct branch_search_stats {
@@ -56,6 +59,17 @@ typedef struct branch_search_stats {
   uint64_t *tmp;
   residual_cache_t cache;
 } branch_search_stats_t;
+
+static void free_subinstance(qsop_instance_t *sub) {
+  if (sub == NULL) {
+    return;
+  }
+  free(sub->unary);
+  free(sub->edge_u);
+  free(sub->edge_v);
+  free(sub->edge_q);
+  *sub = (qsop_instance_t){0};
+}
 
 static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   if (UINT64_MAX - *dst < value) {
@@ -161,8 +175,13 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
 
 static const residual_cache_entry_t *residual_cache_find(const residual_cache_t *cache,
                                                          const qsop_residual_t *residual) {
+  if (cache->bucket_count == 0) {
+    return NULL;
+  }
+
   const uint64_t fingerprint = qsop_residual_fingerprint(residual);
-  for (size_t i = 0; i < cache->len; i++) {
+  const size_t bucket = (size_t)(fingerprint % cache->bucket_count);
+  for (size_t i = cache->buckets[bucket]; i != SIZE_MAX; i = cache->entries[i].next) {
     const residual_cache_entry_t *entry = &cache->entries[i];
     if (entry->key.fingerprint == fingerprint &&
         residual_cache_key_matches_residual(&entry->key, residual)) {
@@ -202,9 +221,38 @@ static bool residual_cache_reserve(residual_cache_t *cache, size_t needed, qsop_
   return true;
 }
 
+static bool residual_cache_rehash(residual_cache_t *cache, size_t bucket_count,
+                                  qsop_error_t *error) {
+  if (bucket_count == 0 || bucket_count > SIZE_MAX / sizeof(*cache->buckets)) {
+    set_error(error, "residual cache is too large");
+    return false;
+  }
+
+  size_t *buckets = malloc(bucket_count * sizeof(*buckets));
+  if (buckets == NULL) {
+    set_error(error, "out of memory while allocating residual cache buckets");
+    return false;
+  }
+  for (size_t i = 0; i < bucket_count; i++) {
+    buckets[i] = SIZE_MAX;
+  }
+
+  for (size_t i = 0; i < cache->len; i++) {
+    const size_t bucket = (size_t)(cache->entries[i].key.fingerprint % bucket_count);
+    cache->entries[i].next = buckets[bucket];
+    buckets[bucket] = i;
+  }
+
+  free(cache->buckets);
+  cache->buckets = buckets;
+  cache->bucket_count = bucket_count;
+  return true;
+}
+
 static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t *residual,
                                  const uint64_t *counts, qsop_error_t *error) {
   residual_cache_entry_t entry = {0};
+  entry.next = SIZE_MAX;
   if (!residual_cache_key_create(residual, &entry.key, error)) {
     return false;
   }
@@ -220,8 +268,25 @@ static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t 
     free(entry.counts);
     return false;
   }
+  if (cache->bucket_count == 0) {
+    if (!residual_cache_rehash(cache, 64U, error)) {
+      residual_cache_key_free(&entry.key);
+      free(entry.counts);
+      return false;
+    }
+  } else if (cache->bucket_count <= SIZE_MAX / 2U &&
+             cache->len + 1U > cache->bucket_count * 2U &&
+             !residual_cache_rehash(cache, cache->bucket_count * 2U, error)) {
+    residual_cache_key_free(&entry.key);
+    free(entry.counts);
+    return false;
+  }
 
-  cache->entries[cache->len++] = entry;
+  const size_t bucket = (size_t)(entry.key.fingerprint % cache->bucket_count);
+  entry.next = cache->buckets[bucket];
+  cache->entries[cache->len] = entry;
+  cache->buckets[bucket] = cache->len;
+  cache->len++;
   return true;
 }
 
@@ -235,7 +300,152 @@ static void residual_cache_free(residual_cache_t *cache) {
     free(cache->entries[i].counts);
   }
   free(cache->entries);
+  free(cache->buckets);
   *cache = (residual_cache_t){0};
+}
+
+static bool build_residual_subinstance(const qsop_residual_t *residual, const uint32_t *component,
+                                       uint32_t wanted, qsop_instance_t *sub,
+                                       qsop_error_t *error) {
+  const uint32_t source_vars = qsop_residual_nvars(residual);
+  const uint32_t source_edges = qsop_residual_nedges(residual);
+  uint32_t *map = malloc((source_vars == 0 ? 1U : source_vars) * sizeof(*map));
+  if (map == NULL) {
+    set_error(error, "out of memory while building residual component subinstance");
+    return false;
+  }
+  for (uint32_t v = 0; v < source_vars; v++) {
+    map[v] = UINT32_MAX;
+  }
+
+  uint32_t nvars = 0;
+  for (uint32_t v = 0; v < source_vars; v++) {
+    if (component[v] == wanted) {
+      map[v] = nvars++;
+    }
+  }
+
+  uint32_t nedges = 0;
+  bool sign_only = true;
+  const uint32_t r = qsop_residual_modulus(residual);
+  const uint32_t sign_coeff = r / 2U;
+  for (uint32_t e = 0; e < source_edges; e++) {
+    const uint32_t u = qsop_residual_edge_u(residual, e);
+    if (qsop_residual_edge_active(residual, e) && component[u] == wanted) {
+      nedges++;
+      if (qsop_residual_edge_q(residual, e) != sign_coeff) {
+        sign_only = false;
+      }
+    }
+  }
+
+  *sub = (qsop_instance_t){
+      .r = r,
+      .nvars = nvars,
+      .norm_h = 0,
+      .constant = 0,
+      .mode = sign_only ? QSOP_MODE_SIGN : QSOP_MODE_LABELLED,
+      .nedges = nedges,
+  };
+  sub->unary = calloc(nvars == 0 ? 1U : nvars, sizeof(*sub->unary));
+  sub->edge_u = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_u));
+  sub->edge_v = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_v));
+  sub->edge_q = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_q));
+  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL ||
+      sub->edge_q == NULL) {
+    free(map);
+    free_subinstance(sub);
+    set_error(error, "out of memory while allocating residual component subinstance");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < source_vars; v++) {
+    if (component[v] == wanted) {
+      sub->unary[map[v]] = qsop_residual_unary(residual, v);
+    }
+  }
+
+  uint32_t out_edge = 0;
+  for (uint32_t e = 0; e < source_edges; e++) {
+    const uint32_t u = qsop_residual_edge_u(residual, e);
+    if (!qsop_residual_edge_active(residual, e) || component[u] != wanted) {
+      continue;
+    }
+    const uint32_t v = qsop_residual_edge_v(residual, e);
+    sub->edge_u[out_edge] = map[u];
+    sub->edge_v[out_edge] = map[v];
+    sub->edge_q[out_edge] = qsop_residual_edge_q(residual, e);
+    out_edge++;
+  }
+
+  free(map);
+  return true;
+}
+
+static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
+                                  branch_search_stats_t *stats, bool *out_split,
+                                  qsop_error_t *error) {
+  *out_split = false;
+  const uint32_t nvars = qsop_residual_nvars(residual);
+  const uint32_t r = qsop_residual_modulus(residual);
+  uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
+  uint64_t *acc = NULL;
+  uint64_t *tmp = NULL;
+  if (component == NULL || !qsop_counts_alloc(r, &acc, error) ||
+      !qsop_counts_alloc(r, &tmp, error)) {
+    free(component);
+    free(acc);
+    free(tmp);
+    set_error(error, "out of memory while splitting residual components");
+    return false;
+  }
+
+  uint32_t ncomponents = 0;
+  if (!qsop_residual_active_components(residual, component, &ncomponents, error)) {
+    free(component);
+    free(acc);
+    free(tmp);
+    return false;
+  }
+  if (ncomponents <= 1U) {
+    free(component);
+    free(acc);
+    free(tmp);
+    return true;
+  }
+
+  acc[0] = 1;
+  for (uint32_t c = 0; c < ncomponents; c++) {
+    qsop_instance_t sub = {0};
+    qsop_result_t *part = NULL;
+    qsop_solve_stats_t part_stats = {0};
+    if (!build_residual_subinstance(residual, component, c, &sub, error) ||
+        !qsop_solve_residual_branch_stats(&sub, sub.nvars, &part, &part_stats, error) ||
+        !qsop_counts_convolve(r, tmp, acc, part->counts, error)) {
+      free_subinstance(&sub);
+      qsop_result_free(part);
+      free(component);
+      free(acc);
+      free(tmp);
+      return false;
+    }
+
+    add_saturating_u64(&stats->nodes, part_stats.search_nodes);
+    add_saturating_u64(&stats->leaves, part_stats.leaf_assignments);
+    add_saturating_u64(&stats->cache_hits, part_stats.cache_hits);
+    add_saturating_u64(&stats->cache_misses, part_stats.cache_misses);
+
+    memcpy(acc, tmp, (size_t)r * sizeof(*acc));
+    free_subinstance(&sub);
+    qsop_result_free(part);
+  }
+
+  qsop_counts_shift_add(r, counts, acc, qsop_residual_constant(residual));
+  free(component);
+  free(acc);
+  free(tmp);
+  *out_split = true;
+  return true;
 }
 
 static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out,
@@ -326,6 +536,14 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
   }
   if (qsop_residual_active_edges(residual) == 0) {
     edge_free_sum(residual, counts, stats);
+    return true;
+  }
+
+  bool did_split = false;
+  if (!branch_sum_components(residual, counts, stats, &did_split, error)) {
+    return false;
+  }
+  if (did_split) {
     return true;
   }
 
