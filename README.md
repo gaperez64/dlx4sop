@@ -35,8 +35,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic, a bucketed fingerprinted residual memo
-    cache, residual component splitting, and a residue-table fast path once no
-    active quadratic edges remain.
+    cache, residual component splitting, balanced split tie-breaks, and a
+    residue-table fast path once no active quadratic edges remain.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -48,8 +48,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   operands.
 - `tools/bench_qasm_corpus.py`: run the QASM solver corpus through `qasm2sop`
   and `sop-solve`, emitting JSONL, CSV, or aggregate summary output with backend
-  counters, wall times, hashes, cache hit rates, and optional phase-trace
-  summaries.
+  counters, wall times, hashes, cache hit rates, optional phase-trace summaries,
+  and ranked top case-boundaries for heuristic inspection.
 - `tools/build_external_qasm_manifest.py`: build a
   `qasm_solver_corpus.json`-compatible manifest from external QASM roots, and
   optionally translated `.qc` files, after checking importability and an
@@ -290,13 +290,14 @@ Run the manifest-backed QASM solver corpus as a lightweight benchmark:
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --trace --format summary --top 8 --top-metric search_nodes
 ```
 
 Build a temporary external benchmark manifest for the same runner:
 
 ```sh
 tools/build_external_qasm_manifest.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits --include-qc --qc2qasm tools/qc2qasm.py --max-vars 24 --output /tmp/pyzx-qc-manifest.json
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest /tmp/pyzx-qc-manifest.json --backend components --backend branch --trace --format summary
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --manifest /tmp/pyzx-qc-manifest.json --backend components --backend branch --trace --format summary --top 5 --top-metric leaf_assignments
 ```
 
 Inspect a local FeynmanDD checkout:

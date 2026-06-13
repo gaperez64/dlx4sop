@@ -195,6 +195,10 @@ if python3.found()
       '--trace',
       '--format',
       'summary',
+      '--top',
+      '1',
+      '--top-metric',
+      'search_nodes',
     ],
     depends: [qasm2sop, sop_solve],
   )

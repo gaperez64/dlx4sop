@@ -51,6 +51,10 @@ bool qsop_residual_active_components(const qsop_residual_t *residual, uint32_t *
 bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
                                           uint32_t *out, qsop_error_t *error);
 
+bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                     uint32_t *ncomponents, uint32_t *largest_component,
+                                     qsop_error_t *error);
+
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v);
 
 bool qsop_residual_edge_active(const qsop_residual_t *residual, uint32_t e);

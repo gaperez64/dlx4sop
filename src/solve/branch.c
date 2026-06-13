@@ -461,10 +461,13 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
 }
 
 static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out, qsop_error_t *error) {
+  /* One-variable balance gains can add component subsolves without reducing current corpus search. */
+  const uint32_t min_balance_gain = 2;
   const uint32_t nvars = qsop_residual_nvars(residual);
   bool found = false;
   uint32_t best_var = 0;
   uint32_t best_components = 0;
+  uint32_t best_largest_component = UINT32_MAX;
   uint32_t best_degree = 0;
   bool best_has_unary = false;
 
@@ -475,17 +478,25 @@ static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out, qs
         continue;
       }
       uint32_t components = 0;
-      if (!qsop_residual_components_without_var(residual, v, &components, error)) {
+      uint32_t largest_component = 0;
+      if (!qsop_residual_split_without_var(residual, v, &components, &largest_component, error)) {
         return false;
       }
       const bool has_unary = qsop_residual_unary(residual, v) != 0;
+      const bool materially_better_balance =
+          best_largest_component >= min_balance_gain &&
+          largest_component <= best_largest_component - min_balance_gain;
       if (!found || components > best_components ||
-          (components == best_components && degree > best_degree) ||
-          (components == best_components && degree == best_degree && has_unary &&
+          (components == best_components && materially_better_balance) ||
+          (components == best_components && largest_component == best_largest_component &&
+           degree > best_degree) ||
+          (components == best_components && largest_component == best_largest_component &&
+           degree == best_degree && has_unary &&
            !best_has_unary)) {
         found = true;
         best_var = v;
         best_components = components;
+        best_largest_component = largest_component;
         best_degree = degree;
         best_has_unary = has_unary;
       }

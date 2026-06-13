@@ -12,6 +12,15 @@ from typing import TextIO
 
 
 BACKENDS = ("components", "brute-force", "branch")
+TOP_METRICS = (
+    "solve_elapsed_ns",
+    "import_elapsed_ns",
+    "search_nodes",
+    "leaf_assignments",
+    "cache_hits",
+    "cache_misses",
+    "components",
+)
 CSV_FIELDS = [
     "case",
     "boundary",
@@ -152,6 +161,29 @@ def cache_hit_rate(stats: dict[str, int]) -> str:
     return f"{hits / total:.3f}"
 
 
+def record_metric(record: dict, metric: str) -> int:
+    value = record.get(metric)
+    if isinstance(value, int):
+        return value
+    value = record["stats"].get(metric)
+    return value if isinstance(value, int) else 0
+
+
+def record_has_metric(record: dict, metric: str) -> bool:
+    return isinstance(record.get(metric), int) or isinstance(record["stats"].get(metric), int)
+
+
+def dominant_trace_phase(record: dict) -> str:
+    trace = record["trace"]
+    if not trace:
+        return ""
+    phase, values = max(trace.items(), key=lambda item: (item[1]["elapsed_ns"], item[0]))
+    return (
+        f"{phase}:events={values['events']}:items={values['items']}:"
+        f"elapsed_ns={values['elapsed_ns']}"
+    )
+
+
 def iter_case_boundaries(cases: list[dict], limit: int | None):
     seen = 0
     for case in cases:
@@ -226,7 +258,54 @@ def write_csv(records: list[dict], file: TextIO) -> None:
         writer.writerow(row)
 
 
-def write_summary(records: list[dict], file: TextIO) -> None:
+def write_top_records(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
+    if args.top == 0:
+        return
+
+    print(f"top_records_by_{args.top_metric}:", file=file)
+    for backend in sorted({record["backend"] for record in records}):
+        backend_records = [
+            record
+            for record in records
+            if record["backend"] == backend and record_has_metric(record, args.top_metric)
+        ]
+        ranked = sorted(
+            backend_records,
+            key=lambda record: (
+                record_metric(record, args.top_metric),
+                record["solve_elapsed_ns"],
+                record["case"],
+                record["boundary"],
+            ),
+            reverse=True,
+        )
+        print(f"  backend: {backend}", file=file)
+        if not ranked:
+            print("    no records report this metric", file=file)
+            continue
+        for record in ranked[: args.top]:
+            stats = record["stats"]
+            line = (
+                f"    {record['case']} {record['boundary']} "
+                f"value={record_metric(record, args.top_metric)} "
+                f"nvars={record['nvars']} nedges={record['nedges']} "
+                f"solve_elapsed_ns={record['solve_elapsed_ns']}"
+            )
+            if "search_nodes" in stats:
+                line += f" search_nodes={stats['search_nodes']}"
+            if "leaf_assignments" in stats:
+                line += f" leaf_assignments={stats['leaf_assignments']}"
+            if "components" in stats:
+                line += f" components={stats['components']}"
+            if "cache_hits" in stats or "cache_misses" in stats:
+                line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
+            trace_phase = dominant_trace_phase(record)
+            if trace_phase:
+                line += f" top_trace={trace_phase}"
+            print(line, file=file)
+
+
+def write_summary(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
     print(f"records: {len(records)}", file=file)
     summary = summarize_records(records)
     for backend in sorted(summary):
@@ -252,6 +331,7 @@ def write_summary(records: list[dict], file: TextIO) -> None:
                     f"items={values['items']} elapsed_ns={values['elapsed_ns']}",
                     file=file,
                 )
+    write_top_records(records, args, file)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -276,11 +356,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=0,
+        help="With --format summary, print this many largest case-boundary records per backend.",
+    )
+    parser.add_argument(
+        "--top-metric",
+        choices=TOP_METRICS,
+        default="solve_elapsed_ns",
+        help="Metric used by --top ranking.",
+    )
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be non-negative")
     if args.max_vars < 0:
         parser.error("--max-vars must be non-negative")
+    if args.top < 0:
+        parser.error("--top must be non-negative")
     return args
 
 
@@ -297,7 +391,7 @@ def main(argv: list[str]) -> int:
     elif args.format == "csv":
         write_csv(records, sys.stdout)
     else:
-        write_summary(records, sys.stdout)
+        write_summary(records, args, sys.stdout)
     return 0
 
 

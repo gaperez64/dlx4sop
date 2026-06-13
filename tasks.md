@@ -180,6 +180,28 @@ and `ARCHITECTURE.md`.
     - combined checked-in + MQT + PyZX `.qc` branch-solvable slice has 52 cases
       and 72 boundaries: branch cache hit rate 0/(0+349)=0.000, component cache
       hit rate 67/(67+93)=0.419.
+- Completed branch trace ranking checkpoint:
+  - added `--top` and `--top-metric` to `tools/bench_qasm_corpus.py` summary
+    output so worst case-boundaries can be ranked by stable counters such as
+    `search_nodes` or `leaf_assignments`;
+  - trace-enabled top rows now include the dominant trace phase, keeping branch
+    heuristic inspection visible without post-processing JSONL;
+  - current checked-in branch ranking by `search_nodes` is led by
+    `mqt_qftentangled_indep_4` boundaries at 27-35 search nodes, followed by
+    `register_pair_mix` at 23 search nodes and `entangled_axis_chain` at 18
+    search nodes; all still have zero branch cache hits.
+- Completed balanced branch split checkpoint:
+  - added `qsop_residual_split_without_var`, which reports both split count and
+    largest remaining component size for candidate branch variables;
+  - refined branch variable selection to prefer material reductions in the
+    largest remaining component before degree/unary tie breaks, while ignoring
+    one-variable balance changes that regressed paired length-5 path cases;
+  - checked-in QASM corpus branch summary improved from 267 to 211 search nodes
+    and from 477 to 469 leaf assignments, with `mqt_qftentangled_indep_4`
+    dropping from up to 35 nodes to 15;
+  - combined checked-in + MQT + PyZX `.qc` branch-solvable slice improved from
+    349 to 281 branch search nodes and from 803 to 783 leaf assignments, with
+    branch cache hits still at zero.
 
 ## Current Task
 
@@ -187,8 +209,9 @@ and `ARCHITECTURE.md`.
   runner, trace output, and branch cache stats as measurable circuit-derived
   regressions.
 - Next likely solver work before tree/rankwidth experiments:
-  - inspect branch trace summaries per case to tune variable ordering and split
-    behavior before adding more branch-cache machinery;
+  - use ranked branch summaries to tune remaining hard cases, now led by
+    `register_pair_mix`, `entangled_axis_chain`, and the reduced
+    `mqt_qftentangled_indep_4` cases;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;

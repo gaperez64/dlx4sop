@@ -569,13 +569,15 @@ bool qsop_residual_active_components(const qsop_residual_t *residual, uint32_t *
   return true;
 }
 
-bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
-                                          uint32_t *out, qsop_error_t *error) {
-  if (out == NULL) {
+bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                     uint32_t *ncomponents, uint32_t *largest_component,
+                                     qsop_error_t *error) {
+  if (ncomponents == NULL || largest_component == NULL) {
     set_error(error, "internal error: null residual component output");
     return false;
   }
-  *out = 0;
+  *ncomponents = 0;
+  *largest_component = 0;
 
   if (residual == NULL) {
     set_error(error, "internal error: null residual state");
@@ -600,6 +602,7 @@ bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint3
   }
 
   uint32_t components = 0;
+  uint32_t largest = 0;
   for (uint32_t start = 0; start < residual->nvars; start++) {
     if (start == removed || residual->active_var[start] == 0 || visited[start] != 0) {
       continue;
@@ -633,12 +636,26 @@ bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint3
         }
       }
     }
+    if (tail > largest) {
+      largest = tail;
+    }
   }
 
   free(visited);
   free(queue);
-  *out = components;
+  *ncomponents = components;
+  *largest_component = largest;
   return true;
+}
+
+bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                          uint32_t *out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residual component output");
+    return false;
+  }
+  uint32_t largest = 0;
+  return qsop_residual_split_without_var(residual, removed, out, &largest, error);
 }
 
 bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v) {

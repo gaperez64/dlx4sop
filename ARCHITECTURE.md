@@ -200,15 +200,18 @@ cache hits reuse residue-count vectors without depending on hash uniqueness.
 
 The current branch heuristic ignores isolated active variables while quadratic
 edges remain, then estimates how many active residual components would remain
-after removing each interacting candidate variable. It uses active degree and
-unary-label presence as tie breakers. When a branch leaves no active quadratic
-edges, the backend collapses the remaining independent unary variables with a
-residue-table update instead of branching through each isolated variable. When a
-residual graph splits into multiple active components, the backend solves each
-component as a zero-constant residual subproblem, convolves their residue-count
-vectors, and applies the parent residual constant once. The backend reports
-internal node, cache hit/miss, and leaf counters through the stats-aware solve
-API and `sop-solve --format stats`.
+after removing each interacting candidate variable. It prefers material
+reductions in the largest remaining split component before falling back to
+active degree and unary-label tie breakers. Small one-variable balance changes
+are ignored because, on the current benchmark corpus, they can create extra
+nontrivial component subsolves without reducing search. When a branch leaves no
+active quadratic edges, the backend collapses the remaining independent unary
+variables with a residue-table update instead of branching through each isolated
+variable. When a residual graph splits into multiple active components, the
+backend solves each component as a zero-constant residual subproblem, convolves
+their residue-count vectors, and applies the parent residual constant once. The
+backend reports internal node, cache hit/miss, and leaf counters through the
+stats-aware solve API and `sop-solve --format stats`.
 
 All solver backends also accept an optional trace callback. `sop-solve --trace
 csv` emits coarse phase rows to stderr while preserving the requested primary
@@ -301,7 +304,10 @@ inspection. Each record includes case and boundary labels, source and normalized
 QSOP hashes, QSOP size, import and solve wall-clock timings, backend counters,
 and optional aggregated trace summaries collected from `sop-solve --trace csv`.
 The summary mode aggregates per-backend cache hit rates, leaf/search counters,
-and trace phase event/item/elapsed totals.
+and trace phase event/item/elapsed totals. It can also rank the largest
+case-boundary records per backend by a selected metric such as branch search
+nodes, leaf assignments, cache misses, or wall-clock time; trace-enabled ranked
+rows include the dominant trace phase for that record.
 `tools/build_external_qasm_manifest.py` materializes compatible manifests from
 external QASM roots and optional `.qc` translations by first checking
 `qasm2sop` importability for selected fixed-boundary amplitudes and filtering
