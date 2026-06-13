@@ -168,6 +168,24 @@ def rz_crz_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     return qasm, circuit, [("00", "00"), ("00", "11"), ("10", "10")]
 
 
+def axis_rotation_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
+    qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    h q;
+    rx(pi/4) q[0];
+    ry(-pi/2) q[1];
+    cx q[0], q[1];
+    """
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.h(1)
+    circuit.rx(math.pi / 4.0, 0)
+    circuit.ry(-math.pi / 2.0, 1)
+    circuit.cx(0, 1)
+    return qasm, circuit, [("00", "00"), ("00", "11"), ("10", "01")]
+
+
 def run_qiskit_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
     for case_name, (qasm, circuit, boundaries) in {
         "bell": bell_case(),
@@ -175,6 +193,7 @@ def run_qiskit_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
         "register_pair": register_pair_case(),
         "named_controlled_phase": named_controlled_phase_case(),
         "rz_crz": rz_crz_case(),
+        "axis_rotation": axis_rotation_case(),
     }.items():
         for input_bits, output_bits in boundaries:
             expected = qiskit_amplitude(circuit, input_bits, output_bits)

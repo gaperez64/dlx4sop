@@ -655,6 +655,17 @@ static bool apply_sxdg_decomposition(qasm_importer_t *importer, uint32_t qubit) 
          apply_h(importer, qubit);
 }
 
+static bool apply_rx(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
+  return apply_h(importer, qubit) && apply_rz(importer, qubit, units) &&
+         apply_h(importer, qubit);
+}
+
+static bool apply_ry(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
+  return apply_phase(importer, qubit, 12) && apply_h(importer, qubit) &&
+         apply_rz(importer, qubit, units) && apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, 4);
+}
+
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
                                    uint32_t target) {
   return apply_h(importer, target) && apply_cz(importer, control, target) &&
@@ -756,14 +767,18 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
   return true;
 }
 
-static bool apply_rz_operand(qasm_importer_t *importer, char *rest, int64_t units) {
+typedef bool (*qasm_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                        int64_t units);
+
+static bool apply_param_one_qubit_operand(qasm_importer_t *importer, char *rest,
+                                          int64_t units, qasm_param_one_qubit_fn apply) {
   rest = trim(rest);
   if (strchr(rest, '[') != NULL) {
     uint32_t qubit = 0;
     if (!parse_qref(importer, rest, &qubit)) {
       return false;
     }
-    return apply_rz(importer, qubit, units);
+    return apply(importer, qubit, units);
   }
 
   if (!valid_identifier(rest)) {
@@ -777,7 +792,7 @@ static bool apply_rz_operand(qasm_importer_t *importer, char *rest, int64_t unit
     return false;
   }
   for (uint32_t i = 0; i < reg->size; i++) {
-    if (!apply_rz(importer, reg->offset + i, units)) {
+    if (!apply(importer, reg->offset + i, units)) {
       return false;
     }
   }
@@ -888,7 +903,25 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_rz) {
-    return apply_rz_operand(importer, rest, rz_units);
+    return apply_param_one_qubit_operand(importer, rest, rz_units, apply_rz);
+  }
+
+  int64_t rx_units = 0;
+  bool is_rx = false;
+  if (!rz_units_for_gate(importer, gate, "rx(", "rx", &rx_units, &is_rx)) {
+    return false;
+  }
+  if (is_rx) {
+    return apply_param_one_qubit_operand(importer, rest, rx_units, apply_rx);
+  }
+
+  int64_t ry_units = 0;
+  bool is_ry = false;
+  if (!rz_units_for_gate(importer, gate, "ry(", "ry", &ry_units, &is_ry)) {
+    return false;
+  }
+  if (is_ry) {
+    return apply_param_one_qubit_operand(importer, rest, ry_units, apply_ry);
   }
 
   int64_t crz_units = 0;

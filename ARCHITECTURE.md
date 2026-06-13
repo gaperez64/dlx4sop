@@ -215,6 +215,8 @@ deliberately small static OpenQASM 2.0 subset:
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - finite `u1(...)` and `p(...)` phase calls for symbolic multiples of `pi/4`;
 - finite `rz(...)` phase calls for symbolic multiples of `pi/4`;
+- finite `rx(...)` and `ry(...)` axis rotations for symbolic multiples of
+  `pi/4`;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
@@ -222,8 +224,8 @@ deliberately small static OpenQASM 2.0 subset:
   of `pi/4`;
 - finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
-- decomposition-backed gates `x`, `y`, `sx`, `sxdg`, `cx`, and `cy`, lowered to the
-  primitive gate set.
+- decomposition-backed gates `x`, `y`, `sx`, `sxdg`, `cx`, and `cy`, lowered
+  to the primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
 and `if` fail with line-numbered diagnostics. The importer currently stores
