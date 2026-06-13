@@ -148,8 +148,10 @@ Current production implementation lives under:
 Tests are split between Python CLI golden tests and C unit tests for residue and
 residual behavior. The default suite also includes QASM-derived solver corpus
 cases that import fixed-boundary circuits, compare all exact backends, and check
-solver stats invariants. Optional parser fuzzing is available as a separate
-Meson option.
+solver stats invariants. The corpus includes GHZ and uniform-superposition
+shapes inspired by the Qymera benchmark demonstration scenarios, expressed as
+local OpenQASM snippets rather than vendored benchmark files. Optional parser
+fuzzing is available as a separate Meson option.
 
 ## Solver Backends
 

@@ -104,6 +104,27 @@ def assert_stats_invariants(sop_solve: pathlib.Path, case: str, boundary: str, q
 def run_corpus(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
     cases = [
         (
+            "qymera_ghz",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[4];
+            h q[0];
+            cx q[0], q[1];
+            cx q[1], q[2];
+            cx q[2], q[3];
+            """,
+            [("0000", "0000"), ("0000", "1111"), ("0000", "0011")],
+        ),
+        (
+            "qymera_uniform_superposition",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[4];
+            h q;
+            """,
+            [("0000", "0000"), ("0000", "1111"), ("1010", "0101")],
+        ),
+        (
             "repeated_components",
             """OPENQASM 2.0;
             include "qelib1.inc";

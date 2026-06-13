@@ -20,6 +20,8 @@ and `ARCHITECTURE.md`.
 - Completed solver-pivot checkpoint:
   - added a default QASM-derived solver corpus that compares all exact backends
     and checks stats invariants on fixed-boundary circuit instances;
+  - did not find a local Qymera pointer or public benchmark artifact to vendor,
+    but added Qymera-inspired GHZ and uniform-superposition corpus cases;
   - added component-cache fingerprints for fast rejection before exact
     subinstance comparison;
   - updated README and architecture notes for the solver-focused direction.
@@ -31,14 +33,13 @@ and `ARCHITECTURE.md`.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.4% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.5% line coverage over `src`.
 
 ## Current Task
 
 - Pivot back to solver improvements using the current QASM importer as a circuit
   source for boundary-level solver regressions and backend stats.
 - Next likely solver work:
-  - use the QASM corpus to add broader benchmark-shaped cases;
   - inspect residual branch stats for split-heavy circuits and repeated
     residual states;
   - keep coverage above the 75% CI gate.

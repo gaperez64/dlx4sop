@@ -47,7 +47,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, deterministic algebraic invariants for canonicalization and solver
 agreement, dependency-free amplitude checks for `qasm2sop + sop-solve`, and a
-QASM-derived solver corpus that compares all exact backends and stats paths.
+QASM-derived solver corpus that compares all exact backends and stats paths,
+including GHZ and uniform-superposition benchmark shapes.
 
 ## Build And Test
 
