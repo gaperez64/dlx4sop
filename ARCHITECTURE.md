@@ -195,7 +195,25 @@ Currently implemented commands:
 sop-check   validate and canonicalize a QSOP file
 sop-stats   print structural statistics as text or JSON
 sop-solve   compute exact residue-count vectors or solver counters
+qasm2sop    import a small static OpenQASM 2.0 subset to canonical QSOP
 ```
+
+## OpenQASM Import
+
+The first importer slice is `qasm2sop`. It assumes the default 0-to-0 amplitude
+and supports a deliberately small static OpenQASM 2.0 subset:
+
+- `OPENQASM 2.0`;
+- `include` directives, ignored after syntax recognition;
+- `qreg` declarations;
+- `barrier`, ignored;
+- one-qubit gates `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
+- two-qubit `cz`.
+
+Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
+and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with
+boundary pins internally, then canonicalizes it through the normal QSOP parser
+and writer.
 
 ## CI And Coverage
 
@@ -217,7 +235,7 @@ bytes through the QSOP parser and uses canonical writer idempotence as its oracl
 
 Likely next solver-facing targets are:
 
-- a static OpenQASM subset importer once the QSOP core stabilizes.
+- broader OpenQASM static-subset coverage.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

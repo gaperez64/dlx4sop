@@ -51,14 +51,22 @@ Completed implementation history has been flushed into `README.md`.
   - `meson test -C build --print-errorlogs`
   - `meson setup --wipe build-fuzz -Dbuild_fuzzers=true`
   - `meson test -C build-fuzz --print-errorlogs`
+- Added initial OpenQASM static-subset importer:
+  - new `qasm2sop` utility;
+  - OpenQASM 2.0, `qreg`, ignored `include` and `barrier`;
+  - gates `h`, `t`, `tdg`, `s`, `sdg`, `z`, and `cz`;
+  - generated raw QSOP with 0-to-0 boundary pins, then canonicalized through the QSOP parser/writer;
+  - golden tests for `H-T-H`, `H-CZ-H`, stdin/help, and unsupported dynamic features.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 75.2% line coverage over `src`.
 
 ## Current Task
 
-- Add OpenQASM static-subset importer:
-  - start with a minimal static OpenQASM 2 subset;
-  - reject unsupported dynamic/control-flow features clearly;
-  - emit canonical QSOP for a very small finite gate set.
+- Extend OpenQASM importer coverage beyond the initial finite gate set:
+  - add more static Clifford gates where the QSOP mapping is direct;
+  - keep unsupported dynamic behavior explicit.
 
 ## Future Tasks
 
-- Extend OpenQASM importer coverage beyond the initial finite gate set.
+- Add explicit input/output boundary options to `qasm2sop`.

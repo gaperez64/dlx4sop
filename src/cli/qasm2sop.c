@@ -1,0 +1,639 @@
+#define _GNU_SOURCE
+
+#include "dlx4sop/qsop.h"
+
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct qasm_reg {
+  char *name;
+  uint32_t size;
+  uint32_t offset;
+} qasm_reg_t;
+
+typedef struct qasm_unary {
+  uint32_t v;
+  uint32_t q;
+} qasm_unary_t;
+
+typedef struct qasm_edge {
+  uint32_t u;
+  uint32_t v;
+  uint32_t q;
+} qasm_edge_t;
+
+typedef struct qasm_importer {
+  const char *path;
+  size_t line_no;
+  char error[256];
+
+  qasm_reg_t *regs;
+  size_t regs_len;
+  size_t regs_cap;
+
+  uint32_t *current;
+  uint32_t nqubits;
+  uint32_t qubits_cap;
+
+  qasm_unary_t *unary;
+  uint32_t unary_len;
+  uint32_t unary_cap;
+
+  qasm_edge_t *edges;
+  uint32_t edges_len;
+  uint32_t edges_cap;
+
+  uint32_t nvars;
+  uint64_t norm_h;
+  bool have_openqasm;
+  bool saw_gate;
+} qasm_importer_t;
+
+static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(importer->error, sizeof(importer->error), fmt, args);
+  va_end(args);
+}
+
+static void print_usage(FILE *file) {
+  fputs("usage: qasm2sop [PATH|-]\n", file);
+}
+
+static char *trim(char *text) {
+  while (isspace((unsigned char)*text)) {
+    text++;
+  }
+
+  char *end = text + strlen(text);
+  while (end > text && isspace((unsigned char)end[-1])) {
+    end--;
+  }
+  *end = '\0';
+  return text;
+}
+
+static bool starts_with_keyword(const char *text, const char *keyword) {
+  const size_t len = strlen(keyword);
+  return strncmp(text, keyword, len) == 0 &&
+         (text[len] == '\0' || isspace((unsigned char)text[len]));
+}
+
+static bool valid_identifier(const char *name) {
+  if (!(isalpha((unsigned char)name[0]) || name[0] == '_')) {
+    return false;
+  }
+  for (const char *p = name + 1; *p != '\0'; p++) {
+    if (!(isalnum((unsigned char)*p) || *p == '_')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool parse_u32_text(const char *text, uint32_t *out) {
+  if (text[0] == '-' || text[0] == '\0') {
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  unsigned long long value = strtoull(text, &end, 10);
+  if (errno != 0 || end == text || *trim(end) != '\0' || value > UINT32_MAX) {
+    return false;
+  }
+  *out = (uint32_t)value;
+  return true;
+}
+
+static bool reserve_regs(qasm_importer_t *importer, size_t needed) {
+  if (needed <= importer->regs_cap) {
+    return true;
+  }
+  size_t new_cap = importer->regs_cap == 0 ? 4U : importer->regs_cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(importer, "too many qregs");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  qasm_reg_t *regs = realloc(importer->regs, new_cap * sizeof(*regs));
+  if (regs == NULL) {
+    set_error(importer, "out of memory while storing qregs");
+    return false;
+  }
+  importer->regs = regs;
+  importer->regs_cap = new_cap;
+  return true;
+}
+
+static bool reserve_current(qasm_importer_t *importer, uint32_t needed) {
+  if (needed <= importer->qubits_cap) {
+    return true;
+  }
+  uint32_t new_cap = importer->qubits_cap == 0 ? 8U : importer->qubits_cap;
+  while (new_cap < needed) {
+    if (new_cap > UINT32_MAX / 2U) {
+      set_error(importer, "too many qubits");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  uint32_t *current = realloc(importer->current, (size_t)new_cap * sizeof(*current));
+  if (current == NULL) {
+    set_error(importer, "out of memory while storing qubits");
+    return false;
+  }
+  importer->current = current;
+  importer->qubits_cap = new_cap;
+  return true;
+}
+
+static bool reserve_unary(qasm_importer_t *importer, uint32_t needed) {
+  if (needed <= importer->unary_cap) {
+    return true;
+  }
+  uint32_t new_cap = importer->unary_cap == 0 ? 16U : importer->unary_cap;
+  while (new_cap < needed) {
+    if (new_cap > UINT32_MAX / 2U) {
+      set_error(importer, "too many unary terms");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  qasm_unary_t *unary = realloc(importer->unary, (size_t)new_cap * sizeof(*unary));
+  if (unary == NULL) {
+    set_error(importer, "out of memory while storing unary terms");
+    return false;
+  }
+  importer->unary = unary;
+  importer->unary_cap = new_cap;
+  return true;
+}
+
+static bool reserve_edges(qasm_importer_t *importer, uint32_t needed) {
+  if (needed <= importer->edges_cap) {
+    return true;
+  }
+  uint32_t new_cap = importer->edges_cap == 0 ? 16U : importer->edges_cap;
+  while (new_cap < needed) {
+    if (new_cap > UINT32_MAX / 2U) {
+      set_error(importer, "too many quadratic terms");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  qasm_edge_t *edges = realloc(importer->edges, (size_t)new_cap * sizeof(*edges));
+  if (edges == NULL) {
+    set_error(importer, "out of memory while storing quadratic terms");
+    return false;
+  }
+  importer->edges = edges;
+  importer->edges_cap = new_cap;
+  return true;
+}
+
+static qasm_reg_t *find_reg(qasm_importer_t *importer, const char *name) {
+  for (size_t i = 0; i < importer->regs_len; i++) {
+    if (strcmp(importer->regs[i].name, name) == 0) {
+      return &importer->regs[i];
+    }
+  }
+  return NULL;
+}
+
+static bool add_qreg(qasm_importer_t *importer, const char *name, uint32_t size) {
+  if (importer->saw_gate) {
+    set_error(importer, "qreg declarations must appear before gates");
+    return false;
+  }
+  if (size == 0) {
+    set_error(importer, "qreg '%s' must have positive size", name);
+    return false;
+  }
+  if (find_reg(importer, name) != NULL) {
+    set_error(importer, "duplicate qreg '%s'", name);
+    return false;
+  }
+  if (UINT32_MAX - importer->nqubits < size || UINT32_MAX - importer->nvars < size) {
+    set_error(importer, "too many qubits");
+    return false;
+  }
+  if (!reserve_regs(importer, importer->regs_len + 1U) ||
+      !reserve_current(importer, importer->nqubits + size)) {
+    return false;
+  }
+
+  char *owned_name = strdup(name);
+  if (owned_name == NULL) {
+    set_error(importer, "out of memory while storing qreg name");
+    return false;
+  }
+
+  const uint32_t offset = importer->nqubits;
+  importer->regs[importer->regs_len++] = (qasm_reg_t){
+      .name = owned_name,
+      .size = size,
+      .offset = offset,
+  };
+  for (uint32_t i = 0; i < size; i++) {
+    importer->current[offset + i] = importer->nvars++;
+  }
+  importer->nqubits += size;
+  return true;
+}
+
+static bool add_unary(qasm_importer_t *importer, uint32_t v, uint32_t q) {
+  if (!reserve_unary(importer, importer->unary_len + 1U)) {
+    return false;
+  }
+  importer->unary[importer->unary_len++] = (qasm_unary_t){.v = v, .q = q};
+  return true;
+}
+
+static bool add_edge(qasm_importer_t *importer, uint32_t u, uint32_t v, uint32_t q) {
+  if (!reserve_edges(importer, importer->edges_len + 1U)) {
+    return false;
+  }
+  importer->edges[importer->edges_len++] = (qasm_edge_t){.u = u, .v = v, .q = q};
+  return true;
+}
+
+static bool parse_qref(qasm_importer_t *importer, char *text, uint32_t *out_qubit) {
+  text = trim(text);
+  char *open = strchr(text, '[');
+  char *close = open == NULL ? NULL : strchr(open + 1, ']');
+  if (open == NULL || close == NULL || *trim(close + 1) != '\0') {
+    set_error(importer, "qubit operand must look like qreg[index]");
+    return false;
+  }
+
+  *open = '\0';
+  *close = '\0';
+  char *name = trim(text);
+  char *index_text = trim(open + 1);
+  if (!valid_identifier(name)) {
+    set_error(importer, "invalid qreg name '%s'", name);
+    return false;
+  }
+
+  uint32_t index = 0;
+  if (!parse_u32_text(index_text, &index)) {
+    set_error(importer, "invalid qreg index '%s'", index_text);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, name);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", name);
+    return false;
+  }
+  if (index >= reg->size) {
+    set_error(importer, "qreg index %" PRIu32 " is outside '%s[%" PRIu32 "]'", index,
+              reg->name, reg->size);
+    return false;
+  }
+
+  *out_qubit = reg->offset + index;
+  return true;
+}
+
+static bool parse_qreg(qasm_importer_t *importer, char *rest) {
+  char *open = strchr(rest, '[');
+  char *close = open == NULL ? NULL : strchr(open + 1, ']');
+  if (open == NULL || close == NULL || *trim(close + 1) != '\0') {
+    set_error(importer, "qreg declaration must be: qreg name[size]");
+    return false;
+  }
+
+  *open = '\0';
+  *close = '\0';
+  char *name = trim(rest);
+  char *size_text = trim(open + 1);
+  if (!valid_identifier(name)) {
+    set_error(importer, "invalid qreg name '%s'", name);
+    return false;
+  }
+
+  uint32_t size = 0;
+  if (!parse_u32_text(size_text, &size)) {
+    set_error(importer, "invalid qreg size '%s'", size_text);
+    return false;
+  }
+  return add_qreg(importer, name, size);
+}
+
+static uint32_t phase_coeff_for_gate(const char *gate) {
+  if (strcmp(gate, "t") == 0) {
+    return 1;
+  }
+  if (strcmp(gate, "s") == 0) {
+    return 2;
+  }
+  if (strcmp(gate, "z") == 0) {
+    return 4;
+  }
+  if (strcmp(gate, "sdg") == 0) {
+    return 6;
+  }
+  if (strcmp(gate, "tdg") == 0) {
+    return 7;
+  }
+  return UINT32_MAX;
+}
+
+static bool parse_one_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *out_qubit) {
+  uint32_t qubit = 0;
+  if (!parse_qref(importer, rest, &qubit)) {
+    return false;
+  }
+  *out_qubit = qubit;
+  return true;
+}
+
+static bool parse_two_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *left,
+                                 uint32_t *right) {
+  char *comma = strchr(rest, ',');
+  if (comma == NULL) {
+    set_error(importer, "two-qubit gate operands must be separated by comma");
+    return false;
+  }
+  *comma = '\0';
+
+  uint32_t a = 0;
+  uint32_t b = 0;
+  if (!parse_qref(importer, rest, &a) || !parse_qref(importer, comma + 1, &b)) {
+    return false;
+  }
+  *left = a;
+  *right = b;
+  return true;
+}
+
+static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
+  importer->saw_gate = true;
+
+  const uint32_t phase_coeff = phase_coeff_for_gate(gate);
+  if (phase_coeff != UINT32_MAX) {
+    uint32_t qubit = 0;
+    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
+      return false;
+    }
+    return add_unary(importer, importer->current[qubit], phase_coeff);
+  }
+
+  if (strcmp(gate, "h") == 0) {
+    uint32_t qubit = 0;
+    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
+      return false;
+    }
+    if (importer->nvars == UINT32_MAX || importer->norm_h == UINT64_MAX) {
+      set_error(importer, "too many Hadamard gates");
+      return false;
+    }
+    const uint32_t next_var = importer->nvars++;
+    if (!add_edge(importer, importer->current[qubit], next_var, 4)) {
+      return false;
+    }
+    importer->current[qubit] = next_var;
+    importer->norm_h++;
+    return true;
+  }
+
+  if (strcmp(gate, "cz") == 0) {
+    uint32_t left = 0;
+    uint32_t right = 0;
+    if (!parse_two_qubit_gate(importer, rest, &left, &right)) {
+      return false;
+    }
+    return add_edge(importer, importer->current[left], importer->current[right], 4);
+  }
+
+  set_error(importer, "unsupported OpenQASM operation '%s'", gate);
+  return false;
+}
+
+static bool parse_statement(qasm_importer_t *importer, char *line) {
+  char *comment = strstr(line, "//");
+  if (comment != NULL) {
+    *comment = '\0';
+  }
+
+  char *text = trim(line);
+  if (*text == '\0') {
+    return true;
+  }
+  const size_t len = strlen(text);
+  if (text[len - 1U] != ';') {
+    set_error(importer, "OpenQASM statements must end with ';'");
+    return false;
+  }
+  text[len - 1U] = '\0';
+  text = trim(text);
+  if (*text == '\0') {
+    return true;
+  }
+
+  if (starts_with_keyword(text, "OPENQASM")) {
+    char *version = trim(text + strlen("OPENQASM"));
+    if (strcmp(version, "2.0") != 0) {
+      set_error(importer, "only OPENQASM 2.0 is supported");
+      return false;
+    }
+    importer->have_openqasm = true;
+    return true;
+  }
+
+  if (!importer->have_openqasm) {
+    set_error(importer, "missing OPENQASM 2.0 header");
+    return false;
+  }
+
+  if (starts_with_keyword(text, "include")) {
+    return true;
+  }
+  if (starts_with_keyword(text, "qreg")) {
+    return parse_qreg(importer, trim(text + strlen("qreg")));
+  }
+  if (starts_with_keyword(text, "barrier")) {
+    return true;
+  }
+  if (starts_with_keyword(text, "creg") || starts_with_keyword(text, "measure") ||
+      starts_with_keyword(text, "reset") || starts_with_keyword(text, "if")) {
+    set_error(importer, "dynamic or classical OpenQASM features are not supported");
+    return false;
+  }
+
+  char *rest = text;
+  while (*rest != '\0' && !isspace((unsigned char)*rest)) {
+    rest++;
+  }
+  if (*rest == '\0') {
+    set_error(importer, "gate statement is missing operands");
+    return false;
+  }
+  *rest = '\0';
+  rest = trim(rest + 1);
+  return apply_gate(importer, text, rest);
+}
+
+static void free_importer(qasm_importer_t *importer) {
+  for (size_t i = 0; i < importer->regs_len; i++) {
+    free(importer->regs[i].name);
+  }
+  free(importer->regs);
+  free(importer->current);
+  free(importer->unary);
+  free(importer->edges);
+}
+
+static bool parse_qasm(FILE *input, const char *path, qasm_importer_t *importer) {
+  importer->path = path;
+  char *line = NULL;
+  size_t cap = 0;
+  ssize_t len = 0;
+  bool ok = true;
+  while ((len = getline(&line, &cap, input)) >= 0) {
+    (void)len;
+    importer->line_no++;
+    if (!parse_statement(importer, line)) {
+      ok = false;
+      break;
+    }
+  }
+  if (ok && ferror(input)) {
+    set_error(importer, "read failed: %s", strerror(errno));
+    ok = false;
+  }
+  if (ok && !importer->have_openqasm) {
+    set_error(importer, "missing OPENQASM 2.0 header");
+    ok = false;
+  }
+  free(line);
+  return ok;
+}
+
+static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
+  fprintf(file, "p qsop 8 %" PRIu32 " %" PRIu32 "\n", importer->nvars, importer->edges_len);
+  fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
+  fputs("cst 0\n", file);
+
+  for (uint32_t i = 0; i < importer->unary_len; i++) {
+    fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", importer->unary[i].v, importer->unary[i].q);
+  }
+  for (uint32_t i = 0; i < importer->edges_len; i++) {
+    fprintf(file, "q %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u,
+            importer->edges[i].v, importer->edges[i].q);
+  }
+  for (uint32_t q = 0; q < importer->nqubits; q++) {
+    fprintf(file, "f %" PRIu32 " 0\n", q);
+  }
+  for (uint32_t q = 0; q < importer->nqubits; q++) {
+    fprintf(file, "f %" PRIu32 " 0\n", importer->current[q]);
+  }
+
+  return !ferror(file);
+}
+
+static bool canonicalize_to_stdout(const qasm_importer_t *importer, qsop_error_t *error) {
+  char *raw = NULL;
+  size_t raw_len = 0;
+  FILE *raw_file = open_memstream(&raw, &raw_len);
+  if (raw_file == NULL) {
+    snprintf(error->message, sizeof(error->message), "out of memory while writing raw QSOP");
+    return false;
+  }
+  const bool write_ok = write_raw_qsop(raw_file, importer);
+  const bool close_ok = fclose(raw_file) == 0;
+  if (!write_ok || !close_ok) {
+    free(raw);
+    snprintf(error->message, sizeof(error->message), "failed to write raw QSOP");
+    return false;
+  }
+
+  qsop_instance_t *qsop = NULL;
+  FILE *input = fmemopen(raw, raw_len, "rb");
+  if (input == NULL) {
+    free(raw);
+    snprintf(error->message, sizeof(error->message), "failed to read generated QSOP");
+    return false;
+  }
+  bool ok = qsop_parse_file(input, "<generated-qsop>", &qsop, error);
+  fclose(input);
+  free(raw);
+  if (!ok) {
+    return false;
+  }
+
+  ok = qsop_write_file(stdout, qsop, error);
+  qsop_free(qsop);
+  return ok;
+}
+
+static void print_qsop_error(const qsop_error_t *error) {
+  if (error->line > 0) {
+    fprintf(stderr, "error: %s:%zu:%zu: %s\n", error->path, error->line, error->column,
+            error->message);
+  } else {
+    fprintf(stderr, "error: %s\n", error->message);
+  }
+}
+
+int main(int argc, char **argv) {
+  const char *input_path = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--help") == 0) {
+      print_usage(stdout);
+      return 0;
+    }
+    if (argv[i][0] == '-' && strcmp(argv[i], "-") != 0) {
+      fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
+      print_usage(stderr);
+      return 2;
+    }
+    if (input_path != NULL) {
+      fputs("error: expected at most one input path\n", stderr);
+      print_usage(stderr);
+      return 2;
+    }
+    input_path = argv[i];
+  }
+
+  FILE *input = stdin;
+  const char *diagnostic_path = "<stdin>";
+  if (input_path != NULL && strcmp(input_path, "-") != 0) {
+    input = fopen(input_path, "r");
+    diagnostic_path = input_path;
+    if (input == NULL) {
+      fprintf(stderr, "error: %s: %s\n", input_path, strerror(errno));
+      return 1;
+    }
+  }
+
+  qasm_importer_t importer = {0};
+  bool ok = parse_qasm(input, diagnostic_path, &importer);
+  if (input != stdin) {
+    fclose(input);
+  }
+  if (!ok) {
+    fprintf(stderr, "error: %s:%zu: %s\n", diagnostic_path, importer.line_no, importer.error);
+    free_importer(&importer);
+    return 1;
+  }
+
+  qsop_error_t error = {0};
+  ok = canonicalize_to_stdout(&importer, &error);
+  free_importer(&importer);
+  if (!ok) {
+    print_qsop_error(&error);
+    return 1;
+  }
+  return 0;
+}

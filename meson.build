@@ -66,6 +66,13 @@ sop_stats = executable(
   install: true,
 )
 
+qasm2sop = executable(
+  'qasm2sop',
+  'src/cli/qasm2sop.c',
+  dependencies: dlx4sop_core_dep,
+  install: true,
+)
+
 test_residue = executable(
   'test-residue',
   'tests/unit/test_residue.c',
@@ -124,6 +131,16 @@ if python3.found()
       meson.current_source_dir(),
     ],
     depends: [sop_check, sop_solve],
+  )
+  test(
+    'qasm2sop golden',
+    python3,
+    args: [
+      files('tests/test_qasm2sop.py'),
+      qasm2sop.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: qasm2sop,
   )
 endif
 
