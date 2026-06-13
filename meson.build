@@ -188,6 +188,16 @@ if python3.found()
     ],
   )
   test(
+    'qc2qasm smoke',
+    python3,
+    args: [
+      files('tests/test_qc2qasm.py'),
+      files('tools/qc2qasm.py'),
+      qasm2sop.full_path(),
+    ],
+    depends: qasm2sop,
+  )
+  test(
     'feynmandd scan smoke',
     python3,
     args: [

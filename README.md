@@ -51,6 +51,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `tools/qgraph2qasm.py`: optional PyZX-backed starter utility for translating
   PyZX/Quantomatic `.qgraph` JSON diagrams to OpenQASM when PyZX can extract a
   circuit.
+- `tools/qc2qasm.py`: dependency-free translator for the PyZX/T-Par `.qc`
+  circuit format into the supported OpenQASM subset.
 - `tools/scan_feynmandd_qasm.py`: scan a local FeynmanDD checkout or corpus
   root through `qasm2sop` and group import failures by cause.
 
@@ -291,6 +293,12 @@ Inspect the PyZX QASM benchmark subset used around the rank-width ZX work:
 ```sh
 git clone --depth 1 https://github.com/zxcalc/pyzx.git /tmp/dlx4sop-pyzx
 tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-pyzx/circuits/feyn_bench/qasm
+```
+
+Translate a PyZX/T-Par `.qc` circuit through OpenQASM:
+
+```sh
+tools/qc2qasm.py /tmp/dlx4sop-pyzx/circuits/Arithmetic_and_Toffoli/tof_3_tpar.qc | build/qasm2sop -
 ```
 
 Start from a PyZX/Quantomatic `.qgraph` JSON diagram when PyZX is installed:

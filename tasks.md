@@ -99,10 +99,19 @@ and `ARCHITECTURE.md`.
     are dynamic/classical examples, generic custom gates, or malformed Shor
     output. The PyZX corpus also contains 214 `.qc` files and one `.qgraph`
     file for the optional PyZX-backed conversion path.
+- Completed dependency-free `.qc` bridge checkpoint:
+  - added `tools/qc2qasm.py`, mirroring PyZX's `.qc` parser rules for one-qubit
+    gates, `cnot`, `swap`, multi-arity `tof`, and multi-target `Z`/`Zd`;
+  - added a Meson smoke test that verifies translation and import through
+    `qasm2sop`;
+  - translated 203/214 local PyZX `.qc` files syntactically; the remaining 11
+    are ten empty `.qc` files and one malformed Shor file;
+  - sampled translated `tof_3_tpar.qc`, `grover_5.qc`, and `ham15-low.qc`, and
+    all imported through `qasm2sop`.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.8% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.9% line coverage over `src`.
 
 ## Current Task
 
@@ -124,8 +133,8 @@ and `ARCHITECTURE.md`.
 - Prototype external-format boundary utilities:
   - add a real `.qgraph` conversion fixture once PyZX is available locally or in
     an optional test environment;
-  - add `.qc`/Quipper conversion through optional PyZX so the structured PyZX
-    benchmark corpus can feed `qasm2sop`;
+  - decide whether Quipper conversion still needs optional PyZX support beyond
+    the dependency-free `.qc` bridge;
   - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
     runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.

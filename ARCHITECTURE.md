@@ -316,7 +316,10 @@ simple or Hadamard edges
 `zx2sop` path is therefore PyZX-backed: load `.qgraph` or a supported circuit
 format, extract or convert circuit-like diagrams to OpenQASM, then reuse
 `qasm2sop`. `tools/qgraph2qasm.py` starts this path as an optional PyZX-backed
-adapter. Direct graph-like phase-gadget import can come later.
+adapter. The `.qc` format is different: it is a T-Par/PyZX circuit text format,
+not a ZX graph serialization. `tools/qc2qasm.py` provides a dependency-free
+`.qc` circuit bridge into OpenQASM for benchmark ingestion, while direct
+graph-like `.qgraph` phase-gadget import can come later.
 
 Kuyanov and Kissinger's low-rank-width ZX simulation work points at PyZX's
 `pyzx/rank_width.py` implementation, including `rw-greedy-linear`,
@@ -327,7 +330,9 @@ structured-circuit benchmarks are the PyZX `circuits` corpus, mainly T-Par
 derived `.qc` files plus a QASM subset. A shallow local checkout at
 `/tmp/dlx4sop-pyzx` currently has 214 `.qc`, 132 `.qasm`, and one `.qgraph`
 benchmark/circuit file under `circuits`; the QASM subset can be scanned now,
-while `.qc`/direct ZX ingestion needs the optional PyZX conversion path.
+while the `.qc` circuit subset can be translated through `tools/qc2qasm.py`.
+Direct `.qgraph` ZX ingestion still needs the optional PyZX conversion path or a
+future native graph importer.
 
 FeynmanDD's public repository uses OpenQASM circuit files plus a gate-set JSON
 file passed with `-g`, for example `cudd_circuit_bdd -f ...qasm -g
@@ -357,6 +362,13 @@ the remaining files are dynamic/classical examples, generic custom-gate syntax,
 or malformed Shor output containing statements such as bare `H ;` and
 multi-operand one-qubit gates. Across all PyZX `circuits` QASM files, 109 of 130
 non-invalid files import with the same remaining categories.
+
+For PyZX `.qc`, the dependency-free translator mirrors the local PyZX
+`qcparser.py` rules for one-qubit gates, `cnot`, `swap`, multi-arity `tof`, and
+multi-target `Z`/`Zd` lines. It translates 203 of 214 local `.qc` files; the 11
+misses are ten empty `.qc` files and one malformed Shor file. Sample translated
+files such as `tof_3_tpar.qc`, `grover_5.qc`, and `ham15-low.qc` import through
+`qasm2sop`.
 
 ## CI And Coverage
 
