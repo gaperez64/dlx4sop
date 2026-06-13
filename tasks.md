@@ -25,18 +25,39 @@ This file tracks local project state so work can resume after a pause or stop.
   - `meson setup build`
   - `meson compile -C build`
   - `meson test -C build`
+- Committed and pushed initial scaffold to `origin/main`:
+  - `bdae7c2 Scaffold QSOP parser and sop-check`
+- Implemented initial exact small-instance solver:
+  - `qsop_result_t` residue-count result type.
+  - Brute-force evaluator for bounded-size QSOP instances.
+  - `sop-solve --format residue-vector`.
+  - Golden tests for unary and labelled QSOP residue counts.
+- Implemented `sop-stats`:
+  - Text and JSON output.
+  - Modulus, variable count, quadratic term count, nonzero unary count, normalization exponent, mode, component count, and max degree.
+  - Component counting over the canonical quadratic support graph, including isolated variables.
+- Implemented reusable residue-vector helpers:
+  - allocation and clearing;
+  - phase shift/add;
+  - cyclic convolution modulo `r`;
+  - C unit tests for residue arithmetic.
+- Refactored brute-force result allocation to use the shared residue helper.
+- Verified current local work with:
+  - `meson compile -C build`
+  - `meson test -C build`
 
 ## Current Task
 
 - Next implementation target:
-  - Add exact residue-count brute-force evaluation for small QSOP instances.
-  - Expose it through an initial `sop-solve --format=residue-vector` CLI.
-  - Add tests that compare exact residue vectors against hand-computed examples.
+  - Add component decomposition support for exact solving:
+    - extract connected components from a canonical QSOP;
+    - solve each component independently for small instances;
+    - merge component result vectors using cyclic convolution;
+    - verify against direct brute force.
+  - This is the next step toward branch-and-sum backends.
 
 ## Future Tasks
 
-- Add `sop-stats` with JSON output for modulus, variables, edge counts, components, mode, and degree.
-- Add reusable residue-vector arithmetic and cyclic convolution.
 - Add mutable residual state and reversible trail.
 - Add component decomposition and component-level solve cache.
 - Add simple branching backend and branch heuristics.
