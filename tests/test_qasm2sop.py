@@ -124,6 +124,25 @@ def run_boundary_options(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"unexpected boundary error for {cmd}:\n{failed.stderr}")
 
 
+def run_decomposed_gates(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    cases = [
+        ("qasm_x", ["--input", "0", "--output", "1"]),
+        ("qasm_cx", ["--input", "10", "--output", "11"]),
+    ]
+    for name, options in cases:
+        qasm = source_root / "tests" / "golden" / f"{name}.qasm"
+        expected = source_root / "tests" / "golden" / f"{name}.expected"
+        completed = subprocess.run(
+            [str(exe), *options, str(qasm)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0 or completed.stdout != expected.read_text():
+            raise AssertionError(f"{name}: unexpected decomposed gate import\n{completed.stdout}\n{completed.stderr}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_qasm2sop.py QASM2SOP SOURCE_ROOT", file=sys.stderr)
@@ -136,6 +155,7 @@ def main() -> int:
     run_case(exe, source_root, "qasm_swap_id")
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
+    run_decomposed_gates(exe, source_root)
     return 0
 
 

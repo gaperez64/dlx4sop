@@ -74,11 +74,19 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 75.9% line coverage over `src`.
+- Added decomposition-backed OpenQASM imports:
+  - `x` lowered as `h; z; h`;
+  - `cx` lowered as `h` on the target, `cz`, then `h` on the target;
+  - boundary-level golden tests cover `x: 0 -> 1` and `cx: 10 -> 11`.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
 
 ## Current Task
 
-- Extend OpenQASM importer coverage beyond direct finite gates:
-  - start with small decompositions into already supported primitive gates;
+- Continue broadening OpenQASM importer coverage:
+  - add only gates that lower cleanly to supported primitives or have a clear
+    QSOP representation;
   - keep coverage above the 75% CI gate.
 
 ## Future Tasks

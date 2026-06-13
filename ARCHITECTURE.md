@@ -209,8 +209,9 @@ deliberately small static OpenQASM 2.0 subset:
 - `include` directives, ignored after syntax recognition;
 - `qreg` declarations;
 - `barrier`, ignored;
-- one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
-- two-qubit `cz` and `swap`.
+- primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
+- primitive two-qubit `cz` and `swap`;
+- decomposition-backed gates `x` and `cx`, lowered to the primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
 and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with
@@ -237,8 +238,8 @@ bytes through the QSOP parser and uses canonical writer idempotence as its oracl
 
 Likely next solver-facing targets are:
 
-- broader OpenQASM importer coverage through decompositions into the currently
-  supported primitive gates.
+- broader OpenQASM importer coverage while keeping each added gate covered by
+  boundary-level examples.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

@@ -378,6 +378,39 @@ static uint32_t phase_coeff_for_gate(const char *gate) {
   return UINT32_MAX;
 }
 
+static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
+  return add_unary(importer, importer->current[qubit], coeff);
+}
+
+static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
+  if (importer->nvars == UINT32_MAX || importer->norm_h == UINT64_MAX) {
+    set_error(importer, "too many Hadamard gates");
+    return false;
+  }
+  const uint32_t next_var = importer->nvars++;
+  if (!add_edge(importer, importer->current[qubit], next_var, 4)) {
+    return false;
+  }
+  importer->current[qubit] = next_var;
+  importer->norm_h++;
+  return true;
+}
+
+static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
+  return add_edge(importer, importer->current[left], importer->current[right], 4);
+}
+
+static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) &&
+         apply_h(importer, qubit);
+}
+
+static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
+                                   uint32_t target) {
+  return apply_h(importer, target) && apply_cz(importer, control, target) &&
+         apply_h(importer, target);
+}
+
 static bool parse_one_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t *out_qubit) {
   uint32_t qubit = 0;
   if (!parse_qref(importer, rest, &qubit)) {
@@ -415,7 +448,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     if (!parse_one_qubit_gate(importer, rest, &qubit)) {
       return false;
     }
-    return add_unary(importer, importer->current[qubit], phase_coeff);
+    return apply_phase(importer, qubit, phase_coeff);
   }
 
   if (strcmp(gate, "h") == 0) {
@@ -423,22 +456,20 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     if (!parse_one_qubit_gate(importer, rest, &qubit)) {
       return false;
     }
-    if (importer->nvars == UINT32_MAX || importer->norm_h == UINT64_MAX) {
-      set_error(importer, "too many Hadamard gates");
-      return false;
-    }
-    const uint32_t next_var = importer->nvars++;
-    if (!add_edge(importer, importer->current[qubit], next_var, 4)) {
-      return false;
-    }
-    importer->current[qubit] = next_var;
-    importer->norm_h++;
-    return true;
+    return apply_h(importer, qubit);
   }
 
   if (strcmp(gate, "id") == 0) {
     uint32_t qubit = 0;
     return parse_one_qubit_gate(importer, rest, &qubit);
+  }
+
+  if (strcmp(gate, "x") == 0) {
+    uint32_t qubit = 0;
+    if (!parse_one_qubit_gate(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply_x_decomposition(importer, qubit);
   }
 
   if (strcmp(gate, "cz") == 0) {
@@ -447,7 +478,16 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     if (!parse_two_qubit_gate(importer, rest, &left, &right)) {
       return false;
     }
-    return add_edge(importer, importer->current[left], importer->current[right], 4);
+    return apply_cz(importer, left, right);
+  }
+
+  if (strcmp(gate, "cx") == 0) {
+    uint32_t control = 0;
+    uint32_t target = 0;
+    if (!parse_two_qubit_gate(importer, rest, &control, &target)) {
+      return false;
+    }
+    return apply_cx_decomposition(importer, control, target);
   }
 
   if (strcmp(gate, "swap") == 0) {
