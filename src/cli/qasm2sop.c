@@ -137,10 +137,10 @@ static bool parse_u32_text(const char *text, uint32_t *out) {
   return true;
 }
 
-static uint32_t mod8_i64(int64_t value) {
-  int64_t residue = value % 8;
+static uint32_t mod16_i64(int64_t value) {
+  int64_t residue = value % 16;
   if (residue < 0) {
-    residue += 8;
+    residue += 16;
   }
   return (uint32_t)residue;
 }
@@ -392,19 +392,19 @@ static bool parse_qreg(qasm_importer_t *importer, char *rest) {
 
 static uint32_t named_phase_coeff_for_gate(const char *gate) {
   if (strcmp(gate, "t") == 0) {
-    return 1;
-  }
-  if (strcmp(gate, "s") == 0) {
     return 2;
   }
-  if (strcmp(gate, "z") == 0) {
+  if (strcmp(gate, "s") == 0) {
     return 4;
   }
+  if (strcmp(gate, "z") == 0) {
+    return 8;
+  }
   if (strcmp(gate, "sdg") == 0) {
-    return 6;
+    return 12;
   }
   if (strcmp(gate, "tdg") == 0) {
-    return 7;
+    return 14;
   }
   return UINT32_MAX;
 }
@@ -522,7 +522,7 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
   if (!*out_matches) {
     return true;
   }
-  *out_coeff = mod8_i64(units);
+  *out_coeff = mod16_i64(2 * units);
   return true;
 }
 
@@ -581,23 +581,16 @@ static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const cha
 
 static bool rz_units_for_gate(qasm_importer_t *importer, const char *gate, const char *prefix,
                               const char *name, int64_t *out_units, bool *out_matches) {
-  if (!parse_param_phase_units(importer, gate, prefix, name, out_units, out_matches)) {
-    return false;
-  }
-  if (*out_matches && *out_units % 2 != 0) {
-    set_error(importer, "unsupported %s phase angle '%s' for Z_8 global phase", name, gate);
-    return false;
-  }
-  return true;
+  return parse_param_phase_units(importer, gate, prefix, name, out_units, out_matches);
 }
 
 static bool add_constant(qasm_importer_t *importer, uint32_t coeff) {
-  importer->constant = (importer->constant + coeff) % 8U;
+  importer->constant = (importer->constant + coeff) % 16U;
   return true;
 }
 
 static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
-  if (coeff % 8U == 0) {
+  if (coeff % 16U == 0) {
     return true;
   }
   return add_unary(importer, importer->current[qubit], coeff);
@@ -609,7 +602,7 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
     return false;
   }
   const uint32_t next_var = importer->nvars++;
-  if (!add_edge(importer, importer->current[qubit], next_var, 4)) {
+  if (!add_edge(importer, importer->current[qubit], next_var, 8)) {
     return false;
   }
   importer->current[qubit] = next_var;
@@ -618,38 +611,36 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
 }
 
 static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
-  return add_edge(importer, importer->current[left], importer->current[right], 4);
+  return add_edge(importer, importer->current[left], importer->current[right], 8);
 }
 
 static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uint32_t right,
                                    uint32_t coeff) {
-  if (coeff % 8U == 0) {
+  if (coeff % 16U == 0) {
     return true;
   }
   return add_edge(importer, importer->current[left], importer->current[right], coeff);
 }
 
 static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  const int64_t half_turns = units / 2;
-  return add_constant(importer, mod8_i64(-half_turns)) &&
-         apply_phase(importer, qubit, mod8_i64(2 * half_turns));
+  return add_constant(importer, mod16_i64(-units)) &&
+         apply_phase(importer, qubit, mod16_i64(2 * units));
 }
 
 static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target,
                       int64_t units) {
-  const int64_t half_turns = units / 2;
-  return apply_phase(importer, control, mod8_i64(-half_turns)) &&
-         apply_controlled_phase(importer, control, target, mod8_i64(2 * half_turns));
+  return apply_phase(importer, control, mod16_i64(-units)) &&
+         apply_controlled_phase(importer, control, target, mod16_i64(2 * units));
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) &&
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 8) &&
          apply_h(importer, qubit);
 }
 
 static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_phase(importer, qubit, 6) && apply_x_decomposition(importer, qubit) &&
-         apply_phase(importer, qubit, 2);
+  return apply_phase(importer, qubit, 12) && apply_x_decomposition(importer, qubit) &&
+         apply_phase(importer, qubit, 4);
 }
 
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
@@ -660,8 +651,8 @@ static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
 
 static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control,
                                    uint32_t target) {
-  return apply_phase(importer, target, 6) && apply_cx_decomposition(importer, control, target) &&
-         apply_phase(importer, target, 2);
+  return apply_phase(importer, target, 12) &&
+         apply_cx_decomposition(importer, control, target) && apply_phase(importer, target, 4);
 }
 
 static bool split_two_operands(qasm_importer_t *importer, char *rest, char **left,
@@ -1092,6 +1083,27 @@ static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_
   return true;
 }
 
+static uint32_t output_modulus(const qasm_importer_t *importer) {
+  if (importer->constant % 2U != 0) {
+    return 16;
+  }
+  for (uint32_t i = 0; i < importer->unary_len; i++) {
+    if (importer->unary[i].q % 2U != 0) {
+      return 16;
+    }
+  }
+  for (uint32_t i = 0; i < importer->edges_len; i++) {
+    if (importer->edges[i].q % 2U != 0) {
+      return 16;
+    }
+  }
+  return 8;
+}
+
+static uint32_t output_coeff(uint32_t coeff, uint32_t modulus) {
+  return modulus == 8 ? coeff / 2U : coeff;
+}
+
 static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
   int8_t *pins = NULL;
   bool boundary_conflict = false;
@@ -1103,16 +1115,19 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
     return write_zero_qsop(file, importer->norm_h);
   }
 
-  fprintf(file, "p qsop 8 %" PRIu32 " %" PRIu32 "\n", importer->nvars, importer->edges_len);
+  const uint32_t modulus = output_modulus(importer);
+  fprintf(file, "p qsop %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", modulus, importer->nvars,
+          importer->edges_len);
   fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
-  fprintf(file, "cst %" PRIu32 "\n", importer->constant);
+  fprintf(file, "cst %" PRIu32 "\n", output_coeff(importer->constant, modulus));
 
   for (uint32_t i = 0; i < importer->unary_len; i++) {
-    fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", importer->unary[i].v, importer->unary[i].q);
+    fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", importer->unary[i].v,
+            output_coeff(importer->unary[i].q, modulus));
   }
   for (uint32_t i = 0; i < importer->edges_len; i++) {
     fprintf(file, "q %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u,
-            importer->edges[i].v, importer->edges[i].q);
+            importer->edges[i].v, output_coeff(importer->edges[i].q, modulus));
   }
   for (uint32_t v = 0; v < importer->nvars; v++) {
     if (pins[v] != -1) {

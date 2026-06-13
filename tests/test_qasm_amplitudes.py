@@ -328,8 +328,8 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             include "qelib1.inc";
             qreg q[2];
             h q;
-            rz(pi/2) q[0];
-            crz(pi) q[0], q[1];
+            rz(pi/4) q[0];
+            crz(pi/4) q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("10", "10"), ("11", "01")],
         ),

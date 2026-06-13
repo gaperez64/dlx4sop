@@ -120,7 +120,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
     bad_rz = subprocess.run(
         [str(exe), "-"],
-        input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/4) q[0];\n",
+        input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/3) q[0];\n",
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -216,12 +216,16 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_rz")
+    run_case(exe, source_root, "qasm_rz_quarter")
     run_case(exe, source_root, "qasm_register_unary")
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
     )
     run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
     run_boundary_case(exe, source_root, "qasm_crz", ["--input", "10", "--output", "10"])
+    run_boundary_case(
+        exe, source_root, "qasm_crz_quarter", ["--input", "10", "--output", "10"]
+    )
     run_boundary_case(
         exe, source_root, "qasm_named_cphase", ["--input", "11", "--output", "11"]
     )

@@ -188,6 +188,8 @@ u 0 1
 The `--input` and `--output` bitstrings are ordered by flattened `qreg`
 declaration order. Omitted boundaries default to all-zero bits, matching the
 original 0-to-0 amplitude behavior.
+The importer emits compact `Z_8` QSOP when possible and widens to `Z_16` for
+half-step global phases such as `rz(pi/4)`.
 
 Whole-register OpenQASM operands are accepted for supported gates:
 

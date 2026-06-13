@@ -153,14 +153,14 @@ def rz_crz_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     include "qelib1.inc";
     qreg q[2];
     h q;
-    rz(pi/2) q[0];
-    crz(pi) q[0], q[1];
+    rz(pi/4) q[0];
+    crz(pi/4) q[0], q[1];
     """
     circuit = QuantumCircuit(2)
     circuit.h(0)
     circuit.h(1)
-    circuit.rz(math.pi / 2.0, 0)
-    circuit.crz(math.pi, 0, 1)
+    circuit.rz(math.pi / 4.0, 0)
+    circuit.crz(math.pi / 4.0, 0, 1)
     return qasm, circuit, [("00", "00"), ("00", "11"), ("10", "10")]
 
 

@@ -214,21 +214,23 @@ deliberately small static OpenQASM 2.0 subset:
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
 - finite `u1(...)` and `p(...)` phase calls for symbolic multiples of `pi/4`;
-- finite `rz(...)` phase calls for symbolic multiples of `pi/2`;
+- finite `rz(...)` phase calls for symbolic multiples of `pi/4`;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
 - finite controlled phase calls `cu1(...)` and `cp(...)` for symbolic multiples
   of `pi/4`;
-- finite `crz(...)` phase calls for symbolic multiples of `pi/2`;
+- finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
 - named controlled phase gates `cs`, `ct`, `csdg`, and `ctdg`;
 - decomposition-backed gates `x`, `y`, `cx`, and `cy`, lowered to the
   primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
-and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with
-boundary pins internally, treats contradictory fixed boundaries as a valid zero
-amplitude, then canonicalizes through the normal QSOP parser and writer.
+and `if` fail with line-numbered diagnostics. The importer stores phase
+coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
+coefficients are even, widens to `Z_16` for half-step global phases such as
+`rz(pi/4)`, treats contradictory fixed boundaries as a valid zero amplitude, and
+then canonicalizes through the normal QSOP parser and writer.
 
 Importer tests include both canonical QSOP golden files and dependency-free
 amplitude checks. The amplitude checks run `qasm2sop` for fixed input/output
