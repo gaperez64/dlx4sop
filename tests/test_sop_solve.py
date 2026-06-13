@@ -204,6 +204,12 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
         ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
+        ([str(exe), "--backend", "rankwidth", str(qsop)], "requires --rankwidth-decomposition"),
+        ([str(exe), "--rankwidth-decomposition"], "requires a path"),
+        (
+            [str(exe), "--rankwidth-decomposition", str(qsop), str(qsop)],
+            "requires --backend rankwidth",
+        ),
         ([str(exe), "--branch-heuristic"], "requires a value"),
         ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
         ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
@@ -225,6 +231,119 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         )
         if completed.returncode == 0 or expected_error not in completed.stderr:
             raise AssertionError(f"unexpected error result for {cmd}:\n{completed.stderr}")
+
+
+def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qsop = source_root / "tests" / "golden" / "solve_sign_path.qsop"
+    decomposition = source_root / "tests" / "golden" / "solve_sign_path.rwdec"
+    expected = subprocess.run(
+        [str(exe), "--backend", "brute-force", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if expected.returncode != 0:
+        raise AssertionError(f"brute force solve failed\n{expected.stderr}")
+
+    completed = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(decomposition),
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0 or completed.stdout != expected.stdout:
+        raise AssertionError(f"rankwidth solve mismatch\n{completed.stdout}\n{completed.stderr}")
+
+    stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(decomposition),
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_stats = {
+        "backend: rankwidth",
+        "decomposition_width: 1",
+        "table_entries:",
+        "join_pairs:",
+    }
+    if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
+        raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
+
+    traced = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(decomposition),
+            "--trace",
+            "csv",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if traced.returncode != 0 or "rankwidth.leaf" not in traced.stderr or "rankwidth.join" not in traced.stderr:
+        raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
+
+    malformed = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(qsop),
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if malformed.returncode == 0 or str(qsop) not in malformed.stderr or "expected header" not in malformed.stderr:
+        raise AssertionError(f"rankwidth malformed decomposition diagnostic failed\n{malformed.stderr}")
+
+    labelled = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    labelled_decomposition = source_root / "tests" / "golden" / "solve_labelled.rwdec"
+    bad = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(labelled_decomposition),
+            str(labelled),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad.returncode == 0 or "sign-only" not in bad.stderr:
+        raise AssertionError(f"rankwidth accepted labelled QSOP\n{bad.stdout}\n{bad.stderr}")
 
 
 def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
@@ -322,6 +441,7 @@ def main() -> int:
     run_max_vars_guard(exe, source_root)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
+    run_rankwidth_backend(exe, source_root)
     run_branch_heuristics(exe, source_root)
     run_trace_csv(exe, source_root)
     return 0

@@ -221,12 +221,40 @@ neighbors of a candidate and the rest of the active graph. These are heuristic
 ordering policies for the residual branch backend, not decomposition-based
 solvers.
 
+### Rankwidth Count-Table DP
+
+`qsop_solve_rankwidth_trace_stats` is the first decomposition-based backend. It
+implements the direct count-table dynamic program from arXiv:2605.29944 over an
+explicit rooted binary rank decomposition. Tables are sparse maps keyed by a
+boundary signature, represented as a GF(2) bit mask over the outside vertices,
+and a residue modulo `r`. Leaves add the two assignments of one QSOP variable.
+Join nodes combine child states, restrict/xor the child boundary signatures to
+the parent outside set, add the sign cross-term determined by representative
+child signatures, and accumulate residue-count vectors.
+
+The initial implementation is deliberately narrow: it requires sign-only
+quadratic coefficients, mask-backed instances under the solver variable guard,
+and a hand-supplied decomposition file. It reports decomposition width, total
+table entries, and join-pair count through `sop-solve --format stats`. Fourier
+mode batching and decomposition construction remain future work.
+
+The decomposition text format is:
+
+```text
+p rwdec <variables> <nodes> <root>
+l <node> <variable>
+j <node> <left-child> <right-child>
+```
+
+The root must cover every QSOP variable exactly once. Node identifiers are dense
+`0..nodes-1`, but records may appear in any order.
+
 All solver backends also accept an optional trace callback. `sop-solve --trace
 csv` emits coarse phase rows to stderr while preserving the requested primary
 output on stdout. Current trace phases include brute-force enumeration,
 component labelling, component-cache lookup, component subsolves, convolution,
 branch cache lookup, branch variable selection, residual component splitting,
-and edge-free residue-table leaves.
+edge-free residue-table leaves, and rankwidth leaf/join table construction.
 
 ## Command-Line Contract
 

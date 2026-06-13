@@ -28,7 +28,7 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `sop-check`: parse, validate, normalize, and write canonical QSOP.
 - `sop-stats`: print structural statistics in text or JSON.
 - `sop-solve`: compute exact residue-count vectors or solver stats with one of
-  three backends:
+  four backends:
   - `components` (default): decompose connected components, cache repeated
     component solves with exhaustive relabelling for components up to five
     variables plus fingerprinted cache lookup, and brute-force each cache miss;
@@ -38,6 +38,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     cache, residual component splitting, balanced split tie-breaks, and a
     residue-table fast path once no active quadratic edges remain. Experimental
     variable-choice heuristics can be selected with `--branch-heuristic`.
+  - `rankwidth`: experimental explicit-decomposition backend for sign-edge
+    QSOPs, using the direct boundary-signature/residue count-table DP.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p` phase calls up
   to `pi/8`, finite `rz` phase calls for `pi/4` multiples, finite `rx`/`ry`
@@ -147,6 +149,10 @@ normalization_h: 4
 mode: labelled
 components: 1
 max_degree: 1
+width_diagnostics: available
+min_fill_width: 1
+min_fill_edges: 0
+linear_cut_rank: 1
 ```
 
 Solve a QSOP and print residue counts modulo `r`:
@@ -157,6 +163,7 @@ build/sop-solve --backend brute-force tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --branch-heuristic treewidth tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --branch-heuristic linear-rankwidth tests/golden/solve_labelled.qsop
+build/sop-solve --backend rankwidth --rankwidth-decomposition tests/golden/solve_sign_path.rwdec tests/golden/solve_sign_path.qsop
 ```
 
 Output:
@@ -182,6 +189,18 @@ cache_hits: 0
 cache_misses: 3
 leaf_assignments: 4
 ```
+
+Rankwidth decompositions use a small explicit text format:
+
+```text
+p rwdec <variables> <nodes> <root>
+l <node> <variable>
+j <node> <left-child> <right-child>
+```
+
+The initial backend validates that the root covers every QSOP variable exactly
+once. It currently supports sign-only quadratic coefficients and mask-backed
+instances up to the solver variable guard.
 
 The branch cache counters expose repeated residual states when they occur. For
 example, the small triangle fixture revisits one residual:

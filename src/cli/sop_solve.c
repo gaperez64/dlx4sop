@@ -12,6 +12,7 @@ typedef enum solve_backend {
   SOLVE_BACKEND_COMPONENTS,
   SOLVE_BACKEND_BRUTE_FORCE,
   SOLVE_BACKEND_BRANCH,
+  SOLVE_BACKEND_RANKWIDTH,
 } solve_backend_t;
 
 typedef enum solve_output_format {
@@ -31,9 +32,9 @@ typedef struct csv_trace_writer {
 
 static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
-        "[--backend components|brute-force|branch] "
+        "[--backend components|brute-force|branch|rankwidth] "
         "[--branch-heuristic split|treewidth|linear-rankwidth] "
-        "[--max-vars N] [--trace csv] [PATH|-]\n",
+        "[--rankwidth-decomposition PATH] [--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
 
@@ -57,6 +58,8 @@ static const char *backend_name(solve_backend_t backend) {
     return "brute-force";
   case SOLVE_BACKEND_BRANCH:
     return "branch";
+  case SOLVE_BACKEND_RANKWIDTH:
+    return "rankwidth";
   }
   return "unknown";
 }
@@ -105,11 +108,15 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
-  } else {
+  } else if (backend == SOLVE_BACKEND_BRANCH) {
     fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+  } else {
+    fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
+    fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
+    fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
   }
 
   if (ferror(file)) {
@@ -140,6 +147,7 @@ static bool parse_max_vars(const char *text, uint32_t *out) {
 
 int main(int argc, char **argv) {
   const char *input_path = NULL;
+  const char *rankwidth_decomposition_path = NULL;
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
@@ -221,10 +229,20 @@ int main(int argc, char **argv) {
         backend = SOLVE_BACKEND_BRUTE_FORCE;
       } else if (strcmp(value, "branch") == 0) {
         backend = SOLVE_BACKEND_BRANCH;
+      } else if (strcmp(value, "rankwidth") == 0) {
+        backend = SOLVE_BACKEND_RANKWIDTH;
       } else {
         fprintf(stderr, "error: unsupported backend '%s'\n", value);
         return 2;
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-decomposition") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-decomposition requires a path\n", stderr);
+        return 2;
+      }
+      rankwidth_decomposition_path = argv[++i];
       continue;
     }
     if (argv[i][0] == '-') {
@@ -245,6 +263,14 @@ int main(int argc, char **argv) {
   }
   if (branch_heuristic_set && backend != SOLVE_BACKEND_BRANCH) {
     fputs("error: --branch-heuristic requires --backend branch\n", stderr);
+    return 2;
+  }
+  if (backend == SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path == NULL) {
+    fputs("error: --backend rankwidth requires --rankwidth-decomposition\n", stderr);
+    return 2;
+  }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path != NULL) {
+    fputs("error: --rankwidth-decomposition requires --backend rankwidth\n", stderr);
     return 2;
   }
 
@@ -272,6 +298,7 @@ int main(int argc, char **argv) {
 
   qsop_result_t *result = NULL;
   qsop_solve_stats_t solve_stats = {0};
+  qsop_rankwidth_decomposition_t *rankwidth_decomposition = NULL;
   csv_trace_writer_t csv_trace = {
       .file = stderr,
   };
@@ -286,10 +313,28 @@ int main(int argc, char **argv) {
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
     ok =
         qsop_solve_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr, &error);
-  } else {
+  } else if (backend == SOLVE_BACKEND_BRANCH) {
     ok = qsop_solve_residual_branch_heuristic_trace_stats(
         qsop, max_vars, branch_heuristic, &result, &solve_stats, trace_ptr, &error);
+  } else {
+    FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
+    if (decomposition_file == NULL) {
+      fprintf(stderr, "error: %s: %s\n", rankwidth_decomposition_path, strerror(errno));
+      qsop_free(qsop);
+      return 1;
+    }
+    ok = qsop_rankwidth_decomposition_parse_file(decomposition_file, rankwidth_decomposition_path,
+                                                 qsop->nvars, &rankwidth_decomposition, &error);
+    fclose(decomposition_file);
+    if (!ok) {
+      print_error(&error, rankwidth_decomposition_path);
+      qsop_free(qsop);
+      return 1;
+    }
+    ok = qsop_solve_rankwidth_trace_stats(qsop, rankwidth_decomposition, max_vars, &result,
+                                          &solve_stats, trace_ptr, &error);
   }
+  qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);
   if (!ok) {
     print_error(&error, diagnostic_path);

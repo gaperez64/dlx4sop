@@ -1,0 +1,5 @@
+c Rankwidth decomposition for solve_labelled.qsop
+p rwdec 2 3 2
+l 0 0
+l 1 1
+j 2 0 1

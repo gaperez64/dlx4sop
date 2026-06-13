@@ -6,3 +6,7 @@ normalization_h: 4
 mode: labelled
 components: 1
 max_degree: 1
+width_diagnostics: available
+min_fill_width: 1
+min_fill_edges: 0
+linear_cut_rank: 1

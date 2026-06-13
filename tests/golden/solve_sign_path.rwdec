@@ -1,0 +1,7 @@
+c Rankwidth decomposition for solve_sign_path.qsop
+p rwdec 3 5 4
+l 0 0
+l 1 1
+l 2 2
+j 3 0 1
+j 4 3 2

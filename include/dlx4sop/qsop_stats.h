@@ -16,6 +16,10 @@ typedef struct qsop_stats {
   qsop_mode_t mode;
   uint32_t components;
   uint32_t max_degree;
+  bool width_diagnostics_available;
+  uint32_t min_fill_width;
+  uint64_t min_fill_edges;
+  uint32_t linear_cut_rank;
 } qsop_stats_t;
 
 bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error);

@@ -219,6 +219,18 @@ and `ARCHITECTURE.md`.
     remains best at 281 search nodes, while `treewidth` gets 527 nodes with 102
     cache hits and `linear-rankwidth` gets 329 nodes with zero cache hits. These
     are experimental comparators, not new defaults.
+- Completed first explicit rankwidth backend checkpoint:
+  - added `sop-solve --backend rankwidth --rankwidth-decomposition PATH`;
+  - defined a minimal `.rwdec` text format with `p rwdec`, leaf `l`, and join
+    `j` records;
+  - implemented the direct sparse count-table DP over boundary signatures and
+    residues for sign-only QSOPs, with trace phases for leaf and join table
+    construction;
+  - added a hand-written path decomposition fixture and tests comparing the
+    rankwidth backend against brute force;
+  - added `sop-stats` width diagnostics for mask-backed instances:
+    min-fill width, min-fill fill-edge count, and natural-order linear
+    cut-rank.
 
 ## Current Task
 
@@ -229,9 +241,12 @@ and `ARCHITECTURE.md`.
   - use ranked branch summaries to tune remaining hard cases, now led by
     `register_pair_mix`, `entangled_axis_chain`, and the reduced
     `mqt_qftentangled_indep_4` cases;
-  - design the real `rankwidth` backend around explicit decomposition input,
-    boundary-signature tables, rank-decomposition joins, and later Fourier-mode
-    batching;
+  - extend the `rankwidth` backend beyond the first sign-only/mask-backed DP:
+    add stronger decomposition validation/error tests, decide the labelled-edge
+    signature generalization, and add Fourier-mode batching once the count-table
+    backend is stable;
+  - add decomposition builders or importers after the explicit format has enough
+    golden coverage;
   - deprioritize additional branch-cache machinery until we have realistic
     residual-repetition cases, since the checked-in plus branch-solvable
     external slice still shows no branch-cache hits;
