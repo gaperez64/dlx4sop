@@ -34,12 +34,20 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
+- Added deterministic algebraic invariant tests:
+  - canonicalization idempotence;
+  - raw-vs-canonical solver agreement across available backends;
+  - constant-phase residue-vector rotation.
+- Registered the invariant test in Meson without adding new runtime dependencies.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 75.8% line coverage over `src`.
 
 ## Current Task
 
-- Extend tests with algebraic invariants and parser fuzz targets:
-  - start with deterministic algebraic invariant tests for canonicalization and solver agreement;
-  - keep fuzz targets optional until the normal CI path remains lean.
+- Add parser fuzz targets:
+  - keep fuzz targets optional and outside the normal CI path initially;
+  - reuse existing parser/canonical writer checks as the fuzz oracle where practical.
 
 ## Future Tasks
 

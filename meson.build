@@ -114,4 +114,15 @@ if python3.found()
     ],
     depends: sop_stats,
   )
+  test(
+    'sop invariants',
+    python3,
+    args: [
+      files('tests/test_sop_invariants.py'),
+      sop_check.full_path(),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: [sop_check, sop_solve],
+  )
 endif

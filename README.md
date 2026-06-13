@@ -34,8 +34,9 @@ normalization rules, and backend design notes.
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
 
-The test suite also covers reusable residue-vector helpers and the mutable
-residual state used by the branch backend.
+The test suite also covers reusable residue-vector helpers, mutable residual
+state, and deterministic algebraic invariants for canonicalization and solver
+agreement.
 
 ## Build And Test
 
