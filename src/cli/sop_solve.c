@@ -7,8 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum solve_backend {
+  SOLVE_BACKEND_COMPONENTS,
+  SOLVE_BACKEND_BRUTE_FORCE,
+} solve_backend_t;
+
 static void print_usage(FILE *file) {
-  fputs("usage: sop-solve [--format residue-vector] [--max-vars N] [PATH|-]\n", file);
+  fputs("usage: sop-solve [--format residue-vector] [--backend components|brute-force] "
+        "[--max-vars N] [PATH|-]\n",
+        file);
 }
 
 static void print_error(const qsop_error_t *error, const char *fallback_path) {
@@ -43,6 +50,7 @@ static bool parse_max_vars(const char *text, uint32_t *out) {
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   uint32_t max_vars = 24;
+  solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -67,6 +75,22 @@ int main(int argc, char **argv) {
         return 2;
       }
       i++;
+      continue;
+    }
+    if (strcmp(argv[i], "--backend") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --backend requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "components") == 0) {
+        backend = SOLVE_BACKEND_COMPONENTS;
+      } else if (strcmp(value, "brute-force") == 0) {
+        backend = SOLVE_BACKEND_BRUTE_FORCE;
+      } else {
+        fprintf(stderr, "error: unsupported backend '%s'\n", value);
+        return 2;
+      }
       continue;
     }
     if (argv[i][0] == '-') {
@@ -109,7 +133,11 @@ int main(int argc, char **argv) {
   }
 
   qsop_result_t *result = NULL;
-  ok = qsop_solve_bruteforce(qsop, max_vars, &result, &error);
+  if (backend == SOLVE_BACKEND_COMPONENTS) {
+    ok = qsop_solve_components_bruteforce(qsop, max_vars, &result, &error);
+  } else {
+    ok = qsop_solve_bruteforce(qsop, max_vars, &result, &error);
+  }
   qsop_free(qsop);
   if (!ok) {
     print_error(&error, diagnostic_path);

@@ -33,6 +33,7 @@ dlx4sop_core = static_library(
     'src/core/qsop_stats.c',
     'src/core/qsop_write.c',
     'src/solve/bruteforce.c',
+    'src/solve/components.c',
   ),
   include_directories: inc,
 )

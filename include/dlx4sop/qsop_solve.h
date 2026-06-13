@@ -18,6 +18,9 @@ void qsop_result_free(qsop_result_t *result);
 bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars,
                            qsop_result_t **out, qsop_error_t *error);
 
+bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                      qsop_result_t **out, qsop_error_t *error);
+
 bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result,
                                       qsop_error_t *error);
 

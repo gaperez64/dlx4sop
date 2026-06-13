@@ -48,24 +48,27 @@ This file tracks local project state so work can resume after a pause or stop.
   - `gcovr` line coverage gate over production `src` code.
 - Added `tools/check-coverage.sh` with a default 75% line coverage threshold.
 - Expanded CLI tests for help, stdin, error paths, and output handling to keep the coverage gate meaningful.
+- Implemented component-decomposed exact solving:
+  - `qsop_solve_components_bruteforce`;
+  - `sop-solve --backend components|brute-force`;
+  - disconnected golden test comparing component decomposition with direct brute force;
+  - default `sop-solve` backend is now `components`.
 - Verified current local work with:
   - `meson compile -C build`
   - `meson test -C build`
-  - `tools/check-coverage.sh build-coverage` at 76.1% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 75.5% line coverage over `src`.
 
 ## Current Task
 
 - Next implementation target:
-  - Add component decomposition support for exact solving:
-    - extract connected components from a canonical QSOP;
-    - solve each component independently for small instances;
-    - merge component result vectors using cyclic convolution;
-    - verify against direct brute force.
-  - This is the next step toward branch-and-sum backends.
+  - Add mutable residual state and reversible trail for branch-and-sum:
+    - active vertex/edge state;
+    - reversible unary/constant updates;
+    - branch on `x_v = 0/1`;
+    - unit tests that branch and undo to the original state.
 
 ## Future Tasks
 
-- Add mutable residual state and reversible trail.
 - Add component decomposition and component-level solve cache.
 - Add simple branching backend and branch heuristics.
 - Extend tests with algebraic invariants and parser fuzz targets.

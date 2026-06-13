@@ -25,6 +25,22 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{completed.stdout}\n"
         )
 
+    brute_force = subprocess.run(
+        [str(exe), "--backend", "brute-force", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if brute_force.returncode != 0:
+        raise AssertionError(f"{name}: brute-force backend failed\n{brute_force.stderr}")
+    if brute_force.stdout != expected_text:
+        raise AssertionError(
+            f"{name}: brute-force residue-vector mismatch\n"
+            f"expected:\n{expected_text}\n"
+            f"actual:\n{brute_force.stdout}\n"
+        )
+
 
 def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_single.qsop"
@@ -69,6 +85,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     error_cases = [
         ([str(exe), "--format"], "requires a value"),
         ([str(exe), "--format", "json", str(qsop)], "unsupported format"),
+        ([str(exe), "--backend"], "requires a value"),
+        ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
         ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
         ([str(exe), "--bad"], "unknown option"),
@@ -96,6 +114,7 @@ def main() -> int:
     source_root = pathlib.Path(sys.argv[2])
     run_solve(exe, source_root, "solve_single")
     run_solve(exe, source_root, "solve_labelled")
+    run_solve(exe, source_root, "solve_disconnected")
     run_max_vars_guard(exe, source_root)
     run_cli_paths(exe, source_root)
     return 0
