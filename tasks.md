@@ -53,19 +53,24 @@ This file tracks local project state so work can resume after a pause or stop.
   - `sop-solve --backend components|brute-force`;
   - disconnected golden test comparing component decomposition with direct brute force;
   - default `sop-solve` backend is now `components`.
+- Implemented mutable residual state and reversible trail:
+  - self-contained residual copy of unary labels, edge labels, active vertices, and active edges;
+  - checkpoints and undo through a reversible mutation trail;
+  - branch rule for `x_v = 0` and `x_v = 1`;
+  - unit tests for zero/one branches, nested undo, and invalid branch calls.
+- Added editor swap-file ignores so local task-editor artifacts do not appear in `git status`.
 - Verified current local work with:
   - `meson compile -C build`
   - `meson test -C build`
-  - `tools/check-coverage.sh build-coverage` at 75.5% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 76.3% line coverage over `src`.
 
 ## Current Task
 
 - Next implementation target:
-  - Add mutable residual state and reversible trail for branch-and-sum:
-    - active vertex/edge state;
-    - reversible unary/constant updates;
-    - branch on `x_v = 0/1`;
-    - unit tests that branch and undo to the original state.
+  - Add a first residual branch-and-sum backend:
+    - evaluate active residual state recursively;
+    - use the reversible trail instead of copying at every branch;
+    - compare against brute force and component backend on small examples.
 
 ## Future Tasks
 

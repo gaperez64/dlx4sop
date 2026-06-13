@@ -1,0 +1,42 @@
+#ifndef DLX4SOP_RESIDUAL_H
+#define DLX4SOP_RESIDUAL_H
+
+#include "dlx4sop/qsop.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct qsop_residual qsop_residual_t;
+
+bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
+                          qsop_error_t *error);
+
+void qsop_residual_free(qsop_residual_t *residual);
+
+size_t qsop_residual_checkpoint(const qsop_residual_t *residual);
+
+bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error_t *error);
+
+bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
+                          qsop_error_t *error);
+
+uint32_t qsop_residual_modulus(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_nvars(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_nedges(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_active_vars(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_active_edges(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_constant(const qsop_residual_t *residual);
+
+uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v);
+
+bool qsop_residual_var_active(const qsop_residual_t *residual, uint32_t v);
+
+bool qsop_residual_edge_active(const qsop_residual_t *residual, uint32_t e);
+
+#endif

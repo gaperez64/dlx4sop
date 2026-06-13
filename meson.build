@@ -34,6 +34,7 @@ dlx4sop_core = static_library(
     'src/core/qsop_write.c',
     'src/solve/bruteforce.c',
     'src/solve/components.c',
+    'src/solve/residual.c',
   ),
   include_directories: inc,
 )
@@ -71,6 +72,14 @@ test_residue = executable(
 )
 
 test('residue unit', test_residue)
+
+test_residual = executable(
+  'test-residual',
+  'tests/unit/test_residual.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('residual unit', test_residual)
 
 python3 = find_program('python3', required: false)
 if python3.found()
