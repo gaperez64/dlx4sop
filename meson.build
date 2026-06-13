@@ -142,6 +142,16 @@ if python3.found()
     ],
     depends: qasm2sop,
   )
+  test(
+    'qasm2sop amplitudes',
+    python3,
+    args: [
+      files('tests/test_qasm_amplitudes.py'),
+      qasm2sop.full_path(),
+      sop_solve.full_path(),
+    ],
+    depends: [qasm2sop, sop_solve],
+  )
 endif
 
 if get_option('build_fuzzers')

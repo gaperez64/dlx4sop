@@ -33,6 +33,15 @@ and `ARCHITECTURE.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
+- Added dependency-free OpenQASM amplitude checks:
+  - new Meson test `qasm2sop amplitudes`;
+  - compares `qasm2sop --input/--output | sop-solve` amplitudes against a
+    small Python state-vector simulator for the supported static subset;
+  - covers entangling, phase, whole-register, controlled-phase, swap, and
+    zero-amplitude boundary cases.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.8% line coverage over `src`.
 
 ## Current Task
 
@@ -45,6 +54,8 @@ and `ARCHITECTURE.md`.
 
 - Add more finite OpenQASM syntax compatibility with boundary-level examples.
 - Add small compatibility aliases when they reuse existing lowering paths.
+- Add optional Qiskit comparison tests behind an explicit dependency gate,
+  reusing the same fixed-boundary amplitude cases.
 - Revisit performance-annex items as solver hot paths mature:
   - residual-state hashing;
   - stronger component fingerprints;

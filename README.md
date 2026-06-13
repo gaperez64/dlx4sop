@@ -41,8 +41,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
   whole-register two-qubit operands.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
-state, and deterministic algebraic invariants for canonicalization and solver
-agreement.
+state, deterministic algebraic invariants for canonicalization and solver
+agreement, and dependency-free amplitude checks for `qasm2sop + sop-solve`.
 
 ## Build And Test
 

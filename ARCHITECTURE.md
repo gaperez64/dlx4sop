@@ -227,6 +227,11 @@ and `if` fail with line-numbered diagnostics. The importer emits raw QSOP with
 boundary pins internally, treats contradictory fixed boundaries as a valid zero
 amplitude, then canonicalizes through the normal QSOP parser and writer.
 
+Importer tests include both canonical QSOP golden files and dependency-free
+amplitude checks. The amplitude checks run `qasm2sop` for fixed input/output
+boundaries, solve the resulting QSOP with `sop-solve`, and compare against a
+small Python state-vector simulator for the supported static subset.
+
 ## CI And Coverage
 
 CI runs on GitHub Actions with:
@@ -246,9 +251,9 @@ bytes through the QSOP parser and uses canonical writer idempotence as its oracl
 ## Forward Direction
 
 The next importer targets are broader OpenQASM compatibility while keeping each
-added gate covered by boundary-level examples. Candidate additions should either
-lower cleanly to the supported primitive gates or have a direct QSOP
-representation.
+added gate covered by boundary-level examples and amplitude checks. Candidate
+additions should either lower cleanly to the supported primitive gates or have a
+direct QSOP representation.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.
