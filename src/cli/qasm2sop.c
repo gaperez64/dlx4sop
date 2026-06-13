@@ -45,6 +45,7 @@ typedef enum qasm_two_qubit_op {
   QASM_TWO_CX,
   QASM_TWO_CY,
   QASM_TWO_SWAP,
+  QASM_TWO_ISWAP,
 } qasm_two_qubit_op_t;
 
 typedef struct qasm_operand {
@@ -139,12 +140,40 @@ static bool parse_u32_text(const char *text, uint32_t *out) {
   return true;
 }
 
+static void lowercase_ascii(char *text) {
+  for (char *p = text; *p != '\0'; p++) {
+    *p = (char)tolower((unsigned char)*p);
+  }
+}
+
 static uint32_t mod16_i64(int64_t value) {
   int64_t residue = value % 16;
   if (residue < 0) {
     residue += 16;
   }
   return (uint32_t)residue;
+}
+
+static bool parse_numeric_pi_over_four_units(const char *expr, int64_t *out_units) {
+  errno = 0;
+  char *end = NULL;
+  const double value = strtod(expr, &end);
+  if (errno != 0 || end == expr || *trim(end) != '\0') {
+    return false;
+  }
+
+  const double units = value / 0.78539816339744830962;
+  const int64_t rounded = units >= 0.0 ? (int64_t)(units + 0.5) : (int64_t)(units - 0.5);
+  double diff = units - (double)rounded;
+  if (diff < 0.0) {
+    diff = -diff;
+  }
+  if (diff > 1e-9) {
+    return false;
+  }
+
+  *out_units = rounded;
+  return true;
 }
 
 static bool validate_boundary_bits(const char *option, const char *bits, uint32_t nqubits,
@@ -162,9 +191,9 @@ static bool validate_boundary_bits(const char *option, const char *bits, uint32_
 
   const size_t len = strlen(bits);
   if (len != (size_t)nqubits) {
-    snprintf(error, error_size, "%s bitstring length %zu does not match %" PRIu32
-                                " OpenQASM qubits",
-             option, len, nqubits);
+    snprintf(error, error_size,
+             "%s bitstring length %zu does not match %" PRIu32 " OpenQASM qubits", option, len,
+             nqubits);
     return false;
   }
   return true;
@@ -358,8 +387,8 @@ static bool parse_qref(qasm_importer_t *importer, char *text, uint32_t *out_qubi
     return false;
   }
   if (index >= reg->size) {
-    set_error(importer, "qreg index %" PRIu32 " is outside '%s[%" PRIu32 "]'", index,
-              reg->name, reg->size);
+    set_error(importer, "qreg index %" PRIu32 " is outside '%s[%" PRIu32 "]'", index, reg->name,
+              reg->size);
     return false;
   }
 
@@ -438,13 +467,13 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
       p++;
     } while (isdigit((unsigned char)*p));
     if (*p != '*') {
-      return false;
+      return parse_numeric_pi_over_four_units(expr, out_units);
     }
     p++;
   }
 
   if (strncmp(p, "pi", 2) != 0) {
-    return false;
+    return parse_numeric_pi_over_four_units(expr, out_units);
   }
   p += 2;
 
@@ -480,9 +509,8 @@ static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
   return true;
 }
 
-static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate,
-                                    const char *prefix, const char *name, int64_t *out_units,
-                                    bool *out_matches) {
+static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate, const char *prefix,
+                                    const char *name, int64_t *out_units, bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -514,9 +542,8 @@ static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
-static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
-                                    const char *prefix, const char *name,
-                                    uint32_t *out_coeff, bool *out_matches) {
+static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate, const char *prefix,
+                                    const char *name, uint32_t *out_coeff, bool *out_matches) {
   int64_t units = 0;
   if (!parse_param_phase_units(importer, gate, prefix, name, &units, out_matches)) {
     return false;
@@ -528,9 +555,9 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
-static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate,
-                                  const char *prefix, const char *name, int64_t *out_units,
-                                  size_t expected, bool *out_matches) {
+static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, const char *prefix,
+                                  const char *name, int64_t *out_units, size_t expected,
+                                  bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -581,8 +608,8 @@ static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
-static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
-                                 uint32_t *out_coeff, bool *out_is_phase) {
+static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate, uint32_t *out_coeff,
+                                 bool *out_is_phase) {
   bool matches = false;
   if (!parse_param_phase_coeff(importer, gate, "u1(", "u1", out_coeff, &matches)) {
     return false;
@@ -598,8 +625,8 @@ static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
-static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
-                                 uint32_t *out_coeff, bool *out_is_phase) {
+static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate, uint32_t *out_coeff,
+                                 bool *out_is_phase) {
   const uint32_t named_coeff = named_phase_coeff_for_gate(gate);
   if (named_coeff != UINT32_MAX) {
     *out_coeff = named_coeff;
@@ -610,8 +637,7 @@ static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
 }
 
 static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
-                                            uint32_t *out_coeff,
-                                            bool *out_is_controlled_phase) {
+                                            uint32_t *out_coeff, bool *out_is_controlled_phase) {
   const uint32_t named_coeff = named_phase_coeff_for_gate(gate + 1);
   if (gate[0] == 'c' && named_coeff != UINT32_MAX) {
     *out_coeff = named_coeff;
@@ -682,15 +708,13 @@ static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
          apply_phase(importer, qubit, mod16_i64(2 * units));
 }
 
-static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target,
-                      int64_t units) {
+static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target, int64_t units) {
   return apply_phase(importer, control, mod16_i64(-units)) &&
          apply_controlled_phase(importer, control, target, mod16_i64(2 * units));
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 8) &&
-         apply_h(importer, qubit);
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 8) && apply_h(importer, qubit);
 }
 
 static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
@@ -699,18 +723,15 @@ static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
 }
 
 static bool apply_sx_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) &&
-         apply_h(importer, qubit);
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) && apply_h(importer, qubit);
 }
 
 static bool apply_sxdg_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 12) &&
-         apply_h(importer, qubit);
+  return apply_h(importer, qubit) && apply_phase(importer, qubit, 12) && apply_h(importer, qubit);
 }
 
 static bool apply_rx(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  return apply_h(importer, qubit) && apply_rz(importer, qubit, units) &&
-         apply_h(importer, qubit);
+  return apply_h(importer, qubit) && apply_rz(importer, qubit, units) && apply_h(importer, qubit);
 }
 
 static bool apply_ry(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
@@ -731,20 +752,28 @@ static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_unit
   return apply_u3(importer, qubit, 2, phi_units, lambda_units);
 }
 
-static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
-                                   uint32_t target) {
+static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
   return apply_h(importer, target) && apply_cz(importer, control, target) &&
          apply_h(importer, target);
 }
 
-static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control,
-                                   uint32_t target) {
-  return apply_phase(importer, target, 12) &&
-         apply_cx_decomposition(importer, control, target) && apply_phase(importer, target, 4);
+static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
+  return apply_phase(importer, target, 12) && apply_cx_decomposition(importer, control, target) &&
+         apply_phase(importer, target, 4);
 }
 
-static bool split_two_operands(qasm_importer_t *importer, char *rest, char **left,
-                               char **right) {
+static bool apply_iswap_decomposition(qasm_importer_t *importer, uint32_t left, uint32_t right) {
+  if (!apply_cz(importer, left, right)) {
+    return false;
+  }
+
+  const uint32_t tmp = importer->current[left];
+  importer->current[left] = importer->current[right];
+  importer->current[right] = tmp;
+  return apply_phase(importer, left, 4) && apply_phase(importer, right, 4);
+}
+
+static bool split_two_operands(qasm_importer_t *importer, char *rest, char **left, char **right) {
   char *comma = strchr(rest, ',');
   if (comma == NULL) {
     set_error(importer, "two-qubit gate operands must be separated by comma");
@@ -756,8 +785,7 @@ static bool split_two_operands(qasm_importer_t *importer, char *rest, char **lef
   return true;
 }
 
-static bool parse_qubit_or_reg_operand(qasm_importer_t *importer, char *text,
-                                       qasm_operand_t *out) {
+static bool parse_qubit_or_reg_operand(qasm_importer_t *importer, char *text, qasm_operand_t *out) {
   text = trim(text);
   if (strchr(text, '[') != NULL) {
     uint32_t qubit = 0;
@@ -781,8 +809,8 @@ static bool parse_qubit_or_reg_operand(qasm_importer_t *importer, char *text,
   return true;
 }
 
-static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op,
-                               uint32_t qubit, uint32_t phase_coeff) {
+static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op, uint32_t qubit,
+                               uint32_t phase_coeff) {
   switch (op) {
   case QASM_ONE_ID:
     return true;
@@ -803,8 +831,8 @@ static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op
   return false;
 }
 
-static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
-                                    qasm_one_qubit_op_t op, uint32_t phase_coeff) {
+static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest, qasm_one_qubit_op_t op,
+                                    uint32_t phase_coeff) {
   rest = trim(rest);
   if (strchr(rest, '[') != NULL) {
     uint32_t qubit = 0;
@@ -832,17 +860,16 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
   return true;
 }
 
-typedef bool (*qasm_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
-                                        int64_t units);
+typedef bool (*qasm_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit, int64_t units);
 
-typedef bool (*qasm_param_two_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
-                                        int64_t first, int64_t second);
+typedef bool (*qasm_param_two_qubit_fn)(qasm_importer_t *importer, uint32_t qubit, int64_t first,
+                                        int64_t second);
 
-typedef bool (*qasm_param_three_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
-                                          int64_t first, int64_t second, int64_t third);
+typedef bool (*qasm_param_three_qubit_fn)(qasm_importer_t *importer, uint32_t qubit, int64_t first,
+                                          int64_t second, int64_t third);
 
-static bool apply_param_one_qubit_operand(qasm_importer_t *importer, char *rest,
-                                          int64_t units, qasm_param_one_qubit_fn apply) {
+static bool apply_param_one_qubit_operand(qasm_importer_t *importer, char *rest, int64_t units,
+                                          qasm_param_one_qubit_fn apply) {
   rest = trim(rest);
   if (strchr(rest, '[') != NULL) {
     uint32_t qubit = 0;
@@ -929,8 +956,8 @@ static bool apply_param_three_qubit_operand(qasm_importer_t *importer, char *res
   return true;
 }
 
-static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op,
-                               uint32_t left, uint32_t right, uint32_t phase_coeff) {
+static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op, uint32_t left,
+                               uint32_t right, uint32_t phase_coeff) {
   switch (op) {
   case QASM_TWO_CZ:
     return apply_cz(importer, left, right);
@@ -946,13 +973,15 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
     importer->current[right] = tmp;
     return true;
   }
+  case QASM_TWO_ISWAP:
+    return apply_iswap_decomposition(importer, left, right);
   }
   set_error(importer, "internal error: unknown two-qubit operation");
   return false;
 }
 
-static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest,
-                                     qasm_two_qubit_op_t op, uint32_t phase_coeff) {
+static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest, qasm_two_qubit_op_t op,
+                                     uint32_t phase_coeff) {
   char *left_text = NULL;
   char *right_text = NULL;
   if (!split_two_operands(importer, rest, &left_text, &right_text)) {
@@ -1033,8 +1062,8 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_u3) {
-    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1],
-                                           u3_units[2], apply_u3);
+    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1], u3_units[2],
+                                           apply_u3);
   }
 
   int64_t u2_units[2] = {0};
@@ -1043,8 +1072,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_u2) {
-    return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1],
-                                         apply_u2);
+    return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1], apply_u2);
   }
 
   int64_t rz_units = 0;
@@ -1142,6 +1170,15 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP, 0);
   }
 
+  if (strcmp(gate, "iswap") == 0) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_ISWAP, 0);
+  }
+
+  if (strcmp(gate, "ccx") == 0 || strcmp(gate, "ccz") == 0 || strcmp(gate, "cswap") == 0) {
+    set_error(importer, "higher-degree OpenQASM operation '%s' needs quadratization", gate);
+    return false;
+  }
+
   set_error(importer, "unsupported OpenQASM operation '%s'", gate);
   return false;
 }
@@ -1207,6 +1244,7 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
   }
   *rest = '\0';
   rest = trim(rest + 1);
+  lowercase_ascii(text);
   return apply_gate(importer, text, rest);
 }
 
@@ -1254,8 +1292,7 @@ static bool write_zero_qsop(FILE *file, uint64_t norm_h) {
   return !ferror(file);
 }
 
-static bool pin_boundary_variable(int8_t *pins, uint32_t var, uint32_t value,
-                                  bool *conflict) {
+static bool pin_boundary_variable(int8_t *pins, uint32_t var, uint32_t value, bool *conflict) {
   if (pins[var] != -1 && pins[var] != (int8_t)value) {
     *conflict = true;
     return false;

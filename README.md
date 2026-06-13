@@ -48,6 +48,11 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `tools/bench_qasm_corpus.py`: run the QASM solver corpus through `qasm2sop`
   and `sop-solve`, emitting JSONL or CSV records with backend counters, wall
   times, hashes, and optional phase-trace summaries.
+- `tools/qgraph2qasm.py`: optional PyZX-backed starter utility for translating
+  PyZX/Quantomatic `.qgraph` JSON diagrams to OpenQASM when PyZX can extract a
+  circuit.
+- `tools/scan_feynmandd_qasm.py`: scan a local FeynmanDD checkout or corpus
+  root through `qasm2sop` and group import failures by cause.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, deterministic algebraic invariants for canonicalization and solver
@@ -239,6 +244,11 @@ declaration order. Omitted boundaries default to all-zero bits, matching the
 original 0-to-0 amplitude behavior.
 The importer emits compact `Z_8` QSOP when possible and widens to `Z_16` for
 half-step global phases such as `rz(pi/4)`.
+It accepts the FeynmanDD-style quadratic subset used by the Google benchmarks,
+including uppercase gate spellings, decimal angle literals for multiples of
+`pi/4`, and `iswap`. Higher-degree gates such as `ccx`, `ccz`, and `cswap`
+currently fail with a quadratization diagnostic rather than being lowered
+silently.
 
 Whole-register OpenQASM operands are accepted for supported gates:
 
@@ -267,6 +277,19 @@ Run the manifest-backed QASM solver corpus as a lightweight benchmark:
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --trace --format jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --format csv
+```
+
+Inspect a local FeynmanDD checkout:
+
+```sh
+git clone --depth 1 https://github.com/cqs-thu/feynman-decision-diagram.git /tmp/dlx4sop-feynmandd
+tools/scan_feynmandd_qasm.py build/qasm2sop /tmp/dlx4sop-feynmandd/benchmark/exp
+```
+
+Start from a PyZX/Quantomatic `.qgraph` JSON diagram when PyZX is installed:
+
+```sh
+tools/qgraph2qasm.py diagram.qgraph | build/qasm2sop -
 ```
 
 ## Current Direction

@@ -74,6 +74,15 @@ and `ARCHITECTURE.md`.
   - FeynmanDD's public interface is OpenQASM plus gate-set JSON, so the first
     compatibility target is benchmark ingestion and later OpenQASM/gate-set
     export for external baseline runs.
+- Completed qgraph/FeynmanDD starter checkpoint:
+  - added optional PyZX-backed `tools/qgraph2qasm.py` for `.qgraph` JSON to
+    OpenQASM extraction when PyZX can extract a circuit;
+  - cloned FeynmanDD to `/tmp/dlx4sop-feynmandd` for local corpus inspection;
+  - added uppercase gate spelling, decimal `pi/4`-multiple angle, and `iswap`
+    support to `qasm2sop`;
+  - added `tools/scan_feynmandd_qasm.py`; current scan imports 92/152
+    `benchmark/exp` files and all 60 remaining failures are `ccz`
+    quadratization cases. Full non-invalid checkout scan imports 166/425 files.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
@@ -97,10 +106,12 @@ and `ARCHITECTURE.md`.
 - Add more finite OpenQASM syntax compatibility with boundary-level examples:
   - add small compatibility aliases when they reuse existing lowering paths.
 - Prototype external-format boundary utilities:
-  - `zx2sop` as an optional PyZX-backed loader for `.qgraph` and circuit-like
-    ZX diagrams that can be converted to OpenQASM before `qasm2sop`;
-  - FeynmanDD benchmark ingestion from its OpenQASM corpus, then
-    FeynmanDD-compatible OpenQASM plus gate-set JSON export for baseline runs.
+  - add a real `.qgraph` conversion fixture once PyZX is available locally or in
+    an optional test environment;
+  - add CCZ/Toffoli quadratization before treating higher-degree FeynmanDD
+    benchmarks as native quadratic-labelled SOP;
+  - later emit FeynmanDD-compatible OpenQASM plus gate-set JSON for baseline
+    runs.
 - Expand optional Qiskit comparison coverage as importer scope grows.
 - Revisit performance-annex items as solver hot paths mature:
   - dancing-cells adjacency mutation remains incomplete: the residual backend

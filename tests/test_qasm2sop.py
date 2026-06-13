@@ -252,6 +252,7 @@ def main() -> int:
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_sx")
     run_case(exe, source_root, "qasm_sxdg")
+    run_case(exe, source_root, "qasm_feynmandd_quadratic")
     run_case(exe, source_root, "qasm_rz")
     run_case(exe, source_root, "qasm_rz_quarter")
     run_boundary_case(exe, source_root, "qasm_rx_quarter", ["--input", "0", "--output", "1"])

@@ -248,16 +248,18 @@ deliberately small static OpenQASM 2.0 subset:
 - `qreg` declarations;
 - `barrier`, ignored;
 - primitive one-qubit gates `id`, `h`, `t`, `tdg`, `s`, `sdg`, and `z`;
-- finite `u1(...)` and `p(...)` phase calls for symbolic multiples of `pi/4`;
-- finite `rz(...)` phase calls for symbolic multiples of `pi/4`;
+- finite `u1(...)` and `p(...)` phase calls for symbolic or decimal multiples
+  of `pi/4`;
+- finite `rz(...)` phase calls for symbolic or decimal multiples of `pi/4`;
 - finite `rx(...)` and `ry(...)` axis rotations for symbolic multiples of
-  `pi/4`;
+  `pi/4` or decimal equivalents;
 - finite `u2(...)` and `u3(...)` one-qubit calls whose parameters are symbolic
   multiples of `pi/4`, lowered through exact `rz`/`ry` decompositions plus the
   OpenQASM global phase;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;
+- primitive two-qubit `iswap`, lowered to `cz`, `swap`, and `s` phases;
 - finite controlled phase calls `cu1(...)` and `cp(...)` for symbolic multiples
   of `pi/4`;
 - finite `crz(...)` phase calls for symbolic multiples of `pi/4`;
@@ -266,11 +268,14 @@ deliberately small static OpenQASM 2.0 subset:
   to the primitive gate set.
 
 Unsupported classical or dynamic features such as `creg`, `measure`, `reset`,
-and `if` fail with line-numbered diagnostics. The importer currently stores
-phase coefficients internally in `Z_16`, emits compact `Z_8` QSOP whenever all
-coefficients are even, and widens to `Z_16` for half-step global phases such as
-`rz(pi/4)`. This is an importer resolution choice, not a core maximum modulus:
-the QSOP format and solver remain parameterized by even modulus `r`.
+and `if` fail with line-numbered diagnostics. Higher-degree gates such as
+`ccx`, `ccz`, and `cswap` currently fail with an explicit quadratization
+diagnostic; they are not native quadratic-labelled SOP until a gadget pass is
+implemented. The importer currently stores phase coefficients internally in
+`Z_16`, emits compact `Z_8` QSOP whenever all coefficients are even, and widens
+to `Z_16` for half-step global phases such as `rz(pi/4)`. This is an importer
+resolution choice, not a core maximum modulus: the QSOP format and solver
+remain parameterized by even modulus `r`.
 Contradictory fixed boundaries become a valid zero amplitude, and generated
 QSOP is canonicalized through the normal parser and writer.
 
@@ -306,7 +311,8 @@ simple or Hadamard edges
 (https://pyzx.readthedocs.io/en/latest/graph.html). The most practical first
 `zx2sop` path is therefore PyZX-backed: load `.qgraph` or a supported circuit
 format, extract or convert circuit-like diagrams to OpenQASM, then reuse
-`qasm2sop`. Direct graph-like phase-gadget import can come later.
+`qasm2sop`. `tools/qgraph2qasm.py` starts this path as an optional PyZX-backed
+adapter. Direct graph-like phase-gadget import can come later.
 
 FeynmanDD's public repository uses OpenQASM circuit files plus a gate-set JSON
 file passed with `-g`, for example `cudd_circuit_bdd -f ...qasm -g
@@ -322,6 +328,15 @@ For compatibility, the natural first target is a `qasm2sop`/benchmark adapter
 that can ingest FeynmanDD benchmark `.qasm` files and, later, emit
 FeynmanDD-compatible OpenQASM plus a matching gate-set JSON for external
 baseline runs.
+
+The initial local scan uses a shallow FeynmanDD checkout under `/tmp` and
+`tools/scan_feynmandd_qasm.py`. In the `benchmark/exp` subtree, the importer now
+accepts all currently quadratic Google-style cases found in the scan: 92 of 152
+files import, and the remaining 60 fail on `ccz`, which needs a quadratization
+pass before it can become quadratic-labelled SOP. Across the wider non-invalid
+checkout, 166 of 425 QASM files import; the bulk of remaining failures are
+higher-degree reversible circuits, dynamic/classical circuits, or custom-gate
+syntax outside the current static subset.
 
 ## CI And Coverage
 

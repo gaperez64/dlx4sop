@@ -179,6 +179,26 @@ if python3.found()
     ],
     depends: [qasm2sop, sop_solve],
   )
+  test(
+    'qgraph2qasm smoke',
+    python3,
+    args: [
+      files('tests/test_qgraph2qasm.py'),
+      files('tools/qgraph2qasm.py'),
+    ],
+  )
+  test(
+    'feynmandd scan smoke',
+    python3,
+    args: [
+      files('tools/scan_feynmandd_qasm.py'),
+      qasm2sop.full_path(),
+      meson.current_source_dir() / 'tests' / 'golden',
+      '--limit',
+      '1',
+    ],
+    depends: qasm2sop,
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',
