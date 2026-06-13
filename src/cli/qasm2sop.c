@@ -528,6 +528,59 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
   return true;
 }
 
+static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate,
+                                  const char *prefix, const char *name, int64_t *out_units,
+                                  size_t expected, bool *out_matches) {
+  const size_t prefix_len = strlen(prefix);
+  const size_t gate_len = strlen(gate);
+  if (strncmp(gate, prefix, prefix_len) != 0) {
+    *out_matches = false;
+    return true;
+  }
+  *out_matches = true;
+
+  if (gate_len <= prefix_len || gate[gate_len - 1U] != ')') {
+    set_error(importer, "%s gate must be written with %" PRIu64 " angle parameters", name,
+              (uint64_t)expected);
+    return false;
+  }
+
+  const size_t params_len = gate_len - prefix_len - 1U;
+  char params[192];
+  if (params_len == 0 || params_len >= sizeof(params)) {
+    set_error(importer, "unsupported %s angle list '%s'", name, gate);
+    return false;
+  }
+  memcpy(params, gate + prefix_len, params_len);
+  params[params_len] = '\0';
+
+  char *cursor = params;
+  for (size_t i = 0; i < expected; i++) {
+    char *next = NULL;
+    if (i + 1U < expected) {
+      next = strchr(cursor, ',');
+      if (next == NULL) {
+        set_error(importer, "unsupported %s angle list '%s'", name, gate);
+        return false;
+      }
+      *next = '\0';
+      next++;
+    } else if (strchr(cursor, ',') != NULL) {
+      set_error(importer, "unsupported %s angle list '%s'", name, gate);
+      return false;
+    }
+
+    char *expr = trim(cursor);
+    if (!parse_pi_over_four_units(expr, &out_units[i])) {
+      set_error(importer, "unsupported %s angle '%s'", name, gate);
+      return false;
+    }
+    cursor = next;
+  }
+
+  return true;
+}
+
 static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
                                  uint32_t *out_coeff, bool *out_is_phase) {
   bool matches = false;
@@ -666,6 +719,18 @@ static bool apply_ry(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
          apply_phase(importer, qubit, 4);
 }
 
+static bool apply_u3(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
+                     int64_t phi_units, int64_t lambda_units) {
+  return add_constant(importer, mod16_i64(phi_units + lambda_units)) &&
+         apply_rz(importer, qubit, lambda_units) && apply_ry(importer, qubit, theta_units) &&
+         apply_rz(importer, qubit, phi_units);
+}
+
+static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
+                     int64_t lambda_units) {
+  return apply_u3(importer, qubit, 2, phi_units, lambda_units);
+}
+
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control,
                                    uint32_t target) {
   return apply_h(importer, target) && apply_cz(importer, control, target) &&
@@ -770,6 +835,12 @@ static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest,
 typedef bool (*qasm_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
                                         int64_t units);
 
+typedef bool (*qasm_param_two_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                        int64_t first, int64_t second);
+
+typedef bool (*qasm_param_three_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                          int64_t first, int64_t second, int64_t third);
+
 static bool apply_param_one_qubit_operand(qasm_importer_t *importer, char *rest,
                                           int64_t units, qasm_param_one_qubit_fn apply) {
   rest = trim(rest);
@@ -793,6 +864,65 @@ static bool apply_param_one_qubit_operand(qasm_importer_t *importer, char *rest,
   }
   for (uint32_t i = 0; i < reg->size; i++) {
     if (!apply(importer, reg->offset + i, units)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool apply_param_two_qubit_operand(qasm_importer_t *importer, char *rest, int64_t first,
+                                          int64_t second, qasm_param_two_qubit_fn apply) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply(importer, qubit, first, second);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply(importer, reg->offset + i, first, second)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool apply_param_three_qubit_operand(qasm_importer_t *importer, char *rest, int64_t first,
+                                            int64_t second, int64_t third,
+                                            qasm_param_three_qubit_fn apply) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply(importer, qubit, first, second, third);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply(importer, reg->offset + i, first, second, third)) {
       return false;
     }
   }
@@ -896,6 +1026,26 @@ static bool apply_crz_operands(qasm_importer_t *importer, char *rest, int64_t un
 
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
+
+  int64_t u3_units[3] = {0};
+  bool is_u3 = false;
+  if (!parse_param_unit_list(importer, gate, "u3(", "u3", u3_units, 3, &is_u3)) {
+    return false;
+  }
+  if (is_u3) {
+    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1],
+                                           u3_units[2], apply_u3);
+  }
+
+  int64_t u2_units[2] = {0};
+  bool is_u2 = false;
+  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, &is_u2)) {
+    return false;
+  }
+  if (is_u2) {
+    return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1],
+                                         apply_u2);
+  }
 
   int64_t rz_units = 0;
   bool is_rz = false;

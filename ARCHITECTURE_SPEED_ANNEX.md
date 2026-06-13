@@ -156,6 +156,12 @@ The residual branch backend already mutates in place and records enough state to
 undo branches. As the solver grows, new simplifications should keep this
 discipline instead of reintroducing full residual copies.
 
+The current residual state also stores immutable incident-edge lists and uses
+them for branch mutation, degree queries, and residual split estimates. This is
+a step toward dancing-cells-style locality, but it is not yet linked-cell
+deletion/reinsertion: active state is still represented by flags plus the
+reversible trail.
+
 Suggested trail kinds:
 
 ```c

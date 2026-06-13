@@ -38,9 +38,10 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
     residue-table fast path once no active quadratic edges remain.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
   with explicit fixed input/output bitstrings, finite `u1`/`p`/`rz` phase
-  calls, finite `rx`/`ry` axis rotations, controlled-phase calls, named
-  controlled phase gates, and a few decomposition-backed standard gates
-  including `sx`/`sxdg`. Supported operands include indexed qubits,
+  calls, finite `rx`/`ry` axis rotations, finite `u2`/`u3` calls,
+  controlled-phase calls, named controlled phase gates, and a few
+  decomposition-backed standard gates including `sx`/`sxdg`. Supported operands
+  include indexed qubits,
   whole-register one-qubit operands, and matching whole-register two-qubit
   operands.
 

@@ -184,6 +184,11 @@ count, cache hits, cache misses, and brute-force leaves solved on cache misses.
 recursively branches on active variables. A reversible trail supports checkpoints
 and undo without copying the full residual state at every branch.
 
+The residual stores immutable per-variable incident-edge lists, so branch
+mutation, active-degree queries, and split estimates walk local adjacency
+instead of scanning every edge for each active variable. Active edge and variable
+state still uses the reversible trail.
+
 Residual states expose a deterministic fingerprint over the active graph,
 constant, and active unary labels. The branch backend owns a local exact memo
 cache keyed by that fingerprint plus full active-state comparison, so cache
@@ -233,6 +238,9 @@ deliberately small static OpenQASM 2.0 subset:
 - finite `rz(...)` phase calls for symbolic multiples of `pi/4`;
 - finite `rx(...)` and `ry(...)` axis rotations for symbolic multiples of
   `pi/4`;
+- finite `u2(...)` and `u3(...)` one-qubit calls whose parameters are symbolic
+  multiples of `pi/4`, lowered through exact `rz`/`ry` decompositions plus the
+  OpenQASM global phase;
 - indexed or whole-register operands for supported one-qubit gates;
 - indexed or matching whole-register operands for supported two-qubit gates;
 - primitive two-qubit `cz` and `swap`;

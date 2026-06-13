@@ -47,10 +47,10 @@ def split_statements(qasm: str) -> list[str]:
     return statements
 
 
-def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], float]], dict[str, tuple[int, int]], int]:
+def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dict[str, tuple[int, int]], int]:
     regs: dict[str, tuple[int, int]] = {}
     nqubits = 0
-    gates: list[tuple[str, list[str], float]] = []
+    gates: list[tuple[str, list[str], list[float]]] = []
 
     for statement in split_statements(qasm):
         if statement == "OPENQASM 2.0" or statement.startswith("include "):
@@ -66,14 +66,16 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], float]], dict[str,
             continue
 
         gate, rest = statement.split(None, 1)
-        angle = 0.0
-        for prefix in ("u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz"):
+        params: list[float] = []
+        for prefix in ("u3", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz"):
             if gate.startswith(f"{prefix}(") and gate.endswith(")"):
-                angle = parse_angle(gate[len(prefix) + 1 : -1])
+                params = [
+                    parse_angle(part.strip()) for part in gate[len(prefix) + 1 : -1].split(",")
+                ]
                 gate = prefix
                 break
         operands = [operand.strip() for operand in rest.split(",")]
-        gates.append((gate, operands, angle))
+        gates.append((gate, operands, params))
 
     return gates, regs, nqubits
 
@@ -150,6 +152,15 @@ def apply_swap(state: list[complex], nqubits: int, left: int, right: int) -> Non
         state[index], state[other] = state[other], state[index]
 
 
+def u3_matrix(theta: float, phi: float, lam: float) -> tuple[complex, complex, complex, complex]:
+    return (
+        math.cos(theta / 2.0),
+        -cmath.exp(1j * lam) * math.sin(theta / 2.0),
+        cmath.exp(1j * phi) * math.sin(theta / 2.0),
+        cmath.exp(1j * (phi + lam)) * math.cos(theta / 2.0),
+    )
+
+
 def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
     gates, regs, nqubits = parse_qasm(qasm)
     state = [0j] * (1 << nqubits)
@@ -176,7 +187,18 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
         "ctdg": -math.pi / 4.0,
     }
 
-    for gate, operands, angle in gates:
+    for gate, operands, params in gates:
+        angle = params[0] if params else 0.0
+        if gate == "u3":
+            matrix = u3_matrix(params[0], params[1], params[2])
+            for qubit in operand_qubits(operands[0], regs):
+                apply_one(state, nqubits, qubit, matrix)
+            continue
+        if gate == "u2":
+            matrix = u3_matrix(math.pi / 2.0, params[0], params[1])
+            for qubit in operand_qubits(operands[0], regs):
+                apply_one(state, nqubits, qubit, matrix)
+            continue
         if gate in ("u1", "p"):
             matrix = (1, 0, 0, cmath.exp(1j * angle))
             for qubit in operand_qubits(operands[0], regs):
@@ -365,6 +387,17 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             h q;
             rx(pi/4) q[0];
             ry(-pi/2) q[1];
+            cx q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("10", "01"), ("11", "10")],
+        ),
+        (
+            "u_gates",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            u2(pi/4,-pi/2) q[0];
+            u3(pi/4,pi/4,pi/2) q[1];
             cx q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("10", "01"), ("11", "10")],

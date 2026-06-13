@@ -140,6 +140,28 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if bad_rx.returncode == 0 or "unsupported rx phase angle" not in bad_rx.stderr:
         raise AssertionError(f"unexpected bad rx result:\n{bad_rx.stderr}")
 
+    bad_u2 = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu2(pi/4) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_u2.returncode == 0 or "unsupported u2 angle list" not in bad_u2.stderr:
+        raise AssertionError(f"unexpected bad u2 result:\n{bad_u2.stderr}")
+
+    bad_u3 = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu3(pi/3,0,0) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_u3.returncode == 0 or "unsupported u3 angle" not in bad_u3.stderr:
+        raise AssertionError(f"unexpected bad u3 result:\n{bad_u3.stderr}")
+
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), "--input"], "missing value"),
@@ -225,6 +247,8 @@ def main() -> int:
     run_case(exe, source_root, "qasm_swap_id")
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
+    run_case(exe, source_root, "qasm_u2")
+    run_case(exe, source_root, "qasm_u3")
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_sx")
     run_case(exe, source_root, "qasm_sxdg")
