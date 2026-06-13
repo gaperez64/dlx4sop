@@ -24,6 +24,8 @@ and `ARCHITECTURE.md`.
     but added Qymera-inspired GHZ and uniform-superposition corpus cases;
   - added component-cache fingerprints for fast rejection before exact
     subinstance comparison;
+  - added two-variable one-edge component relabelling so mirrored components can
+    share cache entries;
   - updated README and architecture notes for the solver-focused direction.
 - Completed residual branch checkpoint:
   - added an edge-free residue-table fast path for active independent unary
@@ -35,7 +37,7 @@ and `ARCHITECTURE.md`.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.6% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.5% line coverage over `src`.
 
 ## Current Task
 
@@ -54,6 +56,6 @@ and `ARCHITECTURE.md`.
 - Expand optional Qiskit comparison coverage as importer scope grows.
 - Revisit performance-annex items as solver hot paths mature:
   - residual-state hashing;
-  - small-component canonical relabelling;
+  - broader small-component canonical relabelling;
   - structured timing/tracing;
   - specialized residue kernels.

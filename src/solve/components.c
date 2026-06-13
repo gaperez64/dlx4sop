@@ -256,6 +256,23 @@ static bool store_cached_component(component_cache_t *cache, const qsop_instance
   return true;
 }
 
+static void canonicalize_two_var_component(qsop_instance_t *sub) {
+  if (sub->nvars != 2U || sub->nedges != 1U) {
+    return;
+  }
+
+  if (sub->edge_u[0] > sub->edge_v[0]) {
+    const uint32_t tmp = sub->edge_u[0];
+    sub->edge_u[0] = sub->edge_v[0];
+    sub->edge_v[0] = tmp;
+  }
+  if (sub->unary[1] < sub->unary[0]) {
+    const uint32_t tmp = sub->unary[0];
+    sub->unary[0] = sub->unary[1];
+    sub->unary[1] = tmp;
+  }
+}
+
 static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *component,
                               uint32_t wanted, qsop_instance_t *sub, qsop_error_t *error) {
   uint32_t *map = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*map));
@@ -320,6 +337,7 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
       out_edge++;
     }
   }
+  canonicalize_two_var_component(sub);
 
   free(map);
   return true;

@@ -30,8 +30,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `sop-solve`: compute exact residue-count vectors or solver stats with one of
   three backends:
   - `components` (default): decompose connected components, cache repeated
-    component solves with fingerprinted cache lookup, and brute-force each
-    cache miss;
+    component solves with small-component relabelling and fingerprinted cache
+    lookup, and brute-force each cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic, with a residue-table fast path once no
