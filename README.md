@@ -30,7 +30,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 - `sop-solve`: compute exact residue-count vectors or solver stats with one of
   three backends:
   - `components` (default): decompose connected components, cache repeated
-    component solves, and brute-force each cache miss;
+    component solves with fingerprinted cache lookup, and brute-force each
+    cache miss;
   - `brute-force`: enumerate all assignments directly;
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
@@ -44,7 +45,8 @@ live in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, deterministic algebraic invariants for canonicalization and solver
-agreement, and dependency-free amplitude checks for `qasm2sop + sop-solve`.
+agreement, dependency-free amplitude checks for `qasm2sop + sop-solve`, and a
+QASM-derived solver corpus that compares all exact backends and stats paths.
 
 ## Build And Test
 
@@ -216,5 +218,6 @@ component.
 
 ## Current Direction
 
-The next implementation target is broader OpenQASM importer coverage while
-keeping each added gate covered by boundary-level examples.
+The current implementation target is solver improvement using QASM-derived
+instances as regression inputs for backend agreement, component-cache behavior,
+and stats stability.

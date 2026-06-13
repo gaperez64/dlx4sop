@@ -152,6 +152,16 @@ if python3.found()
     ],
     depends: [qasm2sop, sop_solve],
   )
+  test(
+    'qasm solver corpus',
+    python3,
+    args: [
+      files('tests/test_qasm_solver_corpus.py'),
+      qasm2sop.full_path(),
+      sop_solve.full_path(),
+    ],
+    depends: [qasm2sop, sop_solve],
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',

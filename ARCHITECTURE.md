@@ -146,8 +146,10 @@ Current production implementation lives under:
 - `src/cli`: `sop-check`, `sop-stats`, `sop-solve`, and `qasm2sop`.
 
 Tests are split between Python CLI golden tests and C unit tests for residue and
-residual behavior. Optional parser fuzzing is available as a separate Meson
-option.
+residual behavior. The default suite also includes QASM-derived solver corpus
+cases that import fixed-boundary circuits, compare all exact backends, and check
+solver stats invariants. Optional parser fuzzing is available as a separate
+Meson option.
 
 ## Solver Backends
 
@@ -167,9 +169,11 @@ much cheaper than whole-instance enumeration. The `--max-vars` guard applies to
 each connected component.
 
 The backend owns a local component cache keyed by the deterministic component
-subinstance data. Repeated components reuse cached residue-count vectors before
-convolution. `sop-solve --format stats --backend components` reports component
-count, cache hits, cache misses, and brute-force leaves solved on cache misses.
+subinstance data. Cache entries carry a compact fingerprint for quick rejection
+before exact key comparison. Repeated components reuse cached residue-count
+vectors before convolution. `sop-solve --format stats --backend components`
+reports component count, cache hits, cache misses, and brute-force leaves solved
+on cache misses.
 
 ### Residual Branch-And-Sum
 
@@ -264,10 +268,11 @@ oracle.
 
 ## Forward Direction
 
-The next importer targets are broader OpenQASM compatibility while keeping each
-added gate covered by boundary-level examples and amplitude checks. Candidate
-additions should either lower cleanly to the supported primitive gates or have a
-direct QSOP representation.
+The next solver targets are broader QASM-derived regression corpora, sharper
+component and residual-state caching, and structured timing or tracing around
+backend hot paths. New importer work should be driven by gates found in real
+circuit sources and should keep each added gate covered by boundary-level
+examples and amplitude checks.
 
 External tools such as OpenQASM, MQT, ZX, WMC, and FeynmanDD should remain
 import/export targets rather than runtime dependencies of the core solver.

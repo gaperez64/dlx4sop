@@ -107,6 +107,7 @@ static void free_subinstance(qsop_instance_t *sub) {
 }
 
 typedef struct component_cache_entry {
+  uint64_t fingerprint;
   qsop_instance_t key;
   uint64_t *counts;
 } component_cache_entry_t;
@@ -143,10 +144,37 @@ static bool same_component_key(const qsop_instance_t *a, const qsop_instance_t *
          same_u32_array(a->edge_q, b->edge_q, a->nedges);
 }
 
+static uint64_t fingerprint_u64(uint64_t hash, uint64_t value) {
+  hash ^= value;
+  hash *= UINT64_C(1099511628211);
+  return hash;
+}
+
+static uint64_t component_fingerprint(const qsop_instance_t *key) {
+  uint64_t hash = UINT64_C(1469598103934665603);
+  hash = fingerprint_u64(hash, key->r);
+  hash = fingerprint_u64(hash, key->nvars);
+  hash = fingerprint_u64(hash, key->norm_h);
+  hash = fingerprint_u64(hash, key->constant);
+  hash = fingerprint_u64(hash, (uint32_t)key->mode);
+  hash = fingerprint_u64(hash, key->nedges);
+  for (uint32_t v = 0; v < key->nvars; v++) {
+    hash = fingerprint_u64(hash, key->unary[v]);
+  }
+  for (uint32_t e = 0; e < key->nedges; e++) {
+    hash = fingerprint_u64(hash, key->edge_u[e]);
+    hash = fingerprint_u64(hash, key->edge_v[e]);
+    hash = fingerprint_u64(hash, key->edge_q[e]);
+  }
+  return hash;
+}
+
 static component_cache_entry_t *find_cached_component(component_cache_t *cache,
                                                       const qsop_instance_t *key) {
+  const uint64_t fingerprint = component_fingerprint(key);
   for (size_t i = 0; i < cache->len; i++) {
-    if (same_component_key(&cache->entries[i].key, key)) {
+    if (cache->entries[i].fingerprint == fingerprint &&
+        same_component_key(&cache->entries[i].key, key)) {
       return &cache->entries[i];
     }
   }
@@ -214,6 +242,7 @@ static bool store_cached_component(component_cache_t *cache, const qsop_instance
 
   component_cache_entry_t *entry = &cache->entries[cache->len];
   *entry = (component_cache_entry_t){0};
+  entry->fingerprint = component_fingerprint(key);
   if (!copy_component_key(key, &entry->key, error) ||
       !qsop_counts_alloc(key->r, &entry->counts, error)) {
     free_subinstance(&entry->key);
