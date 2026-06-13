@@ -183,8 +183,11 @@ and undo without copying the full residual state at every branch.
 
 The current branch heuristic first estimates how many active residual components
 would remain after removing each candidate variable. It then uses active degree
-and unary-label presence as tie breakers. The backend reports internal node and
-leaf counters through the stats-aware solve API and `sop-solve --format stats`.
+and unary-label presence as tie breakers. When a branch leaves no active
+quadratic edges, the backend collapses the remaining independent unary variables
+with a residue-table update instead of branching through each isolated variable.
+The backend reports internal node and leaf counters through the stats-aware
+solve API and `sop-solve --format stats`.
 
 ## Command-Line Contract
 

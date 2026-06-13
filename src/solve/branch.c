@@ -25,7 +25,24 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
 typedef struct branch_search_stats {
   uint64_t nodes;
   uint64_t leaves;
+  uint64_t *work;
+  uint64_t *tmp;
 } branch_search_stats_t;
+
+static void add_saturating_u64(uint64_t *dst, uint64_t value) {
+  if (UINT64_MAX - *dst < value) {
+    *dst = UINT64_MAX;
+  } else {
+    *dst += value;
+  }
+}
+
+static uint64_t assignment_count(uint32_t nvars) {
+  if (nvars >= 63U) {
+    return UINT64_MAX;
+  }
+  return UINT64_C(1) << nvars;
+}
 
 static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out,
                               qsop_error_t *error) {
@@ -65,12 +82,51 @@ static bool choose_branch_var(const qsop_residual_t *residual, uint32_t *out,
   return true;
 }
 
+static void edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
+                          branch_search_stats_t *stats) {
+  const uint32_t r = qsop_residual_modulus(residual);
+  uint64_t *current = stats->work;
+  uint64_t *next = stats->tmp;
+  qsop_counts_clear(r, current);
+  current[qsop_residual_constant(residual)] = 1;
+
+  for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
+    if (!qsop_residual_var_active(residual, v)) {
+      continue;
+    }
+
+    qsop_counts_clear(r, next);
+    const uint32_t unary = qsop_residual_unary(residual, v);
+    for (uint32_t residue = 0; residue < r; residue++) {
+      const uint64_t count = current[residue];
+      if (count == 0) {
+        continue;
+      }
+      next[residue] += count;
+      next[((uint64_t)residue + unary) % r] += count;
+    }
+
+    uint64_t *swap = current;
+    current = next;
+    next = swap;
+  }
+
+  for (uint32_t residue = 0; residue < r; residue++) {
+    counts[residue] += current[residue];
+  }
+  add_saturating_u64(&stats->leaves, assignment_count(qsop_residual_active_vars(residual)));
+}
+
 static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
                            branch_search_stats_t *stats, qsop_error_t *error) {
   stats->nodes++;
   if (qsop_residual_active_vars(residual) == 0) {
     stats->leaves++;
     counts[qsop_residual_constant(residual)]++;
+    return true;
+  }
+  if (qsop_residual_active_edges(residual) == 0) {
+    edge_free_sum(residual, counts, stats);
     return true;
   }
 
@@ -140,9 +196,19 @@ bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_
   }
 
   branch_search_stats_t search = {0};
+  if (!qsop_counts_alloc(qsop->r, &search.work, error) ||
+      !qsop_counts_alloc(qsop->r, &search.tmp, error)) {
+    qsop_result_free(result);
+    qsop_residual_free(residual);
+    free(search.work);
+    free(search.tmp);
+    return false;
+  }
   if (!branch_sum_rec(residual, result->counts, &search, error)) {
     qsop_result_free(result);
     qsop_residual_free(residual);
+    free(search.work);
+    free(search.tmp);
     return false;
   }
   if (stats != NULL) {
@@ -151,6 +217,8 @@ bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_
   }
 
   qsop_residual_free(residual);
+  free(search.work);
+  free(search.tmp);
   *out = result;
   return true;
 }

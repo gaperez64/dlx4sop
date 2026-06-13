@@ -23,10 +23,15 @@ and `ARCHITECTURE.md`.
   - added component-cache fingerprints for fast rejection before exact
     subinstance comparison;
   - updated README and architecture notes for the solver-focused direction.
+- Completed residual branch checkpoint:
+  - added an edge-free residue-table fast path for active independent unary
+    variables;
+  - reduced the `solve_labelled` branch stats search from 7 to 3 nodes while
+    preserving the same represented leaf assignments.
 - Latest local verification:
   - `meson test -C build --print-errorlogs`
   - `meson test -C build-qiskit 'qasm2sop qiskit' --print-errorlogs`
-  - `tools/check-coverage.sh build-coverage` at 77.5% line coverage over `src`.
+  - `tools/check-coverage.sh build-coverage` at 77.4% line coverage over `src`.
 
 ## Current Task
 
@@ -34,7 +39,8 @@ and `ARCHITECTURE.md`.
   source for boundary-level solver regressions and backend stats.
 - Next likely solver work:
   - use the QASM corpus to add broader benchmark-shaped cases;
-  - inspect residual branch stats for split-heavy circuits;
+  - inspect residual branch stats for split-heavy circuits and repeated
+    residual states;
   - keep coverage above the 75% CI gate.
 
 ## Future Tasks

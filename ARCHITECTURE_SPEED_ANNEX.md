@@ -314,6 +314,10 @@ Some of these are implemented today by parser normalization; the remaining
 items are future speed work. All of them improve later components: hashing,
 memoization, component decomposition, width heuristics, and SIMD kernels.
 
+The residual branch backend now handles the edge-free case directly by
+collapsing active independent unary variables into a residue-count table. This
+is a first solver-side form of isolated-variable deletion after branching.
+
 ---
 
 ## A.10 Make width heuristics pluggable
