@@ -89,6 +89,14 @@ Completed implementation history has been flushed into `README.md`.
 - Verified with:
   - `meson test -C build --print-errorlogs`
   - `tools/check-coverage.sh build-coverage` at 76.2% line coverage over `src`.
+- Added finite OpenQASM `u1(...)` phase imports:
+  - symbolic multiples of `pi/4` such as `3*pi/4` and `-pi/4`;
+  - direct lowering to unary phase coefficients modulo 8;
+  - golden coverage for positive and negative phases plus invalid-angle
+    diagnostics.
+- Verified with:
+  - `meson test -C build --print-errorlogs`
+  - `tools/check-coverage.sh build-coverage` at 76.4% line coverage over `src`.
 
 ## Current Task
 

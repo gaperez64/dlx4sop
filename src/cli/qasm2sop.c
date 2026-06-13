@@ -359,7 +359,7 @@ static bool parse_qreg(qasm_importer_t *importer, char *rest) {
   return add_qreg(importer, name, size);
 }
 
-static uint32_t phase_coeff_for_gate(const char *gate) {
+static uint32_t named_phase_coeff_for_gate(const char *gate) {
   if (strcmp(gate, "t") == 0) {
     return 1;
   }
@@ -378,7 +378,128 @@ static uint32_t phase_coeff_for_gate(const char *gate) {
   return UINT32_MAX;
 }
 
+static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
+  const char *p = expr;
+  int64_t sign = 1;
+  if (*p == '-') {
+    sign = -1;
+    p++;
+  } else if (*p == '+') {
+    p++;
+  }
+
+  if (strcmp(p, "0") == 0) {
+    *out_units = 0;
+    return true;
+  }
+
+  uint64_t multiplier = 1;
+  if (isdigit((unsigned char)*p)) {
+    multiplier = 0;
+    do {
+      const uint32_t digit = (uint32_t)(*p - '0');
+      if (multiplier > (UINT64_MAX - digit) / 10U) {
+        return false;
+      }
+      multiplier = multiplier * 10U + digit;
+      p++;
+    } while (isdigit((unsigned char)*p));
+    if (*p != '*') {
+      return false;
+    }
+    p++;
+  }
+
+  if (strncmp(p, "pi", 2) != 0) {
+    return false;
+  }
+  p += 2;
+
+  uint64_t denominator = 1;
+  if (*p == '/') {
+    p++;
+    if (!isdigit((unsigned char)*p)) {
+      return false;
+    }
+    denominator = 0;
+    do {
+      const uint32_t digit = (uint32_t)(*p - '0');
+      if (denominator > (UINT64_MAX - digit) / 10U) {
+        return false;
+      }
+      denominator = denominator * 10U + digit;
+      p++;
+    } while (isdigit((unsigned char)*p));
+  }
+  if (*p != '\0') {
+    return false;
+  }
+
+  if (denominator != 1U && denominator != 2U && denominator != 4U) {
+    return false;
+  }
+
+  const uint64_t scale = 4U / denominator;
+  if (multiplier > (uint64_t)INT64_MAX / scale) {
+    return false;
+  }
+  *out_units = sign * (int64_t)(multiplier * scale);
+  return true;
+}
+
+static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate,
+                                 uint32_t *out_coeff, bool *out_is_phase) {
+  static const char prefix[] = "u1(";
+  const size_t prefix_len = strlen(prefix);
+  const size_t gate_len = strlen(gate);
+  if (strncmp(gate, prefix, prefix_len) != 0) {
+    *out_is_phase = false;
+    return true;
+  }
+  *out_is_phase = true;
+
+  if (gate_len <= prefix_len || gate[gate_len - 1U] != ')') {
+    set_error(importer, "u1 phase gate must be written as u1(<angle>)");
+    return false;
+  }
+
+  const size_t expr_len = gate_len - prefix_len - 1U;
+  char expr[64];
+  if (expr_len == 0 || expr_len >= sizeof(expr)) {
+    set_error(importer, "unsupported u1 phase angle '%s'", gate);
+    return false;
+  }
+  memcpy(expr, gate + prefix_len, expr_len);
+  expr[expr_len] = '\0';
+
+  int64_t units = 0;
+  if (!parse_pi_over_four_units(expr, &units)) {
+    set_error(importer, "unsupported u1 phase angle '%s'", gate);
+    return false;
+  }
+  int64_t residue = units % 8;
+  if (residue < 0) {
+    residue += 8;
+  }
+  *out_coeff = (uint32_t)residue;
+  return true;
+}
+
+static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
+                                 uint32_t *out_coeff, bool *out_is_phase) {
+  const uint32_t named_coeff = named_phase_coeff_for_gate(gate);
+  if (named_coeff != UINT32_MAX) {
+    *out_coeff = named_coeff;
+    *out_is_phase = true;
+    return true;
+  }
+  return parse_u1_phase_coeff(importer, gate, out_coeff, out_is_phase);
+}
+
 static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
+  if (coeff % 8U == 0) {
+    return true;
+  }
   return add_unary(importer, importer->current[qubit], coeff);
 }
 
@@ -453,8 +574,12 @@ static bool parse_two_qubit_gate(qasm_importer_t *importer, char *rest, uint32_t
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
 
-  const uint32_t phase_coeff = phase_coeff_for_gate(gate);
-  if (phase_coeff != UINT32_MAX) {
+  uint32_t phase_coeff = 0;
+  bool is_phase = false;
+  if (!phase_coeff_for_gate(importer, gate, &phase_coeff, &is_phase)) {
+    return false;
+  }
+  if (is_phase) {
     uint32_t qubit = 0;
     if (!parse_one_qubit_gate(importer, rest, &qubit)) {
       return false;

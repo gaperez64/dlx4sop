@@ -34,8 +34,8 @@ normalization rules, and backend design notes.
   - `branch`: recursive residual branch-and-sum using a reversible trail and a
     split-aware variable heuristic.
 - `qasm2sop`: import a small static OpenQASM 2.0 subset into canonical QSOP,
-  with explicit fixed input/output bitstrings and a few decomposition-backed
-  standard gates.
+  with explicit fixed input/output bitstrings, finite `u1` phase calls, and a
+  few decomposition-backed standard gates.
 
 The test suite also covers reusable residue-vector helpers, mutable residual
 state, and deterministic algebraic invariants for canonicalization and solver

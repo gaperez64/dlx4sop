@@ -62,6 +62,17 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if unsupported.returncode == 0 or "dynamic or classical" not in unsupported.stderr:
         raise AssertionError(f"unexpected unsupported result:\n{unsupported.stderr}")
 
+    bad_phase = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu1(pi/3) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_phase.returncode == 0 or "unsupported u1 phase angle" not in bad_phase.stderr:
+        raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
+
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), "--input"], "missing value"),
@@ -155,6 +166,8 @@ def main() -> int:
     run_case(exe, source_root, "qasm_hth")
     run_case(exe, source_root, "qasm_cz")
     run_case(exe, source_root, "qasm_swap_id")
+    run_case(exe, source_root, "qasm_u1")
+    run_case(exe, source_root, "qasm_u1_negative")
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)
