@@ -123,6 +123,18 @@ static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
   return left * right;
 }
 
+static uint64_t binary_assignment_forecast(uint32_t nvars) {
+  if (nvars >= 64U) {
+    return UINT64_MAX;
+  }
+  return UINT64_C(1) << nvars;
+}
+
+static uint64_t treewidth_table_forecast(uint32_t width, uint32_t r) {
+  const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
+  return saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
+}
+
 static void max_u32(uint32_t *dst, uint32_t value) {
   if (value > *dst) {
     *dst = value;
@@ -646,6 +658,10 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
                                           branch_search_stats_t *stats,
                                           bool *out_delegated, qsop_error_t *error) {
   *out_delegated = false;
+  if (treewidth_available) {
+    branch_trace_event(stats, "branch.treewidth_table_forecast",
+                       treewidth_table_forecast(treewidth_width, sub->r));
+  }
   if (treewidth_available &&
       treewidth_width <=
           BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN) {
@@ -675,6 +691,8 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, labelled_width,
                           generate_start);
   branch_trace_event(stats, "branch.rankwidth_support_probe", support_width);
+  branch_trace_event(stats, "branch.rankwidth_table_forecast",
+                     binary_assignment_forecast(labelled_width));
 
   const bool use_rankwidth =
       !treewidth_available ||

@@ -46,9 +46,11 @@ TOP_METRICS = (
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
     "branch_rankwidth_support_width",
+    "branch_rankwidth_table_forecast",
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
+    "branch_treewidth_table_forecast",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -114,9 +116,11 @@ CSV_FIELDS = [
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
     "branch_rankwidth_support_width",
+    "branch_rankwidth_table_forecast",
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
+    "branch_treewidth_table_forecast",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -329,6 +333,9 @@ def branch_rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
     support = trace.get("branch.rankwidth_support_probe")
     if support is not None:
         metrics["branch_rankwidth_support_width"] = support["max_items"]
+    table_forecast = trace.get("branch.rankwidth_table_forecast")
+    if table_forecast is not None:
+        metrics["branch_rankwidth_table_forecast"] = table_forecast["max_items"]
     return metrics
 
 
@@ -339,6 +346,9 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
         metrics["branch_treewidth_order_probe_events"] = order["events"]
         metrics["branch_treewidth_order_probe_elapsed_ns"] = order["elapsed_ns"]
         metrics["branch_treewidth_order_width"] = order["max_items"]
+    table_forecast = trace.get("branch.treewidth_table_forecast")
+    if table_forecast is not None:
+        metrics["branch_treewidth_table_forecast"] = table_forecast["max_items"]
     return metrics
 
 
@@ -369,7 +379,9 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "cache_stored_residue_slots",
         "branch_rankwidth_labelled_width",
         "branch_rankwidth_support_width",
+        "branch_rankwidth_table_forecast",
         "branch_treewidth_order_width",
+        "branch_treewidth_table_forecast",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -431,9 +443,11 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_rankwidth_table_forecast",
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_treewidth_table_forecast",
         ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
@@ -680,9 +694,11 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_rankwidth_table_forecast",
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_treewidth_table_forecast",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -781,6 +797,14 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += (
                     f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
                     f",support:{record.get('branch_rankwidth_support_width', 0)}"
+                )
+            if (
+                "branch_rankwidth_table_forecast" in record
+                or "branch_treewidth_table_forecast" in record
+            ):
+                line += (
+                    f" branch_table_forecast=rw:{record.get('branch_rankwidth_table_forecast', 0)}"
+                    f",tw:{record.get('branch_treewidth_table_forecast', 0)}"
                 )
             if "branch_treewidth_order_width" in record:
                 line += f" branch_treewidth_order_width={record['branch_treewidth_order_width']}"
@@ -991,9 +1015,11 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_rankwidth_table_forecast",
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_treewidth_table_forecast",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",
