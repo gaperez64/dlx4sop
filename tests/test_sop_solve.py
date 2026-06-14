@@ -324,6 +324,9 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--rankwidth-mode"], "requires a value"),
         ([str(exe), "--rankwidth-mode", "bad", str(qsop)], "unsupported rankwidth mode"),
         ([str(exe), "--rankwidth-mode", "fourier", str(qsop)], "requires --backend rankwidth"),
+        ([str(exe), "--treewidth-order"], "requires a value"),
+        ([str(exe), "--treewidth-order", "bad", str(qsop)], "unsupported treewidth order"),
+        ([str(exe), "--treewidth-order", "min-degree", str(qsop)], "requires --backend treewidth"),
         ([str(exe), "--branch-heuristic"], "requires a value"),
         ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
         ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
@@ -813,17 +816,19 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         if expected.returncode != 0:
             raise AssertionError(f"{name}: brute-force solve failed\n{expected.stderr}")
 
-        completed = subprocess.run(
-            [str(exe), "--backend", "treewidth", str(qsop)],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if completed.returncode != 0 or completed.stdout != expected.stdout:
-            raise AssertionError(
-                f"{name}: treewidth solve mismatch\n{completed.stdout}\n{completed.stderr}"
+        for order in ["min-fill", "min-degree"]:
+            completed = subprocess.run(
+                [str(exe), "--backend", "treewidth", "--treewidth-order", order, str(qsop)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
+            if completed.returncode != 0 or completed.stdout != expected.stdout:
+                raise AssertionError(
+                    f"{name}: treewidth {order} solve mismatch\n{completed.stdout}\n"
+                    f"{completed.stderr}"
+                )
 
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
     stats = subprocess.run(
@@ -842,6 +847,27 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
 
+    min_degree_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "treewidth",
+            "--treewidth-order",
+            "min-degree",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if min_degree_stats.returncode != 0 or "treewidth_order: min-degree" not in min_degree_stats.stdout:
+        raise AssertionError(
+            f"treewidth min-degree stats failed\n{min_degree_stats.stdout}\n{min_degree_stats.stderr}"
+        )
+
     guarded = subprocess.run(
         [str(exe), "--backend", "treewidth", "--max-vars", "1", str(qsop)],
         check=False,
@@ -853,6 +879,28 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(
             f"treewidth max-vars guard did not trigger\n{guarded.stdout}\n{guarded.stderr}"
         )
+
+    traced = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "treewidth", "--trace", "csv", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_phases = {
+        "treewidth.initial_factors",
+        "treewidth.min_fill_order",
+        "treewidth.multiply",
+        "treewidth.sum_out",
+    }
+    if traced.returncode != 0 or "backend: treewidth" not in traced.stdout:
+        raise AssertionError(f"treewidth trace run failed\n{traced.stdout}\n{traced.stderr}")
+    lines = [line for line in traced.stderr.splitlines() if line]
+    if not lines or lines[0] != "phase,depth,items,elapsed_ns":
+        raise AssertionError(f"treewidth trace missing CSV header\n{traced.stderr}")
+    phases = {line.split(",", 1)[0] for line in lines[1:]}
+    if not expected_phases.issubset(phases):
+        raise AssertionError(f"treewidth trace missing phases {expected_phases - phases}\n{traced.stderr}")
 
 
 def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:

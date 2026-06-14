@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 
-BACKENDS = ["components", "brute-force", "branch"]
+BACKENDS = ["components", "brute-force", "branch", "treewidth"]
 
 
 def run(cmd: list[str], *, input_text: str | None = None) -> str:
@@ -51,7 +51,7 @@ def parse_stats(text: str) -> dict[str, int | str]:
         if not line:
             continue
         key, value = line.split(": ", 1)
-        stats[key] = value if key == "backend" else int(value)
+        stats[key] = value if key in {"backend", "treewidth_order"} else int(value)
     return stats
 
 
@@ -114,6 +114,14 @@ def assert_stats_invariants(
 
     if expect_component_cache_hit and cache_hits < 1:
         raise AssertionError(f"{case} {boundary}: expected a component cache hit")
+
+    treewidth_width = stats["treewidth"]["decomposition_width"]
+    if treewidth_width > nvars:
+        raise AssertionError(
+            f"{case} {boundary}: treewidth width {treewidth_width} exceeds nvars {nvars}"
+        )
+    if stats["treewidth"].get("treewidth_order") != "min-fill":
+        raise AssertionError(f"{case} {boundary}: unexpected treewidth order")
 
 
 def load_cases(path: pathlib.Path) -> list[dict]:

@@ -99,8 +99,9 @@ Implemented exact backends:
 - `rankwidth`: decomposition DP with generated or supplied decompositions,
   sign/labelled count-table mode, CRT-backed larger histograms, and a
   small-instance sign-only Fourier mode.
-- `treewidth`: min-fill bucket-elimination DP over dense factors, with a bag
-  guard and CRT-backed larger histograms.
+- `treewidth`: bucket-elimination DP over dense factors, with
+  `min-fill|min-degree` variable orders, a bag guard, and CRT-backed larger
+  histograms.
 
 The rankwidth backend uses bitset-backed signatures for sign-only instances and
 `Z_r` boundary-signature vectors for labelled instances. Practical limits are
@@ -139,7 +140,8 @@ Relevant tool boundaries:
 - scanners classify unsupported QASM constructs;
 - benchmark runners execute selected solver configurations and collect stats;
 - summary reports distinguish sign-only imports, labelled imports, solver
-  skips, and largest case-boundaries;
+  skips, backend-specific rankwidth/treewidth width and table metrics, and
+  largest case-boundaries;
 - optional comparison scripts can use external frameworks outside the C core.
 
 ## Labelled Rankwidth Direction

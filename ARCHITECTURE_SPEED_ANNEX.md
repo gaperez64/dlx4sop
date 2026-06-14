@@ -8,15 +8,16 @@ implementation notes belong in commit history, not here.
 
 The current performance roadmap is:
 
-1. Compare branch, rankwidth, treewidth, and components on the internal plus
-   external importer-fed corpus.
-2. Improve generated rankwidth/treewidth decompositions from corpus evidence.
-3. Compare branch heuristics only when traces show the cache and split machinery
+1. Expand the importer-fed benchmark pool with larger cases that still remain
+   quadratic labelled QSOPs.
+2. Compare branch, rankwidth, treewidth, and components on that harder pool.
+3. Improve generated rankwidth/treewidth decompositions from corpus evidence.
+4. Compare branch heuristics only when traces show the cache and split machinery
    is being exercised on a representative corpus.
-4. Add incremental residual hashing if full-state hashing appears in hot traces.
-5. Consider dancing-cells-style linked mutation only if active-edge traversal or
+5. Add incremental residual hashing if full-state hashing appears in hot traces.
+6. Consider dancing-cells-style linked mutation only if active-edge traversal or
    undo costs dominate.
-6. Add specialized residue kernels and CPU dispatch after solver shape is
+7. Add specialized residue kernels and CPU dispatch after solver shape is
    stable.
 
 ## Reversible Mutation And Dancing Cells
@@ -60,11 +61,16 @@ the rankwidth and treewidth decomposition backends.
 Near-term experiments should focus on:
 
 - decomposition builders for sign-only and labelled rankwidth/treewidth DP;
-- min-fill and cut-rank split choices;
+- min-fill, min-degree, and cut-rank split choices;
 - trace summaries that report width, table sizes, join counts, cache hits, and
   wall time on the same manifest;
 - clear separation between branch variable ordering and decomposition
   construction.
+
+The current available internal/external importer-fed corpus is still too easy
+for treewidth: imported cases are sign-only and the largest treewidth tables are
+small. Treat that as a tooling check, not a serious conclusion about
+decomposition quality.
 
 Treewidth-style scoring is useful as a cheap proxy when it predicts fewer
 residual components or smaller decomposition tables. Rankwidth-style scoring is

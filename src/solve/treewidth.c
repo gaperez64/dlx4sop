@@ -54,6 +54,16 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   }
 }
 
+static const char *treewidth_order_trace_phase(qsop_treewidth_order_t order) {
+  switch (order) {
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL:
+    return "treewidth.min_fill_order";
+  case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
+    return "treewidth.min_degree_order";
+  }
+  return "treewidth.order";
+}
+
 static bool tw_count_add(const tw_context_t *ctx, uint64_t *dst, uint64_t value,
                          qsop_error_t *error) {
   if (ctx->count_modulus != 0) {
@@ -469,8 +479,23 @@ static uint64_t missing_edges_for(uint32_t v, const uint64_t *work, const uint64
   return fill;
 }
 
-static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, uint32_t *width_out,
-                                qsop_error_t *error) {
+static bool treewidth_candidate_is_better(qsop_treewidth_order_t order, bool found,
+                                          uint64_t fill, uint32_t degree, uint64_t best_fill,
+                                          uint32_t best_degree) {
+  if (!found) {
+    return true;
+  }
+  switch (order) {
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL:
+    return fill < best_fill || (fill == best_fill && degree < best_degree);
+  case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
+    return degree < best_degree || (degree == best_degree && fill < best_fill);
+  }
+  return false;
+}
+
+static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_order_t order_policy,
+                                 uint32_t *order, uint32_t *width_out, qsop_error_t *error) {
   const size_t words = qsop_bitset_words(qsop->nvars);
   uint64_t *work = adjacency_bitsets(qsop, words, error);
   uint64_t *active = calloc(words == 0 ? 1U : words, sizeof(*active));
@@ -479,7 +504,7 @@ static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, ui
     free(work);
     free(active);
     free(scratch);
-    set_error(error, "out of memory while building treewidth min-fill order");
+    set_error(error, "out of memory while building treewidth order");
     return false;
   }
   for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -499,7 +524,8 @@ static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, ui
       const uint32_t degree =
           qsop_bitset_popcount_intersection(qsop_bitset_const_row(work, words, v), active, words);
       const uint64_t fill = missing_edges_for(v, work, active, scratch, words, qsop->nvars);
-      if (!found || fill < best_fill || (fill == best_fill && degree < best_degree)) {
+      if (treewidth_candidate_is_better(order_policy, found, fill, degree, best_fill,
+                                        best_degree)) {
         found = true;
         best = v;
         best_fill = fill;
@@ -510,7 +536,7 @@ static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, ui
       free(work);
       free(active);
       free(scratch);
-      set_error(error, "internal error: treewidth min-fill order stopped early");
+      set_error(error, "internal error: treewidth order stopped early");
       return false;
     }
     order[pos] = best;
@@ -681,9 +707,9 @@ static bool shift_result_counts(uint32_t r, uint64_t *dst, const uint64_t *src, 
 }
 
 static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
-                                 uint64_t count_modulus, uint64_t *counts,
-                                 qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                                 qsop_error_t *error) {
+                                 qsop_treewidth_order_t order_policy, uint64_t count_modulus,
+                                 uint64_t *counts, qsop_solve_stats_t *stats,
+                                 qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -714,11 +740,12 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
 
   uint32_t width = 0;
   const uint64_t order_start = qsop_trace_begin(trace);
-  if (!make_min_fill_order(qsop, order, &width, error)) {
+  if (!make_treewidth_order(qsop, order_policy, order, &width, error)) {
     free(order);
     return false;
   }
-  qsop_trace_emit_elapsed(trace, "treewidth.min_fill_order", width, qsop->nvars, order_start);
+  qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
+                          order_start);
   if (stats != NULL) {
     stats->decomposition_width = width;
   }
@@ -767,8 +794,9 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
 }
 
 static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_vars,
-                                qsop_result_t **out, qsop_solve_stats_t *stats,
-                                qsop_solve_trace_t *trace, qsop_error_t *error) {
+                                qsop_treewidth_order_t order_policy, qsop_result_t **out,
+                                qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                qsop_error_t *error) {
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
@@ -806,8 +834,9 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
   for (size_t p = 0; p < nprimes; p++) {
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
-    if (!solve_treewidth_once(qsop, max_bag_vars, primes[p], &all_counts[p * (size_t)qsop->r],
-                              stats_for_prime, trace_for_prime, error)) {
+    if (!solve_treewidth_once(qsop, max_bag_vars, order_policy, primes[p],
+                              &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                              trace_for_prime, error)) {
       free(primes);
       free(all_counts);
       free(residues);
@@ -851,6 +880,15 @@ bool qsop_solve_treewidth_stats(const qsop_instance_t *qsop, uint32_t max_bag_va
 bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                       qsop_result_t **out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error) {
+  return qsop_solve_treewidth_order_trace_stats(qsop, max_bag_vars,
+                                                QSOP_TREEWIDTH_ORDER_MIN_FILL, out, stats, trace,
+                                                error);
+}
+
+bool qsop_solve_treewidth_order_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -861,7 +899,7 @@ bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_
     return false;
   }
   if (qsop->nvars >= 64U) {
-    return solve_treewidth_crt(qsop, max_bag_vars, out, stats, trace, error);
+    return solve_treewidth_crt(qsop, max_bag_vars, order_policy, out, stats, trace, error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -875,7 +913,8 @@ bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_
     qsop_result_free(result);
     return false;
   }
-  if (!solve_treewidth_once(qsop, max_bag_vars, 0, result->counts, stats, trace, error)) {
+  if (!solve_treewidth_once(qsop, max_bag_vars, order_policy, 0, result->counts, stats, trace,
+                            error)) {
     qsop_result_free(result);
     return false;
   }

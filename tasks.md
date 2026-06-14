@@ -21,8 +21,8 @@ than repeated here.
   - `rankwidth` handles sign-edge and labelled QSOPs with generated or explicit
     decompositions, count-table mode, CRT-backed large assignment counts, and
     sign-only Fourier mode.
-  - `treewidth` has a first exact min-fill bucket-elimination backend with
-    CRT-backed large assignment counts.
+  - `treewidth` has a first exact bucket-elimination backend with
+    `min-fill|min-degree` orders and CRT-backed large assignment counts.
 - Importer status:
   - OpenQASM support covers the static finite subset used by the checked-in
     corpus and many PyZX/FeynmanDD/MQT cases.
@@ -32,26 +32,29 @@ than repeated here.
 - Benchmark status:
   - External manifest builds can emit per-source classification reports.
   - Benchmark summaries report imported sign/labelled counts, rankwidth skips,
-    and largest case-boundaries by core size/performance metrics.
+    backend-specific rankwidth/treewidth width and table metrics, and largest
+    case-boundaries by core size/performance metrics.
 - Last full validation:
-  - `meson test -C build --print-errorlogs`: 17/17 passing.
-  - `tools/check-coverage.sh build-coverage`: 77.5% line coverage.
+  - `meson test -C build --print-errorlogs`: 18/18 passing.
+  - `tools/check-coverage.sh build-coverage`: 77.2% line coverage.
 
 ## Current Task
 
-- Validate the new `components` CRT path and `treewidth` backend on the full
-  internal plus external importer-fed corpus.
-- Use the resulting traces to decide whether treewidth decomposition quality,
-  rankwidth generation, or branch cache behavior is the next limiting factor.
+- Move from smoke-sized sign-only imports to harder importer-fed benchmarks.
+  The current internal plus available external comparison still has small
+  support graphs: treewidth width tops out at 1, treewidth tables at 64 entries,
+  and `min-fill` and `min-degree` tie on table shape.
+- Use external classification reports to find larger labelled-quadratic cases
+  before drawing strong conclusions about treewidth vs. rankwidth.
 
 ## Next Steps
 
-- Compare `components`, `branch`, `rankwidth`, and `treewidth` on internal and
-  external manifests after the treewidth baseline exists.
-- Add summary/report labels that distinguish rankwidth width from treewidth
-  elimination width when both are benchmarked together.
-- Improve treewidth decomposition builders beyond greedy min-fill if corpus
-  traces show large bags or table blowups.
+- Expand the importable benchmark pool with cases that remain labelled
+  quadratic and have nontrivial support width.
+- Compare `components`, `branch`, `rankwidth`, `treewidth:min-fill`, and
+  `treewidth:min-degree` on that harder pool.
+- Add stronger treewidth decomposition builders only after the benchmark pool
+  shows large bags or table blowups.
 - Use external classification reports to choose importer fixes that remain
   labelled quadratic.
 - Keep coverage above the 75% CI gate.

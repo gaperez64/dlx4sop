@@ -230,6 +230,33 @@ if python3.found()
     depends: [qasm2sop, sop_solve],
   )
   test(
+    'qasm treewidth benchmark smoke',
+    python3,
+    args: [
+      files('tools/bench_qasm_corpus.py'),
+      qasm2sop.full_path(),
+      sop_solve.full_path(),
+      '--manifest',
+      files('tests/qasm_solver_corpus.json'),
+      '--backend',
+      'treewidth',
+      '--treewidth-order',
+      'min-fill',
+      '--treewidth-order',
+      'min-degree',
+      '--limit',
+      '1',
+      '--trace',
+      '--format',
+      'summary',
+      '--top',
+      '1',
+      '--top-metric',
+      'treewidth_max_table_entries',
+    ],
+    depends: [qasm2sop, sop_solve],
+  )
+  test(
     'qgraph2qasm smoke',
     python3,
     args: [

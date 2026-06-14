@@ -16,6 +16,17 @@ DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
 RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
+TREEWIDTH_ORDERS = ("min-fill", "min-degree")
+BACKEND_ALIAS_METRICS = (
+    "rankwidth_width",
+    "treewidth_width",
+    "rankwidth_table_entries",
+    "rankwidth_max_table_entries",
+    "treewidth_table_entries",
+    "treewidth_max_table_entries",
+    "rankwidth_signature_entries",
+    "rankwidth_max_signature_entries",
+)
 TOP_METRICS = (
     "solve_elapsed_ns",
     "import_elapsed_ns",
@@ -25,10 +36,18 @@ TOP_METRICS = (
     "cache_misses",
     "components",
     "decomposition_width",
+    "rankwidth_width",
+    "treewidth_width",
     "table_entries",
     "max_table_entries",
+    "rankwidth_table_entries",
+    "rankwidth_max_table_entries",
+    "treewidth_table_entries",
+    "treewidth_max_table_entries",
     "signature_entries",
     "max_signature_entries",
+    "rankwidth_signature_entries",
+    "rankwidth_max_signature_entries",
     "join_pairs",
     "join_signature_pairs",
 )
@@ -54,10 +73,18 @@ CSV_FIELDS = [
     "cache_misses",
     "components",
     "decomposition_width",
+    "rankwidth_width",
+    "treewidth_width",
     "table_entries",
     "max_table_entries",
+    "rankwidth_table_entries",
+    "rankwidth_max_table_entries",
+    "treewidth_table_entries",
+    "treewidth_max_table_entries",
     "signature_entries",
     "max_signature_entries",
+    "rankwidth_signature_entries",
+    "rankwidth_max_signature_entries",
     "join_pairs",
     "join_signature_pairs",
     "qasm_sha256",
@@ -144,6 +171,32 @@ def parse_stats(text: str) -> dict[str, int | str]:
     return stats
 
 
+def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str, int | str]:
+    aliases: dict[str, int | str] = {}
+    if backend == "rankwidth":
+        mapping = {
+            "decomposition_width": "rankwidth_width",
+            "table_entries": "rankwidth_table_entries",
+            "max_table_entries": "rankwidth_max_table_entries",
+            "signature_entries": "rankwidth_signature_entries",
+            "max_signature_entries": "rankwidth_max_signature_entries",
+        }
+    elif backend == "treewidth":
+        mapping = {
+            "decomposition_width": "treewidth_width",
+            "table_entries": "treewidth_table_entries",
+            "max_table_entries": "treewidth_max_table_entries",
+        }
+    else:
+        return aliases
+
+    for source, target in mapping.items():
+        value = stats.get(source)
+        if isinstance(value, int):
+            aliases[target] = value
+    return aliases
+
+
 def parse_trace_csv(text: str) -> dict[str, dict[str, int]]:
     rows = [line for line in text.splitlines() if line]
     if not rows:
@@ -175,22 +228,32 @@ def add_counter(total: dict[str, int], key: str, value: int | str | None) -> Non
 def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
     if not isinstance(value, int):
         return
-    if key in {"decomposition_width", "max_table_entries", "max_signature_entries"}:
+    if key in {
+        "decomposition_width",
+        "rankwidth_width",
+        "treewidth_width",
+        "max_table_entries",
+        "rankwidth_max_table_entries",
+        "treewidth_max_table_entries",
+        "max_signature_entries",
+        "rankwidth_max_signature_entries",
+    }:
         total[key] = max(total.get(key, 0), value)
     else:
         add_counter(total, key, value)
 
 
-def record_summary_key(record: dict) -> tuple[str, str, str]:
+def record_summary_key(record: dict) -> tuple[str, str, str, str]:
     return (
         record["backend"],
         record["branch_heuristic"],
         f"{record['rankwidth_decomposition']}:{record['rankwidth_mode']}",
+        record["treewidth_order"],
     )
 
 
-def format_summary_key(key: tuple[str, str, str]) -> list[str]:
-    backend, branch_heuristic, rankwidth_config = key
+def format_summary_key(key: tuple[str, str, str, str]) -> list[str]:
+    backend, branch_heuristic, rankwidth_config, treewidth_order = key
     lines = [f"backend: {backend}"]
     if backend == "branch" and branch_heuristic:
         lines.append(f"  branch_heuristic: {branch_heuristic}")
@@ -198,11 +261,13 @@ def format_summary_key(key: tuple[str, str, str]) -> list[str]:
         decomposition, mode = rankwidth_config.split(":", 1)
         lines.append(f"  rankwidth_decomposition: {decomposition}")
         lines.append(f"  rankwidth_mode: {mode}")
+    if backend == "treewidth" and treewidth_order:
+        lines.append(f"  treewidth_order: {treewidth_order}")
     return lines
 
 
-def summarize_records(records: list[dict]) -> dict[tuple[str, str, str], dict]:
-    summary: dict[tuple[str, str, str], dict] = {}
+def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], dict]:
+    summary: dict[tuple[str, str, str, str], dict] = {}
     for record in records:
         key = record_summary_key(record)
         entry = summary.setdefault(
@@ -222,6 +287,8 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str], dict]:
         stats_total = entry["stats"]
         for stat_key, value in record["stats"].items():
             add_stat(stats_total, stat_key, value)
+        for stat_key in BACKEND_ALIAS_METRICS:
+            add_stat(stats_total, stat_key, record.get(stat_key))
 
         trace_total = entry["trace"]
         for phase, values in record["trace"].items():
@@ -283,13 +350,24 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
                     "rankwidth_generate": generator,
                     "rankwidth_mode": mode,
                     "branch_heuristic": "",
+                    "treewidth_order": "",
                 }
+        return
+    if backend == "treewidth":
+        for order in args.treewidth_orders:
+            yield {
+                "rankwidth_generate": "",
+                "rankwidth_mode": "",
+                "branch_heuristic": "",
+                "treewidth_order": order,
+            }
         return
 
     yield {
         "rankwidth_generate": "",
         "rankwidth_mode": "",
         "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
+        "treewidth_order": "",
     }
 
 
@@ -337,6 +415,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
                         "--rankwidth-mode",
                         config["rankwidth_mode"],
                     ]
+                if backend == "treewidth":
+                    cmd += ["--treewidth-order", config["treewidth_order"]]
                 cmd.append("-")
                 try:
                     stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
@@ -346,6 +426,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
                         continue
                     raise
                 stats = parse_stats(stats_text)
+                aliases = backend_stat_aliases(backend, stats)
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 records.append(
                     {
@@ -357,12 +438,14 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
                         "branch_heuristic": config["branch_heuristic"],
                         "rankwidth_mode": config["rankwidth_mode"],
                         "rankwidth_decomposition": config["rankwidth_generate"],
+                        "treewidth_order": str(stats.get("treewidth_order", config["treewidth_order"])),
                         **header,
                         "import_elapsed_ns": import_elapsed_ns,
                         "solve_elapsed_ns": solve_elapsed_ns,
                         "qasm_sha256": sha256_text(qasm),
                         "qsop_sha256": sha256_text(qsop),
                         "stats": stats,
+                        **aliases,
                         "trace": trace,
                     }
                 )
@@ -387,15 +470,22 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_misses",
             "components",
             "decomposition_width",
+            "rankwidth_width",
+            "treewidth_width",
             "table_entries",
             "max_table_entries",
+            "rankwidth_table_entries",
+            "rankwidth_max_table_entries",
+            "treewidth_table_entries",
+            "treewidth_max_table_entries",
             "signature_entries",
             "max_signature_entries",
+            "rankwidth_signature_entries",
+            "rankwidth_max_signature_entries",
             "join_pairs",
             "join_signature_pairs",
         ):
-            row[key] = stats.get(key, "")
-        row["treewidth_order"] = stats.get("treewidth_order", "")
+            row[key] = record.get(key, stats.get(key, ""))
         row["trace_summary"] = trace_summary_text(record["trace"])
         writer.writerow(row)
 
@@ -476,6 +566,10 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
         ("slowest_solve", "solve_elapsed_ns"),
         ("largest_decomposition_width", "decomposition_width"),
         ("largest_decomposition_table", "max_table_entries"),
+        ("largest_rankwidth_width", "rankwidth_width"),
+        ("largest_rankwidth_table", "rankwidth_max_table_entries"),
+        ("largest_treewidth_width", "treewidth_width"),
+        ("largest_treewidth_table", "treewidth_max_table_entries"),
     ]
     for label, metric in metrics:
         candidates = [record for record in records if metric_value(record, metric) is not None]
@@ -522,10 +616,18 @@ def write_summary(records: list[dict], metadata: dict[str, int], args: argparse.
             "cache_hits",
             "cache_misses",
             "decomposition_width",
+            "rankwidth_width",
+            "treewidth_width",
             "table_entries",
             "max_table_entries",
+            "rankwidth_table_entries",
+            "rankwidth_max_table_entries",
+            "treewidth_table_entries",
+            "treewidth_max_table_entries",
             "signature_entries",
             "max_signature_entries",
+            "rankwidth_signature_entries",
+            "rankwidth_max_signature_entries",
             "join_pairs",
             "join_signature_pairs",
         ):
@@ -600,6 +702,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Benchmark all rankwidth generator and solve-mode combinations.",
     )
     parser.add_argument(
+        "--treewidth-order",
+        dest="treewidth_orders",
+        action="append",
+        choices=TREEWIDTH_ORDERS,
+        help="Treewidth elimination order. May be repeated.",
+    )
+    parser.add_argument(
         "--top",
         type=int,
         default=0,
@@ -624,6 +733,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     else:
         args.rankwidth_generators = args.rankwidth_generators or ["linear"]
         args.rankwidth_modes = args.rankwidth_modes or ["count-table"]
+    args.treewidth_orders = args.treewidth_orders or ["min-fill"]
     return args
 
 

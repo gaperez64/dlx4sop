@@ -26,8 +26,26 @@ Implemented solver backends:
 - `rankwidth`: decomposition backend with sign/labelled count-table mode,
   CRT-backed large-count output, generated decompositions, and sign-only
   Fourier mode.
-- `treewidth`: min-fill bucket-elimination backend with CRT-backed large-count
-  output.
+- `treewidth`: bucket-elimination backend with `min-fill|min-degree` orders and
+  CRT-backed large-count output.
+
+Current solver guidance:
+
+- Use `components` as the default robust exact solver.
+- Use `branch` as the main labelled/CRT baseline for connected instances and
+  branch-cache experiments.
+- Use `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table`
+  as the strongest decomposition DP currently available when it accepts the
+  instance; on the present smoke-scale corpora it reports smaller max tables
+  than treewidth.
+- Use `treewidth` for decomposition comparisons and tracing. `min-fill` and
+  `min-degree` currently tie on table shape in the available benchmark pool.
+
+Benchmark basis: `tools/bench_qasm_corpus.py` over the checked-in
+`tests/qasm_solver_corpus.json` corpus (32 boundaries) plus an external manifest
+generated with `tools/build_external_qasm_manifest.py` (72 boundaries). Both
+sets currently import as small sign-only QSOPs, so these numbers are a tooling
+baseline, not a final performance ranking.
 
 ## Build
 
@@ -69,7 +87,7 @@ build/sop-stats --format json tests/golden/labelled_expected.qsop
 build/sop-solve tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --format stats tests/golden/solve_labelled.qsop
 build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut tests/golden/solve_sign_path.qsop
-build/sop-solve --backend treewidth --format stats tests/golden/solve_labelled.qsop
+build/sop-solve --backend treewidth --treewidth-order min-degree --format stats tests/golden/solve_labelled.qsop
 ```
 
 The `counts` line is a histogram over phase residues modulo `r`; the values are
@@ -86,6 +104,7 @@ Run benchmark summaries and build external corpus manifests:
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --top-metric treewidth_max_table_entries --format summary
 tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --report corpus-report.json --output corpus.json
 ```
 

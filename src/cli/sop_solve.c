@@ -36,7 +36,8 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|linear-rankwidth] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate linear|balanced|min-fill|min-fill-cut] "
-        "[--rankwidth-mode count-table|fourier] [--max-vars N] [--trace csv] [PATH|-]\n",
+        "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree] "
+        "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
 
@@ -104,6 +105,16 @@ static const char *rankwidth_mode_name(qsop_rankwidth_solve_mode_t mode) {
   return "unknown";
 }
 
+static const char *treewidth_order_name(qsop_treewidth_order_t order) {
+  switch (order) {
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL:
+    return "min-fill";
+  case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
+    return "min-degree";
+  }
+  return "unknown";
+}
+
 static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
   csv_trace_writer_t *writer = user;
   if (writer == NULL || writer->file == NULL || event == NULL) {
@@ -119,7 +130,8 @@ static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *ev
 
 static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_solve_stats_t *stats,
                                qsop_rankwidth_solve_mode_t rankwidth_mode,
-                               const char *rankwidth_decomposition, qsop_error_t *error) {
+                               const char *rankwidth_decomposition,
+                               qsop_treewidth_order_t treewidth_order, qsop_error_t *error) {
   if (file == NULL || stats == NULL) {
     error->path = NULL;
     error->line = 0;
@@ -153,7 +165,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
     fprintf(file, "join_signature_pairs: %" PRIu64 "\n", stats->join_signature_pairs);
   } else {
-    fprintf(file, "treewidth_order: min-fill\n");
+    fprintf(file, "treewidth_order: %s\n", treewidth_order_name(treewidth_order));
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
     fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
     fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
@@ -195,9 +207,11 @@ int main(int argc, char **argv) {
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LINEAR;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
+  qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
   bool branch_heuristic_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
+  bool treewidth_order_set = false;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -333,6 +347,23 @@ int main(int argc, char **argv) {
       rankwidth_mode_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--treewidth-order") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --treewidth-order requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "min-fill") == 0) {
+        treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
+      } else if (strcmp(value, "min-degree") == 0) {
+        treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_DEGREE;
+      } else {
+        fprintf(stderr, "error: unsupported treewidth order '%s'\n", value);
+        return 2;
+      }
+      treewidth_order_set = true;
+      continue;
+    }
     if (argv[i][0] == '-') {
       if (strcmp(argv[i], "-") == 0 && input_path == NULL) {
         input_path = argv[i];
@@ -363,6 +394,10 @@ int main(int argc, char **argv) {
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_mode_set) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
+    return 2;
+  }
+  if (backend != SOLVE_BACKEND_TREEWIDTH && treewidth_order_set) {
+    fputs("error: --treewidth-order requires --backend treewidth\n", stderr);
     return 2;
   }
   if (rankwidth_decomposition_path != NULL && rankwidth_generator_set) {
@@ -439,8 +474,8 @@ int main(int argc, char **argv) {
                                                  &error);
     }
   } else {
-    ok = qsop_solve_treewidth_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr,
-                                          &error);
+    ok = qsop_solve_treewidth_order_trace_stats(qsop, max_vars, treewidth_order, &result,
+                                                &solve_stats, trace_ptr, &error);
   }
   qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);
@@ -453,7 +488,7 @@ int main(int argc, char **argv) {
     ok = qsop_result_write_residue_vector(stdout, result, &error);
   } else {
     ok = write_solver_stats(stdout, backend, &solve_stats, rankwidth_mode,
-                            rankwidth_decomposition_label, &error);
+                            rankwidth_decomposition_label, treewidth_order, &error);
     if (ok && backend == SOLVE_BACKEND_BRANCH && branch_heuristic_set) {
       printf("branch_heuristic: %s\n", branch_heuristic_name(branch_heuristic));
     }
