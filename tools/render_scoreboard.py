@@ -86,14 +86,26 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                     "tier": tier,
                     "config": key[1],
                     "records": 0,
+                    "ok": 0,
+                    "timeouts": 0,
+                    "errors": 0,
                     "elapsed_ns": 0,
                     "sources": collections.Counter(),
                     "stats": {},
                 },
             )
             entry["records"] += 1
+            status = record.get("status", "ok")
+            if status == "ok":
+                entry["ok"] += 1
+            elif status == "timeout":
+                entry["timeouts"] += 1
+            else:
+                entry["errors"] += 1
             entry["elapsed_ns"] += int(record.get("solve_elapsed_ns") or 0)
             entry["sources"][record.get("source") or "unknown"] += 1
+            if status != "ok":
+                continue
             stats = entry["stats"]
             for stat in ("search_nodes", "leaf_assignments", "cache_hits", "cache_misses", "components"):
                 add_sum(stats, stat, stat_value(record, stat))
@@ -139,6 +151,15 @@ def key_stats(stats: dict[str, int]) -> str:
     if "join_pairs" in stats:
         parts.append(f"{stats['join_pairs']} join pairs")
     return "; ".join(parts) if parts else ""
+
+
+def solver_status_stats(row: dict) -> str:
+    parts = [key_stats(row["stats"])]
+    if row.get("timeouts"):
+        parts.append(f"{row['timeouts']} timeouts")
+    if row.get("errors"):
+        parts.append(f"{row['errors']} errors")
+    return "; ".join(part for part in parts if part)
 
 
 def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
@@ -201,12 +222,13 @@ def write_solver_tables(named_records: list[tuple[str, list[dict]]], file: TextI
     if not rows:
         return
     print("\n## Solver Results\n", file=file)
-    print("| Tier | Backend/configuration | Solved records | Total solve time | Key stats |", file=file)
+    print("| Tier | Backend/configuration | Solved / records | Total solve time | Key stats |", file=file)
     print("| --- | --- | ---: | ---: | --- |", file=file)
     for row in rows:
         print(
             f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
-            f"{row['records']} | {format_ns(row['elapsed_ns'])} | {markdown_escape(key_stats(row['stats']))} |",
+            f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} | "
+            f"{markdown_escape(solver_status_stats(row))} |",
             file=file,
         )
 

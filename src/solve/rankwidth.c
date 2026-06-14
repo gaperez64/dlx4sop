@@ -348,6 +348,9 @@ static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words,
                                    qsop_error_t *error);
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
                                  const uint64_t *right, size_t words, qsop_error_t *error);
+static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
+                                    const uint64_t *adj, qsop_error_t *error);
+static bool qsop_is_sign_edge_instance(const qsop_instance_t *qsop);
 
 static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error) {
   if (needed <= table->cap) {
@@ -1072,6 +1075,67 @@ static uint32_t build_cut_rank_nodes(qsop_rankwidth_decomposition_t *decompositi
   return node;
 }
 
+static bool make_linear_generated_decomposition(const qsop_instance_t *qsop,
+                                                qsop_rankwidth_decomposition_t **out,
+                                                qsop_error_t *error) {
+  if (qsop == NULL || out == NULL) {
+    set_error(error, "internal error: null linear rankwidth generation argument");
+    return false;
+  }
+  *out = NULL;
+
+  qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
+  if (decomposition == NULL) {
+    set_error(error, "out of memory while allocating linear rankwidth decomposition");
+    return false;
+  }
+
+  const size_t words = qsop_bitset_words(qsop->nvars);
+  decomposition->nvars = qsop->nvars;
+  decomposition->words = words;
+  decomposition->nnodes = 2U * qsop->nvars - 1U;
+  decomposition->nodes = calloc(decomposition->nnodes, sizeof(*decomposition->nodes));
+  decomposition->node_vars = calloc((size_t)decomposition->nnodes * decomposition->words,
+                                    sizeof(*decomposition->node_vars));
+  decomposition->postorder = calloc(decomposition->nnodes, sizeof(*decomposition->postorder));
+  if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
+      decomposition->postorder == NULL) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    set_error(error, "out of memory while allocating linear rankwidth decomposition nodes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < qsop->nvars; i++) {
+    decomposition->nodes[i] = (rw_node_t){
+        .kind = RW_NODE_LEAF,
+        .var = i,
+    };
+  }
+  if (qsop->nvars == 1U) {
+    decomposition->root = 0;
+  } else {
+    uint32_t current = 0;
+    uint32_t next_join = qsop->nvars;
+    for (uint32_t i = 1; i < qsop->nvars; i++) {
+      const uint32_t node = next_join++;
+      decomposition->nodes[node] = (rw_node_t){
+          .kind = RW_NODE_JOIN,
+          .left = current,
+          .right = i,
+      };
+      current = node;
+    }
+    decomposition->root = current;
+  }
+
+  if (!validate_decomposition(decomposition, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
+  *out = decomposition;
+  return true;
+}
+
 bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_generator_t generator,
                                            qsop_rankwidth_decomposition_t **out,
@@ -1201,13 +1265,45 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
         build_balanced_nodes(decomposition, leaf_nodes, 0, qsop->nvars, &next_join);
   }
 
-  free(adj);
   free(order);
   free(leaf_nodes);
   if (!validate_decomposition(decomposition, error)) {
+    free(adj);
     qsop_rankwidth_decomposition_free(decomposition);
     return false;
   }
+
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL &&
+      !qsop_is_sign_edge_instance(qsop)) {
+    const uint32_t selected_width = decomposition_width(decomposition, adj, error);
+    if (selected_width == UINT32_MAX) {
+      free(adj);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+
+    qsop_rankwidth_decomposition_t *linear = NULL;
+    if (!make_linear_generated_decomposition(qsop, &linear, error)) {
+      free(adj);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    const uint32_t linear_width = decomposition_width(linear, adj, error);
+    if (linear_width == UINT32_MAX) {
+      free(adj);
+      qsop_rankwidth_decomposition_free(linear);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    if (linear_width < selected_width) {
+      qsop_rankwidth_decomposition_free(decomposition);
+      decomposition = linear;
+      linear = NULL;
+    }
+    qsop_rankwidth_decomposition_free(linear);
+  }
+
+  free(adj);
   *out = decomposition;
   return true;
 }

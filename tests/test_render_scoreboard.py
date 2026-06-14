@@ -30,6 +30,14 @@ def main() -> int:
         "treewidth_width": 2,
         "treewidth_max_table_entries": 16,
     }
+    timeout_solver = {
+        "backend": "branch",
+        "branch_heuristic": "split",
+        "source": "Synthetic",
+        "status": "timeout",
+        "solve_elapsed_ns": 2_000_000_000,
+        "stats": {},
+    }
     native = {
         "engine": "qiskit-statevector",
         "status": "ok",
@@ -43,7 +51,10 @@ def main() -> int:
         solver_path = tmp_path / "solver.jsonl"
         native_path = tmp_path / "native.jsonl"
         report_path.write_text(json.dumps(report), encoding="utf-8")
-        solver_path.write_text(json.dumps(solver) + "\n", encoding="utf-8")
+        solver_path.write_text(
+            json.dumps(solver) + "\n" + json.dumps(timeout_solver) + "\n",
+            encoding="utf-8",
+        )
         native_path.write_text(json.dumps(native) + "\n", encoding="utf-8")
         completed = subprocess.run(
             [
@@ -66,6 +77,8 @@ def main() -> int:
             "## Import Coverage",
             "| Synthetic | https://example.invalid/synthetic | 2 | 1 | 0 | 1 | 0 |",
             "`treewidth --treewidth-order min-fill`",
+            "| synthetic | `branch --branch-heuristic split` | 0 / 1 | 2.00 s | 1 timeouts |",
+            "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | tw width 2; max table 16; 32 join pairs |",
             "`qiskit-statevector`",
         ):
             if expected not in completed.stdout:

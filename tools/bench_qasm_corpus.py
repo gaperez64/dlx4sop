@@ -584,6 +584,7 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             line = (
                 f"    {record['source']}:{record['case']} {record['boundary']} "
                 f"value={record_metric(record, args.top_metric)} "
+                f"status={record.get('status', 'ok')} "
                 f"nvars={record['nvars']} nedges={record['nedges']} "
                 f"solve_elapsed_ns={record['solve_elapsed_ns']}"
             )
@@ -604,6 +605,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             trace_phase = dominant_trace_phase(record)
             if trace_phase:
                 line += f" top_trace={trace_phase}"
+            if record.get("status") != "ok" and record.get("error"):
+                error = str(record["error"]).replace("\n", " ")
+                if len(error) > 160:
+                    error = error[:157] + "..."
+                line += f" error={error}"
             print(line, file=file)
 
 
@@ -617,6 +623,89 @@ def metric_value(record: dict, metric: str) -> int | None:
         return value
     value = record["stats"].get(metric)
     return value if isinstance(value, int) else None
+
+
+def write_timeout_overview(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
+    timeouts = [record for record in records if record.get("status") == "timeout"]
+    if not timeouts:
+        return
+
+    print("timeouts:", file=file)
+    for key in sorted({record_summary_key(record) for record in timeouts}):
+        selected = [record for record in timeouts if record_summary_key(record) == key]
+        for line in format_summary_key(key):
+            print(f"  {line}", file=file)
+        print(f"    records: {len(selected)}", file=file)
+        print(f"    elapsed_ns: {sum(int(record['solve_elapsed_ns']) for record in selected)}", file=file)
+        sources: dict[str, int] = {}
+        for record in selected:
+            source = record.get("source") or "unknown"
+            sources[source] = sources.get(source, 0) + 1
+        for source in sorted(sources):
+            print(f"    source[{source}]: {sources[source]}", file=file)
+
+    if args.timeout_top == 0:
+        return
+    print("top_timeout_records:", file=file)
+    ranked = sorted(
+        timeouts,
+        key=lambda record: (
+            int(record.get("solve_elapsed_ns") or 0),
+            int(record.get("nvars") or 0),
+            record.get("source") or "",
+            record.get("case") or "",
+        ),
+        reverse=True,
+    )
+    for record in ranked[: args.timeout_top]:
+        error = str(record.get("error") or "").replace("\n", " ")
+        if len(error) > 160:
+            error = error[:157] + "..."
+        print(
+            f"  {record['source']}:{record['case']} {record['boundary']} "
+            f"backend={record['backend']} nvars={record['nvars']} nedges={record['nedges']} "
+            f"elapsed_ns={record['solve_elapsed_ns']} error={error}",
+            file=file,
+        )
+
+
+def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
+    rankwidth = [record for record in records if record.get("backend") == "rankwidth"]
+    if not rankwidth:
+        return
+
+    print("rankwidth_generator_diagnostics:", file=file)
+    for key in sorted({record_summary_key(record) for record in rankwidth}):
+        selected = [record for record in rankwidth if record_summary_key(record) == key]
+        ok = [record for record in selected if record.get("status", "ok") == "ok"]
+        timeouts = [record for record in selected if record.get("status") == "timeout"]
+        for line in format_summary_key(key):
+            print(f"  {line}", file=file)
+        print(f"    records: {len(selected)}", file=file)
+        print(f"    solved_records: {len(ok)}", file=file)
+        print(f"    timed_out_records: {len(timeouts)}", file=file)
+        print(f"    solve_elapsed_ns: {sum(int(record['solve_elapsed_ns']) for record in selected)}", file=file)
+        for label, metric in (
+            ("max_width", "rankwidth_width"),
+            ("max_table_entries", "rankwidth_max_table_entries"),
+            ("max_signature_entries", "rankwidth_max_signature_entries"),
+            ("join_pairs", "join_pairs"),
+            ("join_signature_pairs", "join_signature_pairs"),
+        ):
+            values = [metric_value(record, metric) for record in ok]
+            values = [value for value in values if value is not None]
+            if not values:
+                continue
+            value = sum(values) if label in {"join_pairs", "join_signature_pairs"} else max(values)
+            print(f"    {label}: {value}", file=file)
+        if ok:
+            slowest = max(ok, key=lambda record: int(record["solve_elapsed_ns"]))
+            print(
+                f"    slowest_ok: {slowest['source']}:{slowest['case']} {slowest['boundary']} "
+                f"elapsed_ns={slowest['solve_elapsed_ns']} "
+                f"nvars={slowest['nvars']} nedges={slowest['nedges']}",
+                file=file,
+            )
 
 
 def write_largest_overview(records: list[dict], file: TextIO) -> None:
@@ -668,6 +757,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
         print("sources:", file=file)
         for source in sorted(source_boundaries):
             print(f"  {source}: boundaries={source_boundaries[source]}", file=file)
+    write_timeout_overview(records, args, file)
+    write_rankwidth_diagnostics(records, file)
     write_largest_overview(records, file)
     summary = summarize_records(solved)
     for key in sorted(summary):
@@ -742,6 +833,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--solver-timeout", type=float, help="Per-solve timeout in seconds.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
+        "--timeout-top",
+        type=int,
+        default=5,
+        help="With --format summary, print this many timed-out case-boundary rows.",
+    )
+    parser.add_argument(
         "--skip-unsupported",
         action="store_true",
         help="Skip rankwidth records rejected by the current sign-only backend.",
@@ -772,6 +869,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Benchmark all rankwidth generator and solve-mode combinations.",
     )
     parser.add_argument(
+        "--rankwidth-diagnostics",
+        action="store_true",
+        help="Convenience mode: rankwidth count-table sweep with trace and timeout-aware summary rows.",
+    )
+    parser.add_argument(
         "--treewidth-order",
         dest="treewidth_orders",
         action="append",
@@ -799,7 +901,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--solver-timeout must be positive")
     if args.top < 0:
         parser.error("--top must be non-negative")
-    if args.rankwidth_sweep:
+    if args.timeout_top < 0:
+        parser.error("--timeout-top must be non-negative")
+    if args.rankwidth_diagnostics:
+        args.backends = ["rankwidth"]
+        args.rankwidth_generators = list(RANKWIDTH_GENERATORS)
+        args.rankwidth_modes = ["count-table"]
+        args.skip_unsupported = True
+        args.trace = True
+    elif args.rankwidth_sweep:
         args.rankwidth_generators = list(RANKWIDTH_GENERATORS)
         args.rankwidth_modes = list(RANKWIDTH_MODES)
     else:
