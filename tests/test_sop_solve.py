@@ -251,7 +251,18 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         )
 
     stats = subprocess.run(
-        [str(exe), "--format", "stats", "--backend", "branch", "--max-vars", "40", "-"],
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "40",
+            "--trace",
+            "csv",
+            "-",
+        ],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -267,6 +278,17 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(
             f"branch rankwidth handoff stats failed\n{stats.stdout}\n{stats.stderr}"
+        )
+    trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    expected_trace = {
+        "branch.rankwidth_probe",
+        "branch.rankwidth_support_probe",
+        "branch.rankwidth_delegate",
+    }
+    if not expected_trace.issubset(trace_phases):
+        raise AssertionError(
+            f"branch rankwidth handoff trace missing {expected_trace - trace_phases}\n"
+            f"{stats.stderr}"
         )
 
 

@@ -1620,8 +1620,15 @@ static bool decomposition_score(const qsop_instance_t *qsop,
 bool qsop_rankwidth_decomposition_support_width(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *out, qsop_error_t *error) {
-  if (qsop == NULL || decomposition == NULL || out == NULL) {
-    set_error(error, "internal error: null rankwidth support-width argument");
+  return qsop_rankwidth_decomposition_widths(qsop, decomposition, out, NULL, error);
+}
+
+bool qsop_rankwidth_decomposition_widths(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error) {
+  if (qsop == NULL || decomposition == NULL ||
+      (support_width_out == NULL && labelled_width_out == NULL)) {
+    set_error(error, "internal error: null rankwidth width argument");
     return false;
   }
   if (decomposition->nvars != qsop->nvars) {
@@ -1633,12 +1640,29 @@ bool qsop_rankwidth_decomposition_support_width(
   if (adj == NULL) {
     return false;
   }
-  const uint32_t width = decomposition_width(decomposition, adj, error);
+
+  uint32_t *coeffs = NULL;
+  if (labelled_width_out != NULL && !qsop_is_sign_edge_instance(qsop)) {
+    coeffs = coefficient_matrix(qsop, error);
+    if (coeffs == NULL) {
+      free(adj);
+      return false;
+    }
+  }
+
+  rw_decomposition_score_t score = {0};
+  const bool ok = decomposition_score(qsop, decomposition, adj, coeffs, &score, error);
+  free(coeffs);
   free(adj);
-  if (width == UINT32_MAX) {
+  if (!ok) {
     return false;
   }
-  *out = width;
+  if (support_width_out != NULL) {
+    *support_width_out = score.support_width;
+  }
+  if (labelled_width_out != NULL) {
+    *labelled_width_out = score.labelled_width;
+  }
   return true;
 }
 

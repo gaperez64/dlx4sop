@@ -626,9 +626,9 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
 }
 
 static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
-                                                uint32_t rankwidth_width) {
-  return rankwidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
-         treewidth_width > rankwidth_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
+                                                uint32_t decision_width) {
+  return decision_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+         treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
 static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
@@ -658,23 +658,26 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     return false;
   }
 
-  uint32_t rankwidth_width = 0;
-  if (!qsop_rankwidth_decomposition_support_width(sub, decomposition, &rankwidth_width, error)) {
+  uint32_t support_width = 0;
+  uint32_t labelled_width = 0;
+  if (!qsop_rankwidth_decomposition_widths(sub, decomposition, &support_width, &labelled_width,
+                                           error)) {
     qsop_rankwidth_decomposition_free(decomposition);
     return false;
   }
-  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, rankwidth_width,
+  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, labelled_width,
                           generate_start);
+  branch_trace_event(stats, "branch.rankwidth_support_probe", support_width);
 
   const bool use_rankwidth =
       !treewidth_available ||
       treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-      rankwidth_should_override_treewidth(treewidth_width, rankwidth_width);
-  if (!use_rankwidth || rankwidth_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+      rankwidth_should_override_treewidth(treewidth_width, labelled_width);
+  if (!use_rankwidth || labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
     note_rankwidth_skip(stats,
                         !use_rankwidth ? "branch.rankwidth_skip_policy"
                                        : "branch.rankwidth_skip_width",
-                        rankwidth_width);
+                        labelled_width);
     qsop_rankwidth_decomposition_free(decomposition);
     return true;
   }
