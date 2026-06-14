@@ -645,8 +645,10 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
 }
 
 static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
-                                                uint32_t decision_width) {
+                                                uint32_t decision_width, uint32_t r) {
   return decision_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+         binary_assignment_forecast(decision_width) <
+             treewidth_table_forecast(treewidth_width, r) &&
          treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
@@ -694,15 +696,22 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   branch_trace_event(stats, "branch.rankwidth_table_forecast",
                      binary_assignment_forecast(labelled_width));
 
-  const bool use_rankwidth =
+  const bool rankwidth_table_forecast_wins =
       !treewidth_available ||
-      treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-      rankwidth_should_override_treewidth(treewidth_width, labelled_width);
+      binary_assignment_forecast(labelled_width) <
+          treewidth_table_forecast(treewidth_width, sub->r);
+  const bool use_rankwidth =
+      rankwidth_table_forecast_wins &&
+      (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+       rankwidth_should_override_treewidth(treewidth_width, labelled_width, sub->r));
   if (!use_rankwidth || labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-    note_rankwidth_skip(stats,
-                        !use_rankwidth ? "branch.rankwidth_skip_policy"
-                                       : "branch.rankwidth_skip_width",
-                        labelled_width);
+    const char *skip_phase = "branch.rankwidth_skip_policy";
+    if (labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+      skip_phase = "branch.rankwidth_skip_width";
+    } else if (!rankwidth_table_forecast_wins) {
+      skip_phase = "branch.rankwidth_skip_table_forecast";
+    }
+    note_rankwidth_skip(stats, skip_phase, labelled_width);
     qsop_rankwidth_decomposition_free(decomposition);
     return true;
   }
