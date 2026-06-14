@@ -196,6 +196,8 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"branch rw probe labelled-cut-signature={stats.get('branch_rankwidth_labelled_width', 0)}, "
             f"support={stats.get('branch_rankwidth_support_width', 0)}"
         )
+    if "branch_treewidth_order_width" in stats:
+        parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(
             f"max residual vars={format_count(stats.get('max_residual_vars', 0))}, "

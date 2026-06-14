@@ -42,6 +42,9 @@ TOP_METRICS = (
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
     "branch_rankwidth_support_width",
+    "branch_treewidth_order_probe_events",
+    "branch_treewidth_order_probe_elapsed_ns",
+    "branch_treewidth_order_width",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -103,6 +106,9 @@ CSV_FIELDS = [
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
     "branch_rankwidth_support_width",
+    "branch_treewidth_order_probe_events",
+    "branch_treewidth_order_probe_elapsed_ns",
+    "branch_treewidth_order_width",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -310,6 +316,16 @@ def branch_rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
     return metrics
 
 
+def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    order = trace.get("branch.treewidth_order_probe")
+    if order is not None:
+        metrics["branch_treewidth_order_probe_events"] = order["events"]
+        metrics["branch_treewidth_order_probe_elapsed_ns"] = order["elapsed_ns"]
+        metrics["branch_treewidth_order_width"] = order["max_items"]
+    return metrics
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -335,6 +351,7 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "max_residual_prefix_cut_rank",
         "branch_rankwidth_labelled_width",
         "branch_rankwidth_support_width",
+        "branch_treewidth_order_width",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -394,6 +411,9 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_treewidth_order_probe_events",
+            "branch_treewidth_order_probe_elapsed_ns",
+            "branch_treewidth_order_width",
         ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
@@ -579,6 +599,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 cache_metrics = cache_record_metrics(stats, trace)
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
+                treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 records.append(
                     {
                         "case": case_name,
@@ -604,6 +625,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **aliases,
                         **cache_metrics,
                         **branch_probe_metrics,
+                        **treewidth_probe_metrics,
                         "trace": trace,
                     }
                 )
@@ -634,6 +656,9 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_treewidth_order_probe_events",
+            "branch_treewidth_order_probe_elapsed_ns",
+            "branch_treewidth_order_width",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -726,6 +751,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
                     f",support:{record.get('branch_rankwidth_support_width', 0)}"
                 )
+            if "branch_treewidth_order_width" in record:
+                line += f" branch_treewidth_order_width={record['branch_treewidth_order_width']}"
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
@@ -929,6 +956,9 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
             "branch_rankwidth_support_width",
+            "branch_treewidth_order_probe_events",
+            "branch_treewidth_order_probe_elapsed_ns",
+            "branch_treewidth_order_width",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",
