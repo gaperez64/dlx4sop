@@ -92,6 +92,30 @@ Future arithmetic work:
 - keep arbitrary-precision libraries out of hot DP tables unless there is no
   fixed-width or CRT alternative.
 
+## SIMD And CPU Dispatch
+
+The portable scalar kernels remain the reference implementation. CPU-specific
+work should be added only after benchmark JSONL or trace output shows the same
+small kernel dominating representative widened-corpus runs.
+
+Reasonable SIMD targets are:
+
+- residue-table add/convolution loops for common small moduli;
+- dense count-table joins in treewidth and rankwidth backends;
+- bitset operations used by cut-rank and decomposition heuristics;
+- branch leaf residue accumulation when it stays table-shaped rather than
+  search-shaped.
+
+Keep dispatch narrow:
+
+- hide specialized kernels behind the same internal scalar API;
+- use compile-time feature checks plus a small runtime feature probe;
+- consider x86-64 AVX2 and ARM NEON first, and add AVX-512 only with measured
+  wins on a real benchmark host;
+- keep deterministic exact integer/CRT behavior identical across kernels;
+- avoid broad microarchitecture tuning until solver structure and benchmark
+  tiers have stabilized.
+
 ## Import And Export Boundary
 
 Importers should preserve enough provenance for debugging, but the solver should

@@ -50,6 +50,46 @@ def main() -> int:
         if "records: 1" not in completed.stdout or "skipped: 1" not in completed.stdout:
             raise AssertionError(f"unexpected skip summary:\n{completed.stdout}")
 
+        try:
+            import qiskit  # noqa: F401
+        except ImportError:
+            return 0
+
+        manifest = [
+            {
+                "name": "native_compat",
+                "qasm_lines": [
+                    "OPENQASM 2.0;",
+                    'include "qelib1.inc";',
+                    "qreg q[3];",
+                    "h q[0];",
+                    "iswap q[0],q[1];",
+                    "ccz q[0],q[1],q[2];",
+                ],
+                "boundaries": [["000", "000"]],
+            }
+        ]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                str(tool),
+                str(manifest_path),
+                "--engine",
+                "qiskit-statevector",
+                "--skip-unsupported",
+                "--format",
+                "summary",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"native compatibility benchmark failed:\n{completed.stdout}\n{completed.stderr}")
+        if "engine: qiskit-statevector" not in completed.stdout or "ok: 1" not in completed.stdout:
+            raise AssertionError(f"unexpected native compatibility summary:\n{completed.stdout}")
+
     return 0
 
 

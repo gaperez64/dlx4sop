@@ -41,8 +41,13 @@ than repeated here.
   - External manifest builds can emit per-source classification reports.
   - `tools/summarize_qasm_report.py` turns those reports into reproducible
     source/status/size-tier tables for benchmark promotion.
-  - `tools/bench_qasm_native_simulator.py` starts optional native QASM timing
-    baselines for Qiskit Statevector and Aer, with a dense-state qubit cap.
+  - `tools/render_scoreboard.py` renders scoreboard Markdown tables from
+    import reports plus solver/native JSONL.
+  - `tools/bench_qasm_native_simulator.py` runs optional native QASM timing
+    baselines for Qiskit Statevector, Aer, MQT DDSIM statevector, and PyZX
+    matrix mode, with dense-state/matrix qubit caps.
+  - Native QASM comparisons insert compatibility definitions for parser-missing
+    `ccz` and `iswap` gates when needed.
   - Benchmark summaries report imported sign/labelled counts, rankwidth skips,
     source-family boundary counts, backend-specific rankwidth/treewidth width
     and table metrics, and largest case-boundaries by core size/performance
@@ -53,41 +58,48 @@ than repeated here.
     decomposition guard records in the current benchmark script.
   - First promoted 33-64 imported-variable tier: 32 fixed-boundary cases from
     PyZX and FeynmanDD, including 9 labelled cases. Treewidth solves the tier in
-    about 27-28ms, branch split in about 86ms, and rankwidth count-table in
-    about 1.75s because of one labelled width-7 case.
-  - Qiskit Statevector has an initial native-set baseline on the promoted tier:
-    17 / 32 boundaries run under a 16-qubit dense-state cap in about 17ms.
-    Aer now runs the same 17 boundaries in about 18ms.
+    about 31-32ms, branch split in about 99ms, and rankwidth min-fill-cut
+    count-table in about 1.88s because of one labelled width-7 case.
+  - Promoted 65-128 imported-variable tier: 130 fixed-boundary cases from PyZX,
+    FeynmanDD, and MQT Bench, including 28 labelled cases. Treewidth solves the
+    full tier in about 0.68-0.69s depending on order; branch split does not
+    complete the first case within a 20s cap.
+  - Native baselines now cover Qiskit, Aer, MQT DDSIM, and PyZX matrix mode.
+    On the 65-128 tier, Qiskit/Aer/MQT handle 73 / 130 boundaries under a
+    16-qubit cap; PyZX matrix handles 48 / 130 under a 10-qubit cap.
+  - Qiskit manifest correctness comparison on the 33-64 tier checks 20 / 32
+    boundaries under a 16-qubit cap with no Qiskit parser skips; the other 12
+    are qubit-cap skips.
   - Branch heuristic comparison on that pool favors `split`: about 9.8k search
     nodes and 81ms total solve time, versus 91.5k/677ms for `treewidth` and
     4.0M/14.5s for `cutrank-proxy`.
 - Last full validation:
-  - `meson test -C build --print-errorlogs`: 18/18 passing.
+  - `meson test -C build --print-errorlogs`: 23/23 passing.
   - `tools/check-coverage.sh build-coverage`: 77.2% line coverage.
 
 ## Current Task
 
-- Use external classification reports to push beyond the current 32-variable
-  comparison pool. The pool now includes labelled FeynmanDD/PyZX cases but still
-  has low support width: rankwidth width tops out at 3 and treewidth width at 2.
-- Use the promoted 33-64 tier to drive solver comparisons, then build the next
-  65-128 tier once the reporting path is stable.
-- Add competitor baselines so solver improvements are measured against
-  strong-simulation alternatives, not only against other dlx4sop backends.
+- Use the 65-128 tier as the current widened benchmark baseline. Treewidth is
+  the only full-tier backend that completes comfortably at this size.
+- Investigate generated rankwidth decompositions: on FeynmanDD
+  `random_10qubit_0`, the rankwidth `linear` generator solves in about 27ms,
+  while `min-fill-cut` takes about 1.72s and `min-fill` exceeds a 20s cap.
+- Use native simulator baselines as comparison data while `sop2X` exporters do
+  not exist.
 
 ## Next Steps
 
-- Refresh the scoreboard from reproducible 0-32 and 33-64 runs, then add a
-  controlled 65-128 tier.
-- Add competitor baseline harnesses only on native benchmark formats until
-  `sop2X` exporters exist. QASM-native Qiskit/Aer timing has started; MQT and
-  ZX-calculus simulator baselines still need native-corpus runners.
-- Add optional environment detection/reporting for native simulators so missing
-  MQT/ZX dependencies show up as structured skips.
+- Add rankwidth generator diagnostics that can be run across a manifest without
+  one bad decomposition hiding completed rows.
+- Improve generated rankwidth decompositions for labelled cases, using the
+  `random_10qubit_0` diagnostic and the first 65-128 PyZX Toffoli case as
+  regression targets.
+- Add optional capped branch profiling by case so search blowups are reported
+  structurally instead of as silent timeouts.
+- Keep native baseline harnesses on native benchmark formats until `sop2X`
+  exporters exist.
 - Keep `branch --branch-heuristic split` as the branch baseline until a harder
   pool shows that cache-heavy heuristics repay their selection cost.
-- Add stronger rankwidth/treewidth decomposition builders only after larger
-  cases show bag or table blowups.
 - Use external classification reports to choose the next importer fixes that
   remain labelled quadratic.
 - Keep [scoreboard.md](scoreboard.md) as the concise public record for corpus

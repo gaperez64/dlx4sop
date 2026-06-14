@@ -105,8 +105,12 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --treewidth-order min-fill-max-degree --top-metric treewidth_max_table_entries --format summary
 tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --source-name NAME --source-url URL --min-vars 33 --max-vars 64 --report corpus-report.json --output corpus.json
 tools/summarize_qasm_report.py corpus-report.json --format markdown
-tools/check_qasm_manifest_qiskit.py build/qasm2sop build/sop-solve corpus.json --skip-qiskit-unsupported
+tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
+tools/check_qasm_manifest_qiskit.py build/qasm2sop build/sop-solve corpus.json --solver-backend treewidth --solver-max-vars 128 --max-qubits 16 --skip-qiskit-unsupported
 tools/bench_qasm_native_simulator.py corpus.json --engine qiskit-statevector --max-qubits 16 --skip-unsupported --format summary
+tools/bench_qasm_native_simulator.py corpus.json --engine aer-statevector --max-qubits 16 --skip-unsupported --format summary
+tools/bench_qasm_native_simulator.py corpus.json --engine mqt-ddsim-statevector --max-qubits 16 --skip-unsupported --format summary
+tools/bench_qasm_native_simulator.py corpus.json --engine pyzx-matrix --max-qubits 10 --skip-unsupported --format summary
 ```
 
 ## Scope

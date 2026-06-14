@@ -318,6 +318,22 @@ if python3.found()
     ],
   )
   test(
+    'scoreboard render smoke',
+    python3,
+    args: [
+      files('tests/test_render_scoreboard.py'),
+      files('tools/render_scoreboard.py'),
+    ],
+  )
+  test(
+    'qasm native compatibility smoke',
+    python3,
+    args: [
+      files('tests/test_qasm_native_compat.py'),
+      meson.current_source_dir(),
+    ],
+  )
+  test(
     'native simulator benchmark help',
     python3,
     args: [

@@ -151,6 +151,9 @@ Relevant tool boundaries:
   Until `sop2X` exporters exist, those comparisons should use each external
   simulator on its native benchmark format rather than pretending every backend
   can consume SOP directly.
+- native simulator runners may inject OpenQASM compatibility definitions for
+  parser-missing gates such as `ccz` and `iswap`; this is a comparison-tool
+  adapter, while `qasm2sop` keeps its own importer semantics.
 
 ## Labelled Rankwidth Direction
 

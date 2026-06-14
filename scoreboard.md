@@ -2,125 +2,112 @@
 
 Last updated: 2026-06-14.
 
-This scoreboard tracks progress toward a competitive SOP-based strong simulator.
-The current benchmark target is exact fixed-boundary strong simulation: import a
-static circuit into a labelled quadratic SOP, solve the resulting residue-count
-histogram exactly, and compare amplitudes against independent simulators where
-available.
+This tracks progress toward a competitive exact strong simulator based on
+labelled quadratic SOPs. The current benchmark contract is fixed-boundary
+strong simulation: import a static circuit into QSOP, solve the exact
+residue-count histogram, and compare with native simulators where possible.
 
-## Corpus Sources
+## Corpus
 
 External sources are cited by upstream repository. Generated manifests and
 reports are local benchmark artifacts, not citation targets.
 
-Use `tools/summarize_qasm_report.py` on the generated per-source import reports
-to reproduce tier tables from structured data. The default tiers are `0-32`,
-`33-64`, `65-128`, `129-256`, and `257+` imported SOP variables.
-
-| Source | Upstream | Inputs scanned | Emitted at 32 vars | Too large at 32 vars | Other unsupported |
+| Source | Upstream | Inputs | Imported at 0-32 vars | Too large at 32 vars | Other unsupported |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Internal corpus | `tests/qasm_solver_corpus.json` | 12 cases | 12 cases | 0 | 0 |
-| PyZX | <https://github.com/zxcalc/pyzx> | 344 | 29 | 292 | 23 |
-| MQT Bench | <https://github.com/munich-quantum-toolkit/bench> | 32 | 20 | 3 | 9 |
+| Internal corpus | `tests/qasm_solver_corpus.json` | 12 | 12 | 0 | 0 |
 | FeynmanDD | <https://github.com/cqs-thu/feynman-decision-diagram> | 425 | 52 | 361 | 12 |
-| Total |  | 813 | 113 cases | 656 | 44 |
+| MQT Bench | <https://github.com/munich-quantum-toolkit/bench> | 32 | 20 | 3 | 9 |
+| PyZX | <https://github.com/zxcalc/pyzx> | 344 | 29 | 292 | 23 |
 
-The 32-variable emitted pool has 133 fixed-boundary amplitudes: 32 internal, 29
-PyZX, 20 MQT Bench, and 52 FeynmanDD. It contains 120 sign-only boundaries and
-13 labelled boundaries. The largest emitted cases currently have 32 imported SOP
-variables and 32 quadratic terms.
+External import classification by imported QSOP variables, from 32-variable-cap
+reports. Rows above 32 are structurally importable cases that were rejected by
+that cap and later promoted into controlled widened tiers.
 
-There are many importable but filtered cases above the current 32-variable
-scoreboard cap: 292 PyZX cases, 361 FeynmanDD cases, and 3 MQT Bench cases. That
-is the next source of larger benchmark instances.
+| Tier | Records | OK | Too large | Other unsupported | Sign | Labelled |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0-32 | 101 | 101 | 0 | 0 | 88 | 13 |
+| 33-64 | 32 | 0 | 32 | 0 | 23 | 9 |
+| 65-128 | 130 | 0 | 130 | 0 | 102 | 28 |
+| 129-256 | 112 | 0 | 112 | 0 | 49 | 63 |
+| 257+ | 382 | 0 | 382 | 0 | 179 | 203 |
+| Unknown unsupported | 44 | 0 | 0 | 44 | 0 | 0 |
 
-## Current dlx4sop Results
+Use `tools/summarize_qasm_report.py` or `tools/render_scoreboard.py` on
+generated import reports and benchmark JSONL to refresh these tables.
 
-Benchmark command shape:
+## Solver Results
+
+Command shape:
 
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve \
-  --backend branch --backend rankwidth --backend treewidth \
-  --rankwidth-generate min-fill-cut --rankwidth-mode count-table \
-  --treewidth-order min-fill --treewidth-order min-degree \
-  --treewidth-order min-fill-max-degree --trace --format summary
+  --manifest CORPUS.json --backend treewidth --treewidth-order min-fill \
+  --treewidth-order min-degree --treewidth-order min-fill-max-degree \
+  --trace --format jsonl
 ```
 
-| Backend/configuration | Boundaries solved | Total solve time | Key stats |
-| --- | ---: | ---: | --- |
-| `branch --branch-heuristic split` | 133 / 133 | 81.1 ms | 9,781 nodes; 15,314 leaf assignments; cache 0 / 9,781 |
-| `branch --branch-heuristic treewidth` | 133 / 133 | 677.0 ms | 91,543 nodes; cache 42,736 / 48,807; hit rate 0.467 |
-| `branch --branch-heuristic cutrank-proxy` | 133 / 133 | 14.48 s | 4,007,973 nodes; cache 62,992 / 3,944,981 |
-| `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 121 / 133 | 70.5 ms | max width 3; max table 48; max signatures 8 |
-| `treewidth --treewidth-order min-degree` | 133 / 133 | 56.9 ms | max width 2; max table 64; 12,692 join pairs |
-| `treewidth --treewidth-order min-fill` | 133 / 133 | 59.4 ms | max width 2; max table 64; 12,692 join pairs |
-| `treewidth --treewidth-order min-fill-max-degree` | 133 / 133 | 58.2 ms | max width 2; max table 64; 12,690 join pairs |
+| Tier | Backend/configuration | Solved records | Total solve time | Key stats |
+| --- | --- | ---: | ---: | --- |
+| 0-32 | `treewidth --treewidth-order min-degree` | 133 | 56.9 ms | width 2; max table 64 |
+| 0-32 | `branch --branch-heuristic split` | 133 | 81.1 ms | 9,781 nodes; no cache hits |
+| 0-32 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 121 | 70.5 ms | skips 12 zero-variable decomposition guards |
+| 33-64 | `treewidth --treewidth-order min-fill` | 32 | 31.1 ms | width 3; max table 128; 16,182 join pairs |
+| 33-64 | `treewidth --treewidth-order min-degree` | 32 | 31.8 ms | width 3; max table 128; 16,182 join pairs |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 32 | 32.0 ms | width 3; max table 128; 16,176 join pairs |
+| 33-64 | `branch --branch-heuristic split` | 32 | 99.0 ms | 19,629 nodes; 32,678 leaves; no cache hits |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 | 1.88 s | width 7; max table 1024; 386,804 join pairs |
+| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 130 | 682.4 ms | width 7; max table 2048; 289,681 join pairs |
+| 65-128 | `treewidth --treewidth-order min-fill` | 130 | 686.4 ms | width 7; max table 2048; 293,297 join pairs |
+| 65-128 | `treewidth --treewidth-order min-degree` | 130 | 689.0 ms | width 8; max table 4096; 293,423 join pairs |
 
-The current `rankwidth` row skips 12 zero-variable boundary reductions because
-the generated decomposition path refuses empty decompositions. Those are a
-benchmark/tooling guard issue, not hard instances.
+Current widened-tier signal: treewidth is the best full-pool backend. Branch
+split did not complete the first 65-128 case within a 20 s cap. Rankwidth
+`min-fill-cut` did not complete the first 65-128 case within a 20 s cap, while
+the rankwidth `linear` generator solves that same sign-only case in about 48 ms.
 
-The `components` backend was also run on the subset with at most 16 imported SOP
-variables: 100 / 100 boundaries solved in 52.9 ms, with 190 components and a
-component-cache hit rate of 0.379. It remains useful for disconnected small
-components but is not the current full-pool baseline.
+## Rankwidth Generator Diagnostic
 
-## Promoted 33-64 Tier
+FeynmanDD `random_10qubit_0` is the 33-64 tier case that previously dominated
+rankwidth time. It is labelled, with 61 imported variables and 69 quadratic
+terms.
 
-The first widened tier is generated with `--min-vars 33 --max-vars 64`. It has
-32 fixed-boundary amplitudes: 16 from PyZX and 16 from FeynmanDD. The tier
-contains 23 sign-only boundaries and 9 labelled boundaries, with 38-63 imported
-SOP variables and up to 69 quadratic terms. MQT Bench currently contributes no
-cases in this band.
+| Backend/configuration | Solve time | Width/table | Main trace signal |
+| --- | ---: | --- | --- |
+| `treewidth --treewidth-order min-fill-max-degree` | 1.14 ms | width 3; max table 128 | order construction dominates |
+| `branch --branch-heuristic split` | 8.86 ms | 2,367 nodes; no cache hits | variable selection dominates |
+| `rankwidth --rankwidth-generate linear --rankwidth-mode count-table` | 26.9 ms | width 6; max table 512 | labelled joins and join maps |
+| `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 1.72 s | width 7; max table 1024 | labelled joins dominate |
+| `rankwidth --rankwidth-generate balanced --rankwidth-mode count-table` | 2.74 s | width 7; max table 512 | labelled joins dominate |
+| `rankwidth --rankwidth-generate min-fill --rankwidth-mode count-table` | >20 s cap | no completed row | generator/decomposition is bad for this case |
 
-| Backend/configuration | Boundaries solved | Total solve time | Key stats |
-| --- | ---: | ---: | --- |
-| `treewidth --treewidth-order min-degree` | 32 / 32 | 27.1 ms | max width 3; max table 128; 16,182 join pairs |
-| `treewidth --treewidth-order min-fill` | 32 / 32 | 27.9 ms | max width 3; max table 128; 16,182 join pairs |
-| `treewidth --treewidth-order min-fill-max-degree` | 32 / 32 | 28.3 ms | max width 3; max table 128; 16,176 join pairs |
-| `branch --branch-heuristic split` | 32 / 32 | 85.6 ms | 19,629 nodes; 32,678 leaf assignments; no cache hits |
-| `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 1.75 s | max width 7; max table 1024; 386,804 join pairs |
+The immediate rankwidth problem is decomposition quality and labelled join
+cost, not basic labelled-DP correctness.
 
-The slow rankwidth case in this tier is FeynmanDD `random_10qubit_0`, a labelled
-case with 61 imported SOP variables, 69 quadratic terms, generated width 7, and
-about 1.58 s in rankwidth count-table mode. The same case stays at treewidth
-width 3 with a 128-entry maximum table.
+## Native Simulator Results
 
-## Heuristic Note
+These are native QASM-set comparisons, not `sop2X` exports. The native runner
+adds compatibility definitions for QASM gates such as `ccz` and `iswap` when
+the simulator parser needs them. Dense statevector backends use a 16-qubit cap;
+PyZX matrix mode uses a 10-qubit cap because it materializes full matrices.
+The Qiskit manifest correctness checker now covers the 20 / 32 promoted-tier
+boundaries under the 16-qubit cap with no parser skips; the other 12 are qubit
+cap skips.
 
-`cutrank-proxy` is not the exact graph parameter linear rankwidth, and it is not
-the rankwidth DP solver. It is a branch variable-ordering heuristic. At each
-residual state, it scores candidate variables using a local GF(2) cut-rank proxy
-between the candidate's active neighbors and the remaining active graph, then
-branches on the smallest score with the normal split heuristic as a tie-break.
-It does not compute, optimize, or certify a global linear layout. On the current
-pool it is too expensive relative to the benefit, so `split` remains the branch
-baseline.
-
-## Independent Checks
-
-| Checker | Coverage so far | Status |
-| --- | ---: | --- |
-| Built-in exact agreement tests | CI-sized golden and corpus tests | Passing |
-| Qiskit optional manifest check | 97 checked, 3 skipped by Qiskit parser support | Passing checked cases |
-| Qiskit simulator speed baseline | 17 / 32 promoted-tier boundaries under a 16-qubit dense-state cap | 16.9 ms total; remaining cases skipped by parser or qubit cap |
-| Aer speed baseline | 17 / 32 promoted-tier boundaries under a 16-qubit dense-state cap | 17.6 ms total; remaining cases skipped by parser or qubit cap |
-| MQT simulator baseline | Not run | Pending |
-| ZX-calculus simulator baselines | Not run | Pending |
-
-The skipped Qiskit manifest cases use gates this local Qiskit OpenQASM parser did
-not define from the source text, such as `iswap` and `ccz`.
-
-Until `sop2X` exporters exist, competitor speed comparisons should be native-set
-comparisons: run `dlx4sop` on the source cases it can import, and run each
-external simulator on that simulator's native benchmark format. For QASM-backed
-sets, `tools/bench_qasm_native_simulator.py` records Qiskit Statevector or Aer
-fixed-boundary amplitude timings directly from manifest QASM.
+| Tier | Engine | OK / records | Total elapsed | Max qubits | Main skip reason |
+| --- | --- | ---: | ---: | ---: | --- |
+| 33-64 | `qiskit-statevector` | 20 / 32 | 29.0 ms | 10 | qubit cap |
+| 33-64 | `aer-statevector` | 20 / 32 | 80.0 ms | 10 | qubit cap |
+| 33-64 | `mqt-ddsim-statevector` | 20 / 32 | 391.9 ms | 10 | qubit cap |
+| 33-64 | `pyzx-matrix` | 20 / 32 | 5.21 s | 10 | qubit cap |
+| 65-128 | `aer-statevector` | 73 / 130 | 18.71 s | 16 | qubit cap |
+| 65-128 | `qiskit-statevector` | 73 / 130 | 53.01 s | 16 | qubit cap |
+| 65-128 | `mqt-ddsim-statevector` | 73 / 130 | 111.48 s | 16 | qubit cap |
+| 65-128 | `pyzx-matrix` | 48 / 130 | 106.26 s | 10 | qubit cap |
 
 ## Current Takeaway
 
-The current source-attributed pool is good enough to exercise importer plumbing,
-labelled SOP support, treewidth/rankwidth tracing, and branch cache behavior. It
-is not yet hard enough to judge competitiveness: decomposition widths are still
-small, and the most important next move is to promote larger importable cases
-above the 32-variable cap into a controlled benchmark tier.
+The importer-fed corpus is now large enough to expose backend separation.
+Treewidth handles the 65-128 promoted tier cleanly. Branch needs either much
+better decomposition-style splitting or a narrower role. Rankwidth needs better
+generated decompositions for labelled cases before it can be a serious
+competitor on the widened corpus.
