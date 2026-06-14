@@ -1202,10 +1202,13 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     return false;
   }
   const uint64_t subtree_search_nodes = stats->nodes - subtree_start_nodes + 1U;
+  const uint64_t store_start = qsop_trace_begin(stats->trace);
   if (!residual_cache_store(&stats->cache, residual, computed, subtree_search_nodes, error)) {
     free(computed);
     return false;
   }
+  qsop_trace_emit_elapsed(stats->trace, "branch.cache_store", stats->depth, stats->cache.len,
+                          store_start);
 
   if (!add_counts(r, counts, computed, stats, error)) {
     free(computed);

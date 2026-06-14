@@ -563,7 +563,7 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
       const uint64_t solve_start = qsop_trace_begin(trace);
       const bool solved = qsop_solve_bruteforce_trace_stats(&sub, max_component_vars, &part,
                                                             &part_stats, trace, error);
-      if (!solved || !store_cached_component(&cache, &sub, part->counts, error)) {
+      if (!solved) {
         free_subinstance(&sub);
         qsop_result_free(part);
         free_component_cache(&cache);
@@ -575,6 +575,19 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
         return false;
       }
       qsop_trace_emit_elapsed(trace, "components.solve_component", 0, sub.nvars, solve_start);
+      const uint64_t store_start = qsop_trace_begin(trace);
+      if (!store_cached_component(&cache, &sub, part->counts, error)) {
+        free_subinstance(&sub);
+        qsop_result_free(part);
+        free_component_cache(&cache);
+        free(rowptr);
+        free(colind);
+        free(component);
+        free(acc);
+        free(tmp);
+        return false;
+      }
+      qsop_trace_emit_elapsed(trace, "components.cache_store", 0, cache.len, store_start);
       part_counts = part->counts;
       if (stats != NULL) {
         stats->cache_misses++;

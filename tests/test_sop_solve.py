@@ -1203,6 +1203,7 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     phases = {row[0] for row in rows}
     expected_phases = {
         "branch.cache_lookup",
+        "branch.cache_store",
         "branch.component_split",
         "branch.select_variable",
         "branch.edge_free_leaf",
