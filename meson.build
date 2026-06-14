@@ -365,6 +365,14 @@ if python3.found()
     ],
   )
   test(
+    'native solver comparison smoke',
+    python3,
+    args: [
+      files('tests/test_compare_native_solver_results.py'),
+      files('tools/compare_native_solver_results.py'),
+    ],
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [

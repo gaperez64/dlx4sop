@@ -37,10 +37,10 @@ External frameworks stay at the benchmark/import boundary.
 ## Solver Guide
 
 - `components`: default robust exact solver.
-- `treewidth --treewidth-order min-fill-max-degree`: best current widened-corpus
-  backend.
-- `branch --branch-heuristic split`: labelled/CRT search baseline for connected
-  instances.
+- `treewidth --treewidth-order min-fill-max-degree`: direct DP baseline for
+  widened corpus tiers.
+- `branch --branch-heuristic split`: current hybrid backend; it splits
+  components and dispatches low-width residuals to treewidth.
 - `rankwidth`: decomposition-DP experiments; generated decompositions still need
   improvement.
 - `brute-force`: small-instance oracle.
@@ -75,4 +75,5 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
+tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 ```

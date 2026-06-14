@@ -204,6 +204,13 @@ def solver_status_stats(row: dict) -> str:
 
 def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
     grouped: dict[tuple[str, str], dict] = {}
+
+    def cap_value(record: dict, key: str) -> str:
+        if key not in record:
+            return "not recorded"
+        value = record.get(key)
+        return "none" if value is None else str(value)
+
     for tier, records in named_records:
         for record in records:
             key = (tier, record.get("engine") or "unknown")
@@ -217,10 +224,16 @@ def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                     "skipped": 0,
                     "elapsed_ns": 0,
                     "max_qubits": 0,
+                    "qubit_caps": collections.Counter(),
+                    "timeouts": collections.Counter(),
+                    "memory_caps": collections.Counter(),
                     "errors": collections.Counter(),
                 },
             )
             entry["records"] += 1
+            entry["qubit_caps"][cap_value(record, "qubit_cap")] += 1
+            entry["timeouts"][cap_value(record, "timeout_seconds")] += 1
+            entry["memory_caps"][cap_value(record, "memory_limit_mib")] += 1
             if record.get("status") == "ok":
                 entry["ok"] += 1
                 entry["elapsed_ns"] += int(record.get("elapsed_ns") or 0)
@@ -278,13 +291,20 @@ def write_native_tables(named_records: list[tuple[str, list[dict]]], file: TextI
     if not rows:
         return
     print("\n## Native Simulator Results\n", file=file)
-    print("| Tier | Engine | OK / records | Total elapsed | Max qubits | Main skip reason |", file=file)
-    print("| --- | --- | ---: | ---: | ---: | --- |", file=file)
+    print(
+        "| Tier | Engine | OK / records | Total elapsed | Max qubits | Qubit cap | Timeout | Memory cap | Main skip reason |",
+        file=file,
+    )
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
     for row in rows:
         reason = row["errors"].most_common(1)[0][0] if row["errors"] else ""
+        qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
+        timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
+        memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
         print(
             f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['engine'])}` | "
             f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} | {row['max_qubits']} | "
+            f"{markdown_escape(qubit_cap)} | {markdown_escape(timeout)} | {markdown_escape(memory_cap)} | "
             f"{markdown_escape(reason)} |",
             file=file,
         )

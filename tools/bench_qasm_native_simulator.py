@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import contextlib
 import csv
 import json
 import pathlib
+import signal
 import sys
 import time
 from typing import TextIO
@@ -28,12 +30,54 @@ CSV_FIELDS = [
     "output",
     "engine",
     "qubits",
+    "qubit_cap",
+    "timeout_seconds",
+    "memory_limit_mib",
     "elapsed_ns",
     "amplitude_real",
     "amplitude_imag",
     "status",
     "error",
 ]
+
+
+class NativeTimeout(RuntimeError):
+    pass
+
+
+@contextlib.contextmanager
+def native_timeout(seconds: float | None):
+    if seconds is None:
+        yield
+        return
+
+    def handle_timeout(_signum, _frame):
+        raise NativeTimeout(f"native simulator timed out after {seconds:g}s")
+
+    old_handler = signal.signal(signal.SIGALRM, handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+
+def apply_memory_limit(memory_limit_mib: int | None) -> None:
+    if memory_limit_mib is None:
+        return
+    try:
+        import resource
+    except ImportError as exc:
+        raise RuntimeError("--memory-limit-mib requires the resource module") from exc
+
+    limit = memory_limit_mib * 1024 * 1024
+    _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    if hard != resource.RLIM_INFINITY and limit > hard:
+        raise RuntimeError(
+            f"--memory-limit-mib {memory_limit_mib} exceeds existing hard RLIMIT_AS"
+        )
+    resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
 
 
 def case_qasm(case: dict) -> str:
@@ -176,12 +220,22 @@ def record_case(
         "output": output_bits,
         "engine": engine,
         "qubits": qubits,
+        "qubit_cap": None,
+        "timeout_seconds": None,
+        "memory_limit_mib": None,
         "elapsed_ns": elapsed_ns,
         "amplitude_real": None if amplitude is None else amplitude.real,
         "amplitude_imag": None if amplitude is None else amplitude.imag,
         "status": status,
         "error": error or "",
     }
+
+
+def annotate_limits(record: dict, args: argparse.Namespace) -> dict:
+    record["qubit_cap"] = args.max_qubits
+    record["timeout_seconds"] = args.timeout
+    record["memory_limit_mib"] = args.memory_limit_mib
+    return record
 
 
 def benchmark(args: argparse.Namespace) -> list[dict]:
@@ -195,62 +249,75 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
             boundary_qubits = max(len(input_bits), len(output_bits))
             if dependency_error:
                 records.append(
-                    record_case(
-                        case,
-                        boundary_index,
-                        input_bits,
-                        output_bits,
-                        engine,
-                        "skipped",
-                        qubits=boundary_qubits,
-                        error=dependency_error,
+                    annotate_limits(
+                        record_case(
+                            case,
+                            boundary_index,
+                            input_bits,
+                            output_bits,
+                            engine,
+                            "skipped",
+                            qubits=boundary_qubits,
+                            error=dependency_error,
+                        ),
+                        args,
                     )
                 )
                 continue
             if args.max_qubits is not None and boundary_qubits > args.max_qubits:
                 records.append(
-                    record_case(
-                        case,
-                        boundary_index,
-                        input_bits,
-                        output_bits,
-                        engine,
-                        "skipped",
-                        qubits=boundary_qubits,
-                        error=f"boundary uses {boundary_qubits} qubits above --max-qubits {args.max_qubits}",
+                    annotate_limits(
+                        record_case(
+                            case,
+                            boundary_index,
+                            input_bits,
+                            output_bits,
+                            engine,
+                            "skipped",
+                            qubits=boundary_qubits,
+                            error=f"boundary uses {boundary_qubits} qubits above --max-qubits {args.max_qubits}",
+                        ),
+                        args,
                     )
                 )
                 continue
             try:
                 start = time.perf_counter_ns()
-                amplitude, qubits = native_amplitude(engine, qasm, input_bits, output_bits)
+                with native_timeout(args.timeout):
+                    amplitude, qubits = native_amplitude(engine, qasm, input_bits, output_bits)
                 elapsed_ns = time.perf_counter_ns() - start
             except Exception as exc:
                 if not args.skip_unsupported:
                     raise
                 records.append(
+                    annotate_limits(
+                        record_case(
+                            case,
+                            boundary_index,
+                            input_bits,
+                            output_bits,
+                            engine,
+                            "skipped",
+                            error=str(exc).strip().splitlines()[-1] if str(exc).strip() else repr(exc),
+                        ),
+                        args,
+                    )
+                )
+                continue
+            records.append(
+                annotate_limits(
                     record_case(
                         case,
                         boundary_index,
                         input_bits,
                         output_bits,
                         engine,
-                        "skipped",
-                        error=str(exc).strip().splitlines()[-1] if str(exc).strip() else repr(exc),
-                    )
-                )
-                continue
-            records.append(
-                record_case(
-                    case,
-                    boundary_index,
-                    input_bits,
-                    output_bits,
-                    engine,
-                    "ok",
-                    elapsed_ns=elapsed_ns,
-                    amplitude=amplitude,
-                    qubits=qubits,
+                        "ok",
+                        elapsed_ns=elapsed_ns,
+                        amplitude=amplitude,
+                        qubits=qubits,
+                    ),
+                    args,
                 )
             )
     return records
@@ -270,6 +337,25 @@ def write_csv(records: list[dict], file: TextIO) -> None:
 
 def write_summary(records: list[dict], file: TextIO) -> None:
     print(f"records: {len(records)}", file=file)
+    limit_rows = {
+        (
+            record.get("qubit_cap"),
+            record.get("timeout_seconds"),
+            record.get("memory_limit_mib"),
+        )
+        for record in records
+    }
+    if len(limit_rows) == 1:
+        qubit_cap, timeout_seconds, memory_limit_mib = next(iter(limit_rows))
+        print(f"qubit_cap: {qubit_cap if qubit_cap is not None else 'none'}", file=file)
+        print(
+            f"timeout_seconds: {timeout_seconds if timeout_seconds is not None else 'none'}",
+            file=file,
+        )
+        print(
+            f"memory_limit_mib: {memory_limit_mib if memory_limit_mib is not None else 'none'}",
+            file=file,
+        )
     for engine in sorted({record["engine"] for record in records}):
         engine_records = [record for record in records if record["engine"] == engine]
         ok = [record for record in engine_records if record["status"] == "ok"]
@@ -295,17 +381,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--max-qubits", type=int, help="skip boundaries above this dense-state qubit count")
+    parser.add_argument("--timeout", type=float, help="per-boundary native simulator timeout in seconds")
+    parser.add_argument("--memory-limit-mib", type=int, help="process address-space cap for native simulator runs")
     parser.add_argument("--skip-unsupported", action="store_true")
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be non-negative")
     if args.max_qubits is not None and args.max_qubits < 0:
         parser.error("--max-qubits must be non-negative")
+    if args.timeout is not None and args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        parser.error("--memory-limit-mib must be positive")
     return args
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    apply_memory_limit(args.memory_limit_mib)
     records = benchmark(args)
     if args.format == "jsonl":
         write_jsonl(records, sys.stdout)

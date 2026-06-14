@@ -211,14 +211,42 @@ static bool map_scope_positions(const uint32_t *superset, uint32_t superset_arit
   return true;
 }
 
-static size_t project_assignment(size_t assignment, const uint32_t *positions, uint32_t arity) {
-  size_t projected = 0;
-  for (uint32_t i = 0; i < arity; i++) {
-    if ((assignment & ((size_t)1U << positions[i])) != 0) {
-      projected |= (size_t)1U << i;
-    }
+static uint32_t trailing_zero_size(size_t value) {
+  uint32_t index = 0;
+  while ((value & 1U) == 0) {
+    value >>= 1U;
+    index++;
   }
-  return projected;
+  return index;
+}
+
+static bool projection_map_alloc(size_t assignments, uint32_t superset_arity,
+                                 const uint32_t *positions, uint32_t arity, size_t **out,
+                                 qsop_error_t *error) {
+  size_t *map = calloc(assignments == 0 ? 1U : assignments, sizeof(*map));
+  if (map == NULL) {
+    set_error(error, "out of memory while allocating treewidth projection map");
+    return false;
+  }
+
+  size_t projection_bits[sizeof(size_t) * CHAR_BIT] = {0};
+  for (uint32_t i = 0; i < arity; i++) {
+    if (positions[i] >= superset_arity) {
+      free(map);
+      set_error(error, "internal error: treewidth projection position is out of range");
+      return false;
+    }
+    projection_bits[positions[i]] = (size_t)1U << i;
+  }
+
+  for (size_t assignment = 1; assignment < assignments; assignment++) {
+    const size_t bit = assignment & (~assignment + 1U);
+    const uint32_t pos = trailing_zero_size(bit);
+    map[assignment] = map[assignment ^ bit] | projection_bits[pos];
+  }
+
+  *out = map;
+  return true;
 }
 
 static bool convolve_counts_to(uint64_t *dst, const uint64_t *left, const uint64_t *right,
@@ -302,9 +330,23 @@ static bool factor_multiply(const tw_factor_t *left, const tw_factor_t *right,
     return false;
   }
 
+  size_t *left_map = NULL;
+  size_t *right_map = NULL;
+  if (!projection_map_alloc(out->assignments, arity, left_positions, left->arity, &left_map,
+                            error) ||
+      !projection_map_alloc(out->assignments, arity, right_positions, right->arity, &right_map,
+                            error)) {
+    factor_free(out);
+    free(left_positions);
+    free(right_positions);
+    free(left_map);
+    free(right_map);
+    return false;
+  }
+
   for (size_t assignment = 0; assignment < out->assignments; assignment++) {
-    const size_t left_assignment = project_assignment(assignment, left_positions, left->arity);
-    const size_t right_assignment = project_assignment(assignment, right_positions, right->arity);
+    const size_t left_assignment = left_map[assignment];
+    const size_t right_assignment = right_map[assignment];
     uint64_t *dst = factor_counts(out, ctx->r, assignment);
     const uint64_t *left_counts = factor_counts(left, ctx->r, left_assignment);
     const uint64_t *right_counts = factor_counts(right, ctx->r, right_assignment);
@@ -312,12 +354,16 @@ static bool factor_multiply(const tw_factor_t *left, const tw_factor_t *right,
       factor_free(out);
       free(left_positions);
       free(right_positions);
+      free(left_map);
+      free(right_map);
       return false;
     }
   }
 
   free(left_positions);
   free(right_positions);
+  free(left_map);
+  free(right_map);
   if (ctx->stats != NULL) {
     add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
@@ -724,13 +770,14 @@ static bool shift_result_counts(uint32_t r, uint64_t *dst, const uint64_t *src, 
 }
 
 static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
-                                 qsop_treewidth_order_t order_policy, uint64_t count_modulus,
-                                 uint64_t *counts, qsop_solve_stats_t *stats,
-                                 qsop_solve_trace_t *trace, qsop_error_t *error) {
+                                 const uint32_t *order, uint32_t order_width,
+                                 uint64_t count_modulus, uint64_t *counts,
+                                 qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                 qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
-  if (qsop == NULL || counts == NULL) {
+  if (qsop == NULL || order == NULL || counts == NULL) {
     set_error(error, "internal error: null treewidth solve argument");
     return false;
   }
@@ -749,28 +796,13 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
       .trace = trace,
   };
 
-  uint32_t *order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*order));
-  if (order == NULL) {
-    set_error(error, "out of memory while allocating treewidth order");
-    return false;
-  }
-
-  uint32_t width = 0;
-  const uint64_t order_start = qsop_trace_begin(trace);
-  if (!make_treewidth_order(qsop, order_policy, order, &width, error)) {
-    free(order);
-    return false;
-  }
-  qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
-                          order_start);
   if (stats != NULL) {
-    stats->decomposition_width = width;
+    stats->decomposition_width = order_width;
   }
 
   tw_factor_list_t factors = {0};
   const uint64_t factors_start = qsop_trace_begin(trace);
   if (!build_initial_factors(qsop, &factors, error)) {
-    free(order);
     factor_list_free(&factors);
     return false;
   }
@@ -778,7 +810,6 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
 
   for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
     if (!eliminate_variable(&factors, order[pos], &ctx, error)) {
-      free(order);
       factor_list_free(&factors);
       return false;
     }
@@ -786,28 +817,42 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
 
   tw_factor_t final = {0};
   if (!multiply_remaining_factors(&factors, &ctx, &final, error)) {
-    free(order);
     factor_list_free(&factors);
     return false;
   }
   if (final.arity != 0) {
-    free(order);
     factor_list_free(&factors);
     factor_free(&final);
     set_error(error, "internal error: treewidth solve left an uneliminated factor");
     return false;
   }
   if (!shift_result_counts(qsop->r, counts, final.counts, qsop->constant, &ctx, error)) {
-    free(order);
     factor_list_free(&factors);
     factor_free(&final);
     return false;
   }
 
-  free(order);
   factor_list_free(&factors);
   factor_free(&final);
   return true;
+}
+
+static bool solve_treewidth_order_policy_once(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  const uint64_t order_start = qsop_trace_begin(trace);
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
+                          order_start);
+  const bool ok = solve_treewidth_once(qsop, max_bag_vars, order, width, count_modulus, counts,
+                                       stats, trace, error);
+  free(order);
+  return ok;
 }
 
 static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_vars,
@@ -851,7 +896,80 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
   for (size_t p = 0; p < nprimes; p++) {
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
-    if (!solve_treewidth_once(qsop, max_bag_vars, order_policy, primes[p],
+    if (!solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, primes[p],
+                                           &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                                           trace_for_prime, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                      &result->count_strings[residue], error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
+  return true;
+}
+
+static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                            const uint32_t *order, uint32_t order_width,
+                                            qsop_result_t **out, qsop_solve_stats_t *stats,
+                                            qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "treewidth CRT count table is too large");
+    return false;
+  }
+
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating treewidth CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating treewidth CRT result strings");
+    return false;
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!solve_treewidth_once(qsop, max_bag_vars, order, order_width, primes[p],
                               &all_counts[p * (size_t)qsop->r], stats_for_prime,
                               trace_for_prime, error)) {
       free(primes);
@@ -902,6 +1020,71 @@ bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_
                                                 error);
 }
 
+bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order_policy,
+                                uint32_t **order_out, uint32_t *width_out,
+                                qsop_error_t *error) {
+  if (qsop == NULL || order_out == NULL || width_out == NULL) {
+    set_error(error, "internal error: null treewidth order argument");
+    return false;
+  }
+  *order_out = NULL;
+  *width_out = 0;
+
+  uint32_t *order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*order));
+  if (order == NULL) {
+    set_error(error, "out of memory while allocating treewidth order");
+    return false;
+  }
+
+  uint32_t width = 0;
+  if (!make_treewidth_order(qsop, order_policy, order, &width, error)) {
+    free(order);
+    return false;
+  }
+
+  *order_out = order;
+  *width_out = width;
+  return true;
+}
+
+bool qsop_solve_treewidth_precomputed_order_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null result pointer");
+    return false;
+  }
+  *out = NULL;
+  if (qsop == NULL || order == NULL) {
+    set_error(error, "internal error: null treewidth precomputed-order solve argument");
+    return false;
+  }
+  if (qsop->nvars >= 64U) {
+    return solve_treewidth_precomputed_crt(qsop, max_bag_vars, order, order_width, out, stats,
+                                           trace, error);
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL) {
+    set_error(error, "out of memory while allocating treewidth result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  if (!solve_treewidth_once(qsop, max_bag_vars, order, order_width, 0, result->counts, stats,
+                            trace, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  *out = result;
+  return true;
+}
+
 bool qsop_solve_treewidth_order_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
     qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
@@ -930,8 +1113,8 @@ bool qsop_solve_treewidth_order_trace_stats(
     qsop_result_free(result);
     return false;
   }
-  if (!solve_treewidth_once(qsop, max_bag_vars, order_policy, 0, result->counts, stats, trace,
-                            error)) {
+  if (!solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, 0, result->counts,
+                                         stats, trace, error)) {
     qsop_result_free(result);
     return false;
   }
@@ -947,6 +1130,6 @@ bool qsop_solve_treewidth_order_count_mod_stats(
     set_error(error, "internal error: null treewidth modular solve argument");
     return false;
   }
-  return solve_treewidth_once(qsop, max_bag_vars, order_policy, count_modulus, counts, stats,
-                              trace, error);
+  return solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, count_modulus,
+                                           counts, stats, trace, error);
 }

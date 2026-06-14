@@ -1240,6 +1240,114 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_
   return true;
 }
 
+static uint32_t root_find(uint32_t *parent, uint32_t value) {
+  uint32_t root = value;
+  while (parent[root] != root) {
+    root = parent[root];
+  }
+  while (parent[value] != value) {
+    const uint32_t next = parent[value];
+    parent[value] = root;
+    value = next;
+  }
+  return root;
+}
+
+static void root_union(uint32_t *parent, uint32_t left, uint32_t right) {
+  const uint32_t left_root = root_find(parent, left);
+  const uint32_t right_root = root_find(parent, right);
+  if (left_root != right_root) {
+    parent[right_root] = left_root;
+  }
+}
+
+static bool support_component_count(const qsop_instance_t *qsop, uint32_t *out,
+                                    qsop_error_t *error) {
+  uint32_t *parent = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*parent));
+  if (parent == NULL) {
+    set_error(error, "out of memory while counting support components");
+    return false;
+  }
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    parent[v] = v;
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    root_union(parent, qsop->edge_u[e], qsop->edge_v[e]);
+  }
+
+  uint32_t components = 0;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (root_find(parent, v) == v) {
+      components++;
+    }
+  }
+  free(parent);
+  *out = components;
+  return true;
+}
+
+static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qsop_result_t **out,
+                                                qsop_solve_stats_t *stats,
+                                                qsop_solve_trace_t *trace,
+                                                bool *out_handled, qsop_error_t *error) {
+  *out_handled = false;
+  if (qsop->nvars < BRANCH_TREEWIDTH_DELEGATE_MIN_VARS || qsop->nedges == 0) {
+    return true;
+  }
+
+  uint32_t components = 0;
+  if (!support_component_count(qsop, &components, error)) {
+    return false;
+  }
+  if (components != 1U) {
+    return true;
+  }
+
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  const uint64_t stats_start = qsop_trace_begin(trace);
+  if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order, &width,
+                                  error)) {
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, "branch.root_width_probe", 0, width, stats_start);
+  if (width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    free(order);
+    return true;
+  }
+
+  qsop_result_t *result = NULL;
+  qsop_solve_stats_t delegated = {0};
+  const uint64_t solve_start = qsop_trace_begin(trace);
+  if (!qsop_solve_treewidth_precomputed_order_trace_stats(
+          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, &result, &delegated, trace,
+          error)) {
+    free(order);
+    return false;
+  }
+  free(order);
+  qsop_trace_emit_elapsed(trace, "branch.root_treewidth_delegate", 0, qsop->nvars, solve_start);
+
+  if (stats != NULL) {
+    *stats = delegated;
+    stats->search_nodes = 1;
+    stats->cache_misses = 1;
+    stats->leaf_assignments = assignment_count(qsop->nvars);
+    stats->treewidth_delegations = 1;
+    stats->rankwidth_delegations = 0;
+    stats->branch_rankwidth_skips = 1;
+    stats->max_residual_vars = qsop->nvars;
+    stats->max_residual_edges = qsop->nedges;
+    stats->max_residual_components = components;
+    stats->max_residual_largest_component = qsop->nvars;
+    stats->max_residual_min_fill_width = width;
+  }
+
+  *out = result;
+  *out_handled = true;
+  return true;
+}
+
 bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars, qsop_result_t **out,
                                 qsop_error_t *error) {
   return qsop_solve_residual_branch_stats(qsop, max_vars, out, NULL, error);
@@ -1281,6 +1389,13 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
               " variables; pass a larger --max-vars or use a future backend",
               qsop->nvars);
     return false;
+  }
+  bool root_handled = false;
+  if (!branch_try_root_treewidth_fast_path(qsop, out, stats, trace, &root_handled, error)) {
+    return false;
+  }
+  if (root_handled) {
+    return true;
   }
   if (qsop->nvars >= 64U) {
     return solve_branch_crt(qsop, heuristic, out, stats, trace, error);
