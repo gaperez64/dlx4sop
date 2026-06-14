@@ -109,7 +109,13 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             stats = entry["stats"]
             for stat in ("search_nodes", "leaf_assignments", "cache_hits", "cache_misses", "components"):
                 add_sum(stats, stat, stat_value(record, stat))
-            for stat in ("treewidth_delegations", "rankwidth_delegations"):
+            for stat in (
+                "treewidth_delegations",
+                "rankwidth_delegations",
+                "branch_fallthroughs",
+                "branch_treewidth_skips",
+                "branch_rankwidth_skips",
+            ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
                 "rankwidth_width",
@@ -120,6 +126,12 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "decomposition_width",
                 "max_table_entries",
                 "max_signature_entries",
+                "max_residual_vars",
+                "max_residual_edges",
+                "max_residual_components",
+                "max_residual_largest_component",
+                "max_residual_min_fill_width",
+                "max_residual_linear_cut_rank",
             ):
                 add_max(stats, stat, stat_value(record, stat))
             for stat in ("join_pairs", "join_signature_pairs"):
@@ -156,6 +168,27 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(
             f"delegations tw={stats.get('treewidth_delegations', 0)}, "
             f"rw={stats.get('rankwidth_delegations', 0)}"
+        )
+    if (
+        "branch_fallthroughs" in stats
+        or "branch_treewidth_skips" in stats
+        or "branch_rankwidth_skips" in stats
+    ):
+        parts.append(
+            f"branch policy fallthroughs={stats.get('branch_fallthroughs', 0)}, "
+            f"tw skips={stats.get('branch_treewidth_skips', 0)}, "
+            f"rw skips={stats.get('branch_rankwidth_skips', 0)}"
+        )
+    if "max_residual_min_fill_width" in stats or "max_residual_linear_cut_rank" in stats:
+        parts.append(
+            f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
+            f"cut-rank={stats.get('max_residual_linear_cut_rank', 0)}"
+        )
+    if "max_residual_vars" in stats or "max_residual_components" in stats:
+        parts.append(
+            f"max residual vars={stats.get('max_residual_vars', 0)}, "
+            f"components={stats.get('max_residual_components', 0)}, "
+            f"largest={stats.get('max_residual_largest_component', 0)}"
         )
     return "; ".join(parts) if parts else ""
 

@@ -65,6 +65,15 @@ typedef struct branch_search_stats {
   uint64_t join_signature_pairs;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
+  uint64_t branch_fallthroughs;
+  uint64_t branch_treewidth_skips;
+  uint64_t branch_rankwidth_skips;
+  uint32_t max_residual_vars;
+  uint32_t max_residual_edges;
+  uint32_t max_residual_components;
+  uint32_t max_residual_largest_component;
+  uint32_t max_residual_min_fill_width;
+  uint32_t max_residual_linear_cut_rank;
   uint64_t *work;
   uint64_t *tmp;
   residual_cache_t cache;
@@ -76,7 +85,7 @@ typedef struct branch_search_stats {
 } branch_search_stats_t;
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 32U
-#define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 10U
+#define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 5U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
@@ -98,6 +107,72 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   } else {
     *dst += value;
   }
+}
+
+static void max_u32(uint32_t *dst, uint32_t value) {
+  if (value > *dst) {
+    *dst = value;
+  }
+}
+
+static void branch_trace_event(branch_search_stats_t *stats, const char *phase, uint64_t items) {
+  qsop_trace_emit(stats->trace, phase, stats->depth, items, 0);
+}
+
+static void note_residual_shape(branch_search_stats_t *stats, const qsop_residual_t *residual) {
+  max_u32(&stats->max_residual_vars, qsop_residual_active_vars(residual));
+  max_u32(&stats->max_residual_edges, qsop_residual_active_edges(residual));
+}
+
+static bool note_component_shape(branch_search_stats_t *stats, const qsop_residual_t *residual,
+                                 const uint32_t *component, uint32_t ncomponents,
+                                 qsop_error_t *error) {
+  note_residual_shape(stats, residual);
+  max_u32(&stats->max_residual_components, ncomponents);
+  if (ncomponents <= 1U) {
+    max_u32(&stats->max_residual_largest_component, qsop_residual_active_vars(residual));
+    return true;
+  }
+
+  uint32_t *sizes = calloc(ncomponents, sizeof(*sizes));
+  if (sizes == NULL) {
+    set_error(error, "out of memory while recording residual component shape");
+    return false;
+  }
+  for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
+    if (!qsop_residual_var_active(residual, v)) {
+      continue;
+    }
+    if (component[v] >= ncomponents) {
+      free(sizes);
+      set_error(error, "internal error: residual component index is out of range");
+      return false;
+    }
+    sizes[component[v]]++;
+  }
+  for (uint32_t c = 0; c < ncomponents; c++) {
+    max_u32(&stats->max_residual_largest_component, sizes[c]);
+  }
+  free(sizes);
+  return true;
+}
+
+static void note_width_probe(branch_search_stats_t *stats, const qsop_stats_t *sub_stats) {
+  if (!sub_stats->width_diagnostics_available) {
+    return;
+  }
+  max_u32(&stats->max_residual_min_fill_width, sub_stats->min_fill_width);
+  max_u32(&stats->max_residual_linear_cut_rank, sub_stats->linear_cut_rank);
+}
+
+static void note_treewidth_skip(branch_search_stats_t *stats, const char *phase, uint64_t items) {
+  stats->branch_treewidth_skips++;
+  branch_trace_event(stats, phase, items);
+}
+
+static void note_rankwidth_skip(branch_search_stats_t *stats, const char *phase, uint64_t items) {
+  stats->branch_rankwidth_skips++;
+  branch_trace_event(stats, phase, items);
 }
 
 static uint64_t assignment_count(uint32_t nvars) {
@@ -498,6 +573,9 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
   add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
   add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
+  add_saturating_u64(&stats->branch_fallthroughs, delegated->branch_fallthroughs);
+  add_saturating_u64(&stats->branch_treewidth_skips, delegated->branch_treewidth_skips);
+  add_saturating_u64(&stats->branch_rankwidth_skips, delegated->branch_rankwidth_skips);
   if (delegated->max_table_entries > stats->max_table_entries) {
     stats->max_table_entries = delegated->max_table_entries;
   }
@@ -507,6 +585,12 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   if (delegated->decomposition_width > stats->decomposition_width) {
     stats->decomposition_width = delegated->decomposition_width;
   }
+  max_u32(&stats->max_residual_vars, delegated->max_residual_vars);
+  max_u32(&stats->max_residual_edges, delegated->max_residual_edges);
+  max_u32(&stats->max_residual_components, delegated->max_residual_components);
+  max_u32(&stats->max_residual_largest_component, delegated->max_residual_largest_component);
+  max_u32(&stats->max_residual_min_fill_width, delegated->max_residual_min_fill_width);
+  max_u32(&stats->max_residual_linear_cut_rank, delegated->max_residual_linear_cut_rank);
 }
 
 static void merge_child_solve_stats(branch_search_stats_t *stats,
@@ -521,6 +605,9 @@ static void merge_child_solve_stats(branch_search_stats_t *stats,
   add_saturating_u64(&stats->join_signature_pairs, child->join_signature_pairs);
   add_saturating_u64(&stats->treewidth_delegations, child->treewidth_delegations);
   add_saturating_u64(&stats->rankwidth_delegations, child->rankwidth_delegations);
+  add_saturating_u64(&stats->branch_fallthroughs, child->branch_fallthroughs);
+  add_saturating_u64(&stats->branch_treewidth_skips, child->branch_treewidth_skips);
+  add_saturating_u64(&stats->branch_rankwidth_skips, child->branch_rankwidth_skips);
   if (child->max_table_entries > stats->max_table_entries) {
     stats->max_table_entries = child->max_table_entries;
   }
@@ -530,6 +617,12 @@ static void merge_child_solve_stats(branch_search_stats_t *stats,
   if (child->decomposition_width > stats->decomposition_width) {
     stats->decomposition_width = child->decomposition_width;
   }
+  max_u32(&stats->max_residual_vars, child->max_residual_vars);
+  max_u32(&stats->max_residual_edges, child->max_residual_edges);
+  max_u32(&stats->max_residual_components, child->max_residual_components);
+  max_u32(&stats->max_residual_largest_component, child->max_residual_largest_component);
+  max_u32(&stats->max_residual_min_fill_width, child->max_residual_min_fill_width);
+  max_u32(&stats->max_residual_linear_cut_rank, child->max_residual_linear_cut_rank);
 }
 
 static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
@@ -549,10 +642,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   if (treewidth_available &&
       treewidth_width <=
           BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN) {
+    note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_preferred", treewidth_width);
     return true;
   }
   if (treewidth_available && linear_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
       linear_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
+    note_rankwidth_skip(stats, "branch.rankwidth_skip_linear_proxy", linear_cut_rank);
     return true;
   }
 
@@ -576,6 +671,10 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
       rankwidth_should_override_treewidth(treewidth_width, rankwidth_width);
   if (!use_rankwidth || rankwidth_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+    note_rankwidth_skip(stats,
+                        !use_rankwidth ? "branch.rankwidth_skip_policy"
+                                       : "branch.rankwidth_skip_width",
+                        rankwidth_width);
     qsop_rankwidth_decomposition_free(decomposition);
     return true;
   }
@@ -625,6 +724,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     free_subinstance(&sub);
     return false;
   }
+  note_width_probe(stats, &sub_stats);
   qsop_trace_emit_elapsed(stats->trace, "branch.width_probe", stats->depth,
                           sub_stats.min_fill_width, stats_start);
 
@@ -644,6 +744,11 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
 
   if (!sub_stats.width_diagnostics_available ||
       sub_stats.min_fill_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    note_treewidth_skip(
+        stats,
+        sub_stats.width_diagnostics_available ? "branch.treewidth_skip_width"
+                                              : "branch.treewidth_skip_unavailable",
+        sub_stats.width_diagnostics_available ? sub_stats.min_fill_width : 0);
     free_subinstance(&sub);
     return true;
   }
@@ -731,6 +836,15 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->join_signature_pairs = search.join_signature_pairs;
     stats->treewidth_delegations = search.treewidth_delegations;
     stats->rankwidth_delegations = search.rankwidth_delegations;
+    stats->branch_fallthroughs = search.branch_fallthroughs;
+    stats->branch_treewidth_skips = search.branch_treewidth_skips;
+    stats->branch_rankwidth_skips = search.branch_rankwidth_skips;
+    stats->max_residual_vars = search.max_residual_vars;
+    stats->max_residual_edges = search.max_residual_edges;
+    stats->max_residual_components = search.max_residual_components;
+    stats->max_residual_largest_component = search.max_residual_largest_component;
+    stats->max_residual_min_fill_width = search.max_residual_min_fill_width;
+    stats->max_residual_linear_cut_rank = search.max_residual_linear_cut_rank;
     stats->decomposition_width = search.decomposition_width;
   }
 
@@ -760,6 +874,12 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   uint32_t ncomponents = 0;
   const uint64_t split_start = qsop_trace_begin(stats->trace);
   if (!qsop_residual_active_components(residual, component, &ncomponents, error)) {
+    free(component);
+    free(acc);
+    free(tmp);
+    return false;
+  }
+  if (!note_component_shape(stats, residual, component, ncomponents, error)) {
     free(component);
     free(acc);
     free(tmp);
@@ -982,6 +1102,9 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
   if (delegated) {
     return true;
   }
+
+  stats->branch_fallthroughs++;
+  branch_trace_event(stats, "branch.fallthrough", qsop_residual_active_vars(residual));
 
   uint32_t v = 0;
   const uint64_t select_start = qsop_trace_begin(stats->trace);

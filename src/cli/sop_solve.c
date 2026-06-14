@@ -156,9 +156,23 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
-    if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0) {
+    if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0 ||
+        stats->branch_fallthroughs != 0 || stats->branch_treewidth_skips != 0 ||
+        stats->branch_rankwidth_skips != 0) {
       fprintf(file, "treewidth_delegations: %" PRIu64 "\n", stats->treewidth_delegations);
       fprintf(file, "rankwidth_delegations: %" PRIu64 "\n", stats->rankwidth_delegations);
+      fprintf(file, "branch_fallthroughs: %" PRIu64 "\n", stats->branch_fallthroughs);
+      fprintf(file, "branch_treewidth_skips: %" PRIu64 "\n", stats->branch_treewidth_skips);
+      fprintf(file, "branch_rankwidth_skips: %" PRIu64 "\n", stats->branch_rankwidth_skips);
+      fprintf(file, "max_residual_vars: %" PRIu32 "\n", stats->max_residual_vars);
+      fprintf(file, "max_residual_edges: %" PRIu32 "\n", stats->max_residual_edges);
+      fprintf(file, "max_residual_components: %" PRIu32 "\n", stats->max_residual_components);
+      fprintf(file, "max_residual_largest_component: %" PRIu32 "\n",
+              stats->max_residual_largest_component);
+      fprintf(file, "max_residual_min_fill_width: %" PRIu32 "\n",
+              stats->max_residual_min_fill_width);
+      fprintf(file, "max_residual_linear_cut_rank: %" PRIu32 "\n",
+              stats->max_residual_linear_cut_rank);
       fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
       fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
       fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);

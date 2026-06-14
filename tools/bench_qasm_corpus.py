@@ -52,6 +52,15 @@ TOP_METRICS = (
     "join_signature_pairs",
     "treewidth_delegations",
     "rankwidth_delegations",
+    "branch_fallthroughs",
+    "branch_treewidth_skips",
+    "branch_rankwidth_skips",
+    "max_residual_vars",
+    "max_residual_edges",
+    "max_residual_components",
+    "max_residual_largest_component",
+    "max_residual_min_fill_width",
+    "max_residual_linear_cut_rank",
 )
 CSV_FIELDS = [
     "case",
@@ -96,6 +105,15 @@ CSV_FIELDS = [
     "join_signature_pairs",
     "treewidth_delegations",
     "rankwidth_delegations",
+    "branch_fallthroughs",
+    "branch_treewidth_skips",
+    "branch_rankwidth_skips",
+    "max_residual_vars",
+    "max_residual_edges",
+    "max_residual_components",
+    "max_residual_largest_component",
+    "max_residual_min_fill_width",
+    "max_residual_linear_cut_rank",
     "qasm_sha256",
     "qsop_sha256",
     "trace_summary",
@@ -261,6 +279,12 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "treewidth_max_table_entries",
         "max_signature_entries",
         "rankwidth_max_signature_entries",
+        "max_residual_vars",
+        "max_residual_edges",
+        "max_residual_components",
+        "max_residual_largest_component",
+        "max_residual_min_fill_width",
+        "max_residual_linear_cut_rank",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -552,6 +576,15 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "join_signature_pairs",
             "treewidth_delegations",
             "rankwidth_delegations",
+            "branch_fallthroughs",
+            "branch_treewidth_skips",
+            "branch_rankwidth_skips",
+            "max_residual_vars",
+            "max_residual_edges",
+            "max_residual_components",
+            "max_residual_largest_component",
+            "max_residual_min_fill_width",
+            "max_residual_linear_cut_rank",
         ):
             row[key] = record.get(key, stats.get(key, ""))
         row["trace_summary"] = trace_summary_text(record["trace"])
@@ -612,6 +645,21 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += (
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
                     f"{stats.get('rankwidth_delegations', 0)}"
+                )
+            if (
+                "branch_fallthroughs" in stats
+                or "branch_treewidth_skips" in stats
+                or "branch_rankwidth_skips" in stats
+            ):
+                line += (
+                    f" branch_policy=fallthroughs:{stats.get('branch_fallthroughs', 0)}"
+                    f",tw_skips:{stats.get('branch_treewidth_skips', 0)}"
+                    f",rw_skips:{stats.get('branch_rankwidth_skips', 0)}"
+                )
+            if "max_residual_min_fill_width" in stats or "max_residual_linear_cut_rank" in stats:
+                line += (
+                    f" residual_widths=tw:{stats.get('max_residual_min_fill_width', 0)}"
+                    f",cutrank:{stats.get('max_residual_linear_cut_rank', 0)}"
                 )
             trace_phase = dominant_trace_phase(record)
             if trace_phase:
@@ -732,6 +780,8 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
         ("largest_rankwidth_table", "rankwidth_max_table_entries"),
         ("largest_treewidth_width", "treewidth_width"),
         ("largest_treewidth_table", "treewidth_max_table_entries"),
+        ("largest_residual_min_fill_width", "max_residual_min_fill_width"),
+        ("largest_residual_linear_cut_rank", "max_residual_linear_cut_rank"),
     ]
     for label, metric in metrics:
         candidates = [record for record in records if metric_value(record, metric) is not None]
@@ -803,6 +853,15 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "join_signature_pairs",
             "treewidth_delegations",
             "rankwidth_delegations",
+            "branch_fallthroughs",
+            "branch_treewidth_skips",
+            "branch_rankwidth_skips",
+            "max_residual_vars",
+            "max_residual_edges",
+            "max_residual_components",
+            "max_residual_largest_component",
+            "max_residual_min_fill_width",
+            "max_residual_linear_cut_rank",
         ):
             if key in stats:
                 print(f"  {key}: {stats[key]}", file=file)

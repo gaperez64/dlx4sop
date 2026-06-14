@@ -27,6 +27,15 @@ typedef struct qsop_solve_stats {
   uint64_t join_signature_pairs;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
+  uint64_t branch_fallthroughs;
+  uint64_t branch_treewidth_skips;
+  uint64_t branch_rankwidth_skips;
+  uint32_t max_residual_vars;
+  uint32_t max_residual_edges;
+  uint32_t max_residual_components;
+  uint32_t max_residual_largest_component;
+  uint32_t max_residual_min_fill_width;
+  uint32_t max_residual_linear_cut_rank;
   uint32_t components;
   uint32_t decomposition_width;
 } qsop_solve_stats_t;

@@ -429,6 +429,16 @@ static void factor_list_remove_at(tw_factor_list_t *list, size_t index) {
   }
 }
 
+static tw_factor_t factor_list_take_at(tw_factor_list_t *list, size_t index) {
+  tw_factor_t taken = list->items[index];
+  list->len--;
+  if (index != list->len) {
+    list->items[index] = list->items[list->len];
+  }
+  list->items[list->len] = (tw_factor_t){0};
+  return taken;
+}
+
 static void factor_list_free(tw_factor_list_t *list) {
   if (list == NULL) {
     return;
@@ -635,14 +645,16 @@ static bool build_initial_factors(const qsop_instance_t *qsop, tw_factor_list_t 
 static bool eliminate_variable(tw_factor_list_t *list, uint32_t var, const tw_context_t *ctx,
                                qsop_error_t *error) {
   tw_factor_t combined = {0};
-  if (!factor_identity(ctx->r, &combined, error)) {
-    return false;
-  }
-
   bool collected = false;
   for (size_t i = 0; i < list->len;) {
     if (!factor_contains_var(&list->items[i], var)) {
       i++;
+      continue;
+    }
+
+    if (!collected) {
+      combined = factor_list_take_at(list, i);
+      collected = true;
       continue;
     }
 
@@ -658,7 +670,6 @@ static bool eliminate_variable(tw_factor_list_t *list, uint32_t var, const tw_co
   }
 
   if (!collected) {
-    factor_free(&combined);
     set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
@@ -678,18 +689,20 @@ static bool eliminate_variable(tw_factor_list_t *list, uint32_t var, const tw_co
 
 static bool multiply_remaining_factors(tw_factor_list_t *list, const tw_context_t *ctx,
                                        tw_factor_t *out, qsop_error_t *error) {
-  if (!factor_identity(ctx->r, out, error)) {
-    return false;
+  if (list->len == 0) {
+    return factor_identity(ctx->r, out, error);
   }
 
-  for (size_t i = 0; i < list->len; i++) {
+  *out = factor_list_take_at(list, 0);
+  while (list->len != 0) {
     tw_factor_t next = {0};
-    if (!factor_multiply(out, &list->items[i], ctx, &next, error)) {
+    if (!factor_multiply(out, &list->items[0], ctx, &next, error)) {
       factor_free(out);
       return false;
     }
     factor_free(out);
     *out = next;
+    factor_list_remove_at(list, 0);
   }
   return true;
 }

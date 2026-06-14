@@ -1273,12 +1273,34 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
   }
 
   if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL) {
-    const uint32_t selected_width = decomposition_width(decomposition, adj, error);
+    uint32_t selected_width = decomposition_width(decomposition, adj, error);
     if (selected_width == UINT32_MAX) {
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
+
+    qsop_rankwidth_decomposition_t *min_fill = NULL;
+    if (!qsop_rankwidth_decomposition_generate(qsop, QSOP_RANKWIDTH_GENERATOR_MIN_FILL, &min_fill,
+                                               error)) {
+      free(adj);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    const uint32_t min_fill_width = decomposition_width(min_fill, adj, error);
+    if (min_fill_width == UINT32_MAX) {
+      free(adj);
+      qsop_rankwidth_decomposition_free(min_fill);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    if (min_fill_width < selected_width) {
+      qsop_rankwidth_decomposition_free(decomposition);
+      decomposition = min_fill;
+      min_fill = NULL;
+      selected_width = min_fill_width;
+    }
+    qsop_rankwidth_decomposition_free(min_fill);
 
     qsop_rankwidth_decomposition_t *linear = NULL;
     if (!make_linear_generated_decomposition(qsop, &linear, error)) {

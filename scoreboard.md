@@ -88,19 +88,20 @@ counts are mostly a saturation/work signal, not a useful exact aggregate.
 | 65-128 | `treewidth --treewidth-order min-fill` | 130 / 130 | 669.4 ms | width 7; max table 2048; 293,297 join pairs |
 | 65-128 | `treewidth --treewidth-order min-degree` | 130 / 130 | 676.5 ms | width 8; max table 4096; 293,423 join pairs |
 | 65-128 | `branch --branch-heuristic split` | 130 / 130 | 1.33 s | 1,753 nodes; cache 0 / 1,753; delegations tw=121, rw=0 |
-| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 112 / 112 | 11.37 s | tw width 14; max table 262,144; 7,168,072 join pairs |
+| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 112 / 112 | 11.06 s | tw width 14; max table 262,144; 7,044,136 join pairs |
+| 129-256 | `branch --branch-heuristic split` | 112 / 112 | 17.37 s | 6,566 nodes; cache 0 / 6,566; delegations tw=115, rw=0; fallthroughs=1,888; max residual tw=14; max residual cut-rank=80 |
 
 Current widened-tier signal: direct treewidth is still the best default solver.
-Hybrid branch now completes the full 65-128 tier by handing most large residuals
-to treewidth, but it is slower than calling treewidth directly. The full 129-256
-treewidth row completes; a full branch row for that tier is not listed yet
-because hard cases still fall through to branch search and need tighter
-pre-solve policy before that is a useful headline number.
+Hybrid branch now completes the full 65-128 and 129-256 tiers by handing large
+residuals to treewidth, but it is slower than calling treewidth directly. On the
+129-256 run there are no treewidth policy skips; the remaining branch overhead
+is width probing plus small residual fallthroughs after decomposition.
 
 ## Rankwidth Diagnostics
 
 The rankwidth generator now compares the generated `min-fill-cut` decomposition
-against a plain linear candidate and keeps the lower support-width candidate.
+against a balanced min-fill candidate and a plain linear candidate, keeping the
+lowest support-width candidate.
 This is a support-graph proxy, not a labelled-width certificate, but it fixed
 the known 33-64 labelled outlier and is also used as the branch rankwidth
 handoff candidate.
@@ -138,7 +139,7 @@ the largest traced kernel because width reaches 14.
 | 65-128 | `min-fill-max-degree` | 668.7 ms | 71.4% | 24.9% | 3.7% |
 | 65-128 | `min-fill` | 669.4 ms | 71.0% | 25.3% | 3.6% |
 | 65-128 | `min-degree` | 676.5 ms | 70.8% | 25.5% | 3.6% |
-| 129-256 | `min-fill-max-degree` | 11.37 s | 31.8% | 66.2% | 2.0% |
+| 129-256 | `min-fill-max-degree` | 11.06 s | 33.0% | 65.1% | 1.8% |
 
 Treewidth optimization now has two regimes: cached or incremental order scoring
 for small and medium tiers, and faster dense-table kernels for the 129-256 tier.
@@ -165,8 +166,8 @@ materializes full matrices.
 
 The importer-fed corpus is now large enough to expose backend separation.
 Treewidth is the best current solver configuration and handles the promoted
-0-32, 33-64, 65-128, and 129-256 tiers. Hybrid branch is now a decomposition
-and DP-dispatch backend rather than a pure enumerator, but direct treewidth is
-still faster on these tiers. Rankwidth handoff support exists and is tested;
-the remaining rankwidth work is better decomposition generation and labelled
-width prediction.
+0-32, 33-64, 65-128, and 129-256 tiers. Hybrid branch now also completes those
+widened tiers as a decomposition and DP-dispatch backend rather than a pure
+enumerator, but direct treewidth is still faster. Rankwidth handoff support
+exists and is tested; the remaining rankwidth work is better decomposition
+generation and labelled-width prediction.
