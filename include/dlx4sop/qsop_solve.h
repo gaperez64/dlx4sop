@@ -176,6 +176,10 @@ bool qsop_rankwidth_decomposition_widths(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error);
 
+bool qsop_rankwidth_decomposition_forecast(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint64_t *max_table_entries_out, uint64_t *join_pairs_out, qsop_error_t *error);
+
 void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposition);
 
 bool qsop_solve_rankwidth_count_table_mod_stats(

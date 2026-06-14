@@ -693,13 +693,20 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, labelled_width,
                           generate_start);
   branch_trace_event(stats, "branch.rankwidth_support_probe", support_width);
-  branch_trace_event(stats, "branch.rankwidth_table_forecast",
-                     binary_assignment_forecast(labelled_width));
+  uint64_t rankwidth_table_forecast =
+      saturating_mul_u64(binary_assignment_forecast(labelled_width), sub->r);
+  uint64_t rankwidth_join_pair_forecast = 0;
+  if (!qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table_forecast,
+                                             &rankwidth_join_pair_forecast, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
+  branch_trace_event(stats, "branch.rankwidth_table_forecast", rankwidth_table_forecast);
+  branch_trace_event(stats, "branch.rankwidth_join_pair_forecast", rankwidth_join_pair_forecast);
 
   const bool rankwidth_table_forecast_wins =
       !treewidth_available ||
-      binary_assignment_forecast(labelled_width) <
-          treewidth_table_forecast(treewidth_width, sub->r);
+      rankwidth_table_forecast < treewidth_table_forecast(treewidth_width, sub->r);
   const bool use_rankwidth =
       rankwidth_table_forecast_wins &&
       (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||

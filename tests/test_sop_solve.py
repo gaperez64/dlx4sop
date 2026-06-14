@@ -307,6 +307,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "branch.rankwidth_probe",
         "branch.rankwidth_support_probe",
         "branch.rankwidth_table_forecast",
+        "branch.rankwidth_join_pair_forecast",
         "branch.treewidth_table_forecast",
         "branch.rankwidth_delegate",
     }

@@ -1670,6 +1670,133 @@ bool qsop_rankwidth_decomposition_widths(
   return true;
 }
 
+static uint64_t saturating_add_u64(uint64_t left, uint64_t right) {
+  return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
+  if (left != 0 && right > UINT64_MAX / left) {
+    return UINT64_MAX;
+  }
+  return left * right;
+}
+
+static uint64_t binary_signature_bound(uint32_t width) {
+  if (width >= 64U) {
+    return UINT64_MAX;
+  }
+  return UINT64_C(1) << width;
+}
+
+static uint64_t min_u64(uint64_t left, uint64_t right) {
+  return left < right ? left : right;
+}
+
+bool qsop_rankwidth_decomposition_forecast(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint64_t *max_table_entries_out, uint64_t *join_pairs_out, qsop_error_t *error) {
+  if (qsop == NULL || decomposition == NULL ||
+      (max_table_entries_out == NULL && join_pairs_out == NULL)) {
+    set_error(error, "internal error: null rankwidth forecast argument");
+    return false;
+  }
+  if (decomposition->nvars != qsop->nvars) {
+    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    return false;
+  }
+
+  uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+  uint32_t *coeffs = NULL;
+  uint64_t *all = NULL;
+  uint64_t *right = NULL;
+  uint64_t *signature_counts = NULL;
+  if (adj == NULL) {
+    return false;
+  }
+  if (!qsop_is_sign_edge_instance(qsop)) {
+    coeffs = coefficient_matrix(qsop, error);
+    if (coeffs == NULL) {
+      free(adj);
+      return false;
+    }
+  }
+
+  all = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*all));
+  right = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*right));
+  signature_counts =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*signature_counts));
+  if (all == NULL || right == NULL || signature_counts == NULL) {
+    free(adj);
+    free(coeffs);
+    free(all);
+    free(right);
+    free(signature_counts);
+    set_error(error, "out of memory while forecasting rankwidth table pressure");
+    return false;
+  }
+  for (uint32_t v = 0; v < decomposition->nvars; v++) {
+    qsop_bitset_set(all, v);
+  }
+
+  uint64_t max_table_entries = 0;
+  uint64_t join_pairs = 0;
+  bool ok = true;
+  for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
+    const uint32_t node_id = decomposition->postorder[i];
+    const rw_node_t *node = &decomposition->nodes[node_id];
+
+    uint64_t signature_cap = 1;
+    if (node_id != decomposition->root) {
+      const uint64_t *left = node_vars_const(decomposition, node_id);
+      qsop_bitset_copy(right, all, decomposition->words);
+      qsop_bitset_and_not(right, left, decomposition->words);
+      uint32_t width = 0;
+      if (coeffs != NULL) {
+        width = labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+      } else {
+        width = cut_rank_bitsets(decomposition->nvars, adj, left, right,
+                                 decomposition->words, error);
+      }
+      if (width == UINT32_MAX) {
+        ok = false;
+        break;
+      }
+      signature_cap = binary_signature_bound(width);
+    }
+
+    uint64_t signatures = 0;
+    if (node->kind == RW_NODE_LEAF) {
+      signatures = min_u64(2U, signature_cap);
+    } else {
+      const uint64_t pair_count =
+          saturating_mul_u64(signature_counts[node->left], signature_counts[node->right]);
+      join_pairs = saturating_add_u64(join_pairs, pair_count);
+      signatures = min_u64(pair_count, signature_cap);
+    }
+    signature_counts[node_id] = signatures;
+    const uint64_t table_entries = saturating_mul_u64(signatures, qsop->r);
+    if (table_entries > max_table_entries) {
+      max_table_entries = table_entries;
+    }
+  }
+
+  free(adj);
+  free(coeffs);
+  free(all);
+  free(right);
+  free(signature_counts);
+  if (!ok) {
+    return false;
+  }
+  if (max_table_entries_out != NULL) {
+    *max_table_entries_out = max_table_entries;
+  }
+  if (join_pairs_out != NULL) {
+    *join_pairs_out = join_pairs;
+  }
+  return true;
+}
+
 static uint32_t cross_parity_bitsets(uint32_t nvars, const uint64_t *adj,
                                      const uint64_t *left_assignment,
                                      const uint64_t *right_assignment, size_t words) {
