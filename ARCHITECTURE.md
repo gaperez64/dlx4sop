@@ -89,7 +89,9 @@ Implemented exact backends:
 - `bruteforce`: enumerates all assignments and is used as the small-instance
   oracle.
 - `components`: splits the quadratic support graph into connected components,
-  solves components independently, and convolves residue histograms.
+  solves components independently, and convolves residue histograms. It is the
+  default backend and should share the same large-count result contract as
+  branch and rankwidth.
 - `branch`: mutates a reversible residual state, branches on active variables,
   memoizes repeated residuals, splits residual components, and collapses
   edge-free unary tails. It uses fixed-width counts when safe and a CRT-backed
@@ -107,7 +109,8 @@ count-table mode. Brute force remains a small-instance oracle with a hard
 variable guard.
 
 Current branch variable-ordering policies are heuristics, not decomposition
-solvers:
+solvers. A treewidth backend should be implemented as a separate decomposition
+solver, not by reusing the branch heuristic as a backend:
 
 - `split`: default residual component split estimate;
 - `treewidth`: min-fill estimate on the active graph;

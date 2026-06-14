@@ -8,18 +8,16 @@ implementation notes belong in commit history, not here.
 
 The current performance roadmap is:
 
-1. Rerun importer-fed local and external corpora with the widened rankwidth
-   backend, especially cases with large cut signatures.
-2. Improve decomposition quality before adding more branch-local heuristics.
-3. Compare branch heuristics only when traces show the cache and split machinery
+1. Make the default components backend safe for large exact histograms.
+2. Add a baseline treewidth-decomposition backend.
+3. Improve generated rankwidth/treewidth decompositions from corpus evidence.
+4. Compare branch heuristics only when traces show the cache and split machinery
    is being exercised on a representative corpus.
-4. Add incremental residual hashing if full-state hashing appears in hot traces.
-5. Consider dancing-cells-style linked mutation only if active-edge traversal or
+5. Add incremental residual hashing if full-state hashing appears in hot traces.
+6. Consider dancing-cells-style linked mutation only if active-edge traversal or
    undo costs dominate.
-6. Add specialized residue kernels and CPU dispatch after solver shape is
+7. Add specialized residue kernels and CPU dispatch after solver shape is
    stable.
-7. Refine labelled rankwidth after corpus runs identify decomposition or table
-   growth bottlenecks.
 
 ## Reversible Mutation And Dancing Cells
 
@@ -57,11 +55,13 @@ fingerprint before it is made more complicated.
 ## Width Heuristics
 
 The implemented branch heuristics are ordering policies. They do not replace a
-decomposition backend.
+decomposition backend. The next solver backend should use a tree decomposition
+with bag-local dynamic programming, separate from the branch heuristic named
+`treewidth`.
 
 Near-term experiments should focus on:
 
-- decomposition builders for sign-only and labelled rankwidth DP;
+- decomposition builders for sign-only and labelled rankwidth/treewidth DP;
 - min-fill and cut-rank split choices;
 - trace summaries that report width, table sizes, join counts, cache hits, and
   wall time on the same manifest;
@@ -81,6 +81,7 @@ another exact multiword representation when the final histogram cannot fit.
 
 Future arithmetic work:
 
+- CRT-safe component convolution for the default backend;
 - specialize common moduli such as `2`, `4`, `8`, `16`, and `24`;
 - keep count-table and Fourier modes behind the same result contract;
 - consider multi-prime Fourier only if it beats count-table plus CRT on real
