@@ -1171,6 +1171,10 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     set_error(error, "rankwidth decomposition generation requires at least one variable");
     return false;
   }
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT &&
+      !qsop_is_sign_edge_instance(qsop)) {
+    return make_left_deep_generated_decomposition(qsop, out, error);
+  }
 
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
   uint32_t *leaf_nodes = calloc(qsop->nvars, sizeof(*leaf_nodes));

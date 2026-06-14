@@ -419,7 +419,10 @@ def parse_solver_stats(text: str) -> dict[str, int | str]:
     stats: dict[str, int | str] = {}
     for line in text.splitlines():
         key, value = line.split(": ", 1)
-        stats[key] = value if key == "backend" else int(value)
+        try:
+            stats[key] = int(value)
+        except ValueError:
+            stats[key] = value
     return stats
 
 
@@ -900,6 +903,62 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "join_signature_pairs: 4" not in labelled_stats.stdout
     ):
         raise AssertionError(f"labelled rankwidth stats failed\n{labelled_stats.stdout}\n{labelled_stats.stderr}")
+
+    labelled_left_deep_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "left-deep",
+            str(labelled),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    labelled_min_fill_cut_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "min-fill-cut",
+            str(labelled),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if labelled_left_deep_stats.returncode != 0 or labelled_min_fill_cut_stats.returncode != 0:
+        raise AssertionError(
+            f"labelled generated rankwidth stats failed\n"
+            f"left-deep:\n{labelled_left_deep_stats.stdout}\n{labelled_left_deep_stats.stderr}\n"
+            f"min-fill-cut:\n{labelled_min_fill_cut_stats.stdout}\n{labelled_min_fill_cut_stats.stderr}"
+        )
+    left_stats = parse_solver_stats(labelled_left_deep_stats.stdout)
+    cut_stats = parse_solver_stats(labelled_min_fill_cut_stats.stdout)
+    for key in (
+        "decomposition_width",
+        "table_entries",
+        "max_table_entries",
+        "signature_entries",
+        "max_signature_entries",
+        "join_pairs",
+        "join_signature_pairs",
+    ):
+        if left_stats[key] != cut_stats[key]:
+            raise AssertionError(
+                f"labelled min-fill-cut should use the left-deep fallback for {key}\n"
+                f"left-deep:\n{labelled_left_deep_stats.stdout}\n"
+                f"min-fill-cut:\n{labelled_min_fill_cut_stats.stdout}"
+            )
 
     labelled_trace = subprocess.run(
         [
