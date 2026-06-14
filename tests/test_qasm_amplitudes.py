@@ -67,7 +67,7 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
 
         gate, rest = statement.split(None, 1)
         params: list[float] = []
-        for prefix in ("u3", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz"):
+        for prefix in ("u3", "u", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz"):
             if gate.startswith(f"{prefix}(") and gate.endswith(")"):
                 params = [
                     parse_angle(part.strip()) for part in gate[len(prefix) + 1 : -1].split(",")
@@ -220,7 +220,7 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
 
     for gate, operands, params in gates:
         angle = params[0] if params else 0.0
-        if gate == "u3":
+        if gate in ("u3", "u"):
             matrix = u3_matrix(params[0], params[1], params[2])
             for qubit in operand_qubits(operands[0], regs):
                 apply_one(state, nqubits, qubit, matrix)
@@ -445,7 +445,7 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             include "qelib1.inc";
             qreg q[2];
             u2(pi/4,-pi/2) q[0];
-            u3(pi/4,pi/4,pi/2) q[1];
+            u(pi/4,pi/4,pi/2) q[1];
             cx q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("10", "01"), ("11", "10")],

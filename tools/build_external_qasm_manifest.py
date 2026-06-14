@@ -103,16 +103,23 @@ def parse_csv_operands(text: str) -> list[str]:
     return [chunk.strip() for chunk in text.split(",") if chunk.strip()]
 
 
-def parse_gate_definition(header: str) -> tuple[str, list[str]]:
+def split_name_params(text: str) -> tuple[str, list[str]]:
+    if "(" not in text:
+        return text, []
+    if not text.endswith(")"):
+        raise RuntimeError("invalid parameterized gate name")
+    name, params = text[:-1].split("(", 1)
+    return name, parse_csv_operands(params)
+
+
+def parse_gate_definition(header: str) -> tuple[str, list[str], list[str]]:
     declaration = header.split("{", 1)[0].strip()
     parts = declaration.split(None, 2)
     if len(parts) < 2 or parts[0] != "gate":
         raise RuntimeError("invalid simple gate definition")
-    name = parts[1]
-    if "(" in name or ")" in name:
-        raise RuntimeError("parameterized gate definitions cannot be inlined")
+    name, params = split_name_params(parts[1])
     formals = parse_csv_operands(parts[2]) if len(parts) == 3 else []
-    return name, formals
+    return name, params, formals
 
 
 def gate_body_statements(text: str) -> list[str]:
@@ -120,10 +127,17 @@ def gate_body_statements(text: str) -> list[str]:
 
 
 def inline_simple_gates(qasm: str) -> str:
-    macros: dict[str, tuple[list[str], list[str]]] = {}
+    macros: dict[str, tuple[list[str], list[str], list[str]]] = {}
     output: list[str] = []
     lines = qasm.splitlines()
     i = 0
+
+    def rewrite_gate_name(gate: str, param_mapping: dict[str, str]) -> str:
+        name, params = split_name_params(gate)
+        if not params:
+            return name
+        rewritten = [param_mapping.get(param, param) for param in params]
+        return f"{name}({','.join(rewritten)})"
 
     def expand_statement(statement: str, depth: int = 0) -> list[str]:
         if depth > 16:
@@ -134,19 +148,23 @@ def inline_simple_gates(qasm: str) -> str:
         if not bare:
             return []
         op, _, operand_text = bare.partition(" ")
-        if op not in macros:
+        name, params = split_name_params(op)
+        if name not in macros:
             return [statement]
-        formals, body = macros[op]
+        param_formals, formals, body = macros[name]
+        if len(params) != len(param_formals):
+            raise RuntimeError(f"gate {name} expects {len(param_formals)} parameters, got {len(params)}")
+        param_mapping = dict(zip(param_formals, params, strict=True))
         actuals = parse_csv_operands(operand_text)
         if len(actuals) != len(formals):
-            raise RuntimeError(f"gate {op} expects {len(formals)} operands, got {len(actuals)}")
-        mapping = dict(zip(formals, actuals, strict=True))
+            raise RuntimeError(f"gate {name} expects {len(formals)} operands, got {len(actuals)}")
+        operand_mapping = dict(zip(formals, actuals, strict=True))
         expanded: list[str] = []
         for body_statement in body:
             body_op, _, body_operand_text = body_statement.partition(" ")
             operands = parse_csv_operands(body_operand_text)
-            rewritten_operands = [mapping.get(operand, operand) for operand in operands]
-            rewritten = body_op
+            rewritten_operands = [operand_mapping.get(operand, operand) for operand in operands]
+            rewritten = rewrite_gate_name(body_op, param_mapping)
             if rewritten_operands:
                 rewritten += " " + ",".join(rewritten_operands)
             rewritten += ";"
@@ -171,17 +189,19 @@ def inline_simple_gates(qasm: str) -> str:
                 raise RuntimeError("unterminated simple gate definition")
             collected.append(strip_line_comment(lines[i]))
         definition = "\n".join(collected)
-        if "(" in definition.split("{", 1)[0]:
-            raise RuntimeError("parameterized gate definitions cannot be inlined")
         before, after_open = definition.split("{", 1)
         body_text, _, after_close = after_open.partition("}")
         if after_close.strip():
             raise RuntimeError("simple gate definition has trailing text after '}'")
-        name, formals = parse_gate_definition(before + "{")
-        macros[name] = (formals, gate_body_statements(body_text))
+        name, params, formals = parse_gate_definition(before + "{")
+        macros[name] = (params, formals, gate_body_statements(body_text))
         i += 1
 
     return "\n".join(output).rstrip("\n") + "\n"
+
+
+def has_gate_definition(qasm: str) -> bool:
+    return any(starts_with_keyword(strip_line_comment(line), "gate") for line in qasm.splitlines())
 
 
 def boundary_pairs(nqubits: int, mode: str) -> list[list[str]]:
@@ -196,15 +216,66 @@ def boundary_pairs(nqubits: int, mode: str) -> list[list[str]]:
     raise AssertionError(f"unhandled boundary mode {mode}")
 
 
-def qsop_header(qsop: str) -> tuple[int, int]:
+def qsop_metadata(qsop: str) -> dict[str, int | str]:
+    metadata: dict[str, int | str] | None = None
+    mode = "sign"
     for line in qsop.splitlines():
         parts = line.split()
         if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
-            return int(parts[3]), int(parts[4])
-    raise RuntimeError("missing QSOP header")
+            metadata = {
+                "modulus": int(parts[2]),
+                "nvars": int(parts[3]),
+                "nedges": int(parts[4]),
+            }
+            continue
+        if parts and parts[0] == "q":
+            mode = "labelled"
+    if metadata is None:
+        raise RuntimeError("missing QSOP header")
+    metadata["mode"] = mode
+    return metadata
 
 
-def import_boundary(qasm2sop: pathlib.Path, qasm: str, input_bits: str, output_bits: str) -> tuple[int, int]:
+def classify_error(message: str) -> str:
+    if "too_many_vars" in message:
+        return "too_many_vars"
+    if "dynamic OpenQASM" in message or "dynamic or classical OpenQASM features" in message:
+        return "dynamic_classical"
+    if "unsupported OpenQASM operation 'gate'" in message:
+        return "unsupported_gate_definition"
+    if "unsupported OpenQASM operation" in message:
+        return "unsupported_gate"
+    if "unsupported " in message and (" angle" in message or " angle list" in message):
+        return "unsupported_angle"
+    if "parameterized gate definitions" in message or "simple gate definition" in message:
+        return "unsupported_gate_definition"
+    if ".qc" in message or "qc2qasm" in message or "unknown .qc" in message:
+        return "qc_translation_error"
+    if (
+        "missing OPENQASM" in message
+        or "statements must end with ';'" in message
+        or "invalid " in message
+        or "unterminated" in message
+    ):
+        return "parse_error"
+    return "other_error"
+
+
+def diagnostic_from_exception(exc: Exception) -> str:
+    message = str(exc).strip().splitlines()
+    return message[-1] if message else repr(exc)
+
+
+def relative_path(root: pathlib.Path, path: pathlib.Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def import_boundary_metadata(
+    qasm2sop: pathlib.Path, qasm: str, input_bits: str, output_bits: str
+) -> dict[str, int | str]:
     completed = subprocess.run(
         [str(qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
         check=False,
@@ -216,7 +287,7 @@ def import_boundary(qasm2sop: pathlib.Path, qasm: str, input_bits: str, output_b
     if completed.returncode != 0:
         diagnostic = completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else "qasm2sop failed"
         raise RuntimeError(diagnostic)
-    return qsop_header(completed.stdout)
+    return qsop_metadata(completed.stdout)
 
 
 def build_case(
@@ -227,16 +298,30 @@ def build_case(
     boundaries: list[list[str]],
     max_vars: int,
     source_prefix: str,
-) -> tuple[dict | None, str]:
+) -> tuple[dict | None, str, list[dict[str, int | str]], int, int, str]:
     max_nvars = 0
     max_edges = 0
+    modes: set[str] = set()
+    boundary_records: list[dict[str, int | str]] = []
     for input_bits, output_bits in boundaries:
-        nvars, nedges = import_boundary(qasm2sop, qasm, input_bits, output_bits)
+        metadata = import_boundary_metadata(qasm2sop, qasm, input_bits, output_bits)
+        nvars = int(metadata["nvars"])
+        nedges = int(metadata["nedges"])
         max_nvars = max(max_nvars, nvars)
         max_edges = max(max_edges, nedges)
+        modes.add(str(metadata["mode"]))
+        boundary_records.append(
+            {
+                "input": input_bits,
+                "output": output_bits,
+                **metadata,
+            }
+        )
+
+    mode = "labelled" if "labelled" in modes else "sign"
 
     if max_nvars > max_vars:
-        return None, "too_many_vars"
+        return None, "too_many_vars", boundary_records, max_nvars, max_edges, mode
 
     relpath = path.relative_to(root)
     name = sanitize_name(f"{source_prefix}_{relpath.with_suffix('').as_posix()}")
@@ -250,7 +335,40 @@ def build_case(
             "max_imported_edges": max_edges,
         },
         "ok",
+        boundary_records,
+        max_nvars,
+        max_edges,
+        mode,
     )
+
+
+def report_record(
+    root: pathlib.Path,
+    path: pathlib.Path,
+    status: str,
+    diagnostic: str | None = None,
+    boundaries: list[dict[str, int | str]] | None = None,
+    max_nvars: int | None = None,
+    max_edges: int | None = None,
+    mode: str | None = None,
+) -> dict:
+    record = {
+        "path": str(path),
+        "relative_path": relative_path(root, path),
+        "source_type": path.suffix.lower().lstrip(".") or "unknown",
+        "status": status,
+    }
+    if diagnostic:
+        record["diagnostic"] = diagnostic
+    if boundaries is not None:
+        record["boundaries"] = boundaries
+    if max_nvars is not None:
+        record["max_imported_nvars"] = max_nvars
+    if max_edges is not None:
+        record["max_imported_edges"] = max_edges
+    if mode is not None:
+        record["mode"] = mode
+    return record
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -277,6 +395,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-cases", type=int, help="limit emitted manifest cases")
     parser.add_argument("--max-vars", type=int, default=24)
     parser.add_argument("--output", type=pathlib.Path, help="write manifest JSON to this path instead of stdout")
+    parser.add_argument("--report", type=pathlib.Path, help="write per-source import classification JSON")
     parser.add_argument(
         "--boundaries",
         choices=("zero", "zero-and-one", "zero-to-one"),
@@ -303,9 +422,11 @@ def main(argv: list[str]) -> int:
 
     counts: collections.Counter[str] = collections.Counter()
     cases = []
+    report_records = []
     for root, path in inputs:
         if args.max_cases is not None and len(cases) >= args.max_cases:
             break
+        qasm = None
         try:
             qasm = load_source(path, args.qc2qasm)
             if args.inline_simple_gates:
@@ -314,7 +435,7 @@ def main(argv: list[str]) -> int:
                 qasm = strip_terminal_measurements(qasm)
             nqubits = qasm_qubits(qasm)
             boundaries = boundary_pairs(nqubits, args.boundaries)
-            case, status = build_case(
+            case, status, boundary_records, max_nvars, max_edges, mode = build_case(
                 args.qasm2sop,
                 root,
                 path,
@@ -323,11 +444,27 @@ def main(argv: list[str]) -> int:
                 args.max_vars,
                 args.source_prefix,
             )
-        except Exception:
-            counts["skipped"] += 1
+        except Exception as exc:
+            diagnostic = diagnostic_from_exception(exc)
+            status = classify_error(diagnostic)
+            if status == "parse_error" and qasm is not None and has_gate_definition(qasm):
+                status = "unsupported_gate_definition"
+            counts[status] += 1
+            report_records.append(report_record(root, path, status, diagnostic=diagnostic))
             continue
 
         counts[status] += 1
+        report_records.append(
+            report_record(
+                root,
+                path,
+                status,
+                boundaries=boundary_records,
+                max_nvars=max_nvars,
+                max_edges=max_edges,
+                mode=mode,
+            )
+        )
         if case is not None:
             cases.append(case)
 
@@ -336,6 +473,15 @@ def main(argv: list[str]) -> int:
         print(manifest, end="")
     else:
         args.output.write_text(manifest, encoding="utf-8")
+    if args.report is not None:
+        report = {
+            "roots": [str(root) for root in args.roots],
+            "inputs": len(inputs),
+            "emitted": len(cases),
+            "counts": dict(sorted(counts.items())),
+            "records": report_records,
+        }
+        args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
         "build_external_qasm_manifest: "
         f"inputs={len(inputs)} emitted={len(cases)} "

@@ -41,6 +41,7 @@ CSV_FIELDS = [
     "branch_heuristic",
     "rankwidth_mode",
     "rankwidth_decomposition",
+    "qsop_mode",
     "r",
     "nvars",
     "nedges",
@@ -101,16 +102,24 @@ def case_qasm(case: dict) -> str:
     return "\n".join(case["qasm_lines"]) + "\n"
 
 
-def qsop_header(qsop: str) -> dict[str, int]:
+def qsop_header(qsop: str) -> dict[str, int | str]:
+    header: dict[str, int | str] | None = None
+    mode = "sign"
     for line in qsop.splitlines():
         parts = line.split()
         if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
-            return {
+            header = {
                 "r": int(parts[2]),
                 "nvars": int(parts[3]),
                 "nedges": int(parts[4]),
             }
-    raise RuntimeError(f"missing QSOP header:\n{qsop}")
+            continue
+        if parts and parts[0] == "q":
+            mode = "labelled"
+    if header is None:
+        raise RuntimeError(f"missing QSOP header:\n{qsop}")
+    header["qsop_mode"] = mode
+    return header
 
 
 def parse_stats(text: str) -> dict[str, int | str]:
@@ -272,10 +281,16 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
     }
 
 
-def benchmark(args: argparse.Namespace) -> list[dict]:
+def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
     cases = load_cases(args.manifest)
     backends = args.backends or list(DEFAULT_BACKENDS)
     records: list[dict] = []
+    metadata = {
+        "case_boundaries": 0,
+        "imported_sign": 0,
+        "imported_labelled": 0,
+        "skipped_rankwidth_records": 0,
+    }
 
     for case, qasm, input_bits, output_bits in iter_case_boundaries(cases, args.limit):
         qsop, _stderr, import_elapsed_ns = run_command(
@@ -283,6 +298,11 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
             input_text=qasm,
         )
         header = qsop_header(qsop)
+        metadata["case_boundaries"] += 1
+        if header["qsop_mode"] == "labelled":
+            metadata["imported_labelled"] += 1
+        else:
+            metadata["imported_sign"] += 1
         for backend in backends:
             for config in iter_backend_configs(args, backend):
                 cmd = [
@@ -310,6 +330,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                     stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
                 except RuntimeError as exc:
                     if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
+                        metadata["skipped_rankwidth_records"] += 1
                         continue
                     raise
                 stats = parse_stats(stats_text)
@@ -333,7 +354,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                         "trace": trace,
                     }
                 )
-    return records
+    return records, metadata
 
 
 def write_jsonl(records: list[dict], file: TextIO) -> None:
@@ -421,8 +442,57 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             print(line, file=file)
 
 
-def write_summary(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
+def record_label(record: dict) -> str:
+    return f"{record['case']} {record['boundary']}"
+
+
+def metric_value(record: dict, metric: str) -> int | None:
+    value = record.get(metric)
+    if isinstance(value, int):
+        return value
+    value = record["stats"].get(metric)
+    return value if isinstance(value, int) else None
+
+
+def write_largest_overview(records: list[dict], file: TextIO) -> None:
+    if not records:
+        return
+    metrics = [
+        ("largest_nvars", "nvars"),
+        ("largest_nedges", "nedges"),
+        ("slowest_solve", "solve_elapsed_ns"),
+        ("largest_rankwidth_width", "decomposition_width"),
+        ("largest_rankwidth_table", "max_table_entries"),
+    ]
+    for label, metric in metrics:
+        candidates = [record for record in records if metric_value(record, metric) is not None]
+        if not candidates:
+            continue
+        record = max(
+            candidates,
+            key=lambda item: (
+                metric_value(item, metric) or 0,
+                item["solve_elapsed_ns"],
+                item["case"],
+                item["boundary"],
+            ),
+        )
+        print(
+            f"{label}: {record_label(record)} backend={record['backend']} "
+            f"value={metric_value(record, metric)} nvars={record['nvars']} "
+            f"nedges={record['nedges']} mode={record['qsop_mode']}",
+            file=file,
+        )
+
+
+def write_summary(records: list[dict], metadata: dict[str, int], args: argparse.Namespace, file: TextIO) -> None:
     print(f"records: {len(records)}", file=file)
+    print(f"case_boundaries: {metadata['case_boundaries']}", file=file)
+    print(f"solved_records: {len(records)}", file=file)
+    print(f"skipped_rankwidth_records: {metadata['skipped_rankwidth_records']}", file=file)
+    print(f"imported_sign: {metadata['imported_sign']}", file=file)
+    print(f"imported_labelled: {metadata['imported_labelled']}", file=file)
+    write_largest_overview(records, file)
     summary = summarize_records(records)
     for key in sorted(summary):
         entry = summary[key]
@@ -547,7 +617,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
-        records = benchmark(args)
+        records, metadata = benchmark(args)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -557,7 +627,7 @@ def main(argv: list[str]) -> int:
     elif args.format == "csv":
         write_csv(records, sys.stdout)
     else:
-        write_summary(records, args, sys.stdout)
+        write_summary(records, metadata, args, sys.stdout)
     return 0
 
 

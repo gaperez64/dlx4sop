@@ -93,10 +93,11 @@ Implemented exact backends:
 - `branch`: mutates a reversible residual state, branches on active variables,
   memoizes repeated residuals, splits residual components, and collapses
   edge-free unary tails.
-- `rankwidth`: sign-only decomposition DP with generated or supplied
-  decompositions, count-table mode, and a small-instance Fourier mode.
+- `rankwidth`: decomposition DP with generated or supplied decompositions,
+  sign/labelled count-table mode, and a small-instance sign-only Fourier mode.
 
-The rankwidth backend uses bitset-backed signatures; practical limits are now
+The rankwidth backend uses bitset-backed signatures for sign-only instances and
+`Z_r` boundary-signature vectors for labelled instances. Practical limits are
 solver guards, memory, and decomposition width rather than a single machine-word
 mask. Exact result counts use the normal `uint64_t` fast path when possible and
 a CRT-backed path for larger final histograms.
@@ -129,12 +130,14 @@ Relevant tool boundaries:
 - manifest builders discover external corpus files and record import status;
 - scanners classify unsupported QASM constructs;
 - benchmark runners execute selected solver configurations and collect stats;
+- summary reports distinguish sign-only imports, labelled imports, solver
+  skips, and largest case-boundaries;
 - optional comparison scripts can use external frameworks outside the C core.
 
 ## Labelled Rankwidth Direction
 
-The implemented rankwidth DP is sign-only. The labelled QSOP version should use
-the cut-signature width discussed in the design note:
+The labelled count-table DP uses the cut-signature width discussed in the design
+note:
 
 ```text
 Sigma_X_to_Y(Q) = { x_X^T Q[X,Y] : x_X in {0,1}^X } subset Z_r^Y
@@ -144,8 +147,10 @@ lambda_Q(X|Y) = ceil(log2 s_Q(X|Y))
 ```
 
 For sign-only SOPs this reduces to the familiar GF(2) cut-rank view. For
-labelled SOPs, future DP tables should be keyed by labelled boundary signatures
-rather than parity-only signatures.
+labelled SOPs, count-table states are keyed by labelled boundary signatures
+rather than parity-only signatures. Remaining work is better labelled
+decomposition heuristics and deciding whether Fourier mode should be generalized
+to labelled signatures.
 
 ## CI Contract
 

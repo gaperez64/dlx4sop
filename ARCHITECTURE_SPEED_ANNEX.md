@@ -18,8 +18,8 @@ The current performance roadmap is:
    undo costs dominate.
 6. Add specialized residue kernels and CPU dispatch after solver shape is
    stable.
-7. Implement labelled rankwidth once the sign-only decomposition pipeline and
-   benchmark story are strong enough.
+7. Refine labelled rankwidth after corpus runs identify decomposition or table
+   growth bottlenecks.
 
 ## Reversible Mutation And Dancing Cells
 
@@ -61,7 +61,7 @@ decomposition backend.
 
 Near-term experiments should focus on:
 
-- decomposition builders for sign-only rankwidth DP;
+- decomposition builders for sign-only and labelled rankwidth DP;
 - min-fill and cut-rank split choices;
 - trace summaries that report width, table sizes, join counts, cache hits, and
   wall time on the same manifest;
@@ -103,15 +103,14 @@ Future import work that affects performance:
 
 ## Labelled Rankwidth
 
-The labelled rankwidth solver should generalize sign-only cut signatures from
-GF(2) parity rows to `Z_r` labelled boundary signatures. The relevant target
-width is recorded in `ARCHITECTURE.md`.
+The labelled rankwidth count-table solver generalizes sign-only cut signatures
+from GF(2) parity rows to `Z_r` labelled boundary signatures. The relevant
+target width is recorded in `ARCHITECTURE.md`.
 
 Open implementation questions:
 
-- compact interning of labelled signatures;
-- join formulas for arbitrary edge labels;
 - decomposition heuristics that estimate labelled cut-signature growth;
+- whether Fourier mode should be generalized to labelled signatures;
 - benchmarks that actually require labelled interactions rather than only
   sign-edge structure.
 

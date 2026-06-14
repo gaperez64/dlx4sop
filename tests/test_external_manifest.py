@@ -35,6 +35,17 @@ makebell q[0],q[1];
 measure q -> c;
 """
 
+PARAM_GATE_QASM_SAMPLE = """OPENQASM 2.0;
+include "qelib1.inc";
+gate phasepair(theta) a,b {
+u1(theta) a;
+cp(theta) a,b;
+}
+qreg q[2];
+h q;
+phasepair(pi/4) q[0],q[1];
+"""
+
 
 QC_SAMPLE = """.v a b
 BEGIN
@@ -81,8 +92,10 @@ def main() -> int:
         (root / "bell.qasm").write_text(QASM_SAMPLE, encoding="utf-8")
         (root / "measured.qasm").write_text(MEASURED_QASM_SAMPLE, encoding="utf-8")
         (root / "macro.qasm").write_text(SIMPLE_GATE_QASM_SAMPLE, encoding="utf-8")
+        (root / "param.qasm").write_text(PARAM_GATE_QASM_SAMPLE, encoding="utf-8")
         (root / "small.qc").write_text(QC_SAMPLE, encoding="utf-8")
         (root / "bad.qasm").write_text("OPENQASM 2.0;\nqreg q[1];\nu1(pi/3) q[0];\n", encoding="utf-8")
+        report_path = root / "report.json"
 
         qasm_cases, qasm_report = run_manifest(
             builder,
@@ -92,9 +105,25 @@ def main() -> int:
             "smoke",
             "--boundaries",
             "zero-and-one",
+            "--report",
+            str(report_path),
         )
         if len(qasm_cases) != 1 or len(qasm_cases[0]["boundaries"]) != 2:
             raise AssertionError(f"unexpected QASM manifest:\n{qasm_cases}\n{qasm_report}")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if report["inputs"] != 5 or report["emitted"] != 1 or len(report["records"]) != 5:
+            raise AssertionError(f"unexpected report shape:\n{report}")
+        if (
+            report["counts"].get("ok") != 1
+            or report["counts"].get("unsupported_angle") != 1
+            or report["counts"].get("unsupported_gate_definition") != 2
+        ):
+            raise AssertionError(f"unexpected report counts:\n{report}")
+        ok_records = [record for record in report["records"] if record["status"] == "ok"]
+        if len(ok_records) != 1 or ok_records[0].get("mode") != "sign":
+            raise AssertionError(f"accepted record missing sign metadata:\n{report}")
+        if len(ok_records[0].get("boundaries", [])) != 2:
+            raise AssertionError(f"accepted record missing boundary metadata:\n{report}")
 
         stripped_cases, stripped_report = run_manifest(
             builder,
@@ -121,13 +150,19 @@ def main() -> int:
             "--inline-simple-gates",
         )
         macro = [case for case in inlined_cases if case["name"].endswith("macro")]
-        if len(inlined_cases) != 3 or len(macro) != 1:
+        param = [case for case in inlined_cases if case["name"].endswith("param")]
+        if len(inlined_cases) != 4 or len(macro) != 1 or len(param) != 1:
             raise AssertionError(f"unexpected inlined manifest:\n{inlined_cases}\n{inlined_report}")
         macro_qasm = "\n".join(macro[0]["qasm_lines"])
         if "gate" in macro_qasm or "makebell" in macro_qasm or "measure" in macro_qasm:
             raise AssertionError(f"macro QASM was not inlined and stripped:\n{macro_qasm}")
         if "h q[0];" not in macro_qasm or "cx q[0],q[1];" not in macro_qasm:
             raise AssertionError(f"macro QASM missing expanded body:\n{macro_qasm}")
+        param_qasm = "\n".join(param[0]["qasm_lines"])
+        if "phasepair" in param_qasm or "theta" in param_qasm:
+            raise AssertionError(f"parameterized macro was not inlined:\n{param_qasm}")
+        if "u1(pi/4) q[0];" not in param_qasm or "cp(pi/4) q[0],q[1];" not in param_qasm:
+            raise AssertionError(f"parameterized macro missing expanded body:\n{param_qasm}")
 
         qc_cases, qc_report = run_manifest(
             builder,

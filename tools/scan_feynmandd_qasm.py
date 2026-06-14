@@ -16,17 +16,17 @@ def qasm_files(root: pathlib.Path, include_invalid: bool) -> list[pathlib.Path]:
 
 
 def classify(stderr: str) -> str:
-    if "higher-degree OpenQASM operation" in stderr:
-        return "higher_degree"
     if "dynamic or classical OpenQASM features" in stderr:
-        return "dynamic_or_classical"
+        return "dynamic_classical"
+    if "unsupported OpenQASM operation 'gate'" in stderr:
+        return "unsupported_gate_definition"
     if "unsupported OpenQASM operation" in stderr:
         return "unsupported_gate"
     if "unsupported " in stderr and " angle" in stderr:
         return "unsupported_angle"
     if "statements must end with ';'" in stderr or "operation 'gate'" in stderr:
-        return "custom_gate_or_syntax"
-    return "other"
+        return "unsupported_gate_definition"
+    return "other_error"
 
 
 def scan(qasm2sop: pathlib.Path, root: pathlib.Path, include_invalid: bool, limit: int | None) -> dict:

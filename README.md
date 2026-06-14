@@ -23,8 +23,9 @@ Implemented solver backends:
 - `brute-force`: enumerate all assignments for small oracle checks.
 - `branch`: residual branch-and-sum with component splitting and residual cache
   stats.
-- `rankwidth`: sign-edge decomposition backend with count-table, CRT-backed
-  large-count output, generated decompositions, and small-instance Fourier mode.
+- `rankwidth`: decomposition backend with sign/labelled count-table mode,
+  CRT-backed large-count output, generated decompositions, and sign-only
+  Fourier mode.
 
 ## Build
 
@@ -77,11 +78,12 @@ Import fixed-boundary OpenQASM:
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 ```
 
-Run benchmark summaries:
+Run benchmark summaries and build external corpus manifests:
 
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
+tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --report corpus-report.json --output corpus.json
 ```
 
 ## Scope

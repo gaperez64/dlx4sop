@@ -103,6 +103,23 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if branch.returncode == 0 or "exceeds uint64 capacity" not in branch.stderr:
         raise AssertionError(f"branch did not report uint64 overflow\n{branch.stdout}\n{branch.stderr}")
 
+    labelled_qsop = "p qsop 8 64 1\nn 0\ncst 0\nq 0 1 3\n"
+    labelled = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "-"],
+        input=labelled_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    labelled_expected = (
+        "p qsop-result 8\n"
+        "n 0\n"
+        "counts 13835058055282163712 0 0 4611686018427387904 0 0 0 0\n"
+    )
+    if labelled.returncode != 0 or labelled.stdout != labelled_expected:
+        raise AssertionError(f"large labelled rankwidth CRT solve failed\n{labelled.stdout}\n{labelled.stderr}")
+
 
 def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     cases = [
@@ -585,9 +602,31 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
     labelled = source_root / "tests" / "golden" / "solve_labelled.qsop"
     labelled_decomposition = source_root / "tests" / "golden" / "solve_labelled.rwdec"
-    bad = subprocess.run(
+    labelled_expected = subprocess.run(
+        [str(exe), "--backend", "brute-force", str(labelled)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if labelled_expected.returncode != 0:
+        raise AssertionError(f"labelled brute force solve failed\n{labelled_expected.stderr}")
+    assert_rankwidth_matches(
+        exe,
+        labelled,
+        labelled_expected.stdout,
+        "--rankwidth-decomposition",
+        str(labelled_decomposition),
+    )
+    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout)
+    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "balanced")
+    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "min-fill-cut")
+
+    labelled_stats = subprocess.run(
         [
             str(exe),
+            "--format",
+            "stats",
             "--backend",
             "rankwidth",
             "--rankwidth-decomposition",
@@ -599,8 +638,60 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if bad.returncode == 0 or "sign-only" not in bad.stderr:
-        raise AssertionError(f"rankwidth accepted labelled QSOP\n{bad.stdout}\n{bad.stderr}")
+    if (
+        labelled_stats.returncode != 0
+        or "rankwidth_mode: count-table" not in labelled_stats.stdout
+        or "decomposition_width: 1" not in labelled_stats.stdout
+        or "join_signature_pairs: 4" not in labelled_stats.stdout
+    ):
+        raise AssertionError(f"labelled rankwidth stats failed\n{labelled_stats.stdout}\n{labelled_stats.stderr}")
+
+    labelled_trace = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-decomposition",
+            str(labelled_decomposition),
+            "--trace",
+            "csv",
+            str(labelled),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        labelled_trace.returncode != 0
+        or "rankwidth.labelled_leaf" not in labelled_trace.stderr
+        or "rankwidth.labelled_join_map" not in labelled_trace.stderr
+        or "rankwidth.labelled_join" not in labelled_trace.stderr
+    ):
+        raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
+
+    bad_fourier = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--rankwidth-decomposition",
+            str(labelled_decomposition),
+            str(labelled),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_fourier.returncode == 0 or "sign-only" not in bad_fourier.stderr:
+        raise AssertionError(
+            f"rankwidth Fourier accepted labelled QSOP\n{bad_fourier.stdout}\n{bad_fourier.stderr}"
+        )
 
 
 def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:

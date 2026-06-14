@@ -1192,6 +1192,14 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
                                            apply_u3);
   }
 
+  if (!parse_param_unit_list(importer, gate, "u(", "u", u3_units, 3, &is_u3)) {
+    return false;
+  }
+  if (is_u3) {
+    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1], u3_units[2],
+                                           apply_u3);
+  }
+
   int64_t u2_units[2] = {0};
   bool is_u2 = false;
   if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, &is_u2)) {

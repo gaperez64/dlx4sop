@@ -90,16 +90,16 @@ def parse_sizes(text: str) -> list[int]:
 
 def classify(stderr: str) -> str:
     if "dynamic or classical OpenQASM features" in stderr:
-        return "dynamic_or_classical"
+        return "dynamic_classical"
+    if "unsupported OpenQASM operation 'gate'" in stderr:
+        return "unsupported_gate_definition"
     if "unsupported OpenQASM operation" in stderr:
         return "unsupported_gate"
     if "unsupported " in stderr and " angle" in stderr:
         return "unsupported_angle"
     if "statements must end with ';'" in stderr or "operation 'gate'" in stderr:
-        return "custom_gate_or_syntax"
-    if "higher-degree OpenQASM operation" in stderr:
-        return "higher_degree"
-    return "other"
+        return "unsupported_gate_definition"
+    return "other_error"
 
 
 def status_from_exception(prefix: str, exc: Exception) -> dict:
