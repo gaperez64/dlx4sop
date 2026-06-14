@@ -11,6 +11,7 @@ from typing import Iterable, TextIO
 from render_scoreboard import (
     BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
     BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
+    branch_dispatch_text,
     branch_skip_reason_text,
     cache_hit_rate,
     comparison_speedup,
@@ -198,6 +199,9 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"delegations tw={format_count(stats.get('treewidth_delegations', 0))}, "
             f"rw={format_count(stats.get('rankwidth_delegations', 0))}"
         )
+    dispatch = branch_dispatch_text(stats, format_count)
+    if dispatch:
+        parts.append(f"branch dispatch {dispatch}")
     if (
         "branch_fallthroughs" in stats
         or "branch_treewidth_skips" in stats

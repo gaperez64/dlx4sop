@@ -31,6 +31,19 @@ BRANCH_SKIP_REASON_FIELDS = tuple(
         *BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
     )
 )
+BRANCH_DISPATCH_SUM_FIELDS = (
+    "branch_component_split_events",
+    "branch_component_split_elapsed_ns",
+    "branch_treewidth_delegate_events",
+    "branch_treewidth_delegate_elapsed_ns",
+    "branch_rankwidth_delegate_events",
+    "branch_rankwidth_delegate_elapsed_ns",
+)
+BRANCH_DISPATCH_MAX_FIELDS = (
+    "branch_component_split_max_components",
+    "branch_treewidth_delegate_max_vars",
+    "branch_rankwidth_delegate_max_vars",
+)
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -126,6 +139,32 @@ def branch_skip_reason_text(stats: dict[str, int], fields: tuple[tuple[str, str]
     return ", ".join(parts)
 
 
+def branch_dispatch_text(stats: dict[str, int], value_formatter=str) -> str:
+    parts = []
+    split_events = stats.get("branch_component_split_events", 0)
+    if isinstance(split_events, int) and split_events:
+        parts.append(
+            f"splits={value_formatter(split_events)}/"
+            f"{format_ns(stats.get('branch_component_split_elapsed_ns', 0))} "
+            f"max components={value_formatter(stats.get('branch_component_split_max_components', 0))}"
+        )
+    treewidth_events = stats.get("branch_treewidth_delegate_events", 0)
+    if isinstance(treewidth_events, int) and treewidth_events:
+        parts.append(
+            f"tw delegates={value_formatter(treewidth_events)}/"
+            f"{format_ns(stats.get('branch_treewidth_delegate_elapsed_ns', 0))} "
+            f"max vars={value_formatter(stats.get('branch_treewidth_delegate_max_vars', 0))}"
+        )
+    rankwidth_events = stats.get("branch_rankwidth_delegate_events", 0)
+    if isinstance(rankwidth_events, int) and rankwidth_events:
+        parts.append(
+            f"rw delegates={value_formatter(rankwidth_events)}/"
+            f"{format_ns(stats.get('branch_rankwidth_delegate_elapsed_ns', 0))} "
+            f"max vars={value_formatter(stats.get('branch_rankwidth_delegate_max_vars', 0))}"
+        )
+    return ", ".join(parts)
+
+
 def cache_hit_rate(stats: dict[str, int]) -> str:
     hits = stats.get("cache_hits", 0)
     misses = stats.get("cache_misses", 0)
@@ -191,6 +230,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_treewidth_order_probe_events",
                 "branch_treewidth_order_probe_elapsed_ns",
                 *BRANCH_SKIP_REASON_FIELDS,
+                *BRANCH_DISPATCH_SUM_FIELDS,
             ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
@@ -217,6 +257,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_treewidth_order_width",
                 "branch_treewidth_table_forecast",
                 "branch_treewidth_join_pair_forecast",
+                *BRANCH_DISPATCH_MAX_FIELDS,
             ):
                 add_max(stats, stat, stat_value(record, stat))
             for stat in ("join_pairs", "join_signature_pairs"):
@@ -272,6 +313,9 @@ def key_stats(stats: dict[str, int]) -> str:
             f"delegations tw={stats.get('treewidth_delegations', 0)}, "
             f"rw={stats.get('rankwidth_delegations', 0)}"
         )
+    dispatch = branch_dispatch_text(stats)
+    if dispatch:
+        parts.append(f"branch dispatch {dispatch}")
     if (
         "branch_fallthroughs" in stats
         or "branch_treewidth_skips" in stats

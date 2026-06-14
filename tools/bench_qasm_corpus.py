@@ -35,6 +35,20 @@ BRANCH_RANKWIDTH_SKIP_METRICS = {
 BRANCH_SKIP_REASON_FIELDS = tuple(BRANCH_TREEWIDTH_SKIP_METRICS.values()) + tuple(
     BRANCH_RANKWIDTH_SKIP_METRICS.values()
 )
+BRANCH_DISPATCH_TRACE_GROUPS = (
+    (("branch.component_split",), "branch_component_split", "max_components"),
+    (
+        ("branch.treewidth_delegate", "branch.root_treewidth_delegate"),
+        "branch_treewidth_delegate",
+        "max_vars",
+    ),
+    (("branch.rankwidth_delegate",), "branch_rankwidth_delegate", "max_vars"),
+)
+BRANCH_DISPATCH_METRIC_FIELDS = tuple(
+    field
+    for _phases, prefix, max_key in BRANCH_DISPATCH_TRACE_GROUPS
+    for field in (f"{prefix}_events", f"{prefix}_elapsed_ns", f"{prefix}_{max_key}")
+)
 BACKEND_ALIAS_METRICS = (
     "rankwidth_width",
     "treewidth_width",
@@ -93,6 +107,7 @@ TOP_METRICS = (
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
     *BRANCH_SKIP_REASON_FIELDS,
+    *BRANCH_DISPATCH_METRIC_FIELDS,
     "max_residual_vars",
     "max_residual_edges",
     "max_residual_components",
@@ -168,6 +183,7 @@ CSV_FIELDS = [
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
     *BRANCH_SKIP_REASON_FIELDS,
+    *BRANCH_DISPATCH_METRIC_FIELDS,
     "max_residual_vars",
     "max_residual_edges",
     "max_residual_components",
@@ -426,6 +442,18 @@ def branch_skip_reason_metrics(trace: dict[str, dict[str, int]]) -> dict[str, in
     return metrics
 
 
+def branch_dispatch_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phases, prefix, max_key in BRANCH_DISPATCH_TRACE_GROUPS:
+        matching = [trace[phase] for phase in phases if phase in trace]
+        if not matching:
+            continue
+        metrics[f"{prefix}_events"] = sum(values["events"] for values in matching)
+        metrics[f"{prefix}_elapsed_ns"] = sum(values["elapsed_ns"] for values in matching)
+        metrics[f"{prefix}_{max_key}"] = max(values["max_items"] for values in matching)
+    return metrics
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -458,6 +486,9 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "branch_treewidth_order_width",
         "branch_treewidth_table_forecast",
         "branch_treewidth_join_pair_forecast",
+        "branch_component_split_max_components",
+        "branch_treewidth_delegate_max_vars",
+        "branch_rankwidth_delegate_max_vars",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -527,6 +558,7 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
             *BRANCH_SKIP_REASON_FIELDS,
+            *BRANCH_DISPATCH_METRIC_FIELDS,
         ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
@@ -726,6 +758,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
+                dispatch_metrics = branch_dispatch_metrics(trace)
                 records.append(
                     {
                         "case": case_name,
@@ -754,6 +787,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **branch_probe_metrics,
                         **treewidth_probe_metrics,
                         **skip_reason_metrics,
+                        **dispatch_metrics,
                         "trace": trace,
                     }
                 )
@@ -817,6 +851,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_treewidth_skips",
             "branch_rankwidth_skips",
             *BRANCH_SKIP_REASON_FIELDS,
+            *BRANCH_DISPATCH_METRIC_FIELDS,
             "max_residual_vars",
             "max_residual_edges",
             "max_residual_components",
@@ -919,6 +954,32 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
                     f"{stats.get('rankwidth_delegations', 0)}"
                 )
+            if (
+                record_has_metric(record, "branch_component_split_events")
+                or record_has_metric(record, "branch_treewidth_delegate_events")
+                or record_has_metric(record, "branch_rankwidth_delegate_events")
+            ):
+                line += (
+                    " branch_dispatch="
+                    f"splits:{record_metric(record, 'branch_component_split_events')}"
+                    f",tw:{record_metric(record, 'branch_treewidth_delegate_events')}"
+                    f",rw:{record_metric(record, 'branch_rankwidth_delegate_events')}"
+                )
+                if record_has_metric(record, "branch_component_split_max_components"):
+                    line += (
+                        f",split_max_components:"
+                        f"{record_metric(record, 'branch_component_split_max_components')}"
+                    )
+                if record_has_metric(record, "branch_treewidth_delegate_max_vars"):
+                    line += (
+                        f",tw_max_vars:"
+                        f"{record_metric(record, 'branch_treewidth_delegate_max_vars')}"
+                    )
+                if record_has_metric(record, "branch_rankwidth_delegate_max_vars"):
+                    line += (
+                        f",rw_max_vars:"
+                        f"{record_metric(record, 'branch_rankwidth_delegate_max_vars')}"
+                    )
             if (
                 "branch_fallthroughs" in stats
                 or "branch_treewidth_skips" in stats
@@ -1163,6 +1224,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_treewidth_skips",
             "branch_rankwidth_skips",
             *BRANCH_SKIP_REASON_FIELDS,
+            *BRANCH_DISPATCH_METRIC_FIELDS,
             "max_residual_vars",
             "max_residual_edges",
             "max_residual_components",
