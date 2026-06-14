@@ -13,7 +13,7 @@ max_residual_edges: 1
 max_residual_components: 1
 max_residual_largest_component: 2
 max_residual_min_fill_width: 0
-max_residual_linear_cut_rank: 0
+max_residual_prefix_cut_rank: 0
 decomposition_width: 0
 table_entries: 0
 max_table_entries: 0

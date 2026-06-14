@@ -171,8 +171,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
               stats->max_residual_largest_component);
       fprintf(file, "max_residual_min_fill_width: %" PRIu32 "\n",
               stats->max_residual_min_fill_width);
-      fprintf(file, "max_residual_linear_cut_rank: %" PRIu32 "\n",
-              stats->max_residual_linear_cut_rank);
+      fprintf(file, "max_residual_prefix_cut_rank: %" PRIu32 "\n",
+              stats->max_residual_prefix_cut_rank);
       fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
       fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
       fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);

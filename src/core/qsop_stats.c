@@ -158,8 +158,8 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
       }
     }
     const uint32_t rank = qsop_gf2_rank_bitsets(rows, cut, qsop->nvars, words);
-    if (rank > stats->linear_cut_rank) {
-      stats->linear_cut_rank = rank;
+    if (rank > stats->prefix_cut_rank) {
+      stats->prefix_cut_rank = rank;
     }
   }
 
@@ -265,8 +265,8 @@ static bool compute_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t 
       rows[nrows++] = adj[v] & right;
     }
     const uint32_t rank = gf2_rank_masks(rows, nrows, qsop->nvars);
-    if (rank > stats->linear_cut_rank) {
-      stats->linear_cut_rank = rank;
+    if (rank > stats->prefix_cut_rank) {
+      stats->prefix_cut_rank = rank;
     }
   }
 
@@ -630,7 +630,7 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   if (stats->width_diagnostics_available) {
     fprintf(file, "min_fill_width: %" PRIu32 "\n", stats->min_fill_width);
     fprintf(file, "min_fill_edges: %" PRIu64 "\n", stats->min_fill_edges);
-    fprintf(file, "linear_cut_rank: %" PRIu32 "\n", stats->linear_cut_rank);
+    fprintf(file, "prefix_cut_rank: %" PRIu32 "\n", stats->prefix_cut_rank);
   }
   if (stats->exact_widths_requested) {
     fprintf(file, "exact_widths: %s\n",
@@ -661,8 +661,8 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   if (stats->width_diagnostics_available) {
     fprintf(file,
             ",\"min_fill_width\":%" PRIu32 ",\"min_fill_edges\":%" PRIu64
-            ",\"linear_cut_rank\":%" PRIu32,
-            stats->min_fill_width, stats->min_fill_edges, stats->linear_cut_rank);
+            ",\"prefix_cut_rank\":%" PRIu32,
+            stats->min_fill_width, stats->min_fill_edges, stats->prefix_cut_rank);
   }
   if (stats->exact_widths_requested) {
     fprintf(file, ",\"exact_widths_available\":%s,\"exact_width_max_vars\":%" PRIu32,

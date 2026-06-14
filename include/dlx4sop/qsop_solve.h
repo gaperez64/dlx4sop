@@ -35,7 +35,7 @@ typedef struct qsop_solve_stats {
   uint32_t max_residual_components;
   uint32_t max_residual_largest_component;
   uint32_t max_residual_min_fill_width;
-  uint32_t max_residual_linear_cut_rank;
+  uint32_t max_residual_prefix_cut_rank;
   uint32_t components;
   uint32_t decomposition_width;
 } qsop_solve_stats_t;

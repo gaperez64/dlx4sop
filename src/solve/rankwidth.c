@@ -97,6 +97,17 @@ typedef struct rw_decomposition_score {
   uint32_t support_width;
 } rw_decomposition_score_t;
 
+static int compare_decomposition_scores(rw_decomposition_score_t left,
+                                        rw_decomposition_score_t right) {
+  if (left.labelled_width != right.labelled_width) {
+    return left.labelled_width < right.labelled_width ? -1 : 1;
+  }
+  if (left.support_width != right.support_width) {
+    return left.support_width < right.support_width ? -1 : 1;
+  }
+  return 0;
+}
+
 static void set_error(qsop_error_t *error, const char *fmt, ...) {
   if (error == NULL) {
     return;
@@ -1319,9 +1330,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    if (min_fill_score.labelled_width < selected_score.labelled_width ||
-        (min_fill_score.labelled_width == selected_score.labelled_width &&
-         min_fill_score.support_width < selected_score.support_width)) {
+    if (compare_decomposition_scores(min_fill_score, selected_score) < 0) {
       qsop_rankwidth_decomposition_free(decomposition);
       decomposition = min_fill;
       min_fill = NULL;
@@ -1344,9 +1353,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    if (left_deep_score.labelled_width < selected_score.labelled_width ||
-        (left_deep_score.labelled_width == selected_score.labelled_width &&
-         left_deep_score.support_width < selected_score.support_width)) {
+    if (compare_decomposition_scores(left_deep_score, selected_score) <= 0) {
       qsop_rankwidth_decomposition_free(decomposition);
       decomposition = left_deep;
       left_deep = NULL;

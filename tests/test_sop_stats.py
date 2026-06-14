@@ -98,7 +98,7 @@ def run_large_width_diagnostics(exe: pathlib.Path) -> None:
         "width_diagnostics: available",
         "min_fill_width: 1",
         "min_fill_edges: 0",
-        "linear_cut_rank: 1",
+        "prefix_cut_rank: 1",
     }
     if completed.returncode != 0 or not expected_parts.issubset(set(completed.stdout.splitlines())):
         raise AssertionError(f"large width diagnostics failed\n{completed.stdout}\n{completed.stderr}")
@@ -115,7 +115,7 @@ def run_large_width_diagnostics(exe: pathlib.Path) -> None:
         json_result.returncode != 0
         or '"variables":66' not in json_result.stdout
         or '"width_diagnostics_available":true' not in json_result.stdout
-        or '"linear_cut_rank":1' not in json_result.stdout
+        or '"prefix_cut_rank":1' not in json_result.stdout
     ):
         raise AssertionError(f"large JSON width diagnostics failed\n{json_result.stdout}\n{json_result.stderr}")
 

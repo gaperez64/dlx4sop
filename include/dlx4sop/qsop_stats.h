@@ -19,7 +19,7 @@ typedef struct qsop_stats {
   bool width_diagnostics_available;
   uint32_t min_fill_width;
   uint64_t min_fill_edges;
-  uint32_t linear_cut_rank;
+  uint32_t prefix_cut_rank;
   bool exact_widths_requested;
   bool exact_widths_available;
   uint32_t exact_width_max_vars;

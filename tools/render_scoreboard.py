@@ -142,7 +142,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "max_residual_components",
                 "max_residual_largest_component",
                 "max_residual_min_fill_width",
-                "max_residual_linear_cut_rank",
+                "max_residual_prefix_cut_rank",
             ):
                 add_max(stats, stat, stat_value(record, stat))
             for stat in ("join_pairs", "join_signature_pairs"):
@@ -190,10 +190,10 @@ def key_stats(stats: dict[str, int]) -> str:
             f"tw skips={stats.get('branch_treewidth_skips', 0)}, "
             f"rw skips={stats.get('branch_rankwidth_skips', 0)}"
         )
-    if "max_residual_min_fill_width" in stats or "max_residual_linear_cut_rank" in stats:
+    if "max_residual_min_fill_width" in stats or "max_residual_prefix_cut_rank" in stats:
         parts.append(
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
-            f"cut-rank={stats.get('max_residual_linear_cut_rank', 0)}"
+            f"cut-rank={stats.get('max_residual_prefix_cut_rank', 0)}"
         )
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(

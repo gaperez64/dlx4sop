@@ -73,7 +73,7 @@ typedef struct branch_search_stats {
   uint32_t max_residual_components;
   uint32_t max_residual_largest_component;
   uint32_t max_residual_min_fill_width;
-  uint32_t max_residual_linear_cut_rank;
+  uint32_t max_residual_prefix_cut_rank;
   uint64_t *work;
   uint64_t *tmp;
   residual_cache_t cache;
@@ -162,7 +162,7 @@ static void note_width_probe(branch_search_stats_t *stats, const qsop_stats_t *s
     return;
   }
   max_u32(&stats->max_residual_min_fill_width, sub_stats->min_fill_width);
-  max_u32(&stats->max_residual_linear_cut_rank, sub_stats->linear_cut_rank);
+  max_u32(&stats->max_residual_prefix_cut_rank, sub_stats->prefix_cut_rank);
 }
 
 static void note_treewidth_skip(branch_search_stats_t *stats, const char *phase, uint64_t items) {
@@ -590,7 +590,7 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   max_u32(&stats->max_residual_components, delegated->max_residual_components);
   max_u32(&stats->max_residual_largest_component, delegated->max_residual_largest_component);
   max_u32(&stats->max_residual_min_fill_width, delegated->max_residual_min_fill_width);
-  max_u32(&stats->max_residual_linear_cut_rank, delegated->max_residual_linear_cut_rank);
+  max_u32(&stats->max_residual_prefix_cut_rank, delegated->max_residual_prefix_cut_rank);
 }
 
 static void merge_child_solve_stats(branch_search_stats_t *stats,
@@ -622,7 +622,7 @@ static void merge_child_solve_stats(branch_search_stats_t *stats,
   max_u32(&stats->max_residual_components, child->max_residual_components);
   max_u32(&stats->max_residual_largest_component, child->max_residual_largest_component);
   max_u32(&stats->max_residual_min_fill_width, child->max_residual_min_fill_width);
-  max_u32(&stats->max_residual_linear_cut_rank, child->max_residual_linear_cut_rank);
+  max_u32(&stats->max_residual_prefix_cut_rank, child->max_residual_prefix_cut_rank);
 }
 
 static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
@@ -633,7 +633,7 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
 
 static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
                                           uint32_t treewidth_width,
-                                          uint32_t linear_cut_rank,
+                                          uint32_t prefix_cut_rank,
                                           bool treewidth_available,
                                           uint32_t constant_shift,
                                           branch_search_stats_t *stats,
@@ -645,9 +645,9 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_preferred", treewidth_width);
     return true;
   }
-  if (treewidth_available && linear_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
-      linear_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
-    note_rankwidth_skip(stats, "branch.rankwidth_skip_linear_proxy", linear_cut_rank);
+  if (treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+      prefix_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
+    note_rankwidth_skip(stats, "branch.rankwidth_skip_prefix_proxy", prefix_cut_rank);
     return true;
   }
 
@@ -730,7 +730,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
 
   bool delegated = false;
   if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
-                                     sub_stats.linear_cut_rank,
+                                     sub_stats.prefix_cut_rank,
                                      sub_stats.width_diagnostics_available,
                                      qsop_residual_constant(residual), stats, &delegated, error)) {
     free_subinstance(&sub);
@@ -844,7 +844,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_residual_components = search.max_residual_components;
     stats->max_residual_largest_component = search.max_residual_largest_component;
     stats->max_residual_min_fill_width = search.max_residual_min_fill_width;
-    stats->max_residual_linear_cut_rank = search.max_residual_linear_cut_rank;
+    stats->max_residual_prefix_cut_rank = search.max_residual_prefix_cut_rank;
     stats->decomposition_width = search.decomposition_width;
   }
 

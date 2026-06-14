@@ -31,7 +31,7 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 | 33-64 | `treewidth --treewidth-order min-degree` | 32 / 32 | 27.0 ms | tw width 3; max table 128; 16,182 join pairs |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 32 / 32 | 27.3 ms | tw width 3; max table 128; 16,176 join pairs |
 | 33-64 | `branch --branch-heuristic split` | 32 / 32 | 39.5 ms | 3,525 nodes; max table 128; 10,732 join pairs; delegations tw=20, rw=0 |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 128.8 ms | rw width 6; max table 512; max signatures 64; 132,266 join pairs |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 149.2 ms | rw width 6; max table 512; max signatures 64; 132,074 join pairs |
 | 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 130 / 130 | 668.7 ms | tw width 7; max table 2,048; 289,681 join pairs |
 | 65-128 | `treewidth --treewidth-order min-fill` | 130 / 130 | 669.4 ms | tw width 7; max table 2,048; 293,297 join pairs |
 | 65-128 | `treewidth --treewidth-order min-degree` | 130 / 130 | 676.5 ms | tw width 8; max table 4,096; 293,423 join pairs |

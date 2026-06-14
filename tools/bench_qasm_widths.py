@@ -79,7 +79,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                 "components": stats["components"],
                 "max_degree": stats["max_degree"],
                 "min_fill_width": stats.get("min_fill_width"),
-                "linear_cut_rank": stats.get("linear_cut_rank"),
+                "prefix_cut_rank": stats.get("prefix_cut_rank"),
                 "exact_width_max_vars": stats.get("exact_width_max_vars"),
                 "exact_widths_available": bool(stats.get("exact_widths_available", False)),
                 "exact_treewidth": stats.get("exact_treewidth"),
@@ -117,12 +117,12 @@ def write_summary(records: list[dict], file: TextIO) -> None:
     print(f"exact_treewidth_distribution: {distribution(exact, 'exact_treewidth')}", file=file)
     print(f"exact_rankwidth_distribution: {distribution(exact, 'exact_rankwidth')}", file=file)
     print(f"min_fill_width_distribution: {distribution(records, 'min_fill_width')}", file=file)
-    print(f"linear_cut_rank_distribution: {distribution(records, 'linear_cut_rank')}", file=file)
+    print(f"prefix_cut_rank_distribution: {distribution(records, 'prefix_cut_rank')}", file=file)
     for label, key in (
         ("largest_exact_treewidth", "exact_treewidth"),
         ("largest_exact_rankwidth", "exact_rankwidth"),
         ("largest_min_fill_width", "min_fill_width"),
-        ("largest_linear_cut_rank", "linear_cut_rank"),
+        ("largest_prefix_cut_rank", "prefix_cut_rank"),
     ):
         record = max_record(records, key)
         if record is None:
