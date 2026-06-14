@@ -2,6 +2,7 @@
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
+#include "component_key.h"
 #include "trace.h"
 
 #include <inttypes.h>
@@ -36,6 +37,9 @@ typedef struct residual_cache_key {
   uint8_t *active_var;
   uint8_t *active_edge;
   uint32_t *unary;
+  uint32_t *edge_u;
+  uint32_t *edge_v;
+  uint32_t *edge_q;
 } residual_cache_key_t;
 
 typedef struct residual_cache_entry {
@@ -89,6 +93,7 @@ typedef struct branch_search_stats {
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 5U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
+#define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 
 static void free_subinstance(qsop_instance_t *sub) {
   if (sub == NULL) {
@@ -270,6 +275,9 @@ static void residual_cache_key_free(residual_cache_key_t *key) {
   free(key->active_var);
   free(key->active_edge);
   free(key->unary);
+  free(key->edge_u);
+  free(key->edge_v);
+  free(key->edge_q);
   *key = (residual_cache_key_t){0};
 }
 
@@ -294,7 +302,11 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   key->active_var = malloc(nvars == 0 ? 1U : nvars);
   key->active_edge = malloc(nedges == 0 ? 1U : nedges);
   key->unary = malloc((nvars == 0 ? 1U : nvars) * sizeof(*key->unary));
-  if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL) {
+  key->edge_u = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_u));
+  key->edge_v = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_v));
+  key->edge_q = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_q));
+  if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
+      key->edge_u == NULL || key->edge_v == NULL || key->edge_q == NULL) {
     residual_cache_key_free(key);
     set_error(error, "out of memory while allocating residual cache key");
     return false;
@@ -307,6 +319,9 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   }
   for (uint32_t e = 0; e < nedges; e++) {
     key->active_edge[e] = qsop_residual_edge_active(residual, e) ? 1U : 0U;
+    key->edge_u[e] = qsop_residual_edge_u(residual, e);
+    key->edge_v[e] = qsop_residual_edge_v(residual, e);
+    key->edge_q[e] = qsop_residual_edge_q(residual, e);
   }
 
   return true;
@@ -321,6 +336,14 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
       key->active_vars != qsop_residual_active_vars(residual) ||
       key->active_edges != qsop_residual_active_edges(residual)) {
     return false;
+  }
+
+  for (uint32_t e = 0; e < key->nedges; e++) {
+    if (key->edge_u[e] != qsop_residual_edge_u(residual, e) ||
+        key->edge_v[e] != qsop_residual_edge_v(residual, e) ||
+        key->edge_q[e] != qsop_residual_edge_q(residual, e)) {
+      return false;
+    }
   }
 
   for (uint32_t v = 0; v < key->nvars; v++) {
@@ -542,6 +565,11 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
     sub->edge_q[out_edge] = qsop_residual_edge_q(residual, e);
     out_edge++;
   }
+  if (!qsop_canonicalize_small_component(sub, BRANCH_SMALL_COMPONENT_CANONICAL_NVARS, error)) {
+    free(map);
+    free_subinstance(sub);
+    return false;
+  }
 
   free(map);
   return true;
@@ -591,38 +619,6 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   max_u32(&stats->max_residual_largest_component, delegated->max_residual_largest_component);
   max_u32(&stats->max_residual_min_fill_width, delegated->max_residual_min_fill_width);
   max_u32(&stats->max_residual_prefix_cut_rank, delegated->max_residual_prefix_cut_rank);
-}
-
-static void merge_child_solve_stats(branch_search_stats_t *stats,
-                                    const qsop_solve_stats_t *child) {
-  add_saturating_u64(&stats->nodes, child->search_nodes);
-  add_saturating_u64(&stats->leaves, child->leaf_assignments);
-  add_saturating_u64(&stats->cache_hits, child->cache_hits);
-  add_saturating_u64(&stats->cache_misses, child->cache_misses);
-  add_saturating_u64(&stats->table_entries, child->table_entries);
-  add_saturating_u64(&stats->signature_entries, child->signature_entries);
-  add_saturating_u64(&stats->join_pairs, child->join_pairs);
-  add_saturating_u64(&stats->join_signature_pairs, child->join_signature_pairs);
-  add_saturating_u64(&stats->treewidth_delegations, child->treewidth_delegations);
-  add_saturating_u64(&stats->rankwidth_delegations, child->rankwidth_delegations);
-  add_saturating_u64(&stats->branch_fallthroughs, child->branch_fallthroughs);
-  add_saturating_u64(&stats->branch_treewidth_skips, child->branch_treewidth_skips);
-  add_saturating_u64(&stats->branch_rankwidth_skips, child->branch_rankwidth_skips);
-  if (child->max_table_entries > stats->max_table_entries) {
-    stats->max_table_entries = child->max_table_entries;
-  }
-  if (child->max_signature_entries > stats->max_signature_entries) {
-    stats->max_signature_entries = child->max_signature_entries;
-  }
-  if (child->decomposition_width > stats->decomposition_width) {
-    stats->decomposition_width = child->decomposition_width;
-  }
-  max_u32(&stats->max_residual_vars, child->max_residual_vars);
-  max_u32(&stats->max_residual_edges, child->max_residual_edges);
-  max_u32(&stats->max_residual_components, child->max_residual_components);
-  max_u32(&stats->max_residual_largest_component, child->max_residual_largest_component);
-  max_u32(&stats->max_residual_min_fill_width, child->max_residual_min_fill_width);
-  max_u32(&stats->max_residual_prefix_cut_rank, child->max_residual_prefix_cut_rank);
 }
 
 static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
@@ -853,6 +849,21 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
   return true;
 }
 
+static bool branch_solve_component_counts_shared(const qsop_instance_t *sub, uint64_t *counts,
+                                                 branch_search_stats_t *stats,
+                                                 qsop_error_t *error) {
+  qsop_residual_t *residual = NULL;
+  if (!qsop_residual_create(sub, &residual, error)) {
+    return false;
+  }
+
+  stats->depth++;
+  const bool ok = branch_sum_rec(residual, counts, stats, error);
+  stats->depth--;
+  qsop_residual_free(residual);
+  return ok;
+}
+
 static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
                                   branch_search_stats_t *stats, bool *out_split,
                                   qsop_error_t *error) {
@@ -898,11 +909,9 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   for (uint32_t c = 0; c < ncomponents; c++) {
     qsop_instance_t sub = {0};
     uint64_t *part_counts = NULL;
-    qsop_solve_stats_t part_stats = {0};
     if (!qsop_counts_alloc(r, &part_counts, error) ||
         !build_residual_subinstance(residual, component, c, &sub, error) ||
-        !branch_solve_counts_once(&sub, stats->count_modulus, stats->heuristic, part_counts,
-                                  &part_stats, stats->trace, error)) {
+        !branch_solve_component_counts_shared(&sub, part_counts, stats, error)) {
       free_subinstance(&sub);
       free(part_counts);
       free(component);
@@ -921,8 +930,6 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
       return false;
     }
     qsop_trace_emit_elapsed(stats->trace, "branch.convolution", stats->depth, r, convolve_start);
-
-    merge_child_solve_stats(stats, &part_stats);
 
     memcpy(acc, tmp, (size_t)r * sizeof(*acc));
     free_subinstance(&sub);

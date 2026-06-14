@@ -517,7 +517,8 @@ static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words,
 }
 
 static uint64_t missing_edges_for(uint32_t v, const uint64_t *work, const uint64_t *active,
-                                  uint64_t *remaining, size_t words, uint32_t nvars) {
+                                  uint64_t *remaining, size_t words, uint32_t nvars,
+                                  uint64_t stop_after) {
   const uint64_t *neighbors = qsop_bitset_const_row(work, words, v);
   for (size_t w = 0; w < words; w++) {
     remaining[w] = neighbors[w] & active[w];
@@ -532,9 +533,43 @@ static uint64_t missing_edges_for(uint32_t v, const uint64_t *work, const uint64
     const uint64_t *u_neighbors = qsop_bitset_const_row(work, words, u);
     for (size_t w = 0; w < words; w++) {
       fill += qsop_popcount_u64(remaining[w] & ~u_neighbors[w]);
+      if (fill > stop_after) {
+        return fill;
+      }
     }
   }
   return fill;
+}
+
+static bool treewidth_order_needs_fill(qsop_treewidth_order_t order, bool found, uint32_t degree,
+                                       uint32_t best_degree) {
+  if (!found) {
+    return true;
+  }
+  switch (order) {
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL:
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE:
+    return true;
+  case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
+    return degree <= best_degree;
+  }
+  return true;
+}
+
+static uint64_t treewidth_fill_stop_after(qsop_treewidth_order_t order, bool found,
+                                          uint32_t degree, uint64_t best_fill,
+                                          uint32_t best_degree) {
+  if (!found) {
+    return UINT64_MAX;
+  }
+  switch (order) {
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL:
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE:
+    return best_fill;
+  case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
+    return degree == best_degree ? best_fill : UINT64_MAX;
+  }
+  return UINT64_MAX;
 }
 
 static bool treewidth_candidate_is_better(qsop_treewidth_order_t order, bool found,
@@ -583,7 +618,13 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
       }
       const uint32_t degree =
           qsop_bitset_popcount_intersection(qsop_bitset_const_row(work, words, v), active, words);
-      const uint64_t fill = missing_edges_for(v, work, active, scratch, words, qsop->nvars);
+      if (!treewidth_order_needs_fill(order_policy, found, degree, best_degree)) {
+        continue;
+      }
+      const uint64_t fill =
+          missing_edges_for(v, work, active, scratch, words, qsop->nvars,
+                            treewidth_fill_stop_after(order_policy, found, degree, best_fill,
+                                                      best_degree));
       if (treewidth_candidate_is_better(order_policy, found, fill, degree, best_fill,
                                         best_degree)) {
         found = true;

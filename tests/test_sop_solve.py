@@ -370,6 +370,37 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             )
 
 
+def parse_solver_stats(text: str) -> dict[str, int | str]:
+    stats: dict[str, int | str] = {}
+    for line in text.splitlines():
+        key, value = line.split(": ", 1)
+        stats[key] = value if key == "backend" else int(value)
+    return stats
+
+
+def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    for name in (
+        "solve_repeated_components",
+        "solve_mirrored_components",
+        "solve_mirrored_path_components",
+    ):
+        qsop = source_root / "tests" / "golden" / f"{name}.qsop"
+        completed = subprocess.run(
+            [str(exe), "--format", "stats", "--backend", "branch", str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"{name}: branch cache stats failed\n{completed.stderr}")
+        stats = parse_solver_stats(completed.stdout)
+        if stats["cache_hits"] < 1:
+            raise AssertionError(f"{name}: expected a shared branch component cache hit")
+        if stats["cache_hits"] + stats["cache_misses"] != stats["search_nodes"]:
+            raise AssertionError(f"{name}: branch cache hits + misses do not match search nodes")
+
+
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_single.qsop"
     expected = source_root / "tests" / "golden" / "solve_single.expected"
@@ -1073,6 +1104,7 @@ def main() -> int:
     run_branch_dp_handoff(exe)
     run_branch_rankwidth_handoff(exe)
     run_solver_stats(exe, source_root)
+    run_branch_component_cache(exe, source_root)
     run_cli_paths(exe, source_root)
     run_rankwidth_backend(exe, source_root)
     run_branch_heuristics(exe, source_root)
