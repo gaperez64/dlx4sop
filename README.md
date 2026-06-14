@@ -27,7 +27,8 @@ tools/check-coverage.sh build-coverage
 - `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
 - `sop-stats`: print structural statistics, with opt-in exact small-width
   support-graph diagnostics.
-- `sop-solve`: solve exact residue-count histograms.
+- `sop-solve`: solve exact residue-count histograms; stats mode can include
+  the count vector used by benchmark tooling to reconstruct amplitudes.
 - `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP.
 - `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
 
@@ -68,6 +69,7 @@ build/sop-check tests/golden/labelled_raw.qsop
 build/sop-stats --format json tests/golden/labelled_expected.qsop
 build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
 build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_labelled.qsop
+build/sop-solve --format stats --include-result tests/golden/solve_labelled.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 ```
 
@@ -85,4 +87,6 @@ tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --
 `refresh_scoreboard.py` is the public scoreboard path; `render_scoreboard.py`
 is the lower-level table renderer for ad hoc reports. Use
 `bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
-labelled-rankwidth generator sweeps.
+labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
+amplitudes when stats are collected, and native comparison reports mark how
+many common rows had amplitude checks, mismatches, and maximum absolute error.

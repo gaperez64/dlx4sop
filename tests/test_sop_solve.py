@@ -418,6 +418,34 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             )
 
 
+def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    completed = subprocess.run(
+        [str(exe), "--format", "stats", "--include-result", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_result = {
+        "result_modulus: 8",
+        "result_norm_h: 4",
+        "result_counts: 0 0 1 1 1 0 1 0",
+    }
+    if completed.returncode != 0 or not expected_result.issubset(set(completed.stdout.splitlines())):
+        raise AssertionError(f"include-result stats failed\n{completed.stdout}\n{completed.stderr}")
+
+    invalid = subprocess.run(
+        [str(exe), "--include-result", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if invalid.returncode == 0 or "--include-result requires --format stats" not in invalid.stderr:
+        raise AssertionError(f"include-result guard failed\n{invalid.stdout}\n{invalid.stderr}")
+
+
 def parse_solver_stats(text: str) -> dict[str, int | str]:
     stats: dict[str, int | str] = {}
     for line in text.splitlines():
@@ -1237,6 +1265,7 @@ def main() -> int:
     run_branch_dp_handoff(exe)
     run_branch_rankwidth_handoff(exe)
     run_solver_stats(exe, source_root)
+    run_include_result_stats(exe, source_root)
     run_branch_component_cache(exe, source_root)
     run_cli_paths(exe, source_root)
     run_rankwidth_backend(exe, source_root)

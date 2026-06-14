@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-14.
 
-This tracks progress toward a competitive exact strong simulator based on labelled quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
+This tracks progress toward a competitive exact strong simulator based on labelled quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, reconstruct the requested amplitude, and compare with native simulators where possible.
 
 ## Benchmarks Used
 
@@ -42,7 +42,7 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 
 ## Competitor Comparisons
 
-These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster.
+These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster. Refreshed native comparison artifacts also report amplitude checks, mismatches, and maximum absolute error whenever both sides recorded amplitudes.
 
 ### FeynmanDD
 
