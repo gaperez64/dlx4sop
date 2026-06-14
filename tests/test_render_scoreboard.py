@@ -25,6 +25,10 @@ def main() -> int:
         "backend": "treewidth",
         "treewidth_order": "min-fill",
         "source": "Synthetic",
+        "source_relative_path": "bell.qasm",
+        "case": "bell",
+        "input": "00",
+        "output": "00",
         "solve_elapsed_ns": 1234,
         "stats": {"decomposition_width": 2, "max_table_entries": 16, "join_pairs": 32},
         "treewidth_width": 2,
@@ -40,9 +44,17 @@ def main() -> int:
     }
     native = {
         "engine": "qiskit-statevector",
+        "source": "Synthetic",
+        "source_relative_path": "bell.qasm",
+        "case": "bell",
+        "input": "00",
+        "output": "00",
         "status": "ok",
         "elapsed_ns": 5678,
         "qubits": 3,
+        "qubit_cap": 4,
+        "timeout_seconds": 2.0,
+        "memory_limit_mib": 512,
     }
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -80,6 +92,9 @@ def main() -> int:
             "| synthetic | `branch --branch-heuristic split` | 0 / 1 | 2.00 s | 1 timeouts |",
             "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | tw width 2; max table 16; 32 join pairs |",
             "`qiskit-statevector`",
+            "## Native Common-Row Comparison",
+            "### Synthetic",
+            "| synthetic | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.2 us | 5.7 us | 4.60x | 3 | 4 | 2.0 | 512 |  |",
         ):
             if expected not in completed.stdout:
                 raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")

@@ -42,6 +42,13 @@ def format_ns(ns: int) -> str:
     return f"{ns} ns"
 
 
+def tier_sort_key(tier: str) -> tuple[int, str]:
+    for index, (name, _minimum, _maximum) in enumerate(DEFAULT_TIERS):
+        if tier == name:
+            return index, tier
+    return len(DEFAULT_TIERS), tier
+
+
 def solver_config(record: dict) -> str:
     backend = record.get("backend", "")
     if backend == "branch":
@@ -202,14 +209,15 @@ def solver_status_stats(row: dict) -> str:
     return "; ".join(part for part in parts if part)
 
 
+def cap_value(record: dict, key: str) -> str:
+    if key not in record:
+        return "not recorded"
+    value = record.get(key)
+    return "none" if value is None else str(value)
+
+
 def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
     grouped: dict[tuple[str, str], dict] = {}
-
-    def cap_value(record: dict, key: str) -> str:
-        if key not in record:
-            return "not recorded"
-        value = record.get(key)
-        return "none" if value is None else str(value)
 
     for tier, records in named_records:
         for record in records:
@@ -247,6 +255,87 @@ def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) ->
     return [grouped[key] for key in sorted(grouped)]
 
 
+def has_comparison_identity(record: dict) -> bool:
+    return bool(record.get("case") and record.get("input") is not None and record.get("output") is not None)
+
+
+def comparison_key(record: dict) -> tuple[str, str, str, str, str]:
+    return (
+        str(record.get("source") or "unknown"),
+        str(record.get("source_relative_path") or ""),
+        str(record.get("case") or ""),
+        str(record.get("input") or ""),
+        str(record.get("output") or ""),
+    )
+
+
+def comparison_speedup(native_ns: int, solver_ns: int) -> str:
+    if native_ns <= 0 or solver_ns <= 0:
+        return "n/a"
+    return f"{native_ns / solver_ns:.2f}x"
+
+
+def summarize_native_comparison_records(
+    solver_records: Iterable[tuple[str, list[dict]]],
+    native_records: Iterable[tuple[str, list[dict]]],
+) -> list[dict]:
+    native_by_tier_and_key: dict[tuple[str, tuple[str, str, str, str, str]], list[dict]] = {}
+    for tier, records in native_records:
+        for record in records:
+            if has_comparison_identity(record):
+                native_by_tier_and_key.setdefault((tier, comparison_key(record)), []).append(record)
+
+    grouped: dict[tuple[str, str, str], dict] = {}
+    for tier, records in solver_records:
+        for solver in records:
+            if not has_comparison_identity(solver):
+                continue
+            matches = native_by_tier_and_key.get((tier, comparison_key(solver)), [])
+            if not matches:
+                continue
+            config = solver_config(solver)
+            solver_ok = solver.get("status", "ok") == "ok"
+            solver_elapsed_ns = int(solver.get("solve_elapsed_ns") or 0)
+            source = comparison_key(solver)[0]
+            for native in matches:
+                engine = native.get("engine") or "unknown"
+                key = (source, tier, config, engine)
+                entry = grouped.setdefault(
+                    key,
+                    {
+                        "source": source,
+                        "tier": tier,
+                        "config": config,
+                        "engine": engine,
+                        "matched": 0,
+                        "both_ok": 0,
+                        "solver_elapsed_ns": 0,
+                        "native_elapsed_ns": 0,
+                        "max_boundary_qubits": 0,
+                        "qubit_caps": collections.Counter(),
+                        "timeouts": collections.Counter(),
+                        "memory_caps": collections.Counter(),
+                        "errors": collections.Counter(),
+                    },
+                )
+                entry["matched"] += 1
+                entry["qubit_caps"][cap_value(native, "qubit_cap")] += 1
+                entry["timeouts"][cap_value(native, "timeout_seconds")] += 1
+                entry["memory_caps"][cap_value(native, "memory_limit_mib")] += 1
+                if isinstance(native.get("qubits"), int):
+                    entry["max_boundary_qubits"] = max(
+                        entry["max_boundary_qubits"], int(native["qubits"])
+                    )
+                native_ok = native.get("status") == "ok"
+                if solver_ok and native_ok:
+                    entry["both_ok"] += 1
+                    entry["solver_elapsed_ns"] += solver_elapsed_ns
+                    entry["native_elapsed_ns"] += int(native.get("elapsed_ns") or 0)
+                elif native.get("error"):
+                    entry["errors"][str(native["error"])] += 1
+    return [grouped[key] for key in sorted(grouped)]
+
+
 def write_import_tables(report_paths: list[pathlib.Path], file: TextIO) -> None:
     summary = summarize_reports(report_paths, list(DEFAULT_TIERS))
     print("## Import Coverage\n", file=file)
@@ -277,7 +366,7 @@ def write_solver_tables(named_records: list[tuple[str, list[dict]]], file: TextI
     print("\n## Solver Results\n", file=file)
     print("| Tier | Backend/configuration | Solved / records | Total solve time | Key stats |", file=file)
     print("| --- | --- | ---: | ---: | --- |", file=file)
-    for row in rows:
+    for row in sorted(rows, key=lambda item: (tier_sort_key(item["tier"]), item["elapsed_ns"], item["config"])):
         print(
             f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
             f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} | "
@@ -310,6 +399,44 @@ def write_native_tables(named_records: list[tuple[str, list[dict]]], file: TextI
         )
 
 
+def write_native_comparison_tables(
+    solver_records: list[tuple[str, list[dict]]],
+    native_records: list[tuple[str, list[dict]]],
+    file: TextIO,
+) -> None:
+    rows = summarize_native_comparison_records(solver_records, native_records)
+    if not rows:
+        return
+    print("\n## Native Common-Row Comparison\n", file=file)
+    print(
+        "Rows join solver and native simulator JSONL on source, relative path, case, input, and output. "
+        "Times and speedups use rows where both completed.",
+        file=file,
+    )
+    for source in sorted({row["source"] for row in rows}):
+        print(f"\n### {markdown_escape(source)}\n", file=file)
+        print(
+            "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | Native time | "
+            "QSOP speedup | Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
+            file=file,
+        )
+        print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+        for row in [candidate for candidate in rows if candidate["source"] == source]:
+            qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
+            timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
+            memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
+            reason = row["errors"].most_common(1)[0][0] if row["errors"] else ""
+            print(
+                f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
+                f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
+                f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
+                f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
+                f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
+                f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} | {markdown_escape(reason)} |",
+                file=file,
+            )
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render scoreboard Markdown tables from structured benchmark outputs.")
     parser.add_argument("--import-report", action="append", type=pathlib.Path, default=[])
@@ -327,6 +454,7 @@ def main(argv: list[str]) -> int:
             write_import_tables(args.import_report, sys.stdout)
         write_solver_tables(solver_records, sys.stdout)
         write_native_tables(native_records, sys.stdout)
+        write_native_comparison_tables(solver_records, native_records, sys.stdout)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

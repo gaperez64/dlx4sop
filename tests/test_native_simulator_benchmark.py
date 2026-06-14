@@ -35,7 +35,9 @@ def main() -> int:
                 str(tool),
                 str(manifest_path),
                 "--max-qubits",
-                "1",
+                "4",
+                "--engine-qubit-cap",
+                "qiskit-statevector=1",
                 "--skip-unsupported",
                 "--format",
                 "summary",
@@ -49,6 +51,8 @@ def main() -> int:
             raise AssertionError(f"native benchmark skip failed:\n{completed.stdout}\n{completed.stderr}")
         if "records: 1" not in completed.stdout or "skipped: 1" not in completed.stdout:
             raise AssertionError(f"unexpected skip summary:\n{completed.stdout}")
+        if "qubit_cap: 1" not in completed.stdout:
+            raise AssertionError(f"engine-specific cap was not reported:\n{completed.stdout}")
 
         try:
             import qiskit  # noqa: F401

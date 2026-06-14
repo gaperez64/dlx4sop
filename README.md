@@ -76,4 +76,8 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 ```sh
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
+tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --engine-qubit-cap pyzx-matrix=10 --timeout 10
 ```
+
+`render_scoreboard.py` emits import, solver, native, and common-row native
+comparison tables when the matching inputs are provided.

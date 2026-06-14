@@ -232,10 +232,14 @@ def record_case(
 
 
 def annotate_limits(record: dict, args: argparse.Namespace) -> dict:
-    record["qubit_cap"] = args.max_qubits
+    record["qubit_cap"] = effective_max_qubits(args, str(record["engine"]))
     record["timeout_seconds"] = args.timeout
     record["memory_limit_mib"] = args.memory_limit_mib
     return record
+
+
+def effective_max_qubits(args: argparse.Namespace, engine: str) -> int | None:
+    return args.engine_qubit_caps.get(engine, args.max_qubits)
 
 
 def benchmark(args: argparse.Namespace) -> list[dict]:
@@ -244,6 +248,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
     engines = list(ENGINES) if args.engine == "all" else [args.engine]
     for engine in engines:
         dependency_error = engine_import_error(engine)
+        max_qubits = effective_max_qubits(args, engine)
         for case, boundary_index, (input_bits, output_bits) in boundary_records(cases, args.limit):
             qasm = case_qasm(case)
             boundary_qubits = max(len(input_bits), len(output_bits))
@@ -264,7 +269,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                     )
                 )
                 continue
-            if args.max_qubits is not None and boundary_qubits > args.max_qubits:
+            if max_qubits is not None and boundary_qubits > max_qubits:
                 records.append(
                     annotate_limits(
                         record_case(
@@ -275,7 +280,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                             engine,
                             "skipped",
                             qubits=boundary_qubits,
-                            error=f"boundary uses {boundary_qubits} qubits above --max-qubits {args.max_qubits}",
+                            error=f"boundary uses {boundary_qubits} qubits above qubit cap {max_qubits}",
                         ),
                         args,
                     )
@@ -372,6 +377,21 @@ def write_summary(records: list[dict], file: TextIO) -> None:
         print(f"  max_qubits: {max_qubits}", file=file)
 
 
+def parse_engine_qubit_cap(text: str) -> tuple[str, int]:
+    if "=" not in text:
+        raise argparse.ArgumentTypeError("engine cap must use ENGINE=N")
+    engine, value_text = text.split("=", 1)
+    if engine not in ENGINES:
+        raise argparse.ArgumentTypeError(f"unsupported engine {engine!r}")
+    try:
+        value = int(value_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("engine qubit cap must be an integer") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("engine qubit cap must be non-negative")
+    return engine, value
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark native statevector simulators on QASM manifest fixed-boundary amplitudes."
@@ -381,6 +401,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--max-qubits", type=int, help="skip boundaries above this dense-state qubit count")
+    parser.add_argument(
+        "--engine-qubit-cap",
+        action="append",
+        type=parse_engine_qubit_cap,
+        default=[],
+        metavar="ENGINE=N",
+        help="override --max-qubits for one engine; may be repeated",
+    )
     parser.add_argument("--timeout", type=float, help="per-boundary native simulator timeout in seconds")
     parser.add_argument("--memory-limit-mib", type=int, help="process address-space cap for native simulator runs")
     parser.add_argument("--skip-unsupported", action="store_true")
@@ -389,6 +417,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--limit must be non-negative")
     if args.max_qubits is not None and args.max_qubits < 0:
         parser.error("--max-qubits must be non-negative")
+    args.engine_qubit_caps = {}
+    for engine, cap in args.engine_qubit_cap:
+        if engine in args.engine_qubit_caps:
+            parser.error(f"duplicate --engine-qubit-cap for {engine}")
+        args.engine_qubit_caps[engine] = cap
     if args.timeout is not None and args.timeout <= 0:
         parser.error("--timeout must be positive")
     if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
