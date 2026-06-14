@@ -86,6 +86,15 @@ def add_max(counter: dict[str, int], key: str, value: int | None) -> None:
         counter[key] = max(counter.get(key, 0), value)
 
 
+def cache_hit_rate(stats: dict[str, int]) -> str:
+    hits = stats.get("cache_hits", 0)
+    misses = stats.get("cache_misses", 0)
+    total = hits + misses
+    if total == 0:
+        return "n/a"
+    return f"{hits / total:.3f}"
+
+
 def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
     grouped: dict[tuple[str, str], dict] = {}
     for tier, records in named_records:
@@ -177,7 +186,10 @@ def key_stats(stats: dict[str, int]) -> str:
     if "leaf_assignments" in stats:
         parts.append(f"{stats['leaf_assignments']} leaves")
     if "cache_hits" in stats or "cache_misses" in stats:
-        cache = f"cache {stats.get('cache_hits', 0)} / {stats.get('cache_misses', 0)}"
+        cache = (
+            f"cache hits={stats.get('cache_hits', 0)}, "
+            f"misses={stats.get('cache_misses', 0)}, hit rate={cache_hit_rate(stats)}"
+        )
         if stats.get("cache_avoided_nodes", 0):
             cache += f", avoided nodes {stats['cache_avoided_nodes']}"
         if "cache_entries" in stats:

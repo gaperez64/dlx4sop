@@ -41,7 +41,13 @@ def main() -> int:
         "cache_lookup_elapsed_ns": 2_000,
         "cache_store_events": 1,
         "cache_store_elapsed_ns": 3_000,
-        "stats": {"search_nodes": 3, "cache_entries": 2, "cache_stored_residue_slots": 16},
+        "stats": {
+            "search_nodes": 3,
+            "cache_hits": 1,
+            "cache_misses": 2,
+            "cache_entries": 2,
+            "cache_stored_residue_slots": 16,
+        },
     }
     native = {
         "engine": "qiskit-statevector",
@@ -93,6 +99,7 @@ def main() -> int:
             "## Internal Solver Configurations",
             "`treewidth --treewidth-order min-fill`",
             "`branch --branch-heuristic split`",
+            "cache hits=1, misses=2, hit rate=0.333",
             "cache entries=2, slots=16",
             "cache trace lookup=2 events/2.0 us, store=1 events/3.0 us",
             "branch rw probe labelled-cut-signature=4, support=7",

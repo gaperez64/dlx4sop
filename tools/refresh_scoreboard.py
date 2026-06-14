@@ -9,6 +9,7 @@ import sys
 from typing import Iterable, TextIO
 
 from render_scoreboard import (
+    cache_hit_rate,
     comparison_speedup,
     format_ns,
     has_comparison_identity,
@@ -150,6 +151,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
     parts = []
     if "search_nodes" in stats:
         parts.append(f"{format_count(stats['search_nodes'])} nodes")
+    if "cache_hits" in stats or "cache_misses" in stats:
+        parts.append(
+            f"cache hits={format_count(stats.get('cache_hits', 0))}, "
+            f"misses={format_count(stats.get('cache_misses', 0))}, "
+            f"hit rate={cache_hit_rate(stats)}"
+        )
     if stats.get("cache_avoided_nodes", 0):
         parts.append(f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}")
     if "cache_entries" in stats:
