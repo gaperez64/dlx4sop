@@ -248,6 +248,51 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
         )
 
 
+def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
+    edges = "\n".join(f"q {i} {i + 1} 8" for i in range(31))
+    qsop = f"p qsop-sign 16 32 31\nn 0\ncst 3\n{edges}\n"
+    stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "32",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_stats = {
+        "backend: branch",
+        "treewidth_delegations: 1",
+        "rankwidth_delegations: 0",
+        "branch_rankwidth_skips: 1",
+    }
+    if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
+        raise AssertionError(f"branch root treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
+    trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    expected_trace = {
+        "branch.root_width_probe",
+        "branch.treewidth_table_forecast",
+        "branch.treewidth_join_pair_forecast",
+        "branch.rankwidth_skip_treewidth_preferred",
+        "branch.root_treewidth_delegate",
+        "treewidth.initial_factors",
+    }
+    if not expected_trace.issubset(trace_phases):
+        raise AssertionError(
+            f"branch root treewidth trace missing {expected_trace - trace_phases}\n{stats.stderr}"
+        )
+
+
 def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
     qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
@@ -1264,6 +1309,7 @@ def main() -> int:
     run_max_vars_guard(exe, source_root)
     run_large_rankwidth_crt(exe)
     run_branch_dp_handoff(exe)
+    run_branch_root_treewidth_trace(exe)
     run_branch_rankwidth_handoff(exe)
     run_solver_stats(exe, source_root)
     run_include_result_stats(exe, source_root)

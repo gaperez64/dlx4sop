@@ -1413,6 +1413,11 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
     free(order);
     return true;
   }
+  qsop_trace_emit(trace, "branch.treewidth_table_forecast", 0,
+                  treewidth_table_forecast(width, qsop->r), 0);
+  qsop_trace_emit(trace, "branch.treewidth_join_pair_forecast", 0,
+                  treewidth_join_pair_forecast(width, qsop->nvars), 0);
+  qsop_trace_emit(trace, "branch.rankwidth_skip_treewidth_preferred", 0, width, 0);
 
   qsop_result_t *result = NULL;
   qsop_solve_stats_t delegated = {0};
