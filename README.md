@@ -42,10 +42,14 @@ Current solver guidance:
   `min-degree` currently tie on table shape in the available benchmark pool.
 
 Benchmark basis: `tools/bench_qasm_corpus.py` over the checked-in
-`tests/qasm_solver_corpus.json` corpus (32 boundaries) plus an external manifest
-generated with `tools/build_external_qasm_manifest.py` (72 boundaries). Both
-sets currently import as small sign-only QSOPs, so these numbers are a tooling
-baseline, not a final performance ranking.
+`tests/qasm_solver_corpus.json` corpus (32 boundaries) and a larger comparison
+pool (72 boundaries total) drawn from the checked-in cases plus supported
+imports from [PyZX](https://github.com/zxcalc/pyzx) benchmark circuits and
+[MQT Bench](https://github.com/munich-quantum-toolkit/bench). The FeynmanDD
+scanner targets
+[feynman-decision-diagram](https://github.com/cqs-thu/feynman-decision-diagram),
+but that source does not yet contribute supported cases to the cited run. These
+numbers are a tooling baseline, not a final performance ranking.
 
 ## Build
 
