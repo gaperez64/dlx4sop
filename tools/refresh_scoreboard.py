@@ -157,6 +157,13 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"cache entries={format_count(stats['cache_entries'])}, "
             f"slots={format_count(stats.get('cache_stored_residue_slots', 0))}"
         )
+    if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:
+        parts.append(
+            f"cache trace lookup={format_count(stats.get('cache_lookup_events', 0))} events/"
+            f"{format_ns(stats.get('cache_lookup_elapsed_ns', 0))}, "
+            f"store={format_count(stats.get('cache_store_events', 0))} events/"
+            f"{format_ns(stats.get('cache_store_elapsed_ns', 0))}"
+        )
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
     if "treewidth_width" in stats:

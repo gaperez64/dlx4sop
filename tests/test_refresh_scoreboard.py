@@ -37,6 +37,10 @@ def main() -> int:
         "branch_rankwidth_labelled_width": 4,
         "branch_rankwidth_support_width": 7,
         "branch_treewidth_order_width": 3,
+        "cache_lookup_events": 2,
+        "cache_lookup_elapsed_ns": 2_000,
+        "cache_store_events": 1,
+        "cache_store_elapsed_ns": 3_000,
         "stats": {"search_nodes": 3, "cache_entries": 2, "cache_stored_residue_slots": 16},
     }
     native = {
@@ -90,6 +94,7 @@ def main() -> int:
             "`treewidth --treewidth-order min-fill`",
             "`branch --branch-heuristic split`",
             "cache entries=2, slots=16",
+            "cache trace lookup=2 events/2.0 us, store=1 events/3.0 us",
             "branch rw probe labelled-cut-signature=4, support=7",
             "branch tw order width=3",
             "## Competitor Comparisons",

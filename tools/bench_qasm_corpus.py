@@ -40,6 +40,8 @@ TOP_METRICS = (
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "cache_store_events",
+    "cache_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
@@ -106,6 +108,8 @@ CSV_FIELDS = [
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "cache_store_events",
+    "cache_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
@@ -300,10 +304,18 @@ def cache_record_metrics(
         total = hits + misses
         if total:
             metrics["cache_hit_rate_ppm"] = (hits * 1_000_000) // total
-    lookup = trace.get("branch.cache_lookup")
-    if lookup is not None:
-        metrics["cache_lookup_events"] = lookup["events"]
-        metrics["cache_lookup_elapsed_ns"] = lookup["elapsed_ns"]
+    for phase, events_key, elapsed_key in (
+        ("cache_lookup", "cache_lookup_events", "cache_lookup_elapsed_ns"),
+        ("cache_store", "cache_store_events", "cache_store_elapsed_ns"),
+    ):
+        matching = [
+            values
+            for event, values in trace.items()
+            if event.endswith(f".{phase}") and event.rsplit(".", 1)[0] in {"branch", "components"}
+        ]
+        if matching:
+            metrics[events_key] = sum(values["events"] for values in matching)
+            metrics[elapsed_key] = sum(values["elapsed_ns"] for values in matching)
     return metrics
 
 
@@ -413,6 +425,8 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
         for stat_key in (
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_store_events",
+            "cache_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
@@ -660,6 +674,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_hit_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_store_events",
+            "cache_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
@@ -759,6 +775,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 )
             if "cache_lookup_elapsed_ns" in record:
                 line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
+            if "cache_store_elapsed_ns" in record:
+                line += f" cache_store_elapsed_ns={record['cache_store_elapsed_ns']}"
             if "branch_rankwidth_labelled_width" in record:
                 line += (
                     f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
@@ -967,6 +985,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_stored_residue_slots",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_store_events",
+            "cache_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",

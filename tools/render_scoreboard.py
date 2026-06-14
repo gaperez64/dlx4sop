@@ -133,6 +133,10 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_fallthroughs",
                 "branch_treewidth_skips",
                 "branch_rankwidth_skips",
+                "cache_lookup_events",
+                "cache_lookup_elapsed_ns",
+                "cache_store_events",
+                "cache_store_elapsed_ns",
                 "branch_rankwidth_probe_events",
                 "branch_rankwidth_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
@@ -182,6 +186,13 @@ def key_stats(stats: dict[str, int]) -> str:
                 f"slots {stats.get('cache_stored_residue_slots', 0)}"
             )
         parts.append(cache)
+    if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:
+        parts.append(
+            f"cache trace lookup={stats.get('cache_lookup_events', 0)} events/"
+            f"{format_ns(stats.get('cache_lookup_elapsed_ns', 0))}, "
+            f"store={stats.get('cache_store_events', 0)} events/"
+            f"{format_ns(stats.get('cache_store_elapsed_ns', 0))}"
+        )
     if "components" in stats:
         parts.append(f"{stats['components']} components")
     if "rankwidth_width" in stats:
