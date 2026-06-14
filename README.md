@@ -33,14 +33,14 @@ Implemented solver backends:
 Current solver guidance:
 
 - Use `components` as the default robust exact solver.
+- Use `treewidth --treewidth-order min-fill-max-degree` as the best current
+  widened-corpus baseline; keep `min-fill` in comparisons because it is nearly
+  tied.
 - Use `branch --branch-heuristic split` as the main labelled/CRT baseline for
   connected instances; the other branch heuristics are currently experiments.
-- Use `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table`
-  as the strongest decomposition DP currently available when it accepts the
-  instance.
-- Use `treewidth` for decomposition comparisons and tracing. `min-fill` and
-  `min-fill-max-degree` are useful tie-break variants to compare against
-  `min-degree`.
+- Use `rankwidth` for decomposition-DP experiments; current generated
+  decompositions need improvement before rankwidth is competitive on the
+  widened corpus.
 
 Corpus links, current coverage, and solver timing tables live in
 [scoreboard.md](scoreboard.md).
@@ -82,6 +82,7 @@ Canonicalize, inspect, and solve:
 ```sh
 build/sop-check tests/golden/labelled_raw.qsop
 build/sop-stats --format json tests/golden/labelled_expected.qsop
+build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
 build/sop-solve tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --format stats tests/golden/solve_labelled.qsop
 build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut tests/golden/solve_sign_path.qsop
@@ -103,6 +104,8 @@ Run benchmark summaries and build external corpus manifests:
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --treewidth-order min-fill-max-degree --top-metric treewidth_max_table_entries --format summary
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --solver-timeout 20 --format summary
+tools/bench_qasm_widths.py build/qasm2sop build/sop-stats --manifest corpus.json --exact-width-max-vars 16 --format summary
 tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --source-name NAME --source-url URL --min-vars 33 --max-vars 64 --report corpus-report.json --output corpus.json
 tools/summarize_qasm_report.py corpus-report.json --format markdown
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl

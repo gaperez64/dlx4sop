@@ -35,6 +35,23 @@ that cap and later promoted into controlled widened tiers.
 Use `tools/summarize_qasm_report.py` or `tools/render_scoreboard.py` on
 generated import reports and benchmark JSONL to refresh these tables.
 
+## Support Widths
+
+`sop-stats --exact-widths` computes exact support-graph treewidth and GF(2)
+rankwidth only under a small variable cap. These are graph-parameter
+certificates for the support graph, not labelled cut-signature-width
+certificates.
+
+| Corpus tier | Exact cap | Exact coverage | Exact support treewidth | Exact support rankwidth | Heuristic notes |
+| --- | ---: | ---: | --- | --- | --- |
+| Checked-in corpus | 12 vars | 32 / 32 | `0:19, 1:13` | `0:19, 1:13` | max min-fill width 1 |
+| 0-32 importer-fed pool | 16 vars | 100 / 133 | `0:63, 1:35, 2:2` | `0:63, 1:35, 2:2` | skipped 30 FeynmanDD and 3 PyZX boundaries above cap |
+| 33-64 promoted tier | 16 vars | 0 / 32 | n/a | n/a | min-fill width `1:17, 2:14, 3:1` |
+| 65-128 promoted tier | 16 vars | 0 / 130 | n/a | n/a | min-fill width reaches 7 |
+
+For the widened tiers, the current certified statement is therefore about the
+solver's generated/heuristic widths, not exact treewidth or exact rankwidth.
+
 ## Solver Results
 
 Command shape:

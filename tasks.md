@@ -29,6 +29,8 @@ than repeated here.
   - `treewidth` has a first exact bucket-elimination backend with
     `min-fill|min-degree|min-fill-max-degree` orders and CRT-backed large
     assignment counts.
+  - `sop-stats --exact-widths` can certify exact support-graph treewidth and
+    GF(2) rankwidth for small instances under a guarded variable cap.
 - Importer status:
   - OpenQASM support covers the static finite subset used by the checked-in
     corpus and many PyZX/FeynmanDD/MQT cases.
@@ -52,6 +54,10 @@ than repeated here.
     source-family boundary counts, backend-specific rankwidth/treewidth width
     and table metrics, and largest case-boundaries by core size/performance
     metrics.
+  - `tools/bench_qasm_widths.py` measures support-graph width diagnostics from
+    QASM manifests using `qasm2sop` and `sop-stats`.
+  - `tools/bench_qasm_corpus.py --solver-timeout SECONDS` records timed-out
+    solver attempts as structured benchmark rows.
   - Current 32-variable source-attributed pool: 113 cases / 133 boundaries
     across internal, PyZX, MQT Bench, and FeynmanDD. Branch, rankwidth
     count-table, and treewidth solve it; rankwidth skips 12 zero-variable
@@ -70,12 +76,19 @@ than repeated here.
   - Qiskit manifest correctness comparison on the 33-64 tier checks 20 / 32
     boundaries under a 16-qubit cap with no Qiskit parser skips; the other 12
     are qubit-cap skips.
+  - Exact support-width pass:
+    checked-in corpus has exact support treewidth/rankwidth distribution
+    `0:19, 1:13`; the current 0-32 importer-fed pool certifies 100 / 133
+    boundaries under a 16-variable exact-width cap, with exact support
+    treewidth/rankwidth distribution `0:63, 1:35, 2:2`.
+    The 33-64 and 65-128 tiers are above the exact cap, so only heuristic
+    min-fill width and linear cut-rank diagnostics are currently recorded there.
   - Branch heuristic comparison on that pool favors `split`: about 9.8k search
     nodes and 81ms total solve time, versus 91.5k/677ms for `treewidth` and
     4.0M/14.5s for `cutrank-proxy`.
 - Last full validation:
-  - `meson test -C build --print-errorlogs`: 23/23 passing.
-  - `tools/check-coverage.sh build-coverage`: 77.2% line coverage.
+  - `meson test -C build --print-errorlogs`: 24/24 passing.
+  - `tools/check-coverage.sh build-coverage`: 77.1% line coverage.
 
 ## Current Task
 
@@ -96,6 +109,9 @@ than repeated here.
   regression targets.
 - Add optional capped branch profiling by case so search blowups are reported
   structurally instead of as silent timeouts.
+- Use exact-width certification on small/capped manifests and heuristic width
+  diagnostics on widened tiers until a more serious exact-parameter toolchain is
+  justified.
 - Keep native baseline harnesses on native benchmark formats until `sop2X`
   exporters exist.
 - Keep `branch --branch-heuristic split` as the branch baseline until a harder

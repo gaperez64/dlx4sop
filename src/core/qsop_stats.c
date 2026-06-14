@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define QSOP_EXACT_WIDTH_HARD_MAX 16U
+
 static void set_error(qsop_error_t *error, const char *fmt, ...) {
   if (error == NULL) {
     return;
@@ -321,7 +323,201 @@ static bool compute_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t 
   return true;
 }
 
-bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error) {
+static void build_support_adjacency_masks(const qsop_instance_t *qsop, uint64_t *adj) {
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    adj[v] = 0;
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    adj[qsop->edge_u[e]] |= bit_for_var(qsop->edge_v[e]);
+    adj[qsop->edge_v[e]] |= bit_for_var(qsop->edge_u[e]);
+  }
+}
+
+static uint32_t active_degree(uint32_t v, const uint64_t *adj, uint64_t active) {
+  return popcount_u64(adj[v] & active & ~bit_for_var(v));
+}
+
+static void exact_treewidth_search(uint32_t nvars, uint64_t active, const uint64_t *adj,
+                                   uint32_t current_width, uint32_t *best_width) {
+  if (current_width >= *best_width) {
+    return;
+  }
+  if (active == 0) {
+    *best_width = current_width;
+    return;
+  }
+
+  uint32_t min_degree = UINT32_MAX;
+  for (uint32_t v = 0; v < nvars; v++) {
+    if ((active & bit_for_var(v)) == 0) {
+      continue;
+    }
+    const uint32_t degree = active_degree(v, adj, active);
+    if (degree < min_degree) {
+      min_degree = degree;
+    }
+  }
+  if (min_degree != UINT32_MAX && (current_width > min_degree ? current_width : min_degree) >=
+                                      *best_width) {
+    return;
+  }
+
+  uint64_t candidates = active;
+  while (candidates != 0) {
+    bool found = false;
+    uint32_t best_v = 0;
+    uint32_t best_degree = UINT32_MAX;
+    for (uint32_t v = 0; v < nvars; v++) {
+      if ((candidates & bit_for_var(v)) == 0) {
+        continue;
+      }
+      const uint32_t degree = active_degree(v, adj, active);
+      if (!found || degree < best_degree) {
+        found = true;
+        best_v = v;
+        best_degree = degree;
+      }
+    }
+    if (!found) {
+      break;
+    }
+    candidates &= ~bit_for_var(best_v);
+
+    const uint32_t next_width =
+        current_width > best_degree ? current_width : best_degree;
+    if (next_width >= *best_width) {
+      continue;
+    }
+
+    uint64_t next_adj[QSOP_EXACT_WIDTH_HARD_MAX] = {0};
+    for (uint32_t v = 0; v < nvars; v++) {
+      next_adj[v] = adj[v];
+    }
+
+    const uint64_t neighbors = adj[best_v] & active & ~bit_for_var(best_v);
+    uint64_t remaining_neighbors = neighbors;
+    while (remaining_neighbors != 0) {
+      const uint32_t u = first_set_bit_u64(remaining_neighbors);
+      remaining_neighbors &= ~bit_for_var(u);
+      next_adj[u] |= neighbors & ~bit_for_var(u);
+    }
+
+    const uint64_t next_active = active & ~bit_for_var(best_v);
+    for (uint32_t v = 0; v < nvars; v++) {
+      next_adj[v] &= next_active;
+    }
+    next_adj[best_v] = 0;
+    exact_treewidth_search(nvars, next_active, next_adj, next_width, best_width);
+  }
+}
+
+static uint32_t exact_treewidth_masks(uint32_t nvars, const uint64_t *adj,
+                                      uint32_t upper_bound) {
+  if (nvars <= 1) {
+    return 0;
+  }
+  uint32_t best_width = upper_bound;
+  exact_treewidth_search(nvars, all_vars_mask(nvars), adj, 0, &best_width);
+  return best_width;
+}
+
+static uint32_t max4_u32(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+  uint32_t out = a > b ? a : b;
+  out = out > c ? out : c;
+  return out > d ? out : d;
+}
+
+static bool exact_rankwidth_masks(uint32_t nvars, const uint64_t *adj, uint32_t *out,
+                                  qsop_error_t *error) {
+  if (nvars <= 1) {
+    *out = 0;
+    return true;
+  }
+
+  const uint32_t states = UINT32_C(1) << nvars;
+  uint8_t *cutrank = calloc(states, sizeof(*cutrank));
+  uint8_t *dp = calloc(states, sizeof(*dp));
+  if (cutrank == NULL || dp == NULL) {
+    free(cutrank);
+    free(dp);
+    set_error(error, "out of memory while computing exact rankwidth");
+    return false;
+  }
+
+  const uint64_t all = all_vars_mask(nvars);
+  uint64_t rows[QSOP_EXACT_WIDTH_HARD_MAX] = {0};
+  for (uint32_t mask = 0; mask < states; mask++) {
+    const uint64_t right = all & ~(uint64_t)mask;
+    uint32_t nrows = 0;
+    for (uint32_t v = 0; v < nvars; v++) {
+      if (((uint64_t)mask & bit_for_var(v)) != 0) {
+        rows[nrows++] = adj[v] & right;
+      }
+    }
+    cutrank[mask] = (uint8_t)gf2_rank_masks(rows, nrows, nvars);
+  }
+
+  for (uint32_t size = 2; size <= nvars; size++) {
+    for (uint32_t mask = 1; mask < states; mask++) {
+      if (popcount_u64(mask) != size) {
+        continue;
+      }
+      const uint32_t anchor = mask & (0U - mask);
+      uint32_t best = nvars;
+      for (uint32_t sub = (mask - 1U) & mask; sub != 0; sub = (sub - 1U) & mask) {
+        if ((sub & anchor) == 0 || sub == mask) {
+          continue;
+        }
+        const uint32_t other = mask ^ sub;
+        const uint32_t width =
+            max4_u32(cutrank[sub], cutrank[other], dp[sub], dp[other]);
+        if (width < best) {
+          best = width;
+        }
+      }
+      dp[mask] = (uint8_t)best;
+    }
+  }
+
+  *out = dp[states - 1U];
+  free(cutrank);
+  free(dp);
+  return true;
+}
+
+static bool compute_exact_widths(const qsop_instance_t *qsop, const qsop_stats_options_t *options,
+                                 qsop_stats_t *stats, qsop_error_t *error) {
+  if (options == NULL || !options->exact_widths) {
+    return true;
+  }
+
+  stats->exact_widths_requested = true;
+  stats->exact_width_max_vars = options->exact_width_max_vars;
+  if (stats->exact_width_max_vars == 0) {
+    stats->exact_width_max_vars = 12;
+  }
+  if (stats->exact_width_max_vars > QSOP_EXACT_WIDTH_HARD_MAX) {
+    stats->exact_width_max_vars = QSOP_EXACT_WIDTH_HARD_MAX;
+  }
+  if (qsop->nvars > stats->exact_width_max_vars ||
+      qsop->nvars > QSOP_EXACT_WIDTH_HARD_MAX) {
+    stats->exact_widths_available = false;
+    return true;
+  }
+
+  uint64_t adj[QSOP_EXACT_WIDTH_HARD_MAX] = {0};
+  build_support_adjacency_masks(qsop, adj);
+  stats->exact_treewidth = exact_treewidth_masks(qsop->nvars, adj, stats->min_fill_width);
+  if (!exact_rankwidth_masks(qsop->nvars, adj, &stats->exact_rankwidth, error)) {
+    return false;
+  }
+  stats->exact_widths_available = true;
+  return true;
+}
+
+bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
+                                     const qsop_stats_options_t *options,
+                                     qsop_stats_t *stats, qsop_error_t *error) {
   if (qsop == NULL || stats == NULL) {
     set_error(error, "internal error: null stats argument");
     return false;
@@ -405,7 +601,14 @@ bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_e
   free(colind);
   free(visited);
   free(queue);
-  return compute_width_diagnostics(qsop, stats, error);
+  if (!compute_width_diagnostics(qsop, stats, error)) {
+    return false;
+  }
+  return compute_exact_widths(qsop, options, stats, error);
+}
+
+bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error) {
+  return qsop_compute_stats_with_options(qsop, NULL, stats, error);
 }
 
 bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *error) {
@@ -429,6 +632,15 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
     fprintf(file, "min_fill_edges: %" PRIu64 "\n", stats->min_fill_edges);
     fprintf(file, "linear_cut_rank: %" PRIu32 "\n", stats->linear_cut_rank);
   }
+  if (stats->exact_widths_requested) {
+    fprintf(file, "exact_widths: %s\n",
+            stats->exact_widths_available ? "available" : "skipped");
+    fprintf(file, "exact_width_max_vars: %" PRIu32 "\n", stats->exact_width_max_vars);
+    if (stats->exact_widths_available) {
+      fprintf(file, "exact_treewidth: %" PRIu32 "\n", stats->exact_treewidth);
+      fprintf(file, "exact_rankwidth: %" PRIu32 "\n", stats->exact_rankwidth);
+    }
+  }
   return !write_failed(file, error);
 }
 
@@ -451,6 +663,14 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
             ",\"min_fill_width\":%" PRIu32 ",\"min_fill_edges\":%" PRIu64
             ",\"linear_cut_rank\":%" PRIu32,
             stats->min_fill_width, stats->min_fill_edges, stats->linear_cut_rank);
+  }
+  if (stats->exact_widths_requested) {
+    fprintf(file, ",\"exact_widths_available\":%s,\"exact_width_max_vars\":%" PRIu32,
+            stats->exact_widths_available ? "true" : "false", stats->exact_width_max_vars);
+    if (stats->exact_widths_available) {
+      fprintf(file, ",\"exact_treewidth\":%" PRIu32 ",\"exact_rankwidth\":%" PRIu32,
+              stats->exact_treewidth, stats->exact_rankwidth);
+    }
   }
   fputs("}\n", file);
   return !write_failed(file, error);

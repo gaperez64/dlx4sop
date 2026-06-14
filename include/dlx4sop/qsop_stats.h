@@ -20,9 +20,23 @@ typedef struct qsop_stats {
   uint32_t min_fill_width;
   uint64_t min_fill_edges;
   uint32_t linear_cut_rank;
+  bool exact_widths_requested;
+  bool exact_widths_available;
+  uint32_t exact_width_max_vars;
+  uint32_t exact_treewidth;
+  uint32_t exact_rankwidth;
 } qsop_stats_t;
 
+typedef struct qsop_stats_options {
+  bool exact_widths;
+  uint32_t exact_width_max_vars;
+} qsop_stats_options_t;
+
 bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error);
+
+bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
+                                     const qsop_stats_options_t *options,
+                                     qsop_stats_t *stats, qsop_error_t *error);
 
 bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *error);
 

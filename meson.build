@@ -259,6 +259,24 @@ if python3.found()
     depends: [qasm2sop, sop_solve],
   )
   test(
+    'qasm width benchmark smoke',
+    python3,
+    args: [
+      files('tools/bench_qasm_widths.py'),
+      qasm2sop.full_path(),
+      sop_stats.full_path(),
+      '--manifest',
+      files('tests/qasm_solver_corpus.json'),
+      '--limit',
+      '1',
+      '--exact-width-max-vars',
+      '12',
+      '--format',
+      'summary',
+    ],
+    depends: [qasm2sop, sop_stats],
+  )
+  test(
     'qgraph2qasm smoke',
     python3,
     args: [

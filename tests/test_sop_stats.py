@@ -59,6 +59,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     error_cases = [
         ([str(exe), "--format"], "requires a value"),
         ([str(exe), "--format", "xml", str(qsop)], "unsupported format"),
+        ([str(exe), "--exact-width-max-vars"], "requires a value"),
+        ([str(exe), "--exact-width-max-vars", "bad"], "must be a non-negative integer"),
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), str(qsop), str(qsop)], "at most one input"),
         ([str(exe), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
@@ -118,6 +120,74 @@ def run_large_width_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(f"large JSON width diagnostics failed\n{json_result.stdout}\n{json_result.stderr}")
 
 
+def run_exact_widths(exe: pathlib.Path) -> None:
+    path_qsop = """p qsop-sign 8 4 3
+n 0
+cst 0
+
+e 0 1
+e 1 2
+e 2 3
+"""
+    completed = subprocess.run(
+        [str(exe), "--exact-widths", "-"],
+        input=path_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_parts = {
+        "exact_widths: available",
+        "exact_width_max_vars: 12",
+        "exact_treewidth: 1",
+        "exact_rankwidth: 1",
+    }
+    if completed.returncode != 0 or not expected_parts.issubset(set(completed.stdout.splitlines())):
+        raise AssertionError(f"exact path widths failed\n{completed.stdout}\n{completed.stderr}")
+
+    triangle_qsop = """p qsop-sign 8 3 3
+n 0
+cst 0
+
+e 0 1
+e 1 2
+e 0 2
+"""
+    json_result = subprocess.run(
+        [str(exe), "--format", "json", "--exact-widths", "--exact-width-max-vars", "3", "-"],
+        input=triangle_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        json_result.returncode != 0
+        or '"exact_widths_available":true' not in json_result.stdout
+        or '"exact_width_max_vars":3' not in json_result.stdout
+        or '"exact_treewidth":2' not in json_result.stdout
+        or '"exact_rankwidth":1' not in json_result.stdout
+    ):
+        raise AssertionError(f"exact triangle JSON widths failed\n{json_result.stdout}\n{json_result.stderr}")
+
+    skipped = subprocess.run(
+        [str(exe), "--exact-widths", "--exact-width-max-vars", "3", "-"],
+        input=path_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        skipped.returncode != 0
+        or "exact_widths: skipped" not in skipped.stdout
+        or "exact_treewidth:" in skipped.stdout
+        or "exact_rankwidth:" in skipped.stdout
+    ):
+        raise AssertionError(f"exact width cap skip failed\n{skipped.stdout}\n{skipped.stderr}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_stats.py SOP_STATS SOURCE_ROOT", file=sys.stderr)
@@ -131,6 +201,7 @@ def main() -> int:
     run_stats(exe, source_root, ["--format", "text"], "stats_labelled.text")
     run_cli_paths(exe, source_root)
     run_large_width_diagnostics(exe)
+    run_exact_widths(exe)
     return 0
 
 

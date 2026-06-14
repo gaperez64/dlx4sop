@@ -3,7 +3,9 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef enum stats_format {
@@ -12,7 +14,9 @@ typedef enum stats_format {
 } stats_format_t;
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop-stats [--json|--format text|json] [PATH|-]\n", file);
+  fputs("usage: sop-stats [--json|--format text|json] [--exact-widths] "
+        "[--exact-width-max-vars N] [PATH|-]\n",
+        file);
 }
 
 static void print_error(const qsop_error_t *error, const char *fallback_path) {
@@ -31,6 +35,7 @@ static void print_error(const qsop_error_t *error, const char *fallback_path) {
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   stats_format_t format = STATS_FORMAT_TEXT;
+  qsop_stats_options_t options = {0};
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -55,6 +60,25 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: unsupported format '%s'\n", value);
         return 2;
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--exact-widths") == 0) {
+      options.exact_widths = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--exact-width-max-vars") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --exact-width-max-vars requires a value\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const unsigned long value = strtoul(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0' || value > UINT32_MAX) {
+        fputs("error: --exact-width-max-vars must be a non-negative integer\n", stderr);
+        return 2;
+      }
+      options.exact_width_max_vars = (uint32_t)value;
       continue;
     }
     if (argv[i][0] == '-') {
@@ -97,7 +121,7 @@ int main(int argc, char **argv) {
   }
 
   qsop_stats_t stats = {0};
-  ok = qsop_compute_stats(qsop, &stats, &error);
+  ok = qsop_compute_stats_with_options(qsop, &options, &stats, &error);
   qsop_free(qsop);
   if (!ok) {
     print_error(&error, diagnostic_path);

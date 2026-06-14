@@ -64,6 +64,8 @@ CSV_FIELDS = [
     "rankwidth_mode",
     "rankwidth_decomposition",
     "treewidth_order",
+    "status",
+    "error",
     "qsop_mode",
     "r",
     "nvars",
@@ -96,21 +98,36 @@ CSV_FIELDS = [
 ]
 
 
+class CommandTimeout(RuntimeError):
+    def __init__(self, cmd: list[str], timeout_seconds: float, elapsed_ns: int):
+        super().__init__(f"command timed out after {timeout_seconds:g}s: {cmd}")
+        self.cmd = cmd
+        self.timeout_seconds = timeout_seconds
+        self.elapsed_ns = elapsed_ns
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def run_command(cmd: list[str], *, input_text: str | None = None) -> tuple[str, str, int]:
+def run_command(
+    cmd: list[str], *, input_text: str | None = None, timeout_seconds: float | None = None
+) -> tuple[str, str, int]:
     start = time.perf_counter_ns()
-    completed = subprocess.run(
-        cmd,
-        input=input_text,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    elapsed = time.perf_counter_ns() - start
+    try:
+        completed = subprocess.run(
+            cmd,
+            input=input_text,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        elapsed = time.perf_counter_ns() - start
+    except subprocess.TimeoutExpired as exc:
+        elapsed = time.perf_counter_ns() - start
+        raise CommandTimeout(cmd, timeout_seconds or 0.0, elapsed) from exc
     if completed.returncode != 0:
         raise RuntimeError(f"command failed: {cmd}\n{completed.stderr}")
     return completed.stdout, completed.stderr, elapsed
@@ -383,6 +400,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
         "imported_sign": 0,
         "imported_labelled": 0,
         "skipped_rankwidth_records": 0,
+        "timed_out_records": 0,
         "source_boundaries": {},
     }
 
@@ -428,7 +446,37 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                     cmd += ["--treewidth-order", config["treewidth_order"]]
                 cmd.append("-")
                 try:
-                    stats_text, trace_text, solve_elapsed_ns = run_command(cmd, input_text=qsop)
+                    stats_text, trace_text, solve_elapsed_ns = run_command(
+                        cmd, input_text=qsop, timeout_seconds=args.solver_timeout
+                    )
+                except CommandTimeout as exc:
+                    metadata["timed_out_records"] += 1
+                    records.append(
+                        {
+                            "case": case_name,
+                            "source": source,
+                            "source_url": source_url,
+                            "source_relative_path": source_relative_path,
+                            "boundary": f"{input_bits}->{output_bits}",
+                            "input": input_bits,
+                            "output": output_bits,
+                            "backend": backend,
+                            "branch_heuristic": config["branch_heuristic"],
+                            "rankwidth_mode": config["rankwidth_mode"],
+                            "rankwidth_decomposition": config["rankwidth_generate"],
+                            "treewidth_order": config["treewidth_order"],
+                            "status": "timeout",
+                            "error": str(exc),
+                            **header,
+                            "import_elapsed_ns": import_elapsed_ns,
+                            "solve_elapsed_ns": exc.elapsed_ns,
+                            "qasm_sha256": sha256_text(qasm),
+                            "qsop_sha256": sha256_text(qsop),
+                            "stats": {},
+                            "trace": {},
+                        }
+                    )
+                    continue
                 except RuntimeError as exc:
                     if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
                         metadata["skipped_rankwidth_records"] += 1
@@ -451,6 +499,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "rankwidth_mode": config["rankwidth_mode"],
                         "rankwidth_decomposition": config["rankwidth_generate"],
                         "treewidth_order": str(stats.get("treewidth_order", config["treewidth_order"])),
+                        "status": "ok",
+                        "error": "",
                         **header,
                         "import_elapsed_ns": import_elapsed_ns,
                         "solve_elapsed_ns": solve_elapsed_ns,
@@ -605,10 +655,12 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
 
 
 def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace, file: TextIO) -> None:
+    solved = [record for record in records if record.get("status", "ok") == "ok"]
     print(f"records: {len(records)}", file=file)
     print(f"case_boundaries: {metadata['case_boundaries']}", file=file)
-    print(f"solved_records: {len(records)}", file=file)
+    print(f"solved_records: {len(solved)}", file=file)
     print(f"skipped_rankwidth_records: {metadata['skipped_rankwidth_records']}", file=file)
+    print(f"timed_out_records: {metadata['timed_out_records']}", file=file)
     print(f"imported_sign: {metadata['imported_sign']}", file=file)
     print(f"imported_labelled: {metadata['imported_labelled']}", file=file)
     source_boundaries = metadata.get("source_boundaries", {})
@@ -617,7 +669,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
         for source in sorted(source_boundaries):
             print(f"  {source}: boundaries={source_boundaries[source]}", file=file)
     write_largest_overview(records, file)
-    summary = summarize_records(records)
+    summary = summarize_records(solved)
     for key in sorted(summary):
         entry = summary[key]
         stats = entry["stats"]
@@ -687,6 +739,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
+    parser.add_argument("--solver-timeout", type=float, help="Per-solve timeout in seconds.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
         "--skip-unsupported",
@@ -742,6 +795,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--limit must be non-negative")
     if args.max_vars < 0:
         parser.error("--max-vars must be non-negative")
+    if args.solver_timeout is not None and args.solver_timeout <= 0.0:
+        parser.error("--solver-timeout must be positive")
     if args.top < 0:
         parser.error("--top must be non-negative")
     if args.rankwidth_sweep:

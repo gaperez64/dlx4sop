@@ -75,7 +75,8 @@ manifest generation, and comparison against external frameworks.
 The main public headers are:
 
 - `qsop.h`: normalized QSOP representation and parse/write APIs;
-- `qsop_stats.h`: structural statistics;
+- `qsop_stats.h`: structural statistics, including opt-in exact support-graph
+  treewidth/rankwidth under a small variable cap;
 - `qsop_solve.h`: exact solver APIs and stats;
 - `residue.h`: residue-vector helpers;
 - `residual.h`: reversible residual state used by the branch solver.
@@ -172,6 +173,11 @@ labelled SOPs, count-table states are keyed by labelled boundary signatures
 rather than parity-only signatures. Remaining work is better labelled
 decomposition heuristics and deciding whether Fourier mode should be generalized
 to labelled signatures.
+
+`sop-stats --exact-widths` computes exact support-graph treewidth and GF(2)
+rankwidth under a small variable cap. It does not certify the labelled
+cut-signature width above; that remains a separate metric for later labelled
+rankwidth work.
 
 ## CI Contract
 
