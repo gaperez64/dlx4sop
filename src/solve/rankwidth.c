@@ -92,6 +92,11 @@ typedef struct rw_label_signature_pool {
   uint32_t nvars;
 } rw_label_signature_pool_t;
 
+typedef struct rw_decomposition_score {
+  uint32_t labelled_width;
+  uint32_t support_width;
+} rw_decomposition_score_t;
+
 static void set_error(qsop_error_t *error, const char *fmt, ...) {
   if (error == NULL) {
     return;
@@ -344,12 +349,19 @@ static bool label_signature_pool_intern(rw_label_signature_pool_t *pool, const u
   return true;
 }
 
+static bool qsop_is_sign_edge_instance(const qsop_instance_t *qsop);
 static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words,
                                    qsop_error_t *error);
+static uint32_t *coefficient_matrix(const qsop_instance_t *qsop, qsop_error_t *error);
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
                                  const uint64_t *right, size_t words, qsop_error_t *error);
+static uint32_t ceil_log2_u64(uint64_t value);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                     const uint64_t *adj, qsop_error_t *error);
+static bool decomposition_score(const qsop_instance_t *qsop,
+                                const qsop_rankwidth_decomposition_t *decomposition,
+                                const uint64_t *adj, const uint32_t *coeffs,
+                                rw_decomposition_score_t *out, qsop_error_t *error);
 
 static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error) {
   if (needed <= table->cap) {
@@ -1273,8 +1285,19 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
   }
 
   if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL) {
-    uint32_t selected_width = decomposition_width(decomposition, adj, error);
-    if (selected_width == UINT32_MAX) {
+    uint32_t *score_coeffs = NULL;
+    if (!qsop_is_sign_edge_instance(qsop)) {
+      score_coeffs = coefficient_matrix(qsop, error);
+      if (score_coeffs == NULL) {
+        free(adj);
+        qsop_rankwidth_decomposition_free(decomposition);
+        return false;
+      }
+    }
+
+    rw_decomposition_score_t selected_score = {0};
+    if (!decomposition_score(qsop, decomposition, adj, score_coeffs, &selected_score, error)) {
+      free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
@@ -1283,44 +1306,53 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     qsop_rankwidth_decomposition_t *min_fill = NULL;
     if (!qsop_rankwidth_decomposition_generate(qsop, QSOP_RANKWIDTH_GENERATOR_MIN_FILL, &min_fill,
                                                error)) {
+      free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    const uint32_t min_fill_width = decomposition_width(min_fill, adj, error);
-    if (min_fill_width == UINT32_MAX) {
+    rw_decomposition_score_t min_fill_score = {0};
+    if (!decomposition_score(qsop, min_fill, adj, score_coeffs, &min_fill_score, error)) {
+      free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(min_fill);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    if (min_fill_width < selected_width) {
+    if (min_fill_score.labelled_width < selected_score.labelled_width ||
+        (min_fill_score.labelled_width == selected_score.labelled_width &&
+         min_fill_score.support_width < selected_score.support_width)) {
       qsop_rankwidth_decomposition_free(decomposition);
       decomposition = min_fill;
       min_fill = NULL;
-      selected_width = min_fill_width;
+      selected_score = min_fill_score;
     }
     qsop_rankwidth_decomposition_free(min_fill);
 
     qsop_rankwidth_decomposition_t *linear = NULL;
     if (!make_linear_generated_decomposition(qsop, &linear, error)) {
+      free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    const uint32_t linear_width = decomposition_width(linear, adj, error);
-    if (linear_width == UINT32_MAX) {
+    rw_decomposition_score_t linear_score = {0};
+    if (!decomposition_score(qsop, linear, adj, score_coeffs, &linear_score, error)) {
+      free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(linear);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    if (linear_width < selected_width) {
+    if (linear_score.labelled_width < selected_score.labelled_width ||
+        (linear_score.labelled_width == selected_score.labelled_width &&
+         linear_score.support_width < selected_score.support_width)) {
       qsop_rankwidth_decomposition_free(decomposition);
       decomposition = linear;
       linear = NULL;
     }
     qsop_rankwidth_decomposition_free(linear);
+    free(score_coeffs);
   }
 
   free(adj);
@@ -1440,6 +1472,142 @@ static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomp
   free(all);
   free(right);
   return width;
+}
+
+static uint32_t labelled_cut_signature_proxy_width(const qsop_instance_t *qsop,
+                                                   const uint32_t *coeffs,
+                                                   const uint64_t *left,
+                                                   const uint64_t *right,
+                                                   qsop_error_t *error) {
+  const uint32_t nvars = qsop->nvars;
+  if (nvars == 0) {
+    return 0;
+  }
+  if ((size_t)nvars > SIZE_MAX / (size_t)nvars / sizeof(uint32_t)) {
+    set_error(error, "labelled rankwidth cut-signature proxy is too large");
+    return UINT32_MAX;
+  }
+
+  uint32_t *rows = calloc((size_t)nvars * nvars, sizeof(*rows));
+  uint32_t *row = calloc(nvars, sizeof(*row));
+  uint64_t *fingerprints = calloc(nvars, sizeof(*fingerprints));
+  if (rows == NULL || row == NULL || fingerprints == NULL) {
+    free(rows);
+    free(row);
+    free(fingerprints);
+    set_error(error, "out of memory while computing labelled rankwidth cut-signature proxy");
+    return UINT32_MAX;
+  }
+
+  uint32_t distinct_rows = 0;
+  for (uint32_t v = 0; v < nvars; v++) {
+    if (!qsop_bitset_get(left, v)) {
+      continue;
+    }
+    memset(row, 0, (size_t)nvars * sizeof(*row));
+    bool any = false;
+    for (uint32_t u = 0; u < nvars; u++) {
+      if (!qsop_bitset_get(right, u)) {
+        continue;
+      }
+      const uint32_t q = coeffs[(size_t)v * nvars + u] % qsop->r;
+      if (q != 0) {
+        row[u] = q;
+        any = true;
+      }
+    }
+    if (!any) {
+      continue;
+    }
+
+    const uint64_t fingerprint = label_signature_fingerprint(row, nvars);
+    bool seen = false;
+    for (uint32_t i = 0; i < distinct_rows; i++) {
+      const uint32_t *candidate = rows + (size_t)i * nvars;
+      if (fingerprints[i] == fingerprint &&
+          memcmp(candidate, row, (size_t)nvars * sizeof(*row)) == 0) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) {
+      uint32_t *dst = rows + (size_t)distinct_rows * nvars;
+      memcpy(dst, row, (size_t)nvars * sizeof(*dst));
+      fingerprints[distinct_rows] = fingerprint;
+      distinct_rows++;
+    }
+  }
+
+  free(rows);
+  free(row);
+  free(fingerprints);
+  return ceil_log2_u64((uint64_t)distinct_rows + 1U);
+}
+
+static uint32_t labelled_decomposition_proxy_width(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, qsop_error_t *error) {
+  uint64_t *all = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*all));
+  uint64_t *right = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*right));
+  if (all == NULL || right == NULL) {
+    free(all);
+    free(right);
+    set_error(error, "out of memory while computing labelled rankwidth decomposition proxy");
+    return UINT32_MAX;
+  }
+  for (uint32_t v = 0; v < decomposition->nvars; v++) {
+    qsop_bitset_set(all, v);
+  }
+
+  uint32_t width = 0;
+  for (uint32_t i = 0; i < decomposition->nnodes; i++) {
+    if (i == decomposition->root) {
+      continue;
+    }
+    const uint64_t *left = node_vars_const(decomposition, i);
+    qsop_bitset_copy(right, all, decomposition->words);
+    qsop_bitset_and_not(right, left, decomposition->words);
+    const uint32_t cut_width =
+        labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+    if (cut_width == UINT32_MAX) {
+      free(all);
+      free(right);
+      return UINT32_MAX;
+    }
+    if (cut_width > width) {
+      width = cut_width;
+    }
+  }
+
+  free(all);
+  free(right);
+  return width;
+}
+
+static bool decomposition_score(const qsop_instance_t *qsop,
+                                const qsop_rankwidth_decomposition_t *decomposition,
+                                const uint64_t *adj, const uint32_t *coeffs,
+                                rw_decomposition_score_t *out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null rankwidth decomposition score output");
+    return false;
+  }
+  const uint32_t support_width = decomposition_width(decomposition, adj, error);
+  if (support_width == UINT32_MAX) {
+    return false;
+  }
+  uint32_t labelled_width = support_width;
+  if (coeffs != NULL) {
+    labelled_width = labelled_decomposition_proxy_width(qsop, decomposition, coeffs, error);
+    if (labelled_width == UINT32_MAX) {
+      return false;
+    }
+  }
+  *out = (rw_decomposition_score_t){
+      .labelled_width = labelled_width,
+      .support_width = support_width,
+  };
+  return true;
 }
 
 bool qsop_rankwidth_decomposition_support_width(

@@ -74,10 +74,12 @@ build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
+tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
+tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --engine-qubit-cap pyzx-matrix=10 --timeout 10
 ```
 
-`render_scoreboard.py` emits import, solver, native, and common-row native
-comparison tables when the matching inputs are provided.
+`refresh_scoreboard.py` is the public scoreboard path; `render_scoreboard.py`
+is the lower-level table renderer for ad hoc reports.

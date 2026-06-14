@@ -365,6 +365,14 @@ if python3.found()
     ],
   )
   test(
+    'scoreboard refresh smoke',
+    python3,
+    args: [
+      files('tests/test_refresh_scoreboard.py'),
+      files('tools/refresh_scoreboard.py'),
+    ],
+  )
+  test(
     'native solver comparison smoke',
     python3,
     args: [

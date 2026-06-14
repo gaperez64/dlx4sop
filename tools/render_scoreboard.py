@@ -66,9 +66,13 @@ def solver_config(record: dict) -> str:
 def stat_value(record: dict, key: str) -> int | None:
     value = record.get(key)
     if isinstance(value, int):
+        if key == "leaf_assignments" and value == (1 << 64) - 1:
+            return None
         return value
     stats = record.get("stats", {})
     value = stats.get(key) if isinstance(stats, dict) else None
+    if key == "leaf_assignments" and value == (1 << 64) - 1:
+        return None
     return value if isinstance(value, int) else None
 
 
