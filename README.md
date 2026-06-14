@@ -19,13 +19,15 @@ work in [tasks.md](tasks.md).
 Implemented solver backends:
 
 - `components` (default): split connected components and cache repeated small
-  components.
+  components, with CRT-backed large-count output.
 - `brute-force`: enumerate all assignments for small oracle checks.
 - `branch`: residual branch-and-sum with component splitting, cache stats, and
   CRT-backed large-count output.
 - `rankwidth`: decomposition backend with sign/labelled count-table mode,
   CRT-backed large-count output, generated decompositions, and sign-only
   Fourier mode.
+- `treewidth`: min-fill bucket-elimination backend with CRT-backed large-count
+  output.
 
 ## Build
 
@@ -67,6 +69,7 @@ build/sop-stats --format json tests/golden/labelled_expected.qsop
 build/sop-solve tests/golden/solve_labelled.qsop
 build/sop-solve --backend branch --format stats tests/golden/solve_labelled.qsop
 build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut tests/golden/solve_sign_path.qsop
+build/sop-solve --backend treewidth --format stats tests/golden/solve_labelled.qsop
 ```
 
 The `counts` line is a histogram over phase residues modulo `r`; the values are

@@ -12,8 +12,8 @@ than repeated here.
   builder, PyZX/T-Par `.qc` translator, starter `.qgraph` translator, FeynmanDD
   scanner, and optional MQT Bench scanner.
 - Solver status:
-  - `components` remains the default exact backend, but still needs CRT-safe
-    convolution for large final histograms.
+  - `components` is the default exact backend, with component caching and
+    CRT-backed large final histograms.
   - `branch` has residual mutation, residual fingerprints, memo cache stats,
     component splitting, edge-free residue-table leaves, CRT-backed large
     assignment counts, and experimental `split|treewidth|linear-rankwidth`
@@ -21,6 +21,8 @@ than repeated here.
   - `rankwidth` handles sign-edge and labelled QSOPs with generated or explicit
     decompositions, count-table mode, CRT-backed large assignment counts, and
     sign-only Fourier mode.
+  - `treewidth` has a first exact min-fill bucket-elimination backend with
+    CRT-backed large assignment counts.
 - Importer status:
   - OpenQASM support covers the static finite subset used by the checked-in
     corpus and many PyZX/FeynmanDD/MQT cases.
@@ -37,19 +39,19 @@ than repeated here.
 
 ## Current Task
 
-- Make the default `components` backend CRT-safe so large-count instances do not
-  require explicitly selecting `branch` or `rankwidth`.
-- Start a treewidth-decomposition solver backend distinct from branch's current
-  treewidth variable-ordering heuristic.
+- Validate the new `components` CRT path and `treewidth` backend on the full
+  internal plus external importer-fed corpus.
+- Use the resulting traces to decide whether treewidth decomposition quality,
+  rankwidth generation, or branch cache behavior is the next limiting factor.
 
 ## Next Steps
 
-- Add CRT convolution to `components` and cover the default backend on a
-  64-variable large-count instance.
-- Add CLI/API wiring for a `treewidth` backend and a generated decomposition
-  path that can be improved incrementally.
 - Compare `components`, `branch`, `rankwidth`, and `treewidth` on internal and
   external manifests after the treewidth baseline exists.
+- Add summary/report labels that distinguish rankwidth width from treewidth
+  elimination width when both are benchmarked together.
+- Improve treewidth decomposition builders beyond greedy min-fill if corpus
+  traces show large bags or table blowups.
 - Use external classification reports to choose importer fixes that remain
   labelled quadratic.
 - Keep coverage above the 75% CI gate.

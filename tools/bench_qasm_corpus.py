@@ -11,7 +11,7 @@ import time
 from typing import TextIO
 
 
-BACKENDS = ("components", "brute-force", "branch", "rankwidth")
+BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
 RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
@@ -41,6 +41,7 @@ CSV_FIELDS = [
     "branch_heuristic",
     "rankwidth_mode",
     "rankwidth_decomposition",
+    "treewidth_order",
     "qsop_mode",
     "r",
     "nvars",
@@ -128,7 +129,18 @@ def parse_stats(text: str) -> dict[str, int | str]:
         if not line:
             continue
         key, value = line.split(": ", 1)
-        stats[key] = value if key in {"backend", "branch_heuristic", "rankwidth_mode", "rankwidth_decomposition"} else int(value)
+        stats[key] = (
+            value
+            if key
+            in {
+                "backend",
+                "branch_heuristic",
+                "rankwidth_mode",
+                "rankwidth_decomposition",
+                "treewidth_order",
+            }
+            else int(value)
+        )
     return stats
 
 
@@ -383,6 +395,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "join_signature_pairs",
         ):
             row[key] = stats.get(key, "")
+        row["treewidth_order"] = stats.get("treewidth_order", "")
         row["trace_summary"] = trace_summary_text(record["trace"])
         writer.writerow(row)
 
@@ -461,8 +474,8 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
         ("largest_nvars", "nvars"),
         ("largest_nedges", "nedges"),
         ("slowest_solve", "solve_elapsed_ns"),
-        ("largest_rankwidth_width", "decomposition_width"),
-        ("largest_rankwidth_table", "max_table_entries"),
+        ("largest_decomposition_width", "decomposition_width"),
+        ("largest_decomposition_table", "max_table_entries"),
     ]
     for label, metric in metrics:
         candidates = [record for record in records if metric_value(record, metric) is not None]

@@ -89,9 +89,9 @@ Implemented exact backends:
 - `bruteforce`: enumerates all assignments and is used as the small-instance
   oracle.
 - `components`: splits the quadratic support graph into connected components,
-  solves components independently, and convolves residue histograms. It is the
-  default backend and should share the same large-count result contract as
-  branch and rankwidth.
+  solves components independently, caches repeated small components, and
+  convolves residue histograms. It is the default backend and uses the same
+  CRT-backed large-count result contract as the decomposition backends.
 - `branch`: mutates a reversible residual state, branches on active variables,
   memoizes repeated residuals, splits residual components, and collapses
   edge-free unary tails. It uses fixed-width counts when safe and a CRT-backed
@@ -99,18 +99,19 @@ Implemented exact backends:
 - `rankwidth`: decomposition DP with generated or supplied decompositions,
   sign/labelled count-table mode, CRT-backed larger histograms, and a
   small-instance sign-only Fourier mode.
+- `treewidth`: min-fill bucket-elimination DP over dense factors, with a bag
+  guard and CRT-backed larger histograms.
 
 The rankwidth backend uses bitset-backed signatures for sign-only instances and
 `Z_r` boundary-signature vectors for labelled instances. Practical limits are
 solver guards, memory, and decomposition width rather than a single machine-word
 mask. Exact result counts use the normal `uint64_t` fast path when possible and
-a CRT-backed path for larger final histograms in branch and rankwidth
-count-table mode. Brute force remains a small-instance oracle with a hard
-variable guard.
+a CRT-backed path for larger final histograms in branch, components, rankwidth
+count-table mode, and treewidth. Brute force remains a small-instance oracle
+with a hard variable guard.
 
 Current branch variable-ordering policies are heuristics, not decomposition
-solvers. A treewidth backend should be implemented as a separate decomposition
-solver, not by reusing the branch heuristic as a backend:
+solvers:
 
 - `split`: default residual component split estimate;
 - `treewidth`: min-fill estimate on the active graph;

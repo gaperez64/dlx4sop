@@ -119,6 +119,10 @@ typedef struct component_cache {
   size_t cap;
 } component_cache_t;
 
+typedef struct component_solve_context {
+  uint64_t count_modulus;
+} component_solve_context_t;
+
 #define SMALL_COMPONENT_CANONICAL_NVARS 5U
 
 static void free_component_cache(component_cache_t *cache) {
@@ -512,10 +516,75 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
   return true;
 }
 
-static bool shift_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
-                         qsop_error_t *error) {
+static bool component_count_add(const component_solve_context_t *ctx, uint64_t *dst,
+                                uint64_t value, qsop_error_t *error) {
+  if (ctx->count_modulus != 0) {
+    *dst = qsop_mod_add_u64(*dst, value % ctx->count_modulus, ctx->count_modulus);
+    return true;
+  }
+  return qsop_count_add(dst, value, error);
+}
+
+static bool component_count_mul(const component_solve_context_t *ctx, uint64_t left,
+                                uint64_t right, uint64_t *out, qsop_error_t *error) {
+  if (ctx->count_modulus != 0) {
+    *out = qsop_mod_mul_u64(left, right, ctx->count_modulus);
+    return true;
+  }
+  return qsop_count_mul(left, right, out, error);
+}
+
+static bool component_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
+                                      const uint64_t *right,
+                                      const component_solve_context_t *ctx,
+                                      qsop_error_t *error) {
+  if (r == 0 || dst == NULL || left == NULL || right == NULL) {
+    set_error(error, "internal error: invalid component residue convolution argument");
+    return false;
+  }
+
   qsop_counts_clear(r, dst);
-  return qsop_counts_shift_add_checked(r, dst, src, shift, error);
+  for (uint32_t a = 0; a < r; a++) {
+    if (left[a] == 0) {
+      continue;
+    }
+    for (uint32_t b = 0; b < r; b++) {
+      if (right[b] == 0) {
+        continue;
+      }
+      uint32_t target = a + b;
+      if (target >= r) {
+        target -= r;
+      }
+      uint64_t product = 0;
+      if (!component_count_mul(ctx, left[a], right[b], &product, error) ||
+          !component_count_add(ctx, &dst[target], product, error)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool shift_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
+                         const component_solve_context_t *ctx, qsop_error_t *error) {
+  qsop_counts_clear(r, dst);
+  if (r == 0 || dst == NULL || src == NULL) {
+    set_error(error, "internal error: invalid component residue shift-add argument");
+    return false;
+  }
+
+  const uint32_t delta = shift % r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    uint32_t target = residue + delta;
+    if (target >= r) {
+      target -= r;
+    }
+    if (!component_count_add(ctx, &dst[target], src[residue], error)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static void add_saturating_u64(uint64_t *dst, uint64_t value) {
@@ -525,6 +594,15 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
     *dst += value;
   }
 }
+
+static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                  uint64_t count_modulus, uint64_t *counts,
+                                  qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                  qsop_error_t *error);
+
+static bool solve_components_crt(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                 qsop_result_t **out, qsop_solve_stats_t *stats,
+                                 qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                       qsop_result_t **out, qsop_error_t *error) {
@@ -542,9 +620,6 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
                                                   uint32_t max_component_vars, qsop_result_t **out,
                                                   qsop_solve_stats_t *stats,
                                                   qsop_solve_trace_t *trace, qsop_error_t *error) {
-  if (stats != NULL) {
-    *stats = (qsop_solve_stats_t){0};
-  }
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -554,36 +629,60 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
     set_error(error, "internal error: null QSOP instance");
     return false;
   }
+  if (qsop->nvars >= 64U) {
+    return solve_components_crt(qsop, max_component_vars, out, stats, trace, error);
+  }
 
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL) {
+    set_error(error, "out of memory while allocating components result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  if (!solve_components_once(qsop, max_component_vars, 0, result->counts, stats, trace, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  *out = result;
+  return true;
+}
+
+static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                  uint64_t count_modulus, uint64_t *counts,
+                                  qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                  qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+
+  component_solve_context_t ctx = {
+      .count_modulus = count_modulus,
+  };
   uint64_t *rowptr = NULL;
   uint32_t *colind = NULL;
   uint32_t *component = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*component));
   uint64_t *acc = NULL;
   uint64_t *tmp = NULL;
-  qsop_result_t *result = calloc(1, sizeof(*result));
-  if (component == NULL || result == NULL || !qsop_counts_alloc(qsop->r, &acc, error) ||
+  if (component == NULL || !qsop_counts_alloc(qsop->r, &acc, error) ||
       !qsop_counts_alloc(qsop->r, &tmp, error)) {
     free(component);
-    free(result);
     free(acc);
     free(tmp);
     set_error(error, "out of memory while solving components");
     return false;
   }
 
-  result->r = qsop->r;
-  result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
-    free(component);
-    free(result);
-    free(acc);
-    free(tmp);
-    return false;
-  }
-
   if (!alloc_graph(qsop, &rowptr, &colind, error)) {
     free(component);
-    qsop_result_free(result);
     free(acc);
     free(tmp);
     return false;
@@ -595,7 +694,6 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
     free(rowptr);
     free(colind);
     free(component);
-    qsop_result_free(result);
     free(acc);
     free(tmp);
     return false;
@@ -620,7 +718,6 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
       free(rowptr);
       free(colind);
       free(component);
-      qsop_result_free(result);
       free(acc);
       free(tmp);
       return false;
@@ -646,7 +743,6 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
         free(rowptr);
         free(colind);
         free(component);
-        qsop_result_free(result);
         free(acc);
         free(tmp);
         return false;
@@ -660,14 +756,13 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
     }
 
     const uint64_t convolve_start = qsop_trace_begin(trace);
-    if (!qsop_counts_convolve(qsop->r, tmp, acc, part_counts, error)) {
+    if (!component_counts_convolve(qsop->r, tmp, acc, part_counts, &ctx, error)) {
       free_subinstance(&sub);
       qsop_result_free(part);
       free_component_cache(&cache);
       free(rowptr);
       free(colind);
       free(component);
-      qsop_result_free(result);
       free(acc);
       free(tmp);
       return false;
@@ -679,12 +774,11 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
     qsop_result_free(part);
   }
 
-  if (!shift_counts(qsop->r, result->counts, acc, qsop->constant, error)) {
+  if (!shift_counts(qsop->r, counts, acc, qsop->constant, &ctx, error)) {
     free_component_cache(&cache);
     free(rowptr);
     free(colind);
     free(component);
-    qsop_result_free(result);
     free(acc);
     free(tmp);
     return false;
@@ -696,6 +790,77 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
   free_component_cache(&cache);
   free(acc);
   free(tmp);
+  return true;
+}
+
+static bool solve_components_crt(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                 qsop_result_t **out, qsop_solve_stats_t *stats,
+                                 qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "components CRT count table is too large");
+    return false;
+  }
+
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating components CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating components CRT result strings");
+    return false;
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!solve_components_once(qsop, max_component_vars, primes[p],
+                               &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                               trace_for_prime, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                      &result->count_strings[residue], error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
   *out = result;
   return true;
 }

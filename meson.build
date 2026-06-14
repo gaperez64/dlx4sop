@@ -38,6 +38,7 @@ dlx4sop_core = static_library(
     'src/solve/components.c',
     'src/solve/rankwidth.c',
     'src/solve/residual.c',
+    'src/solve/treewidth.c',
   ),
   include_directories: inc,
 )

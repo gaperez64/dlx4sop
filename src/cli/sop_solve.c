@@ -13,6 +13,7 @@ typedef enum solve_backend {
   SOLVE_BACKEND_BRUTE_FORCE,
   SOLVE_BACKEND_BRANCH,
   SOLVE_BACKEND_RANKWIDTH,
+  SOLVE_BACKEND_TREEWIDTH,
 } solve_backend_t;
 
 typedef enum solve_output_format {
@@ -32,7 +33,7 @@ typedef struct csv_trace_writer {
 
 static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
-        "[--backend components|brute-force|branch|rankwidth] "
+        "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|linear-rankwidth] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate linear|balanced|min-fill|min-fill-cut] "
         "[--rankwidth-mode count-table|fourier] [--max-vars N] [--trace csv] [PATH|-]\n",
@@ -61,6 +62,8 @@ static const char *backend_name(solve_backend_t backend) {
     return "branch";
   case SOLVE_BACKEND_RANKWIDTH:
     return "rankwidth";
+  case SOLVE_BACKEND_TREEWIDTH:
+    return "treewidth";
   }
   return "unknown";
 }
@@ -139,7 +142,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
-  } else {
+  } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     fprintf(file, "rankwidth_mode: %s\n", rankwidth_mode_name(rankwidth_mode));
     fprintf(file, "rankwidth_decomposition: %s\n", rankwidth_decomposition);
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
@@ -149,6 +152,12 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "max_signature_entries: %" PRIu64 "\n", stats->max_signature_entries);
     fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
     fprintf(file, "join_signature_pairs: %" PRIu64 "\n", stats->join_signature_pairs);
+  } else {
+    fprintf(file, "treewidth_order: min-fill\n");
+    fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
+    fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
+    fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
+    fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
   }
 
   if (ferror(file)) {
@@ -268,6 +277,8 @@ int main(int argc, char **argv) {
         backend = SOLVE_BACKEND_BRANCH;
       } else if (strcmp(value, "rankwidth") == 0) {
         backend = SOLVE_BACKEND_RANKWIDTH;
+      } else if (strcmp(value, "treewidth") == 0) {
+        backend = SOLVE_BACKEND_TREEWIDTH;
       } else {
         fprintf(stderr, "error: unsupported backend '%s'\n", value);
         return 2;
@@ -402,7 +413,7 @@ int main(int argc, char **argv) {
   } else if (backend == SOLVE_BACKEND_BRANCH) {
     ok = qsop_solve_residual_branch_heuristic_trace_stats(
         qsop, max_vars, branch_heuristic, &result, &solve_stats, trace_ptr, &error);
-  } else {
+  } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
       if (decomposition_file == NULL) {
@@ -427,6 +438,9 @@ int main(int argc, char **argv) {
                                                  rankwidth_mode, &result, &solve_stats, trace_ptr,
                                                  &error);
     }
+  } else {
+    ok = qsop_solve_treewidth_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr,
+                                          &error);
   }
   qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);

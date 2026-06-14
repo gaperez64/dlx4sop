@@ -8,15 +8,15 @@ implementation notes belong in commit history, not here.
 
 The current performance roadmap is:
 
-1. Make the default components backend safe for large exact histograms.
-2. Add a baseline treewidth-decomposition backend.
-3. Improve generated rankwidth/treewidth decompositions from corpus evidence.
-4. Compare branch heuristics only when traces show the cache and split machinery
+1. Compare branch, rankwidth, treewidth, and components on the internal plus
+   external importer-fed corpus.
+2. Improve generated rankwidth/treewidth decompositions from corpus evidence.
+3. Compare branch heuristics only when traces show the cache and split machinery
    is being exercised on a representative corpus.
-5. Add incremental residual hashing if full-state hashing appears in hot traces.
-6. Consider dancing-cells-style linked mutation only if active-edge traversal or
+4. Add incremental residual hashing if full-state hashing appears in hot traces.
+5. Consider dancing-cells-style linked mutation only if active-edge traversal or
    undo costs dominate.
-7. Add specialized residue kernels and CPU dispatch after solver shape is
+6. Add specialized residue kernels and CPU dispatch after solver shape is
    stable.
 
 ## Reversible Mutation And Dancing Cells
@@ -54,10 +54,8 @@ fingerprint before it is made more complicated.
 
 ## Width Heuristics
 
-The implemented branch heuristics are ordering policies. They do not replace a
-decomposition backend. The next solver backend should use a tree decomposition
-with bag-local dynamic programming, separate from the branch heuristic named
-`treewidth`.
+The implemented branch heuristics are ordering policies. They do not replace
+the rankwidth and treewidth decomposition backends.
 
 Near-term experiments should focus on:
 
@@ -81,7 +79,6 @@ another exact multiword representation when the final histogram cannot fit.
 
 Future arithmetic work:
 
-- CRT-safe component convolution for the default backend;
 - specialize common moduli such as `2`, `4`, `8`, `16`, and `24`;
 - keep count-table and Fourier modes behind the same result contract;
 - consider multi-prime Fourier only if it beats count-table plus CRT on real
@@ -125,8 +122,8 @@ Useful stable metrics:
 - imported/skipped/error counts by corpus;
 - variables, terms, components, and modulus;
 - branch internal nodes, leaves, cache hits, and cache misses;
-- rankwidth decomposition width, table entries, signature entries, and join
-  counts;
+- decomposition width, table entries, signature entries where applicable, and
+  join counts;
 - elapsed time and selected backend configuration.
 
 A structured JSON trace format is useful once the metric set settles. Until
@@ -143,5 +140,5 @@ Coverage should continue to include:
 - backend agreement on small examples;
 - residual undo and cache invariants;
 - importer-fed corpus smoke tests;
-- branch and rankwidth large-count paths;
+- branch, components, rankwidth, and treewidth large-count paths;
 - the configured coverage threshold.

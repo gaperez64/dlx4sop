@@ -92,6 +92,28 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if completed.returncode != 0 or completed.stdout != expected:
         raise AssertionError(f"large rankwidth CRT solve failed\n{completed.stdout}\n{completed.stderr}")
 
+    components = subprocess.run(
+        [str(exe), "--backend", "components", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if components.returncode != 0 or components.stdout != expected:
+        raise AssertionError(f"large components CRT solve failed\n{components.stdout}\n{components.stderr}")
+
+    default = subprocess.run(
+        [str(exe), "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if default.returncode != 0 or default.stdout != expected:
+        raise AssertionError(f"large default CRT solve failed\n{default.stdout}\n{default.stderr}")
+
     branch = subprocess.run(
         [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
         input=qsop,
@@ -102,6 +124,17 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     )
     if branch.returncode != 0 or branch.stdout != expected:
         raise AssertionError(f"large branch CRT solve failed\n{branch.stdout}\n{branch.stderr}")
+
+    treewidth = subprocess.run(
+        [str(exe), "--backend", "treewidth", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if treewidth.returncode != 0 or treewidth.stdout != expected:
+        raise AssertionError(f"large treewidth CRT solve failed\n{treewidth.stdout}\n{treewidth.stderr}")
 
     brute_force = subprocess.run(
         [str(exe), "--backend", "brute-force", "--max-vars", "64", "-"],
@@ -278,7 +311,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--format"], "requires a value"),
         ([str(exe), "--format", "json", str(qsop)], "unsupported format"),
         ([str(exe), "--backend"], "requires a value"),
-        ([str(exe), "--backend", "treewidth", str(qsop)], "unsupported backend"),
+        ([str(exe), "--backend", "bad", str(qsop)], "unsupported backend"),
         ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
         ([str(exe), "--rankwidth-decomposition"], "requires a path"),
         (
@@ -767,6 +800,61 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError(f"{heuristic} stats missing heuristic\n{stats.stdout}\n{stats.stderr}")
 
 
+def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+    for name in ["solve_single", "solve_labelled", "solve_disconnected"]:
+        qsop = source_root / "tests" / "golden" / f"{name}.qsop"
+        expected = subprocess.run(
+            [str(exe), "--backend", "brute-force", str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if expected.returncode != 0:
+            raise AssertionError(f"{name}: brute-force solve failed\n{expected.stderr}")
+
+        completed = subprocess.run(
+            [str(exe), "--backend", "treewidth", str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0 or completed.stdout != expected.stdout:
+            raise AssertionError(
+                f"{name}: treewidth solve mismatch\n{completed.stdout}\n{completed.stderr}"
+            )
+
+    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    stats = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "treewidth", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        stats.returncode != 0
+        or "backend: treewidth" not in stats.stdout
+        or "treewidth_order: min-fill" not in stats.stdout
+        or "decomposition_width:" not in stats.stdout
+        or "max_table_entries:" not in stats.stdout
+    ):
+        raise AssertionError(f"treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
+
+    guarded = subprocess.run(
+        [str(exe), "--backend", "treewidth", "--max-vars", "1", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if guarded.returncode == 0 or "treewidth backend refuses" not in guarded.stderr:
+        raise AssertionError(
+            f"treewidth max-vars guard did not trigger\n{guarded.stdout}\n{guarded.stderr}"
+        )
+
+
 def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
     expected_stats = source_root / "tests" / "golden" / "solve_branch.stats"
@@ -820,6 +908,7 @@ def main() -> int:
     run_cli_paths(exe, source_root)
     run_rankwidth_backend(exe, source_root)
     run_branch_heuristics(exe, source_root)
+    run_treewidth_backend(exe, source_root)
     run_trace_csv(exe, source_root)
     return 0
 
