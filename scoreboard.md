@@ -20,8 +20,10 @@ reports are local benchmark artifacts, not citation targets.
 | PyZX | <https://github.com/zxcalc/pyzx> | 344 | 29 | 292 | 23 |
 
 External import classification by imported QSOP variables, from 32-variable-cap
-reports. Rows above 32 are structurally importable cases that were rejected by
-that cap and promoted into controlled widened tiers.
+reports. In the table below, `OK` means accepted by that capped import pass.
+Rows above 32 are structurally importable cases that were rejected only by the
+cap and then promoted into controlled widened manifests. A separate 129-256
+promotion run emits 112 solver-ready rows from the same upstream sources.
 
 | Tier | Records | OK | Too large | Other unsupported | Sign | Labelled |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -49,7 +51,8 @@ not labelled cut-signature-width certificates.
 | 65-128 promoted tier | 16 vars | 0 / 130 | n/a | n/a | min-fill width `0:4, 1:6, 2:17, 3:17, 4:43, 5:24, 6:15, 7:4` |
 
 The widened-tier exact-width rows are intentionally skipped by the cap. Current
-claims there are about heuristic support widths and solver table sizes.
+claims for those tiers are based on heuristic support widths and solver table
+sizes.
 
 ## Solver Results
 
@@ -62,36 +65,45 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve \
   --trace --format jsonl
 ```
 
-`Solved / records` reports only successful solver rows as solved. Timeout rows
-are kept in the denominator. The 65-128 branch and rankwidth rows below are the
-first five promoted-tier boundaries with a 5s per-solve cap; the treewidth rows
-are full-tier runs.
+`Solved / records` reports successful solver rows over attempted rows. Timeout
+rows stay in the denominator. Rankwidth rows on 0-32 skip zero-variable
+boundaries because the generated-decomposition backend currently requires at
+least one variable. Branch rows include the hybrid policy: split disconnected
+residuals first, probe a min-fill support-width upper bound, delegate low-width
+residuals to treewidth, and use generated rankwidth only when a cheap linear
+cut-rank proxy says rankwidth may be substantially smaller. Widened branch leaf
+counts are mostly a saturation/work signal, not a useful exact aggregate.
 
 | Tier | Backend/configuration | Solved / records | Total solve time | Key stats |
 | --- | --- | ---: | ---: | --- |
-| 0-32 | `treewidth --treewidth-order min-degree` | 133 / 133 | 51.7 ms | width 2; max table 64; 12,692 join pairs |
-| 0-32 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 121 / 121 | 62.3 ms | width 3; max table 48; 43,702 join pairs; skips 12 zero-variable decomposition guards |
-| 0-32 | `branch --branch-heuristic split` | 133 / 133 | 79.0 ms | 9,781 nodes; 15,314 leaves; no cache hits |
+| 0-32 | `treewidth --treewidth-order min-degree` | 133 / 133 | 58.0 ms | tw width 2; max table 64; 12,692 join pairs |
+| 0-32 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 121 / 121 | 67.8 ms | rw width 3; max table 48; 43,702 join pairs; skips 12 zero-variable decomposition guards |
+| 0-32 | `branch --branch-heuristic split` | 133 / 133 | 80.2 ms | 9,545 nodes; cache 0 / 9,545; delegations tw=1, rw=0 |
 | 33-64 | `treewidth --treewidth-order min-fill` | 32 / 32 | 26.3 ms | width 3; max table 128; 16,182 join pairs |
 | 33-64 | `treewidth --treewidth-order min-degree` | 32 / 32 | 27.0 ms | width 3; max table 128; 16,182 join pairs |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 32 / 32 | 27.3 ms | width 3; max table 128; 16,176 join pairs |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 197.9 ms | width 6; max table 512; 239,018 join pairs |
+| 33-64 | `branch --branch-heuristic split` | 32 / 32 | 39.5 ms | 3,525 nodes; cache 0 / 3,525; delegations tw=20, rw=0 |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 124.1 ms | rw width 6; max table 512; 141,928 join pairs |
 | 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 130 / 130 | 668.7 ms | width 7; max table 2048; 289,681 join pairs |
 | 65-128 | `treewidth --treewidth-order min-fill` | 130 / 130 | 669.4 ms | width 7; max table 2048; 293,297 join pairs |
 | 65-128 | `treewidth --treewidth-order min-degree` | 130 / 130 | 676.5 ms | width 8; max table 4096; 293,423 join pairs |
-| 65-128 sample | `branch --branch-heuristic split` | 0 / 5 | 25.03 s | 5 timeouts |
-| 65-128 sample | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 0 / 5 | 25.02 s | 5 timeouts |
+| 65-128 | `branch --branch-heuristic split` | 130 / 130 | 1.33 s | 1,753 nodes; cache 0 / 1,753; delegations tw=121, rw=0 |
+| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 112 / 112 | 11.37 s | tw width 14; max table 262,144; 7,168,072 join pairs |
 
-Current widened-tier signal: treewidth is the only backend that completes the
-full 65-128 promoted tier comfortably. Branch and generated rankwidth both time
-out on the first five sign-only PyZX Toffoli-style boundaries under a 5s cap.
+Current widened-tier signal: direct treewidth is still the best default solver.
+Hybrid branch now completes the full 65-128 tier by handing most large residuals
+to treewidth, but it is slower than calling treewidth directly. The full 129-256
+treewidth row completes; a full branch row for that tier is not listed yet
+because hard cases still fall through to branch search and need tighter
+pre-solve policy before that is a useful headline number.
 
 ## Rankwidth Diagnostics
 
 The rankwidth generator now compares the generated `min-fill-cut` decomposition
-against a plain linear candidate on labelled instances and keeps the lower
-support-width candidate. This is a proxy for labelled cost, not a labelled-width
-certificate, but it fixed the known 33-64 labelled outlier.
+against a plain linear candidate and keeps the lower support-width candidate.
+This is a support-graph proxy, not a labelled-width certificate, but it fixed
+the known 33-64 labelled outlier and is also used as the branch rankwidth
+handoff candidate.
 
 FeynmanDD `random_10qubit_0` is labelled, with 61 imported variables and 69
 quadratic terms.
@@ -105,15 +117,18 @@ quadratic terms.
 | `rankwidth --rankwidth-generate balanced --rankwidth-mode count-table` | about 2.7 s | width 7; max table 512 | labelled joins dominate |
 | `rankwidth --rankwidth-generate min-fill --rankwidth-mode count-table` | >20 s cap | no completed row | generator/decomposition is bad for this case |
 
-After this change, the immediate rankwidth problem is no longer the labelled
-33-64 outlier. The remaining blocker is sign-heavy 65-128 Toffoli-style cases
-where generated decompositions still create too much join work.
+Rankwidth is now available as a branch handoff when the treewidth bound is high
+and a cheap linear cut-rank proxy is promising. The current QASM tiers mostly
+trigger treewidth handoffs; synthetic complete-bipartite tests exercise the
+rankwidth handoff path. The next rankwidth problem is better generated
+decompositions and labelled-width estimates, not basic labelled support.
 
 ## Treewidth Trace Profile
 
-Trace rows separate order construction from table joins. On the widened corpus,
-treewidth solve time is dominated by greedy order construction, not by dense
-factor multiplication.
+Trace rows separate order construction from table joins. Percentages are over
+traced solver phases, not total process time. On 33-64 and 65-128 the greedy
+order pass dominates; on the larger 129-256 tier, dense multiplication becomes
+the largest traced kernel because width reaches 14.
 
 | Tier | Order | Total solve | Order phase | Multiply phase | Other traced phases |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -123,10 +138,11 @@ factor multiplication.
 | 65-128 | `min-fill-max-degree` | 668.7 ms | 71.4% | 24.9% | 3.7% |
 | 65-128 | `min-fill` | 669.4 ms | 71.0% | 25.3% | 3.6% |
 | 65-128 | `min-degree` | 676.5 ms | 70.8% | 25.5% | 3.6% |
+| 129-256 | `min-fill-max-degree` | 11.37 s | 31.8% | 66.2% | 2.0% |
 
-The next treewidth optimization target is therefore cached or incremental
-ordering work, while keeping the current DP table behavior as the correctness
-baseline.
+Treewidth optimization now has two regimes: cached or incremental order scoring
+for small and medium tiers, and faster dense-table kernels for the 129-256 tier.
+The current DP table behavior remains the correctness baseline.
 
 ## Native Simulator Results
 
@@ -148,8 +164,9 @@ materializes full matrices.
 ## Current Takeaway
 
 The importer-fed corpus is now large enough to expose backend separation.
-Treewidth is the best current solver configuration and handles the full 65-128
-promoted tier. Branch needs a narrower role or stronger decomposition-style
-splitting. Rankwidth now handles the known labelled 33-64 outlier, but needs
-better generated decompositions for sign-heavy widened cases before it can be a
-serious competitor.
+Treewidth is the best current solver configuration and handles the promoted
+0-32, 33-64, 65-128, and 129-256 tiers. Hybrid branch is now a decomposition
+and DP-dispatch backend rather than a pure enumerator, but direct treewidth is
+still faster on these tiers. Rankwidth handoff support exists and is tested;
+the remaining rankwidth work is better decomposition generation and labelled
+width prediction.

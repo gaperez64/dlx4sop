@@ -925,3 +925,15 @@ bool qsop_solve_treewidth_order_trace_stats(
   *out = result;
   return true;
 }
+
+bool qsop_solve_treewidth_order_count_mod_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop == NULL || counts == NULL) {
+    set_error(error, "internal error: null treewidth modular solve argument");
+    return false;
+  }
+  return solve_treewidth_once(qsop, max_bag_vars, order_policy, count_modulus, counts, stats,
+                              trace, error);
+}

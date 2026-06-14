@@ -25,6 +25,8 @@ typedef struct qsop_solve_stats {
   uint64_t max_signature_entries;
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
+  uint64_t treewidth_delegations;
+  uint64_t rankwidth_delegations;
   uint32_t components;
   uint32_t decomposition_width;
 } qsop_solve_stats_t;
@@ -110,6 +112,11 @@ bool qsop_solve_treewidth_order_trace_stats(
     qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error);
 
+bool qsop_solve_treewidth_order_count_mod_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars, qsop_result_t **out,
                                 qsop_error_t *error);
 
@@ -135,7 +142,16 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_decomposition_t **out,
                                            qsop_error_t *error);
 
+bool qsop_rankwidth_decomposition_support_width(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t *out, qsop_error_t *error);
+
 void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposition);
+
+bool qsop_solve_rankwidth_count_table_mod_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_rankwidth_mode_trace_stats(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,

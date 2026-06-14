@@ -109,6 +109,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             stats = entry["stats"]
             for stat in ("search_nodes", "leaf_assignments", "cache_hits", "cache_misses", "components"):
                 add_sum(stats, stat, stat_value(record, stat))
+            for stat in ("treewidth_delegations", "rankwidth_delegations"):
+                add_sum(stats, stat, stat_value(record, stat))
             for stat in (
                 "rankwidth_width",
                 "rankwidth_max_table_entries",
@@ -150,6 +152,11 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(f"max signatures {max(stats.get('rankwidth_max_signature_entries', 0), stats.get('max_signature_entries', 0))}")
     if "join_pairs" in stats:
         parts.append(f"{stats['join_pairs']} join pairs")
+    if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
+        parts.append(
+            f"delegations tw={stats.get('treewidth_delegations', 0)}, "
+            f"rw={stats.get('rankwidth_delegations', 0)}"
+        )
     return "; ".join(parts) if parts else ""
 
 

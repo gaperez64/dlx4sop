@@ -156,6 +156,14 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+    if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0) {
+      fprintf(file, "treewidth_delegations: %" PRIu64 "\n", stats->treewidth_delegations);
+      fprintf(file, "rankwidth_delegations: %" PRIu64 "\n", stats->rankwidth_delegations);
+      fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
+      fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
+      fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
+      fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
+    }
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     fprintf(file, "rankwidth_mode: %s\n", rankwidth_mode_name(rankwidth_mode));
     fprintf(file, "rankwidth_decomposition: %s\n", rankwidth_decomposition);

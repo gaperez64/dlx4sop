@@ -1,4 +1,5 @@
 #include "dlx4sop/qsop_solve.h"
+#include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
 #include "trace.h"
@@ -56,6 +57,14 @@ typedef struct branch_search_stats {
   uint64_t leaves;
   uint64_t cache_hits;
   uint64_t cache_misses;
+  uint64_t table_entries;
+  uint64_t max_table_entries;
+  uint64_t signature_entries;
+  uint64_t max_signature_entries;
+  uint64_t join_pairs;
+  uint64_t join_signature_pairs;
+  uint64_t treewidth_delegations;
+  uint64_t rankwidth_delegations;
   uint64_t *work;
   uint64_t *tmp;
   residual_cache_t cache;
@@ -63,7 +72,14 @@ typedef struct branch_search_stats {
   qsop_branch_heuristic_t heuristic;
   uint64_t count_modulus;
   uint32_t depth;
+  uint32_t decomposition_width;
 } branch_search_stats_t;
+
+#define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 32U
+#define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 10U
+#define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
+#define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 5U
+#define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 
 static void free_subinstance(qsop_instance_t *sub) {
   if (sub == NULL) {
@@ -456,6 +472,213 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
   return true;
 }
 
+static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
+                                             qsop_error_t *error) {
+  const uint32_t nvars = qsop_residual_nvars(residual);
+  uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
+  if (component == NULL) {
+    set_error(error, "out of memory while building active residual subinstance");
+    return false;
+  }
+  for (uint32_t v = 0; v < nvars; v++) {
+    component[v] = qsop_residual_var_active(residual, v) ? 0U : UINT32_MAX;
+  }
+  const bool ok = build_residual_subinstance(residual, component, 0, sub, error);
+  free(component);
+  return ok;
+}
+
+static void merge_delegated_stats(branch_search_stats_t *stats,
+                                  const qsop_solve_stats_t *delegated,
+                                  uint32_t delegated_nvars) {
+  add_saturating_u64(&stats->leaves, assignment_count(delegated_nvars));
+  add_saturating_u64(&stats->treewidth_delegations, delegated->treewidth_delegations);
+  add_saturating_u64(&stats->rankwidth_delegations, delegated->rankwidth_delegations);
+  add_saturating_u64(&stats->table_entries, delegated->table_entries);
+  add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
+  add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
+  add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
+  if (delegated->max_table_entries > stats->max_table_entries) {
+    stats->max_table_entries = delegated->max_table_entries;
+  }
+  if (delegated->max_signature_entries > stats->max_signature_entries) {
+    stats->max_signature_entries = delegated->max_signature_entries;
+  }
+  if (delegated->decomposition_width > stats->decomposition_width) {
+    stats->decomposition_width = delegated->decomposition_width;
+  }
+}
+
+static void merge_child_solve_stats(branch_search_stats_t *stats,
+                                    const qsop_solve_stats_t *child) {
+  add_saturating_u64(&stats->nodes, child->search_nodes);
+  add_saturating_u64(&stats->leaves, child->leaf_assignments);
+  add_saturating_u64(&stats->cache_hits, child->cache_hits);
+  add_saturating_u64(&stats->cache_misses, child->cache_misses);
+  add_saturating_u64(&stats->table_entries, child->table_entries);
+  add_saturating_u64(&stats->signature_entries, child->signature_entries);
+  add_saturating_u64(&stats->join_pairs, child->join_pairs);
+  add_saturating_u64(&stats->join_signature_pairs, child->join_signature_pairs);
+  add_saturating_u64(&stats->treewidth_delegations, child->treewidth_delegations);
+  add_saturating_u64(&stats->rankwidth_delegations, child->rankwidth_delegations);
+  if (child->max_table_entries > stats->max_table_entries) {
+    stats->max_table_entries = child->max_table_entries;
+  }
+  if (child->max_signature_entries > stats->max_signature_entries) {
+    stats->max_signature_entries = child->max_signature_entries;
+  }
+  if (child->decomposition_width > stats->decomposition_width) {
+    stats->decomposition_width = child->decomposition_width;
+  }
+}
+
+static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
+                                                uint32_t rankwidth_width) {
+  return rankwidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+         treewidth_width > rankwidth_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
+}
+
+static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
+                                          uint32_t treewidth_width,
+                                          uint32_t linear_cut_rank,
+                                          bool treewidth_available,
+                                          uint32_t constant_shift,
+                                          branch_search_stats_t *stats,
+                                          bool *out_delegated, qsop_error_t *error) {
+  *out_delegated = false;
+  if (treewidth_available &&
+      treewidth_width <=
+          BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN) {
+    return true;
+  }
+  if (treewidth_available && linear_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+      linear_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
+    return true;
+  }
+
+  qsop_rankwidth_decomposition_t *decomposition = NULL;
+  const uint64_t generate_start = qsop_trace_begin(stats->trace);
+  if (!qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+                                             &decomposition, error)) {
+    return false;
+  }
+
+  uint32_t rankwidth_width = 0;
+  if (!qsop_rankwidth_decomposition_support_width(sub, decomposition, &rankwidth_width, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
+  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, rankwidth_width,
+                          generate_start);
+
+  const bool use_rankwidth =
+      !treewidth_available ||
+      treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+      rankwidth_should_override_treewidth(treewidth_width, rankwidth_width);
+  if (!use_rankwidth || rankwidth_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return true;
+  }
+
+  uint64_t *part_counts = NULL;
+  qsop_solve_stats_t delegated = {0};
+  const uint64_t solve_start = qsop_trace_begin(stats->trace);
+  const bool ok =
+      qsop_counts_alloc(sub->r, &part_counts, error) &&
+      qsop_solve_rankwidth_count_table_mod_stats(sub, decomposition, stats->count_modulus,
+                                                 part_counts, &delegated, stats->trace, error);
+  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_delegate", stats->depth, sub->nvars,
+                          solve_start);
+  qsop_rankwidth_decomposition_free(decomposition);
+  if (!ok) {
+    free(part_counts);
+    return false;
+  }
+
+  if (!branch_counts_shift_add(sub->r, counts, part_counts, constant_shift, stats, error)) {
+    free(part_counts);
+    return false;
+  }
+  delegated.rankwidth_delegations = 1;
+  merge_delegated_stats(stats, &delegated, sub->nvars);
+  free(part_counts);
+  *out_delegated = true;
+  return true;
+}
+
+static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
+                                   branch_search_stats_t *stats, bool *out_delegated,
+                                   qsop_error_t *error) {
+  *out_delegated = false;
+  const uint32_t active_vars = qsop_residual_active_vars(residual);
+  if (active_vars < BRANCH_TREEWIDTH_DELEGATE_MIN_VARS) {
+    return true;
+  }
+
+  qsop_instance_t sub = {0};
+  qsop_stats_t sub_stats = {0};
+  if (!build_active_residual_subinstance(residual, &sub, error)) {
+    return false;
+  }
+  const uint64_t stats_start = qsop_trace_begin(stats->trace);
+  if (!qsop_compute_stats(&sub, &sub_stats, error)) {
+    free_subinstance(&sub);
+    return false;
+  }
+  qsop_trace_emit_elapsed(stats->trace, "branch.width_probe", stats->depth,
+                          sub_stats.min_fill_width, stats_start);
+
+  bool delegated = false;
+  if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
+                                     sub_stats.linear_cut_rank,
+                                     sub_stats.width_diagnostics_available,
+                                     qsop_residual_constant(residual), stats, &delegated, error)) {
+    free_subinstance(&sub);
+    return false;
+  }
+  if (delegated) {
+    free_subinstance(&sub);
+    *out_delegated = true;
+    return true;
+  }
+
+  if (!sub_stats.width_diagnostics_available ||
+      sub_stats.min_fill_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    free_subinstance(&sub);
+    return true;
+  }
+
+  uint64_t *part_counts = NULL;
+  qsop_solve_stats_t delegated_stats = {0};
+  const uint64_t solve_start = qsop_trace_begin(stats->trace);
+  const bool ok =
+      qsop_counts_alloc(sub.r, &part_counts, error) &&
+      qsop_solve_treewidth_order_count_mod_stats(
+          &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS,
+          QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, stats->count_modulus, part_counts,
+          &delegated_stats, stats->trace, error);
+  qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_delegate", stats->depth, sub.nvars,
+                          solve_start);
+  if (!ok) {
+    free_subinstance(&sub);
+    free(part_counts);
+    return false;
+  }
+
+  if (!branch_counts_shift_add(sub.r, counts, part_counts, qsop_residual_constant(residual),
+                               stats, error)) {
+    free_subinstance(&sub);
+    free(part_counts);
+    return false;
+  }
+  delegated_stats.treewidth_delegations = 1;
+  merge_delegated_stats(stats, &delegated_stats, sub.nvars);
+  free_subinstance(&sub);
+  free(part_counts);
+  *out_delegated = true;
+  return true;
+}
+
 static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
                            branch_search_stats_t *stats, qsop_error_t *error);
 
@@ -500,6 +723,15 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->leaf_assignments = search.leaves;
     stats->cache_hits = search.cache_hits;
     stats->cache_misses = search.cache_misses;
+    stats->table_entries = search.table_entries;
+    stats->max_table_entries = search.max_table_entries;
+    stats->signature_entries = search.signature_entries;
+    stats->max_signature_entries = search.max_signature_entries;
+    stats->join_pairs = search.join_pairs;
+    stats->join_signature_pairs = search.join_signature_pairs;
+    stats->treewidth_delegations = search.treewidth_delegations;
+    stats->rankwidth_delegations = search.rankwidth_delegations;
+    stats->decomposition_width = search.decomposition_width;
   }
 
   qsop_residual_free(residual);
@@ -570,10 +802,7 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
     }
     qsop_trace_emit_elapsed(stats->trace, "branch.convolution", stats->depth, r, convolve_start);
 
-    add_saturating_u64(&stats->nodes, part_stats.search_nodes);
-    add_saturating_u64(&stats->leaves, part_stats.leaf_assignments);
-    add_saturating_u64(&stats->cache_hits, part_stats.cache_hits);
-    add_saturating_u64(&stats->cache_misses, part_stats.cache_misses);
+    merge_child_solve_stats(stats, &part_stats);
 
     memcpy(acc, tmp, (size_t)r * sizeof(*acc));
     free_subinstance(&sub);
@@ -743,6 +972,14 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
     return false;
   }
   if (did_split) {
+    return true;
+  }
+
+  bool delegated = false;
+  if (!branch_try_dp_delegate(residual, counts, stats, &delegated, error)) {
+    return false;
+  }
+  if (delegated) {
     return true;
   }
 

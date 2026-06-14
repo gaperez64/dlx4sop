@@ -350,7 +350,6 @@ static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint
                                  const uint64_t *right, size_t words, qsop_error_t *error);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                     const uint64_t *adj, qsop_error_t *error);
-static bool qsop_is_sign_edge_instance(const qsop_instance_t *qsop);
 
 static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error) {
   if (needed <= table->cap) {
@@ -1273,8 +1272,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     return false;
   }
 
-  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL &&
-      !qsop_is_sign_edge_instance(qsop)) {
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL) {
     const uint32_t selected_width = decomposition_width(decomposition, adj, error);
     if (selected_width == UINT32_MAX) {
       free(adj);
@@ -1420,6 +1418,31 @@ static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomp
   free(all);
   free(right);
   return width;
+}
+
+bool qsop_rankwidth_decomposition_support_width(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t *out, qsop_error_t *error) {
+  if (qsop == NULL || decomposition == NULL || out == NULL) {
+    set_error(error, "internal error: null rankwidth support-width argument");
+    return false;
+  }
+  if (decomposition->nvars != qsop->nvars) {
+    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    return false;
+  }
+
+  uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+  if (adj == NULL) {
+    return false;
+  }
+  const uint32_t width = decomposition_width(decomposition, adj, error);
+  free(adj);
+  if (width == UINT32_MAX) {
+    return false;
+  }
+  *out = width;
+  return true;
 }
 
 static uint32_t cross_parity_bitsets(uint32_t nvars, const uint64_t *adj,
@@ -2658,6 +2681,75 @@ static bool solve_labelled_count_table(const qsop_instance_t *qsop,
   label_signature_pool_free(&pool);
   *out = result;
   return true;
+}
+
+bool qsop_solve_rankwidth_count_table_mod_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (qsop == NULL || decomposition == NULL || counts == NULL) {
+    set_error(error, "internal error: null rankwidth modular solve argument");
+    return false;
+  }
+  if (decomposition->nvars != qsop->nvars) {
+    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    return false;
+  }
+  qsop_counts_clear(qsop->r, counts);
+
+  if (count_modulus == 0) {
+    if (qsop->nvars >= 64U) {
+      set_error(error, "rankwidth exact count-table handoff requires fewer than 64 variables");
+      return false;
+    }
+    qsop_result_t *result = NULL;
+    bool ok = false;
+    if (qsop_is_sign_edge_instance(qsop)) {
+      uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+      if (adj == NULL) {
+        return false;
+      }
+      ok = solve_rankwidth_count_table(qsop, decomposition, adj, &result, stats, trace, error);
+      free(adj);
+    } else {
+      uint32_t *coeffs = coefficient_matrix(qsop, error);
+      if (coeffs == NULL) {
+        return false;
+      }
+      ok = solve_labelled_count_table(qsop, decomposition, coeffs, &result, stats, trace, error);
+      free(coeffs);
+    }
+    if (!ok) {
+      qsop_result_free(result);
+      return false;
+    }
+    memcpy(counts, result->counts, (size_t)qsop->r * sizeof(*counts));
+    qsop_result_free(result);
+    return true;
+  }
+
+  if (qsop_is_sign_edge_instance(qsop)) {
+    uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+    if (adj == NULL) {
+      return false;
+    }
+    const bool ok = solve_rankwidth_count_table_mod_once(
+        qsop, decomposition, adj, count_modulus, counts, stats, trace, error);
+    free(adj);
+    return ok;
+  }
+
+  uint32_t *coeffs = coefficient_matrix(qsop, error);
+  if (coeffs == NULL) {
+    return false;
+  }
+  const bool ok = solve_labelled_count_table_mod_once(qsop, decomposition, coeffs,
+                                                      count_modulus, counts, stats, trace, error);
+  free(coeffs);
+  return ok;
 }
 
 static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,

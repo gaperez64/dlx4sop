@@ -50,6 +50,8 @@ TOP_METRICS = (
     "rankwidth_max_signature_entries",
     "join_pairs",
     "join_signature_pairs",
+    "treewidth_delegations",
+    "rankwidth_delegations",
 )
 CSV_FIELDS = [
     "case",
@@ -92,6 +94,8 @@ CSV_FIELDS = [
     "rankwidth_max_signature_entries",
     "join_pairs",
     "join_signature_pairs",
+    "treewidth_delegations",
+    "rankwidth_delegations",
     "qasm_sha256",
     "qsop_sha256",
     "trace_summary",
@@ -546,6 +550,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "rankwidth_max_signature_entries",
             "join_pairs",
             "join_signature_pairs",
+            "treewidth_delegations",
+            "rankwidth_delegations",
         ):
             row[key] = record.get(key, stats.get(key, ""))
         row["trace_summary"] = trace_summary_text(record["trace"])
@@ -602,6 +608,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" max_signatures={stats['max_signature_entries']}"
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
+            if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
+                line += (
+                    f" delegations={stats.get('treewidth_delegations', 0)}/"
+                    f"{stats.get('rankwidth_delegations', 0)}"
+                )
             trace_phase = dominant_trace_phase(record)
             if trace_phase:
                 line += f" top_trace={trace_phase}"
@@ -790,6 +801,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "rankwidth_max_signature_entries",
             "join_pairs",
             "join_signature_pairs",
+            "treewidth_delegations",
+            "rankwidth_delegations",
         ):
             if key in stats:
                 print(f"  {key}: {stats[key]}", file=file)

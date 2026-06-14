@@ -182,6 +182,94 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         )
 
 
+def run_branch_dp_handoff(exe: pathlib.Path) -> None:
+    edges = "\n".join(f"q {i} {i + 1} 8" for i in range(63))
+    qsop = f"p qsop-sign 16 64 63\nn 0\ncst 3\n{edges}\n"
+    branch = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    treewidth = subprocess.run(
+        [str(exe), "--backend", "treewidth", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch.returncode != 0 or treewidth.returncode != 0 or branch.stdout != treewidth.stdout:
+        raise AssertionError(
+            f"branch DP handoff mismatch\nbranch:\n{branch.stdout}\n{branch.stderr}\n"
+            f"treewidth:\n{treewidth.stdout}\n{treewidth.stderr}"
+        )
+
+    stats = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "branch", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_stats = {
+        "backend: branch",
+        "treewidth_delegations: 1",
+        "rankwidth_delegations: 0",
+        "decomposition_width: 1",
+    }
+    if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
+        raise AssertionError(f"branch DP handoff stats failed\n{stats.stdout}\n{stats.stderr}")
+
+
+def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
+    edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
+    qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
+    branch = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "40", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    rankwidth = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "40", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch.returncode != 0 or rankwidth.returncode != 0 or branch.stdout != rankwidth.stdout:
+        raise AssertionError(
+            f"branch rankwidth handoff mismatch\nbranch:\n{branch.stdout}\n{branch.stderr}\n"
+            f"rankwidth:\n{rankwidth.stdout}\n{rankwidth.stderr}"
+        )
+
+    stats = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "branch", "--max-vars", "40", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_stats = {
+        "backend: branch",
+        "treewidth_delegations: 0",
+        "rankwidth_delegations: 1",
+        "decomposition_width: 1",
+    }
+    if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
+        raise AssertionError(
+            f"branch rankwidth handoff stats failed\n{stats.stdout}\n{stats.stderr}"
+        )
+
+
 def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     cases = [
         (
@@ -981,6 +1069,8 @@ def main() -> int:
     run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)
     run_large_rankwidth_crt(exe)
+    run_branch_dp_handoff(exe)
+    run_branch_rankwidth_handoff(exe)
     run_solver_stats(exe, source_root)
     run_cli_paths(exe, source_root)
     run_rankwidth_backend(exe, source_root)
