@@ -24,6 +24,8 @@ def main() -> int:
             "treewidth_order": "min-fill-max-degree",
             "status": "ok",
             "solve_elapsed_ns": 100,
+            "amplitude_real": 1.25,
+            "amplitude_imag": 0.0,
         },
         {
             "source": "Synthetic",
@@ -47,6 +49,8 @@ def main() -> int:
             "engine": "aer-statevector",
             "status": "ok",
             "elapsed_ns": 400,
+            "amplitude_real": 1.0,
+            "amplitude_imag": 0.0,
             "qubits": 2,
             "qubit_cap": 16,
             "timeout_seconds": 2.0,
@@ -96,6 +100,7 @@ def main() -> int:
             "`aer-statevector`",
             "1 / 2",
             "4.00x",
+            "1 | 1 | 0.25",
             "16",
             "512",
         ):
@@ -120,7 +125,13 @@ def main() -> int:
         if completed.returncode != 0:
             raise AssertionError(f"compare json failed:\n{completed.stdout}\n{completed.stderr}")
         rows = json.loads(completed.stdout)
-        if rows[0]["both_ok"] != 1 or rows[0]["native_ok_solver_skip"] != 1:
+        if (
+            rows[0]["both_ok"] != 1
+            or rows[0]["native_ok_solver_skip"] != 1
+            or rows[0]["amplitude_checked"] != 1
+            or rows[0]["amplitude_mismatches"] != 1
+            or rows[0]["amplitude_max_abs_error"] != 0.25
+        ):
             raise AssertionError(f"unexpected json rows:\n{completed.stdout}")
 
     return 0

@@ -30,6 +30,8 @@ def main() -> int:
         "input": "00",
         "output": "00",
         "solve_elapsed_ns": 1234,
+        "amplitude_real": 1.0,
+        "amplitude_imag": 0.0,
         "stats": {
             "decomposition_width": 2,
             "max_table_entries": 16,
@@ -63,6 +65,8 @@ def main() -> int:
         "output": "00",
         "status": "ok",
         "elapsed_ns": 5678,
+        "amplitude_real": 1.0,
+        "amplitude_imag": 0.0,
         "qubits": 3,
         "qubit_cap": 4,
         "timeout_seconds": 2.0,
@@ -106,7 +110,7 @@ def main() -> int:
             "`qiskit-statevector`",
             "## Native Common-Row Comparison",
             "### Synthetic",
-            "| synthetic | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.2 us | 5.7 us | 4.60x | 3 | 4 | 2.0 | 512 |  |",
+            "| synthetic | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.2 us | 5.7 us | 4.60x | 1 | 0 | 0 | 3 | 4 | 2.0 | 512 |  |",
         ):
             if expected not in completed.stdout:
                 raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")

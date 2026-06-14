@@ -37,6 +37,7 @@ static void print_usage(FILE *file) {
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
         "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
+        "[--include-result] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -215,6 +216,38 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   return true;
 }
 
+static bool write_result_stats(FILE *file, const qsop_result_t *result, qsop_error_t *error) {
+  if (file == NULL || result == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "internal error: null result-stats write argument");
+    return false;
+  }
+
+  fprintf(file, "result_modulus: %" PRIu32 "\n", result->r);
+  fprintf(file, "result_norm_h: %" PRIu64 "\n", result->norm_h);
+  fputs("result_counts:", file);
+  for (uint32_t residue = 0; residue < result->r; residue++) {
+    if (result->count_strings != NULL) {
+      fprintf(file, " %s", result->count_strings[residue]);
+    } else {
+      fprintf(file, " %" PRIu64, result->counts[residue]);
+    }
+  }
+  fputc('\n', file);
+
+  if (ferror(file)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
 static bool parse_max_vars(const char *text, uint32_t *out) {
   if (text == NULL || text[0] == '-' || text[0] == '\0') {
     return false;
@@ -245,6 +278,7 @@ int main(int argc, char **argv) {
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
   bool treewidth_order_set = false;
+  bool include_result = false;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -267,6 +301,10 @@ int main(int argc, char **argv) {
           return 2;
         }
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--include-result") == 0) {
+      include_result = true;
       continue;
     }
     if (strcmp(argv[i], "--max-vars") == 0) {
@@ -440,6 +478,10 @@ int main(int argc, char **argv) {
           stderr);
     return 2;
   }
+  if (include_result && format != SOLVE_FORMAT_STATS) {
+    fputs("error: --include-result requires --format stats\n", stderr);
+    return 2;
+  }
 
   FILE *input = stdin;
   const char *diagnostic_path = "<stdin>";
@@ -526,6 +568,9 @@ int main(int argc, char **argv) {
                             rankwidth_decomposition_label, treewidth_order, &error);
     if (ok && backend == SOLVE_BACKEND_BRANCH && branch_heuristic_set) {
       printf("branch_heuristic: %s\n", branch_heuristic_name(branch_heuristic));
+    }
+    if (ok && include_result) {
+      ok = write_result_stats(stdout, result, &error);
     }
   }
   qsop_result_free(result);

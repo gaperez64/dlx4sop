@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import cmath
 import csv
 import hashlib
 import json
+import math
 import pathlib
 import subprocess
 import sys
@@ -100,6 +102,8 @@ CSV_FIELDS = [
     "nedges",
     "import_elapsed_ns",
     "solve_elapsed_ns",
+    "amplitude_real",
+    "amplitude_imag",
     "search_nodes",
     "leaf_assignments",
     "cache_hits",
@@ -226,12 +230,34 @@ def qsop_header(qsop: str) -> dict[str, int | str]:
     return header
 
 
-def parse_stats(text: str) -> dict[str, int | str]:
+def amplitude_metrics(modulus: int, norm_h: int, counts: list[int]) -> dict[str, float]:
+    omega = cmath.exp(2j * math.pi / modulus)
+    total = sum(count * (omega**residue) for residue, count in enumerate(counts))
+    amplitude = total * (2.0 ** (-norm_h / 2.0))
+    return {
+        "amplitude_real": amplitude.real,
+        "amplitude_imag": amplitude.imag,
+    }
+
+
+def parse_stats_and_amplitude(text: str) -> tuple[dict[str, int | str], dict[str, float]]:
     stats: dict[str, int | str] = {}
+    result_modulus: int | None = None
+    result_norm_h: int | None = None
+    result_counts: list[int] | None = None
     for line in text.splitlines():
         if not line:
             continue
         key, value = line.split(": ", 1)
+        if key == "result_modulus":
+            result_modulus = int(value)
+            continue
+        if key == "result_norm_h":
+            result_norm_h = int(value)
+            continue
+        if key == "result_counts":
+            result_counts = [int(part) for part in value.split()]
+            continue
         stats[key] = (
             value
             if key
@@ -244,7 +270,14 @@ def parse_stats(text: str) -> dict[str, int | str]:
             }
             else int(value)
         )
-    return stats
+    metrics: dict[str, float] = {}
+    if result_modulus is not None and result_norm_h is not None and result_counts is not None:
+        metrics = amplitude_metrics(result_modulus, result_norm_h, result_counts)
+    return stats, metrics
+
+
+def parse_stats(text: str) -> dict[str, int | str]:
+    return parse_stats_and_amplitude(text)[0]
 
 
 def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str, int | str]:
@@ -574,6 +607,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                     backend,
                     "--format",
                     "stats",
+                    "--include-result",
                     "--max-vars",
                     str(args.max_vars),
                 ]
@@ -628,7 +662,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         metadata["skipped_rankwidth_records"] += 1
                         continue
                     raise
-                stats = parse_stats(stats_text)
+                stats, amplitude = parse_stats_and_amplitude(stats_text)
                 aliases = backend_stat_aliases(backend, stats)
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 cache_metrics = cache_record_metrics(stats, trace)
@@ -653,6 +687,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **header,
                         "import_elapsed_ns": import_elapsed_ns,
                         "solve_elapsed_ns": solve_elapsed_ns,
+                        **amplitude,
                         "qasm_sha256": sha256_text(qasm),
                         "qsop_sha256": sha256_text(qsop),
                         "stats": stats,

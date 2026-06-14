@@ -24,6 +24,8 @@ def main() -> int:
         "output": "0",
         "qsop_mode": "labelled",
         "solve_elapsed_ns": 1_000,
+        "amplitude_real": 1.0,
+        "amplitude_imag": 0.0,
         "status": "ok",
         "treewidth_width": 1,
         "treewidth_max_table_entries": 8,
@@ -60,6 +62,8 @@ def main() -> int:
         "output": "0",
         "status": "ok",
         "elapsed_ns": 2_000,
+        "amplitude_real": 1.0,
+        "amplitude_imag": 0.0,
         "qubits": 1,
         "qubit_cap": 16,
         "timeout_seconds": 10.0,
@@ -108,7 +112,7 @@ def main() -> int:
             "branch table forecast rw=2, tw=128",
             "branch tw order width=3",
             "## Competitor Comparisons",
-            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 16 | 10.0 | 4096 |",
+            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",
         ):
             if expected not in output:

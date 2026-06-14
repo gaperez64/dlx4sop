@@ -10,6 +10,9 @@ from typing import Iterable, TextIO
 from summarize_qasm_report import DEFAULT_TIERS, markdown_escape, summarize_reports
 
 
+AMPLITUDE_ABS_TOL = 1e-8
+
+
 def read_jsonl(path: pathlib.Path) -> list[dict]:
     records = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -74,6 +77,14 @@ def stat_value(record: dict, key: str) -> int | None:
     if key == "leaf_assignments" and value == (1 << 64) - 1:
         return None
     return value if isinstance(value, int) else None
+
+
+def amplitude_value(record: dict) -> complex | None:
+    real = record.get("amplitude_real")
+    imag = record.get("amplitude_imag")
+    if isinstance(real, (int, float)) and isinstance(imag, (int, float)):
+        return complex(float(real), float(imag))
+    return None
 
 
 def add_sum(counter: dict[str, int], key: str, value: int | None) -> None:
@@ -376,6 +387,9 @@ def summarize_native_comparison_records(
                         "both_ok": 0,
                         "solver_elapsed_ns": 0,
                         "native_elapsed_ns": 0,
+                        "amplitude_checked": 0,
+                        "amplitude_mismatches": 0,
+                        "amplitude_max_abs_error": 0.0,
                         "max_boundary_qubits": 0,
                         "qubit_caps": collections.Counter(),
                         "timeouts": collections.Counter(),
@@ -396,6 +410,16 @@ def summarize_native_comparison_records(
                     entry["both_ok"] += 1
                     entry["solver_elapsed_ns"] += solver_elapsed_ns
                     entry["native_elapsed_ns"] += int(native.get("elapsed_ns") or 0)
+                    solver_amplitude = amplitude_value(solver)
+                    native_amplitude = amplitude_value(native)
+                    if solver_amplitude is not None and native_amplitude is not None:
+                        entry["amplitude_checked"] += 1
+                        error = abs(solver_amplitude - native_amplitude)
+                        entry["amplitude_max_abs_error"] = max(
+                            entry["amplitude_max_abs_error"], error
+                        )
+                        if error > AMPLITUDE_ABS_TOL:
+                            entry["amplitude_mismatches"] += 1
                 elif native.get("error"):
                     entry["errors"][str(native["error"])] += 1
     return [grouped[key] for key in sorted(grouped)]
@@ -475,17 +499,22 @@ def write_native_comparison_tables(
     print("\n## Native Common-Row Comparison\n", file=file)
     print(
         "Rows join solver and native simulator JSONL on source, relative path, case, input, and output. "
-        "Times and speedups use rows where both completed.",
+        "Times and speedups use rows where both completed. Amplitude mismatch columns use rows "
+        "where both sides recorded amplitudes.",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}):
         print(f"\n### {markdown_escape(source)}\n", file=file)
         print(
             "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | Native time | "
-            "QSOP speedup | Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
+            "QSOP speedup | Amplitude checked | Mismatches | Max amplitude error | "
+            "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
             file=file,
         )
-        print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+        print(
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            file=file,
+        )
         for row in [candidate for candidate in rows if candidate["source"] == source]:
             qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
             timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
@@ -496,6 +525,8 @@ def write_native_comparison_tables(
                 f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
                 f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
                 f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
+                f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
+                f"{row['amplitude_max_abs_error']:.3g} | "
                 f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
                 f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} | {markdown_escape(reason)} |",
                 file=file,

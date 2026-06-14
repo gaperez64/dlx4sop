@@ -11,6 +11,9 @@ from render_scoreboard import format_ns
 from summarize_qasm_report import markdown_escape
 
 
+AMPLITUDE_ABS_TOL = 1e-8
+
+
 def read_jsonl(path: pathlib.Path) -> list[dict]:
     records = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -66,6 +69,14 @@ def numeric(record: dict, key: str) -> int:
     return int(value) if isinstance(value, int) else 0
 
 
+def amplitude(record: dict) -> complex | None:
+    real = record.get("amplitude_real")
+    imag = record.get("amplitude_imag")
+    if isinstance(real, (int, float)) and isinstance(imag, (int, float)):
+        return complex(float(real), float(imag))
+    return None
+
+
 def cap_value(record: dict, key: str) -> str:
     if key not in record:
         return "not recorded"
@@ -117,6 +128,9 @@ def summarize(
                         "both_skip": 0,
                         "solver_elapsed_ns": 0,
                         "native_elapsed_ns": 0,
+                        "amplitude_checked": 0,
+                        "amplitude_mismatches": 0,
+                        "amplitude_max_abs_error": 0.0,
                         "max_boundary_qubits": 0,
                         "qubit_caps": collections.Counter(),
                         "timeouts": collections.Counter(),
@@ -135,6 +149,16 @@ def summarize(
                     entry["both_ok"] += 1
                     entry["solver_elapsed_ns"] += solver_elapsed
                     entry["native_elapsed_ns"] += numeric(native, "elapsed_ns")
+                    solver_amplitude = amplitude(solver)
+                    native_amplitude = amplitude(native)
+                    if solver_amplitude is not None and native_amplitude is not None:
+                        entry["amplitude_checked"] += 1
+                        error = abs(solver_amplitude - native_amplitude)
+                        entry["amplitude_max_abs_error"] = max(
+                            entry["amplitude_max_abs_error"], error
+                        )
+                        if error > AMPLITUDE_ABS_TOL:
+                            entry["amplitude_mismatches"] += 1
                 elif solver_ok:
                     entry["solver_ok_native_skip"] += 1
                     error = native_error(native)
@@ -169,16 +193,21 @@ def write_markdown(rows: list[dict], file: TextIO) -> None:
         "Rows join QSOP solver benchmark JSONL with native simulator JSONL on "
         "`source`, `source_relative_path`, `case`, `input`, and `output`. "
         "The speedup column is native elapsed time divided by QSOP solve time "
-        "over rows where both engines completed.",
+        "over rows where both engines completed. Amplitude mismatch columns are "
+        "computed for completed rows where both JSONL records include amplitudes.",
         file=file,
     )
     print("", file=file)
     print(
         "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | "
-        "Native time | QSOP speedup | Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
+        "Native time | QSOP speedup | Amplitude checked | Mismatches | Max amplitude error | "
+        "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
         file=file,
     )
-    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+    print(
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        file=file,
+    )
     for row in rows:
         reason = most_common(row["native_errors"])
         print(
@@ -186,6 +215,8 @@ def write_markdown(rows: list[dict], file: TextIO) -> None:
             f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
             f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
             f"{speedup_text(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
+            f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
+            f"{row['amplitude_max_abs_error']:.3g} | "
             f"{row['max_boundary_qubits']} | {markdown_escape(most_common(row['qubit_caps']))} | "
             f"{markdown_escape(most_common(row['timeouts']))} | "
             f"{markdown_escape(most_common(row['memory_caps']))} | {markdown_escape(reason)} |",
