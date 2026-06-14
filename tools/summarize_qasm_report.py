@@ -113,13 +113,17 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
     for source in sorted(sources):
         entry = sources[source]
         statuses = entry["statuses"]
-        unsupported = sum(count for status, count in statuses.items() if status not in ("ok", "too_many_vars"))
+        unsupported = sum(
+            count for status, count in statuses.items()
+            if status not in ("ok", "below_min_vars", "too_many_vars")
+        )
         source_rows.append(
             {
                 "source": source,
                 "source_url": entry.get("source_url"),
                 "inputs": entry["inputs"],
                 "ok": statuses.get("ok", 0),
+                "below_min_vars": statuses.get("below_min_vars", 0),
                 "too_many_vars": statuses.get("too_many_vars", 0),
                 "unsupported": unsupported,
             }
@@ -144,9 +148,11 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
                 "range": tier_range(label, tiers),
                 "records": total,
                 "ok": statuses.get("ok", 0),
+                "below_min_vars": statuses.get("below_min_vars", 0),
                 "too_many_vars": statuses.get("too_many_vars", 0),
                 "unsupported": sum(
-                    count for status, count in statuses.items() if status not in ("ok", "too_many_vars")
+                    count for status, count in statuses.items()
+                    if status not in ("ok", "below_min_vars", "too_many_vars")
                 ),
                 "sign": modes.get("sign", 0),
                 "labelled": modes.get("labelled", 0),
@@ -177,23 +183,23 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
 def write_markdown(summary: dict, top_diagnostics: int, file) -> None:
     print("# QASM Import Report Summary\n", file=file)
     print("## Sources\n", file=file)
-    print("| Source | Upstream | Inputs | OK | Too large | Other unsupported |", file=file)
-    print("| --- | --- | ---: | ---: | ---: | ---: |", file=file)
+    print("| Source | Upstream | Inputs | OK | Below min | Too large | Other unsupported |", file=file)
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in summary["sources"]:
         url = row.get("source_url") or ""
         print(
             f"| {markdown_escape(row['source'])} | {markdown_escape(url)} | {row['inputs']} | "
-            f"{row['ok']} | {row['too_many_vars']} | {row['unsupported']} |",
+            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} |",
             file=file,
         )
 
     print("\n## Size Tiers\n", file=file)
-    print("| Tier | Imported variables | Records | OK | Too large | Other unsupported | Sign | Labelled | Unknown mode |", file=file)
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print("| Tier | Imported variables | Records | OK | Below min | Too large | Other unsupported | Sign | Labelled | Unknown mode |", file=file)
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in summary["tier_summary"]:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['range'])} | {row['records']} | "
-            f"{row['ok']} | {row['too_many_vars']} | {row['unsupported']} | "
+            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} | "
             f"{row['sign']} | {row['labelled']} | {row['unknown_mode']} |",
             file=file,
         )

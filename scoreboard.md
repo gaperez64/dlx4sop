@@ -65,6 +65,27 @@ variables: 100 / 100 boundaries solved in 52.9 ms, with 190 components and a
 component-cache hit rate of 0.379. It remains useful for disconnected small
 components but is not the current full-pool baseline.
 
+## Promoted 33-64 Tier
+
+The first widened tier is generated with `--min-vars 33 --max-vars 64`. It has
+32 fixed-boundary amplitudes: 16 from PyZX and 16 from FeynmanDD. The tier
+contains 23 sign-only boundaries and 9 labelled boundaries, with 38-63 imported
+SOP variables and up to 69 quadratic terms. MQT Bench currently contributes no
+cases in this band.
+
+| Backend/configuration | Boundaries solved | Total solve time | Key stats |
+| --- | ---: | ---: | --- |
+| `treewidth --treewidth-order min-degree` | 32 / 32 | 27.1 ms | max width 3; max table 128; 16,182 join pairs |
+| `treewidth --treewidth-order min-fill` | 32 / 32 | 27.9 ms | max width 3; max table 128; 16,182 join pairs |
+| `treewidth --treewidth-order min-fill-max-degree` | 32 / 32 | 28.3 ms | max width 3; max table 128; 16,176 join pairs |
+| `branch --branch-heuristic split` | 32 / 32 | 85.6 ms | 19,629 nodes; 32,678 leaf assignments; no cache hits |
+| `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 1.75 s | max width 7; max table 1024; 386,804 join pairs |
+
+The slow rankwidth case in this tier is FeynmanDD `random_10qubit_0`, a labelled
+case with 61 imported SOP variables, 69 quadratic terms, generated width 7, and
+about 1.58 s in rankwidth count-table mode. The same case stays at treewidth
+width 3 with a 128-entry maximum table.
+
 ## Heuristic Note
 
 `cutrank-proxy` is not the exact graph parameter linear rankwidth, and it is not
@@ -82,8 +103,8 @@ baseline.
 | --- | ---: | --- |
 | Built-in exact agreement tests | CI-sized golden and corpus tests | Passing |
 | Qiskit optional manifest check | 97 checked, 3 skipped by Qiskit parser support | Passing checked cases |
-| Qiskit simulator speed baseline | Not run | Pending |
-| Aer speed baseline | Not run | Pending |
+| Qiskit simulator speed baseline | 17 / 32 promoted-tier boundaries under a 16-qubit dense-state cap | 16.9 ms total; remaining cases skipped by parser or qubit cap |
+| Aer speed baseline | 17 / 32 promoted-tier boundaries under a 16-qubit dense-state cap | 17.6 ms total; remaining cases skipped by parser or qubit cap |
 | MQT simulator baseline | Not run | Pending |
 | ZX-calculus simulator baselines | Not run | Pending |
 

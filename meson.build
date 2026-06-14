@@ -325,6 +325,14 @@ if python3.found()
       '--help',
     ],
   )
+  test(
+    'native simulator benchmark smoke',
+    python3,
+    args: [
+      files('tests/test_native_simulator_benchmark.py'),
+      files('tools/bench_qasm_native_simulator.py'),
+    ],
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',

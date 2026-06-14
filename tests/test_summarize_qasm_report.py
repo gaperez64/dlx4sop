@@ -49,6 +49,15 @@ def main() -> int:
                 "max_imported_edges": 90,
             },
             {
+                "relative_path": "below.qasm",
+                "source": "Example",
+                "source_url": "https://example.invalid/bench",
+                "status": "below_min_vars",
+                "mode": "sign",
+                "max_imported_nvars": 20,
+                "max_imported_edges": 12,
+            },
+            {
                 "relative_path": "huge.qasm",
                 "source": "Example",
                 "source_url": "https://example.invalid/bench",
@@ -73,9 +82,10 @@ def main() -> int:
 
         markdown = run_summary(tool, str(report_path), "--top-diagnostics", "1")
         for expected in [
-            "| Example | https://example.invalid/bench | 4 | 1 | 2 | 1 |",
-            "| 33-64 | 33-64 | 1 | 0 | 1 | 0 | 0 | 1 | 0 |",
-            "| 257+ | 257+ | 1 | 0 | 1 | 0 | 1 | 0 | 0 |",
+            "| Example | https://example.invalid/bench | 5 | 1 | 1 | 2 | 1 |",
+            "| 0-32 | 0-32 | 2 | 1 | 1 | 0 | 0 | 2 | 0 | 0 |",
+            "| 33-64 | 33-64 | 1 | 0 | 0 | 1 | 0 | 0 | 1 | 0 |",
+            "| 257+ | 257+ | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |",
             "| unsupported_gate | 1 | unsupported OpenQASM operation 'foo' |",
         ]:
             if expected not in markdown:
@@ -89,11 +99,15 @@ def main() -> int:
             "--tier",
             "wider:17:",
         )
-        if "| wider | 17+ | 2 | 0 | 2 | 0 | 1 | 1 | 0 |" not in custom:
+        if "| wider | 17+ | 3 | 0 | 1 | 2 | 0 | 2 | 1 | 0 |" not in custom:
             raise AssertionError(f"missing custom tier:\n{custom}")
 
         summary = json.loads(run_summary(tool, str(report_path), "--format", "json"))
-        if summary["records"] != 4 or summary["sources"][0]["too_many_vars"] != 2:
+        if (
+            summary["records"] != 5
+            or summary["sources"][0]["too_many_vars"] != 2
+            or summary["sources"][0]["below_min_vars"] != 1
+        ):
             raise AssertionError(f"unexpected JSON summary:\n{summary}")
 
     return 0

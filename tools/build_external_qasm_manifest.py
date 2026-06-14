@@ -312,6 +312,7 @@ def build_case(
     path: pathlib.Path,
     qasm: str,
     boundaries: list[list[str]],
+    min_vars: int,
     max_vars: int,
     source_prefix: str,
     source_name: str,
@@ -340,6 +341,8 @@ def build_case(
 
     if max_nvars > max_vars:
         return None, "too_many_vars", boundary_records, max_nvars, max_edges, mode
+    if max_nvars < min_vars:
+        return None, "below_min_vars", boundary_records, max_nvars, max_edges, mode
 
     relpath = path.relative_to(root)
     name = sanitize_name(f"{source_prefix}_{relpath.with_suffix('').as_posix()}")
@@ -423,6 +426,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, help="limit source files before import filtering")
     parser.add_argument("--max-cases", type=int, help="limit emitted manifest cases")
+    parser.add_argument("--min-vars", type=int, default=0, help="only emit cases with at least this many imported SOP variables")
     parser.add_argument("--max-vars", type=int, default=24)
     parser.add_argument("--output", type=pathlib.Path, help="write manifest JSON to this path instead of stdout")
     parser.add_argument("--report", type=pathlib.Path, help="write per-source import classification JSON")
@@ -439,6 +443,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--max-cases must be non-negative")
     if args.max_vars < 0:
         parser.error("--max-vars must be non-negative")
+    if args.min_vars < 0:
+        parser.error("--min-vars must be non-negative")
+    if args.min_vars > args.max_vars:
+        parser.error("--min-vars must be less than or equal to --max-vars")
     if args.include_qc and args.qc2qasm is None:
         parser.error("--include-qc requires --qc2qasm")
     args.source_name = args.source_name or args.source_prefix
@@ -474,6 +482,7 @@ def main(argv: list[str]) -> int:
                 path,
                 qasm,
                 boundaries,
+                args.min_vars,
                 args.max_vars,
                 args.source_prefix,
                 args.source_name,

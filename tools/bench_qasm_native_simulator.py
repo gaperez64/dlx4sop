@@ -122,6 +122,21 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
     records = []
     for case, boundary_index, (input_bits, output_bits) in boundary_records(cases, args.limit):
         qasm = case_qasm(case)
+        boundary_qubits = max(len(input_bits), len(output_bits))
+        if args.max_qubits is not None and boundary_qubits > args.max_qubits:
+            records.append(
+                record_case(
+                    case,
+                    boundary_index,
+                    input_bits,
+                    output_bits,
+                    args.engine,
+                    "skipped",
+                    qubits=boundary_qubits,
+                    error=f"boundary uses {boundary_qubits} qubits above --max-qubits {args.max_qubits}",
+                )
+            )
+            continue
         try:
             start = time.perf_counter_ns()
             amplitude, qubits = native_amplitude(args.engine, qasm, input_bits, output_bits)
@@ -191,10 +206,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--engine", choices=("qiskit-statevector", "aer-statevector"), default="qiskit-statevector")
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--max-qubits", type=int, help="skip boundaries above this dense-state qubit count")
     parser.add_argument("--skip-unsupported", action="store_true")
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
         parser.error("--limit must be non-negative")
+    if args.max_qubits is not None and args.max_qubits < 0:
+        parser.error("--max-qubits must be non-negative")
     return args
 
 

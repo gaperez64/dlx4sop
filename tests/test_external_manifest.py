@@ -216,6 +216,32 @@ def main() -> int:
         if alias_report.get("source") != "FeynmanDD" or alias_report["counts"].get("ok") != 1:
             raise AssertionError(f"unexpected alias report:\n{alias_report}")
 
+        tier_root = root / "tier_only"
+        tier_root.mkdir()
+        (tier_root / "bell.qasm").write_text(QASM_SAMPLE, encoding="utf-8")
+        tier_report_path = root / "tier-report.json"
+        tier_cases, tier_stderr = run_manifest(
+            builder,
+            qasm2sop,
+            str(tier_root),
+            "--source-prefix",
+            "tier",
+            "--min-vars",
+            "64",
+            "--max-vars",
+            "128",
+            "--report",
+            str(tier_report_path),
+        )
+        if tier_cases:
+            raise AssertionError(f"below-tier case was emitted:\n{tier_cases}\n{tier_stderr}")
+        tier_report = json.loads(tier_report_path.read_text(encoding="utf-8"))
+        if tier_report["counts"].get("below_min_vars") != 1:
+            raise AssertionError(f"unexpected tier filter report:\n{tier_report}")
+        tier_record = tier_report["records"][0]
+        if "max_imported_nvars" not in tier_record or tier_record.get("status") != "below_min_vars":
+            raise AssertionError(f"below-tier record missing metadata:\n{tier_record}")
+
     return 0
 
 
