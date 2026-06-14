@@ -183,8 +183,10 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
 
 
 def run_branch_dp_handoff(exe: pathlib.Path) -> None:
-    edges = "\n".join(f"q {i} {i + 1} 8" for i in range(63))
-    qsop = f"p qsop-sign 16 64 63\nn 0\ncst 3\n{edges}\n"
+    left_edges = [f"q {i} {i + 1} 8" for i in range(31)]
+    right_edges = [f"q {i} {i + 1} 8" for i in range(32, 63)]
+    edges = "\n".join(left_edges + right_edges)
+    qsop = f"p qsop-sign 16 64 62\nn 0\ncst 3\n{edges}\n"
     branch = subprocess.run(
         [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
         input=qsop,
@@ -208,7 +210,18 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
         )
 
     stats = subprocess.run(
-        [str(exe), "--format", "stats", "--backend", "branch", "--max-vars", "64", "-"],
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "64",
+            "--trace",
+            "csv",
+            "-",
+        ],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -223,6 +236,16 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch DP handoff stats failed\n{stats.stdout}\n{stats.stderr}")
+    trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    expected_trace = {
+        "branch.treewidth_order_probe",
+        "branch.treewidth_delegate",
+        "treewidth.initial_factors",
+    }
+    if not expected_trace.issubset(trace_phases):
+        raise AssertionError(
+            f"branch DP handoff trace missing {expected_trace - trace_phases}\n{stats.stderr}"
+        )
 
 
 def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:

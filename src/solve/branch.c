@@ -756,17 +756,34 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
+  uint32_t *order = NULL;
+  uint32_t order_width = 0;
+  const uint64_t order_start = qsop_trace_begin(stats->trace);
+  if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
+                                  &order_width, error)) {
+    free_subinstance(&sub);
+    return false;
+  }
+  qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
+                          order_width, order_start);
+  if (order_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    note_treewidth_skip(stats, "branch.treewidth_skip_order_width", order_width);
+    free(order);
+    free_subinstance(&sub);
+    return true;
+  }
+
   uint64_t *part_counts = NULL;
   qsop_solve_stats_t delegated_stats = {0};
   const uint64_t solve_start = qsop_trace_begin(stats->trace);
   const bool ok =
       qsop_counts_alloc(sub.r, &part_counts, error) &&
-      qsop_solve_treewidth_order_count_mod_stats(
-          &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS,
-          QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, stats->count_modulus, part_counts,
-          &delegated_stats, stats->trace, error);
+      qsop_solve_treewidth_precomputed_order_count_mod_stats(
+          &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
+          stats->count_modulus, part_counts, &delegated_stats, stats->trace, error);
   qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_delegate", stats->depth, sub.nvars,
                           solve_start);
+  free(order);
   if (!ok) {
     free_subinstance(&sub);
     free(part_counts);

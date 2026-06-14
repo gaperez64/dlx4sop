@@ -1174,3 +1174,15 @@ bool qsop_solve_treewidth_order_count_mod_stats(
   return solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, count_modulus,
                                            counts, stats, trace, error);
 }
+
+bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint64_t count_modulus, uint64_t *counts,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop == NULL || order == NULL || counts == NULL) {
+    set_error(error, "internal error: null treewidth precomputed-order modular solve argument");
+    return false;
+  }
+  return solve_treewidth_once(qsop, max_bag_vars, order, order_width, count_modulus, counts,
+                              stats, trace, error);
+}
