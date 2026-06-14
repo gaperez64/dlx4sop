@@ -61,3 +61,6 @@ __pycache__/
 .pytest_cache/
 *.swp
 .*.swp
+
+# Local project planning
+tasks.md

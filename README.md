@@ -1,49 +1,12 @@
 # dlx4sop
 
 `dlx4sop` is a C/Meson toolkit for exact finite-modulus quadratic sums of
-powers (QSOPs). It provides small Unix-style tools to validate, inspect, import,
-benchmark, and solve normalized quadratic SOP text files.
+powers (QSOPs). The project goal is a competitive exact strong simulator using
+labelled quadratic SOPs with fixed-boundary circuit amplitudes as the current
+benchmark contract.
 
-Design notes live in [ARCHITECTURE.md](ARCHITECTURE.md), performance notes in
-[ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md), current benchmark
-coverage in [scoreboard.md](scoreboard.md), and active work in
-[tasks.md](tasks.md).
-
-## Tools
-
-- `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
-- `sop-stats`: print structural statistics as text or JSON.
-- `sop-solve`: compute exact residue-count histograms or backend counters.
-- `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP.
-- `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
-
-Implemented solver backends:
-
-- `components` (default): split connected components and cache repeated small
-  components, with CRT-backed large-count output.
-- `brute-force`: enumerate all assignments for small oracle checks.
-- `branch`: residual branch-and-sum with component splitting, cache stats, and
-  CRT-backed large-count output.
-- `rankwidth`: decomposition backend with sign/labelled count-table mode,
-  CRT-backed large-count output, generated decompositions, and sign-only
-  Fourier mode.
-- `treewidth`: bucket-elimination backend with greedy min-fill/min-degree
-  orders and CRT-backed large-count output.
-
-Current solver guidance:
-
-- Use `components` as the default robust exact solver.
-- Use `treewidth --treewidth-order min-fill-max-degree` as the best current
-  widened-corpus baseline; keep `min-fill` in comparisons because it is nearly
-  tied.
-- Use `branch --branch-heuristic split` as the main labelled/CRT baseline for
-  connected instances; the other branch heuristics are currently experiments.
-- Use `rankwidth` for decomposition-DP experiments; current generated
-  decompositions need improvement before rankwidth is competitive on the
-  widened corpus.
-
-Corpus links, current coverage, and solver timing tables live in
-[scoreboard.md](scoreboard.md).
+Current corpus coverage, solver timings, and native simulator comparisons live
+in [scoreboard.md](scoreboard.md).
 
 ## Build
 
@@ -53,12 +16,34 @@ meson compile -C build
 meson test -C build --print-errorlogs
 ```
 
-Coverage is part of CI and must stay at or above 75% line coverage over
-production `src` files:
+CI enforces at least 75% line coverage over production `src` files:
 
 ```sh
 tools/check-coverage.sh build-coverage
 ```
+
+## Tools
+
+- `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
+- `sop-stats`: print structural statistics, with opt-in exact small-width
+  support-graph diagnostics.
+- `sop-solve`: solve exact residue-count histograms.
+- `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP.
+- `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
+
+The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
+External frameworks stay at the benchmark/import boundary.
+
+## Solver Guide
+
+- `components`: default robust exact solver.
+- `treewidth --treewidth-order min-fill-max-degree`: best current widened-corpus
+  backend.
+- `branch --branch-heuristic split`: labelled/CRT search baseline for connected
+  instances.
+- `rankwidth`: decomposition-DP experiments; generated decompositions still need
+  improvement.
+- `brute-force`: small-instance oracle.
 
 ## QSOP Format
 
@@ -73,51 +58,21 @@ f <vertex> <0|1>
 ```
 
 `e u v` is shorthand for a sign edge with coefficient `r/2`. Pins (`f`) are
-applied during parsing, and canonical output uses dense variable IDs.
+applied during parsing, and canonical output uses dense variable IDs. Solver
+`counts` are ordinary assignment counts bucketed by phase residue modulo `r`.
 
 ## Examples
-
-Canonicalize, inspect, and solve:
 
 ```sh
 build/sop-check tests/golden/labelled_raw.qsop
 build/sop-stats --format json tests/golden/labelled_expected.qsop
 build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
-build/sop-solve tests/golden/solve_labelled.qsop
-build/sop-solve --backend branch --format stats tests/golden/solve_labelled.qsop
-build/sop-solve --backend rankwidth --rankwidth-generate min-fill-cut tests/golden/solve_sign_path.qsop
-build/sop-solve --backend treewidth --treewidth-order min-degree --format stats tests/golden/solve_labelled.qsop
-```
-
-The `counts` line is a histogram over phase residues modulo `r`; the values are
-ordinary assignment counts.
-
-Import fixed-boundary OpenQASM:
-
-```sh
+build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_labelled.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 ```
 
-Run benchmark summaries and build external corpus manifests:
+Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --treewidth-order min-fill-max-degree --top-metric treewidth_max_table_entries --format summary
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend branch --solver-timeout 20 --format summary
-tools/bench_qasm_widths.py build/qasm2sop build/sop-stats --manifest corpus.json --exact-width-max-vars 16 --format summary
-tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --source-name NAME --source-url URL --min-vars 33 --max-vars 64 --report corpus-report.json --output corpus.json
-tools/summarize_qasm_report.py corpus-report.json --format markdown
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
-tools/check_qasm_manifest_qiskit.py build/qasm2sop build/sop-solve corpus.json --solver-backend treewidth --solver-max-vars 128 --max-qubits 16 --skip-qiskit-unsupported
-tools/bench_qasm_native_simulator.py corpus.json --engine qiskit-statevector --max-qubits 16 --skip-unsupported --format summary
-tools/bench_qasm_native_simulator.py corpus.json --engine aer-statevector --max-qubits 16 --skip-unsupported --format summary
-tools/bench_qasm_native_simulator.py corpus.json --engine mqt-ddsim-statevector --max-qubits 16 --skip-unsupported --format summary
-tools/bench_qasm_native_simulator.py corpus.json --engine pyzx-matrix --max-qubits 10 --skip-unsupported --format summary
 ```
-
-## Scope
-
-The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
-External formats stay at the tool boundary. New importer support should be
-driven by real benchmark cases and covered by fixed-boundary amplitude checks.
