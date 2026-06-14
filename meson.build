@@ -381,6 +381,14 @@ if python3.found()
     ],
   )
   test(
+    'rankwidth generator comparison smoke',
+    python3,
+    args: [
+      files('tests/test_compare_rankwidth_generators.py'),
+      files('tools/compare_rankwidth_generators.py'),
+    ],
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [

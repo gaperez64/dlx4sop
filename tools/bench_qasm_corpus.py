@@ -14,7 +14,7 @@ from typing import TextIO
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
-RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
+RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
 BACKEND_ALIAS_METRICS = (
@@ -429,6 +429,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
         "imported_labelled": 0,
         "skipped_rankwidth_records": 0,
         "timed_out_records": 0,
+        "skipped_qsop_mode_records": 0,
         "source_boundaries": {},
     }
 
@@ -448,6 +449,9 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
             metadata["imported_labelled"] += 1
         else:
             metadata["imported_sign"] += 1
+        if args.qsop_mode != "all" and header["qsop_mode"] != args.qsop_mode:
+            metadata["skipped_qsop_mode_records"] += 1
+            continue
         for backend in backends:
             for config in iter_backend_configs(args, backend):
                 cmd = [
@@ -809,6 +813,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
     print(f"records: {len(records)}", file=file)
     print(f"case_boundaries: {metadata['case_boundaries']}", file=file)
     print(f"solved_records: {len(solved)}", file=file)
+    print(f"skipped_qsop_mode_records: {metadata['skipped_qsop_mode_records']}", file=file)
     print(f"skipped_rankwidth_records: {metadata['skipped_rankwidth_records']}", file=file)
     print(f"timed_out_records: {metadata['timed_out_records']}", file=file)
     print(f"imported_sign: {metadata['imported_sign']}", file=file)
@@ -902,6 +907,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--format", choices=("jsonl", "csv", "summary"), default="jsonl")
     parser.add_argument("--limit", type=int, help="Limit case-boundary pairs before backend expansion.")
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
+    parser.add_argument(
+        "--qsop-mode",
+        choices=("all", "sign", "labelled"),
+        default="all",
+        help="Only solve imported QSOP rows with this mode. Imports still count in summary metadata.",
+    )
     parser.add_argument("--solver-timeout", type=float, help="Per-solve timeout in seconds.")
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
@@ -985,7 +996,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         args.rankwidth_generators = list(RANKWIDTH_GENERATORS)
         args.rankwidth_modes = list(RANKWIDTH_MODES)
     else:
-        args.rankwidth_generators = args.rankwidth_generators or ["linear"]
+        args.rankwidth_generators = args.rankwidth_generators or ["left-deep"]
         args.rankwidth_modes = args.rankwidth_modes or ["count-table"]
     args.treewidth_orders = args.treewidth_orders or ["min-fill"]
     return args

@@ -1086,18 +1086,18 @@ static uint32_t build_cut_rank_nodes(qsop_rankwidth_decomposition_t *decompositi
   return node;
 }
 
-static bool make_linear_generated_decomposition(const qsop_instance_t *qsop,
-                                                qsop_rankwidth_decomposition_t **out,
-                                                qsop_error_t *error) {
+static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
+                                                   qsop_rankwidth_decomposition_t **out,
+                                                   qsop_error_t *error) {
   if (qsop == NULL || out == NULL) {
-    set_error(error, "internal error: null linear rankwidth generation argument");
+    set_error(error, "internal error: null left-deep rankwidth generation argument");
     return false;
   }
   *out = NULL;
 
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
   if (decomposition == NULL) {
-    set_error(error, "out of memory while allocating linear rankwidth decomposition");
+    set_error(error, "out of memory while allocating left-deep rankwidth decomposition");
     return false;
   }
 
@@ -1112,7 +1112,7 @@ static bool make_linear_generated_decomposition(const qsop_instance_t *qsop,
   if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
       decomposition->postorder == NULL) {
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory while allocating linear rankwidth decomposition nodes");
+    set_error(error, "out of memory while allocating left-deep rankwidth decomposition nodes");
     return false;
   }
 
@@ -1223,7 +1223,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
 
   if (qsop->nvars == 1U) {
     decomposition->root = 0;
-  } else if (generator == QSOP_RANKWIDTH_GENERATOR_LINEAR) {
+  } else if (generator == QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP) {
     uint32_t current = leaf_nodes[0];
     uint32_t next_join = qsop->nvars;
     for (uint32_t i = 1; i < qsop->nvars; i++) {
@@ -1329,29 +1329,29 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     }
     qsop_rankwidth_decomposition_free(min_fill);
 
-    qsop_rankwidth_decomposition_t *linear = NULL;
-    if (!make_linear_generated_decomposition(qsop, &linear, error)) {
+    qsop_rankwidth_decomposition_t *left_deep = NULL;
+    if (!make_left_deep_generated_decomposition(qsop, &left_deep, error)) {
       free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    rw_decomposition_score_t linear_score = {0};
-    if (!decomposition_score(qsop, linear, adj, score_coeffs, &linear_score, error)) {
+    rw_decomposition_score_t left_deep_score = {0};
+    if (!decomposition_score(qsop, left_deep, adj, score_coeffs, &left_deep_score, error)) {
       free(score_coeffs);
       free(adj);
-      qsop_rankwidth_decomposition_free(linear);
+      qsop_rankwidth_decomposition_free(left_deep);
       qsop_rankwidth_decomposition_free(decomposition);
       return false;
     }
-    if (linear_score.labelled_width < selected_score.labelled_width ||
-        (linear_score.labelled_width == selected_score.labelled_width &&
-         linear_score.support_width < selected_score.support_width)) {
+    if (left_deep_score.labelled_width < selected_score.labelled_width ||
+        (left_deep_score.labelled_width == selected_score.labelled_width &&
+         left_deep_score.support_width < selected_score.support_width)) {
       qsop_rankwidth_decomposition_free(decomposition);
-      decomposition = linear;
-      linear = NULL;
+      decomposition = left_deep;
+      left_deep = NULL;
     }
-    qsop_rankwidth_decomposition_free(linear);
+    qsop_rankwidth_decomposition_free(left_deep);
     free(score_coeffs);
   }
 

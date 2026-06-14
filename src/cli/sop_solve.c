@@ -35,7 +35,7 @@ static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
-        "[--rankwidth-decomposition PATH] [--rankwidth-generate linear|balanced|min-fill|min-fill-cut] "
+        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
         "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
@@ -83,8 +83,8 @@ static const char *branch_heuristic_name(qsop_branch_heuristic_t heuristic) {
 
 static const char *rankwidth_generator_name(qsop_rankwidth_generator_t generator) {
   switch (generator) {
-  case QSOP_RANKWIDTH_GENERATOR_LINEAR:
-    return "linear";
+  case QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP:
+    return "left-deep";
   case QSOP_RANKWIDTH_GENERATOR_BALANCED:
     return "balanced";
   case QSOP_RANKWIDTH_GENERATOR_MIN_FILL:
@@ -225,11 +225,11 @@ static bool parse_max_vars(const char *text, uint32_t *out) {
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   const char *rankwidth_decomposition_path = NULL;
-  const char *rankwidth_decomposition_label = "linear";
+  const char *rankwidth_decomposition_label = "left-deep";
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
-  qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LINEAR;
+  qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
   bool branch_heuristic_set = false;
@@ -338,8 +338,8 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "linear") == 0) {
-        rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LINEAR;
+      if (strcmp(value, "left-deep") == 0) {
+        rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
       } else if (strcmp(value, "balanced") == 0) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_BALANCED;
       } else if (strcmp(value, "min-fill") == 0) {

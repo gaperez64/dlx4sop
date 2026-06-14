@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+
+def rankwidth_record(generator: str, elapsed_ns: int, max_table: int, max_signatures: int) -> dict:
+    return {
+        "backend": "rankwidth",
+        "rankwidth_decomposition": generator,
+        "rankwidth_mode": "count-table",
+        "source": "Synthetic",
+        "source_relative_path": "labelled.qasm",
+        "case": "labelled",
+        "input": "0",
+        "output": "0",
+        "qsop_mode": "labelled",
+        "status": "ok",
+        "solve_elapsed_ns": elapsed_ns,
+        "rankwidth_width": 3,
+        "rankwidth_max_table_entries": max_table,
+        "rankwidth_max_signature_entries": max_signatures,
+        "stats": {
+            "decomposition_width": 3,
+            "max_table_entries": max_table,
+            "max_signature_entries": max_signatures,
+            "join_pairs": 100 + max_table,
+            "join_signature_pairs": 10 + max_signatures,
+        },
+    }
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: test_compare_rankwidth_generators.py COMPARE_TOOL", file=sys.stderr)
+        return 2
+
+    tool = pathlib.Path(sys.argv[1])
+    records = [
+        rankwidth_record("min-fill-cut", 200, 64, 16),
+        rankwidth_record("balanced", 300, 32, 8),
+        rankwidth_record("left-deep", 100, 128, 32),
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = pathlib.Path(tmp)
+        jsonl_path = tmp_path / "rankwidth.jsonl"
+        jsonl_path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+        completed = subprocess.run(
+            [str(tool), "--rankwidth-jsonl", f"33-64={jsonl_path}", "--qsop-mode", "labelled"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"rankwidth comparison failed:\n{completed.stdout}\n{completed.stderr}")
+        for expected in (
+            "# Rankwidth Generator Comparison",
+            "`min-fill-cut:count-table`",
+            "`balanced:count-table`",
+            "left-deep:count-table 1",
+            "balanced:count-table 1",
+            "0 / 0 / 0 of 1",
+        ):
+            if expected not in completed.stdout:
+                raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")
+
+        completed = subprocess.run(
+            [
+                str(tool),
+                "--rankwidth-jsonl",
+                f"33-64={jsonl_path}",
+                "--qsop-mode",
+                "labelled",
+                "--format",
+                "json",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"rankwidth json comparison failed:\n{completed.stdout}\n{completed.stderr}")
+        payload = json.loads(completed.stdout)
+        common = payload["common_row_summary"][0]
+        if common["time_wins"] != {"left-deep:count-table": 1}:
+            raise AssertionError(f"unexpected time winners: {common}")
+        if common["table_wins"] != {"balanced:count-table": 1}:
+            raise AssertionError(f"unexpected table winners: {common}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

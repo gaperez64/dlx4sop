@@ -55,7 +55,7 @@ def solver_config(record: dict) -> str:
         return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}"
     if backend == "rankwidth":
         return (
-            f"rankwidth --rankwidth-generate {record.get('rankwidth_decomposition') or 'linear'} "
+            f"rankwidth --rankwidth-generate {record.get('rankwidth_decomposition') or 'left-deep'} "
             f"--rankwidth-mode {record.get('rankwidth_mode') or 'count-table'}"
         )
     if backend == "treewidth":

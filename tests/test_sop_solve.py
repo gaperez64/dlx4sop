@@ -408,7 +408,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ),
         ([str(exe), "--rankwidth-generate"], "requires a value"),
         ([str(exe), "--rankwidth-generate", "bad", str(qsop)], "unsupported rankwidth generator"),
-        ([str(exe), "--rankwidth-generate", "linear", str(qsop)], "requires --backend rankwidth"),
+        ([str(exe), "--rankwidth-generate", "left-deep", str(qsop)], "requires --backend rankwidth"),
+        ([str(exe), "--backend", "rankwidth", "--rankwidth-generate", "linear", str(qsop)], "unsupported rankwidth generator"),
         ([str(exe), "--rankwidth-mode"], "requires a value"),
         ([str(exe), "--rankwidth-mode", "bad", str(qsop)], "unsupported rankwidth mode"),
         ([str(exe), "--rankwidth-mode", "fourier", str(qsop)], "requires --backend rankwidth"),
@@ -580,7 +581,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if (
         fourier_stats.returncode != 0
         or "rankwidth_mode: fourier" not in fourier_stats.stdout
-        or "rankwidth_decomposition: linear" not in fourier_stats.stdout
+        or "rankwidth_decomposition: left-deep" not in fourier_stats.stdout
     ):
         raise AssertionError(f"rankwidth Fourier stats failed\n{fourier_stats.stdout}\n{fourier_stats.stderr}")
 

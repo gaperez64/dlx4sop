@@ -43,7 +43,7 @@ typedef struct qsop_solve_stats {
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
 
 typedef enum qsop_rankwidth_generator {
-  QSOP_RANKWIDTH_GENERATOR_LINEAR,
+  QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,
   QSOP_RANKWIDTH_GENERATOR_BALANCED,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
