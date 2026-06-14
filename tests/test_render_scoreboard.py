@@ -48,6 +48,7 @@ def main() -> int:
         "branch_rankwidth_table_forecast": 2,
         "branch_rankwidth_join_pair_forecast": 9,
         "branch_treewidth_table_forecast": 128,
+        "branch_treewidth_join_pair_forecast": 64,
     }
     timeout_solver = {
         "backend": "branch",
@@ -107,7 +108,7 @@ def main() -> int:
             "| Synthetic | https://example.invalid/synthetic | 2 | 1 | 0 | 1 | 0 |",
             "`treewidth --treewidth-order min-fill`",
             "| synthetic | `branch --branch-heuristic split` | 0 / 1 | 2.00 s | 1 timeouts |",
-            "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | cache hits=1, misses=2, hit rate=0.333; cache trace lookup=2 events/2.0 us, store=1 events/3.0 us; tw width 2; max table 16; 32 join pairs; branch table forecast rw=2, tw=128; branch rw join forecast 9 |",
+            "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | cache hits=1, misses=2, hit rate=0.333; cache trace lookup=2 events/2.0 us, store=1 events/3.0 us; tw width 2; max table 16; 32 join pairs; branch table forecast rw=2, tw=128; branch join forecast rw=9, tw=64 |",
             "`qiskit-statevector`",
             "## Native Common-Row Comparison",
             "### Synthetic",

@@ -309,6 +309,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "branch.rankwidth_table_forecast",
         "branch.rankwidth_join_pair_forecast",
         "branch.treewidth_table_forecast",
+        "branch.treewidth_join_pair_forecast",
         "branch.rankwidth_delegate",
     }
     if not expected_trace.issubset(trace_phases):

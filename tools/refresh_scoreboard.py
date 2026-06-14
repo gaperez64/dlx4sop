@@ -221,10 +221,11 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"rw={format_count(stats.get('branch_rankwidth_table_forecast', 0))}, "
             f"tw={format_count(stats.get('branch_treewidth_table_forecast', 0))}"
         )
-    if "branch_rankwidth_join_pair_forecast" in stats:
+    if "branch_rankwidth_join_pair_forecast" in stats or "branch_treewidth_join_pair_forecast" in stats:
         parts.append(
-            "branch rw join forecast "
-            f"{format_count(stats['branch_rankwidth_join_pair_forecast'])}"
+            "branch join forecast "
+            f"rw={format_count(stats.get('branch_rankwidth_join_pair_forecast', 0))}, "
+            f"tw={format_count(stats.get('branch_treewidth_join_pair_forecast', 0))}"
         )
     if "branch_treewidth_order_width" in stats:
         parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")

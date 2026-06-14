@@ -54,6 +54,7 @@ TOP_METRICS = (
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
     "branch_treewidth_table_forecast",
+    "branch_treewidth_join_pair_forecast",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -127,6 +128,7 @@ CSV_FIELDS = [
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
     "branch_treewidth_table_forecast",
+    "branch_treewidth_join_pair_forecast",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -387,6 +389,9 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
     table_forecast = trace.get("branch.treewidth_table_forecast")
     if table_forecast is not None:
         metrics["branch_treewidth_table_forecast"] = table_forecast["max_items"]
+    join_forecast = trace.get("branch.treewidth_join_pair_forecast")
+    if join_forecast is not None:
+        metrics["branch_treewidth_join_pair_forecast"] = join_forecast["max_items"]
     return metrics
 
 
@@ -421,6 +426,7 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "branch_rankwidth_join_pair_forecast",
         "branch_treewidth_order_width",
         "branch_treewidth_table_forecast",
+        "branch_treewidth_join_pair_forecast",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -488,6 +494,7 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
+            "branch_treewidth_join_pair_forecast",
         ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
@@ -742,6 +749,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
+            "branch_treewidth_join_pair_forecast",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -849,10 +857,14 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f" branch_table_forecast=rw:{record.get('branch_rankwidth_table_forecast', 0)}"
                     f",tw:{record.get('branch_treewidth_table_forecast', 0)}"
                 )
-            if "branch_rankwidth_join_pair_forecast" in record:
+            if (
+                "branch_rankwidth_join_pair_forecast" in record
+                or "branch_treewidth_join_pair_forecast" in record
+            ):
                 line += (
-                    " branch_rankwidth_join_pair_forecast="
-                    f"{record['branch_rankwidth_join_pair_forecast']}"
+                    " branch_join_pair_forecast="
+                    f"rw:{record.get('branch_rankwidth_join_pair_forecast', 0)}"
+                    f",tw:{record.get('branch_treewidth_join_pair_forecast', 0)}"
                 )
             if "branch_treewidth_order_width" in record:
                 line += f" branch_treewidth_order_width={record['branch_treewidth_order_width']}"
@@ -1069,6 +1081,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
+            "branch_treewidth_join_pair_forecast",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",

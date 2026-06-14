@@ -135,6 +135,11 @@ static uint64_t treewidth_table_forecast(uint32_t width, uint32_t r) {
   return saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
 }
 
+static uint64_t treewidth_join_pair_forecast(uint32_t width, uint32_t nvars) {
+  const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
+  return saturating_mul_u64(binary_assignment_forecast(bag_vars), nvars);
+}
+
 static void max_u32(uint32_t *dst, uint32_t value) {
   if (value > *dst) {
     *dst = value;
@@ -660,9 +665,13 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
                                           branch_search_stats_t *stats,
                                           bool *out_delegated, qsop_error_t *error) {
   *out_delegated = false;
+  uint64_t treewidth_table = 0;
+  uint64_t treewidth_join_pairs = 0;
   if (treewidth_available) {
-    branch_trace_event(stats, "branch.treewidth_table_forecast",
-                       treewidth_table_forecast(treewidth_width, sub->r));
+    treewidth_table = treewidth_table_forecast(treewidth_width, sub->r);
+    treewidth_join_pairs = treewidth_join_pair_forecast(treewidth_width, sub->nvars);
+    branch_trace_event(stats, "branch.treewidth_table_forecast", treewidth_table);
+    branch_trace_event(stats, "branch.treewidth_join_pair_forecast", treewidth_join_pairs);
   }
   if (treewidth_available &&
       treewidth_width <=
@@ -705,10 +714,11 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   branch_trace_event(stats, "branch.rankwidth_join_pair_forecast", rankwidth_join_pair_forecast);
 
   const bool rankwidth_table_forecast_wins =
-      !treewidth_available ||
-      rankwidth_table_forecast < treewidth_table_forecast(treewidth_width, sub->r);
+      !treewidth_available || rankwidth_table_forecast < treewidth_table;
+  const bool rankwidth_join_forecast_wins =
+      !treewidth_available || rankwidth_join_pair_forecast <= treewidth_join_pairs;
   const bool use_rankwidth =
-      rankwidth_table_forecast_wins &&
+      rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
       (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
        rankwidth_should_override_treewidth(treewidth_width, labelled_width, sub->r));
   if (!use_rankwidth || labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
@@ -717,8 +727,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       skip_phase = "branch.rankwidth_skip_width";
     } else if (!rankwidth_table_forecast_wins) {
       skip_phase = "branch.rankwidth_skip_table_forecast";
+    } else if (!rankwidth_join_forecast_wins) {
+      skip_phase = "branch.rankwidth_skip_join_pair_forecast";
     }
-    note_rankwidth_skip(stats, skip_phase, labelled_width);
+    note_rankwidth_skip(stats, skip_phase,
+                        rankwidth_join_forecast_wins ? labelled_width
+                                                     : rankwidth_join_pair_forecast);
     qsop_rankwidth_decomposition_free(decomposition);
     return true;
   }

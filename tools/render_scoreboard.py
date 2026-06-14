@@ -186,6 +186,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_join_pair_forecast",
                 "branch_treewidth_order_width",
                 "branch_treewidth_table_forecast",
+                "branch_treewidth_join_pair_forecast",
             ):
                 add_max(stats, stat, stat_value(record, stat))
             for stat in ("join_pairs", "join_signature_pairs"):
@@ -266,9 +267,10 @@ def key_stats(stats: dict[str, int]) -> str:
             f"branch table forecast rw={stats.get('branch_rankwidth_table_forecast', 0)}, "
             f"tw={stats.get('branch_treewidth_table_forecast', 0)}"
         )
-    if "branch_rankwidth_join_pair_forecast" in stats:
+    if "branch_rankwidth_join_pair_forecast" in stats or "branch_treewidth_join_pair_forecast" in stats:
         parts.append(
-            f"branch rw join forecast {stats['branch_rankwidth_join_pair_forecast']}"
+            f"branch join forecast rw={stats.get('branch_rankwidth_join_pair_forecast', 0)}, "
+            f"tw={stats.get('branch_treewidth_join_pair_forecast', 0)}"
         )
     if "branch_treewidth_order_width" in stats:
         parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")
