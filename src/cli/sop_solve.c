@@ -155,6 +155,9 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
+    if (stats->cache_avoided_nodes != 0) {
+      fprintf(file, "cache_avoided_nodes: %" PRIu64 "\n", stats->cache_avoided_nodes);
+    }
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
     if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0 ||
         stats->branch_fallthroughs != 0 || stats->branch_treewidth_skips != 0 ||

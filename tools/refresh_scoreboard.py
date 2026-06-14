@@ -150,6 +150,8 @@ def public_key_stats(stats: dict[str, int]) -> str:
     parts = []
     if "search_nodes" in stats:
         parts.append(f"{format_count(stats['search_nodes'])} nodes")
+    if stats.get("cache_avoided_nodes", 0):
+        parts.append(f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}")
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
     if "treewidth_width" in stats:

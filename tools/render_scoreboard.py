@@ -118,7 +118,14 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             if status != "ok":
                 continue
             stats = entry["stats"]
-            for stat in ("search_nodes", "leaf_assignments", "cache_hits", "cache_misses", "components"):
+            for stat in (
+                "search_nodes",
+                "leaf_assignments",
+                "cache_hits",
+                "cache_misses",
+                "cache_avoided_nodes",
+                "components",
+            ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
                 "treewidth_delegations",
@@ -157,7 +164,10 @@ def key_stats(stats: dict[str, int]) -> str:
     if "leaf_assignments" in stats:
         parts.append(f"{stats['leaf_assignments']} leaves")
     if "cache_hits" in stats or "cache_misses" in stats:
-        parts.append(f"cache {stats.get('cache_hits', 0)} / {stats.get('cache_misses', 0)}")
+        cache = f"cache {stats.get('cache_hits', 0)} / {stats.get('cache_misses', 0)}"
+        if stats.get("cache_avoided_nodes", 0):
+            cache += f", avoided nodes {stats['cache_avoided_nodes']}"
+        parts.append(cache)
     if "components" in stats:
         parts.append(f"{stats['components']} components")
     if "rankwidth_width" in stats:

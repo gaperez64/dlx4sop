@@ -400,6 +400,31 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
         if stats["cache_hits"] + stats["cache_misses"] != stats["search_nodes"]:
             raise AssertionError(f"{name}: branch cache hits + misses do not match search nodes")
 
+    repeated_triangle = (
+        "p qsop 8 6 6\n"
+        "n 0\n"
+        "cst 0\n"
+        "q 0 1 4\n"
+        "q 1 2 4\n"
+        "q 0 2 4\n"
+        "q 3 4 4\n"
+        "q 4 5 4\n"
+        "q 3 5 4\n"
+    )
+    completed = subprocess.run(
+        [str(exe), "--format", "stats", "--backend", "branch", "-"],
+        input=repeated_triangle,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"repeated triangle branch cache stats failed\n{completed.stderr}")
+    stats = parse_solver_stats(completed.stdout)
+    if stats.get("cache_avoided_nodes", 0) < 1:
+        raise AssertionError("repeated triangle: expected branch cache to report avoided nodes")
+
 
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_single.qsop"

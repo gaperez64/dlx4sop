@@ -45,6 +45,7 @@ typedef struct residual_cache_key {
 typedef struct residual_cache_entry {
   residual_cache_key_t key;
   uint64_t *counts;
+  uint64_t search_nodes;
   size_t next;
 } residual_cache_entry_t;
 
@@ -61,6 +62,7 @@ typedef struct branch_search_stats {
   uint64_t leaves;
   uint64_t cache_hits;
   uint64_t cache_misses;
+  uint64_t cache_avoided_nodes;
   uint64_t table_entries;
   uint64_t max_table_entries;
   uint64_t signature_entries;
@@ -441,9 +443,11 @@ static bool residual_cache_rehash(residual_cache_t *cache, size_t bucket_count,
 }
 
 static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t *residual,
-                                 const uint64_t *counts, qsop_error_t *error) {
+                                 const uint64_t *counts, uint64_t search_nodes,
+                                 qsop_error_t *error) {
   residual_cache_entry_t entry = {0};
   entry.next = SIZE_MAX;
+  entry.search_nodes = search_nodes;
   if (!residual_cache_key_create(residual, &entry.key, error)) {
     return false;
   }
@@ -824,6 +828,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->leaf_assignments = search.leaves;
     stats->cache_hits = search.cache_hits;
     stats->cache_misses = search.cache_misses;
+    stats->cache_avoided_nodes = search.cache_avoided_nodes;
     stats->table_entries = search.table_entries;
     stats->max_table_entries = search.max_table_entries;
     stats->signature_entries = search.signature_entries;
@@ -1149,10 +1154,14 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
                           lookup_start);
   if (entry != NULL) {
     stats->cache_hits++;
+    if (entry->search_nodes > 1U) {
+      add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
+    }
     return add_counts(qsop_residual_modulus(residual), counts, entry->counts, stats, error);
   }
 
   stats->cache_misses++;
+  const uint64_t subtree_start_nodes = stats->nodes;
   uint64_t *computed = NULL;
   const uint32_t r = qsop_residual_modulus(residual);
   if (!qsop_counts_alloc(r, &computed, error)) {
@@ -1162,7 +1171,8 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     free(computed);
     return false;
   }
-  if (!residual_cache_store(&stats->cache, residual, computed, error)) {
+  const uint64_t subtree_search_nodes = stats->nodes - subtree_start_nodes + 1U;
+  if (!residual_cache_store(&stats->cache, residual, computed, subtree_search_nodes, error)) {
     free(computed);
     return false;
   }

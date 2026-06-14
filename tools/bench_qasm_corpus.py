@@ -34,6 +34,10 @@ TOP_METRICS = (
     "leaf_assignments",
     "cache_hits",
     "cache_misses",
+    "cache_avoided_nodes",
+    "cache_hit_rate_ppm",
+    "cache_lookup_events",
+    "cache_lookup_elapsed_ns",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -87,6 +91,10 @@ CSV_FIELDS = [
     "leaf_assignments",
     "cache_hits",
     "cache_misses",
+    "cache_avoided_nodes",
+    "cache_hit_rate_ppm",
+    "cache_lookup_events",
+    "cache_lookup_elapsed_ns",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -262,6 +270,23 @@ def trace_summary_text(trace: dict[str, dict[str, int]]) -> str:
     )
 
 
+def cache_record_metrics(
+    stats: dict[str, int | str], trace: dict[str, dict[str, int]]
+) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    hits = stats.get("cache_hits")
+    misses = stats.get("cache_misses")
+    if isinstance(hits, int) and isinstance(misses, int):
+        total = hits + misses
+        if total:
+            metrics["cache_hit_rate_ppm"] = (hits * 1_000_000) // total
+    lookup = trace.get("branch.cache_lookup")
+    if lookup is not None:
+        metrics["cache_lookup_events"] = lookup["events"]
+        metrics["cache_lookup_elapsed_ns"] = lookup["elapsed_ns"]
+    return metrics
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -336,6 +361,8 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
         for stat_key, value in record["stats"].items():
             add_stat(stats_total, stat_key, value)
         for stat_key in BACKEND_ALIAS_METRICS:
+            add_stat(stats_total, stat_key, record.get(stat_key))
+        for stat_key in ("cache_lookup_events", "cache_lookup_elapsed_ns"):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
         trace_total = entry["trace"]
@@ -517,6 +544,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 stats = parse_stats(stats_text)
                 aliases = backend_stat_aliases(backend, stats)
                 trace = parse_trace_csv(trace_text) if args.trace else {}
+                cache_metrics = cache_record_metrics(stats, trace)
                 records.append(
                     {
                         "case": case_name,
@@ -540,6 +568,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "qsop_sha256": sha256_text(qsop),
                         "stats": stats,
                         **aliases,
+                        **cache_metrics,
                         "trace": trace,
                     }
                 )
@@ -562,6 +591,10 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "leaf_assignments",
             "cache_hits",
             "cache_misses",
+            "cache_avoided_nodes",
+            "cache_hit_rate_ppm",
+            "cache_lookup_events",
+            "cache_lookup_elapsed_ns",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -645,6 +678,10 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" max_signatures={stats['max_signature_entries']}"
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
+            if "cache_avoided_nodes" in stats:
+                line += f" cache_avoided_nodes={stats['cache_avoided_nodes']}"
+            if "cache_lookup_elapsed_ns" in record:
+                line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
@@ -841,6 +878,9 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "components",
             "cache_hits",
             "cache_misses",
+            "cache_avoided_nodes",
+            "cache_lookup_events",
+            "cache_lookup_elapsed_ns",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",
