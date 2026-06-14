@@ -207,6 +207,14 @@ if python3.found()
     depends: [qasm2sop, sop_solve],
   )
   test(
+    'qasm benchmark trace metrics',
+    python3,
+    args: [
+      files('tests/test_bench_qasm_corpus.py'),
+      files('tools/bench_qasm_corpus.py'),
+    ],
+  )
+  test(
     'qasm rankwidth benchmark smoke',
     python3,
     args: [
