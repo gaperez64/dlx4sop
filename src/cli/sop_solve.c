@@ -36,7 +36,7 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|linear-rankwidth] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate linear|balanced|min-fill|min-fill-cut] "
-        "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree] "
+        "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -111,6 +111,8 @@ static const char *treewidth_order_name(qsop_treewidth_order_t order) {
     return "min-fill";
   case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
     return "min-degree";
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE:
+    return "min-fill-max-degree";
   }
   return "unknown";
 }
@@ -357,6 +359,8 @@ int main(int argc, char **argv) {
         treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
       } else if (strcmp(value, "min-degree") == 0) {
         treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_DEGREE;
+      } else if (strcmp(value, "min-fill-max-degree") == 0) {
+        treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE;
       } else {
         fprintf(stderr, "error: unsupported treewidth order '%s'\n", value);
         return 2;

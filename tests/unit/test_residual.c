@@ -197,6 +197,56 @@ static int test_nested_undo(void) {
   return result;
 }
 
+static int test_endpoint_branch_keeps_remaining_incidence(void) {
+  qsop_error_t error = {0};
+  qsop_instance_t qsop = fixture_instance();
+  qsop_residual_t *residual = NULL;
+  if (!qsop_residual_create(&qsop, &residual, &error)) {
+    fprintf(stderr, "create failed: %s\n", error.message);
+    return 1;
+  }
+
+  const size_t checkpoint = qsop_residual_checkpoint(residual);
+  if (!qsop_residual_branch(residual, 0, 0, &error)) {
+    fprintf(stderr, "endpoint branch failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+
+  uint32_t labels[3] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+  uint32_t ncomponents = 0;
+  uint64_t fill = UINT64_MAX;
+  uint32_t cut_rank = UINT32_MAX;
+  if (expect_u32("endpoint active_vars", qsop_residual_active_vars(residual), 2) != 0 ||
+      expect_u32("endpoint active_edges", qsop_residual_active_edges(residual), 1) != 0 ||
+      expect_u32("endpoint degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
+      expect_u32("endpoint degree1", qsop_residual_active_degree(residual, 1), 1) != 0 ||
+      expect_u32("endpoint degree2", qsop_residual_active_degree(residual, 2), 1) != 0 ||
+      expect_bool("endpoint edge0", qsop_residual_edge_active(residual, 0), false) != 0 ||
+      expect_bool("endpoint edge1", qsop_residual_edge_active(residual, 1), true) != 0 ||
+      !qsop_residual_active_components(residual, labels, &ncomponents, &error) ||
+      expect_u32("endpoint components", ncomponents, 1) != 0 ||
+      expect_u32("endpoint inactive label", labels[0], UINT32_MAX) != 0 ||
+      labels[1] == UINT32_MAX || labels[2] == UINT32_MAX || labels[1] != labels[2] ||
+      !qsop_residual_fill_edges_without_var(residual, 1, &fill, &error) ||
+      expect_u64("endpoint fill", fill, 0) != 0 ||
+      !qsop_residual_neighbor_cut_rank(residual, 1, &cut_rank, &error) ||
+      expect_u32("endpoint cut-rank", cut_rank, 0) != 0) {
+    fprintf(stderr, "endpoint branch incidence check failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+
+  if (!qsop_residual_undo(residual, checkpoint, &error)) {
+    fprintf(stderr, "endpoint undo failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  const int result = expect_initial_state(residual);
+  qsop_residual_free(residual);
+  return result;
+}
+
 static int test_fingerprint_undo(void) {
   qsop_error_t error = {0};
   qsop_instance_t qsop = fixture_instance();
@@ -374,6 +424,9 @@ int main(void) {
     return 1;
   }
   if (test_nested_undo() != 0) {
+    return 1;
+  }
+  if (test_endpoint_branch_keeps_remaining_incidence() != 0) {
     return 1;
   }
   if (test_fingerprint_undo() != 0) {

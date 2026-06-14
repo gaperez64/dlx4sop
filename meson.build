@@ -244,6 +244,8 @@ if python3.found()
       'min-fill',
       '--treewidth-order',
       'min-degree',
+      '--treewidth-order',
+      'min-fill-max-degree',
       '--limit',
       '1',
       '--trace',

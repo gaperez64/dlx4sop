@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-QREG_RE = re.compile(r"^qreg\s+[A-Za-z_][A-Za-z0-9_]*\[(\d+)\]\s*;$")
+QREG_RE = re.compile(r"^qreg\s+([A-Za-z_][A-Za-z0-9_]*)\[(\d+)\]\s*;$")
 
 
 def sanitize_name(text: str) -> str:
@@ -26,10 +26,26 @@ def qasm_qubits(qasm: str) -> int:
     for raw in qasm.splitlines():
         match = QREG_RE.match(strip_line_comment(raw))
         if match is not None:
-            total += int(match.group(1))
+            total += int(match.group(2))
     if total <= 0:
         raise ValueError("QASM input has no qreg declarations")
     return total
+
+
+def qasm_qreg_names(qasm: str) -> list[str]:
+    names: list[str] = []
+    for raw in qasm.splitlines():
+        match = QREG_RE.match(strip_line_comment(raw))
+        if match is not None:
+            names.append(match.group(1))
+    return names
+
+
+def repair_single_register_alias(qasm: str, alias: str) -> str:
+    names = sorted(set(qasm_qreg_names(qasm)))
+    if len(names) != 1 or alias in names:
+        return qasm
+    return re.sub(rf"\b{re.escape(alias)}\s*\[", f"{names[0]}[", qasm)
 
 
 def source_files(roots: list[pathlib.Path], include_qc: bool, include_invalid: bool) -> list[tuple[pathlib.Path, pathlib.Path]]:
@@ -298,6 +314,8 @@ def build_case(
     boundaries: list[list[str]],
     max_vars: int,
     source_prefix: str,
+    source_name: str,
+    source_url: str | None,
 ) -> tuple[dict | None, str, list[dict[str, int | str]], int, int, str]:
     max_nvars = 0
     max_edges = 0
@@ -325,27 +343,27 @@ def build_case(
 
     relpath = path.relative_to(root)
     name = sanitize_name(f"{source_prefix}_{relpath.with_suffix('').as_posix()}")
-    return (
-        {
-            "name": name,
-            "source_path": str(path),
-            "qasm_lines": qasm.rstrip("\n").splitlines(),
-            "boundaries": boundaries,
-            "max_imported_nvars": max_nvars,
-            "max_imported_edges": max_edges,
-        },
-        "ok",
-        boundary_records,
-        max_nvars,
-        max_edges,
-        mode,
-    )
+    case = {
+        "name": name,
+        "source": source_name,
+        "source_path": str(path),
+        "source_relative_path": relpath.as_posix(),
+        "qasm_lines": qasm.rstrip("\n").splitlines(),
+        "boundaries": boundaries,
+        "max_imported_nvars": max_nvars,
+        "max_imported_edges": max_edges,
+    }
+    if source_url is not None:
+        case["source_url"] = source_url
+    return (case, "ok", boundary_records, max_nvars, max_edges, mode)
 
 
 def report_record(
     root: pathlib.Path,
     path: pathlib.Path,
     status: str,
+    source_name: str,
+    source_url: str | None,
     diagnostic: str | None = None,
     boundaries: list[dict[str, int | str]] | None = None,
     max_nvars: int | None = None,
@@ -355,9 +373,12 @@ def report_record(
     record = {
         "path": str(path),
         "relative_path": relative_path(root, path),
+        "source": source_name,
         "source_type": path.suffix.lower().lstrip(".") or "unknown",
         "status": status,
     }
+    if source_url is not None:
+        record["source_url"] = source_url
     if diagnostic:
         record["diagnostic"] = diagnostic
     if boundaries is not None:
@@ -391,6 +412,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="inline non-parameterized OpenQASM gate definitions for benchmark ingestion",
     )
     parser.add_argument("--source-prefix", default="external")
+    parser.add_argument("--source-name", help="human-readable source label stored in emitted cases and reports")
+    parser.add_argument("--source-url", help="upstream source repository or benchmark URL stored in reports")
+    parser.add_argument(
+        "--repair-single-register-alias",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="rewrite NAME[index] to the sole declared qreg name when a source has a known alias typo",
+    )
     parser.add_argument("--limit", type=int, help="limit source files before import filtering")
     parser.add_argument("--max-cases", type=int, help="limit emitted manifest cases")
     parser.add_argument("--max-vars", type=int, default=24)
@@ -411,6 +441,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--max-vars must be non-negative")
     if args.include_qc and args.qc2qasm is None:
         parser.error("--include-qc requires --qc2qasm")
+    args.source_name = args.source_name or args.source_prefix
     return args
 
 
@@ -433,6 +464,8 @@ def main(argv: list[str]) -> int:
                 qasm = inline_simple_gates(qasm)
             if args.strip_terminal_measurements:
                 qasm = strip_terminal_measurements(qasm)
+            for alias in args.repair_single_register_alias:
+                qasm = repair_single_register_alias(qasm, alias)
             nqubits = qasm_qubits(qasm)
             boundaries = boundary_pairs(nqubits, args.boundaries)
             case, status, boundary_records, max_nvars, max_edges, mode = build_case(
@@ -443,6 +476,8 @@ def main(argv: list[str]) -> int:
                 boundaries,
                 args.max_vars,
                 args.source_prefix,
+                args.source_name,
+                args.source_url,
             )
         except Exception as exc:
             diagnostic = diagnostic_from_exception(exc)
@@ -450,7 +485,16 @@ def main(argv: list[str]) -> int:
             if status == "parse_error" and qasm is not None and has_gate_definition(qasm):
                 status = "unsupported_gate_definition"
             counts[status] += 1
-            report_records.append(report_record(root, path, status, diagnostic=diagnostic))
+            report_records.append(
+                report_record(
+                    root,
+                    path,
+                    status,
+                    args.source_name,
+                    args.source_url,
+                    diagnostic=diagnostic,
+                )
+            )
             continue
 
         counts[status] += 1
@@ -459,6 +503,8 @@ def main(argv: list[str]) -> int:
                 root,
                 path,
                 status,
+                args.source_name,
+                args.source_url,
                 boundaries=boundary_records,
                 max_nvars=max_nvars,
                 max_edges=max_edges,
@@ -476,6 +522,8 @@ def main(argv: list[str]) -> int:
     if args.report is not None:
         report = {
             "roots": [str(root) for root in args.roots],
+            "source": args.source_name,
+            "source_url": args.source_url,
             "inputs": len(inputs),
             "emitted": len(cases),
             "counts": dict(sorted(counts.items())),

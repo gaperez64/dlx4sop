@@ -7,6 +7,9 @@ than repeated here.
 ## Current State
 
 - Branch: `main`, tracking `origin/main`.
+- Project target: a competitive exact strong simulator based on labelled
+  quadratic SOPs, with fixed-boundary amplitudes as the current benchmark
+  contract.
 - Core utilities implemented: `sop-check`, `sop-stats`, `sop-solve`, `qasm2sop`.
 - Boundary tools implemented: QASM corpus benchmark runner, external manifest
   builder, PyZX/T-Par `.qc` translator, starter `.qgraph` translator, FeynmanDD
@@ -15,48 +18,66 @@ than repeated here.
   - `components` is the default exact backend, with component caching and
     CRT-backed large final histograms.
   - `branch` has residual mutation, residual fingerprints, memo cache stats,
-    component splitting, edge-free residue-table leaves, CRT-backed large
-    assignment counts, and experimental `split|treewidth|linear-rankwidth`
-    variable heuristics.
+    dancing-cells-style active incidence unlink/relink, component splitting,
+    edge-free residue-table leaves, CRT-backed large assignment counts, and
+    experimental `split|treewidth|linear-rankwidth` variable heuristics. The
+    `linear-rankwidth` branch option is a local cut-rank proxy, not a certified
+    linear-rankwidth computation.
   - `rankwidth` handles sign-edge and labelled QSOPs with generated or explicit
     decompositions, count-table mode, CRT-backed large assignment counts, and
     sign-only Fourier mode.
   - `treewidth` has a first exact bucket-elimination backend with
-    `min-fill|min-degree` orders and CRT-backed large assignment counts.
+    `min-fill|min-degree|min-fill-max-degree` orders and CRT-backed large
+    assignment counts.
 - Importer status:
   - OpenQASM support covers the static finite subset used by the checked-in
     corpus and many PyZX/FeynmanDD/MQT cases.
   - `u(...)`/`u3(...)`, terminal-measurement stripping, and simple-gate inlining
     are available for external manifest ingestion.
+  - External manifest ingestion records source names/URLs and has opt-in repair
+    for known single-register alias typos in benchmark corpora.
   - `.qc` benchmark files can be translated through `tools/qc2qasm.py`.
 - Benchmark status:
   - External manifest builds can emit per-source classification reports.
   - Benchmark summaries report imported sign/labelled counts, rankwidth skips,
-    backend-specific rankwidth/treewidth width and table metrics, and largest
-    case-boundaries by core size/performance metrics.
+    source-family boundary counts, backend-specific rankwidth/treewidth width
+    and table metrics, and largest case-boundaries by core size/performance
+    metrics.
+  - Current 32-variable source-attributed pool: 113 cases / 133 boundaries
+    across internal, PyZX, MQT Bench, and FeynmanDD. Branch, rankwidth
+    count-table, and treewidth solve it; rankwidth skips 12 zero-variable
+    decomposition guard records in the current benchmark script.
+  - Branch heuristic comparison on that pool favors `split`: about 9.8k search
+    nodes and 81ms total solve time, versus 91.5k/677ms for `treewidth` and
+    4.0M/14.5s for `linear-rankwidth`.
 - Last full validation:
   - `meson test -C build --print-errorlogs`: 18/18 passing.
   - `tools/check-coverage.sh build-coverage`: 77.2% line coverage.
 
 ## Current Task
 
-- Move from smoke-sized sign-only imports to harder importer-fed benchmarks.
-  The current internal plus available external comparison still has small
-  support graphs: treewidth width tops out at 1, treewidth tables at 64 entries,
-  and `min-fill` and `min-degree` tie on table shape.
-- Use external classification reports to find larger labelled-quadratic cases
-  before drawing strong conclusions about treewidth vs. rankwidth.
+- Use external classification reports to push beyond the current 32-variable
+  comparison pool. The pool now includes labelled FeynmanDD/PyZX cases but still
+  has low support width: rankwidth width tops out at 3 and treewidth width at 2.
+- Promote harder labelled-quadratic cases and add competitor baselines so solver
+  improvements are measured against strong-simulation alternatives, not only
+  against other dlx4sop backends.
 
 ## Next Steps
 
-- Expand the importable benchmark pool with cases that remain labelled
-  quadratic and have nontrivial support width.
-- Compare `components`, `branch`, `rankwidth`, `treewidth:min-fill`, and
-  `treewidth:min-degree` on that harder pool.
-- Add stronger treewidth decomposition builders only after the benchmark pool
-  shows large bags or table blowups.
-- Use external classification reports to choose importer fixes that remain
-  labelled quadratic.
+- Raise the benchmark cap selectively and classify the importable-but-filtered
+  cases above 32 variables by source, mode, width proxy, and expected solver.
+- Add competitor baseline harnesses for fixed-boundary amplitudes: Qiskit
+  Statevector, Aer when available, MQT simulator tooling, and ZX-calculus
+  simulators where the input format matches.
+- Keep `branch --branch-heuristic split` as the branch baseline until a harder
+  pool shows that cache-heavy heuristics repay their selection cost.
+- Add stronger rankwidth/treewidth decomposition builders only after larger
+  cases show bag or table blowups.
+- Use external classification reports to choose the next importer fixes that
+  remain labelled quadratic.
+- Keep [scoreboard.md](scoreboard.md) as the concise public record for corpus
+  coverage, solver results, and external simulator comparisons.
 - Keep coverage above the 75% CI gate.
 
 ## Deferred Work
@@ -65,8 +86,6 @@ than repeated here.
 - Labelled rankwidth refinements based on labelled cut-signature width; see
   [ARCHITECTURE.md](ARCHITECTURE.md#labelled-rankwidth-direction).
 - Incremental residual hashing and richer canonical residual fingerprints.
-- Dancing-cells-style linked mutation if traces show active-edge flag traversal
-  is a bottleneck.
 - Specialized residue/count kernels and optional CPU-feature dispatch.
 - Decide whether Fourier should stay a small-instance comparison mode or gain a
   labelled/multi-prime CRT variant.

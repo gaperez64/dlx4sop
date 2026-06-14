@@ -60,6 +60,8 @@ static const char *treewidth_order_trace_phase(qsop_treewidth_order_t order) {
     return "treewidth.min_fill_order";
   case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
     return "treewidth.min_degree_order";
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE:
+    return "treewidth.min_fill_max_degree_order";
   }
   return "treewidth.order";
 }
@@ -490,6 +492,8 @@ static bool treewidth_candidate_is_better(qsop_treewidth_order_t order, bool fou
     return fill < best_fill || (fill == best_fill && degree < best_degree);
   case QSOP_TREEWIDTH_ORDER_MIN_DEGREE:
     return degree < best_degree || (degree == best_degree && fill < best_fill);
+  case QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE:
+    return fill < best_fill || (fill == best_fill && degree > best_degree);
   }
   return false;
 }

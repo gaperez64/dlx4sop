@@ -46,6 +46,7 @@ typedef enum qsop_rankwidth_solve_mode {
 typedef enum qsop_treewidth_order {
   QSOP_TREEWIDTH_ORDER_MIN_FILL,
   QSOP_TREEWIDTH_ORDER_MIN_DEGREE,
+  QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
 } qsop_treewidth_order_t;
 
 typedef enum qsop_branch_heuristic {

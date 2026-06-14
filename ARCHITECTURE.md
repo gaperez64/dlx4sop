@@ -1,9 +1,10 @@
 # dlx4sop Architecture
 
 `dlx4sop` is built around one intermediate representation: a normalized
-finite-modulus quadratic sum of powers (QSOP). External circuit, graph, and
-benchmark formats are boundary formats. They are imported into QSOP before the
-core solver sees them.
+finite-modulus quadratic sum of powers (QSOP). The project target is a
+competitive exact strong simulator based on labelled quadratic SOPs. External
+circuit, graph, and benchmark formats are boundary formats. They are imported
+into QSOP before the core solver sees them.
 
 Performance ideas that are not yet part of the stable command-line contract are
 kept in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md).
@@ -94,14 +95,16 @@ Implemented exact backends:
   CRT-backed large-count result contract as the decomposition backends.
 - `branch`: mutates a reversible residual state, branches on active variables,
   memoizes repeated residuals, splits residual components, and collapses
-  edge-free unary tails. It uses fixed-width counts when safe and a CRT-backed
-  outer loop for larger final histograms.
+  edge-free unary tails. Active incidence is maintained with reversible
+  unlink/relink cells so backtracking avoids walking deleted edges. It uses
+  fixed-width counts when safe and a CRT-backed outer loop for larger final
+  histograms.
 - `rankwidth`: decomposition DP with generated or supplied decompositions,
   sign/labelled count-table mode, CRT-backed larger histograms, and a
   small-instance sign-only Fourier mode.
 - `treewidth`: bucket-elimination DP over dense factors, with
-  `min-fill|min-degree` variable orders, a bag guard, and CRT-backed larger
-  histograms.
+  `min-fill|min-degree|min-fill-max-degree` variable orders, a bag guard, and
+  CRT-backed larger histograms.
 
 The rankwidth backend uses bitset-backed signatures for sign-only instances and
 `Z_r` boundary-signature vectors for labelled instances. Practical limits are
@@ -116,7 +119,9 @@ solvers:
 
 - `split`: default residual component split estimate;
 - `treewidth`: min-fill estimate on the active graph;
-- `linear-rankwidth`: local GF(2) cut-rank proxy.
+- `linear-rankwidth`: historical name for a local GF(2) cut-rank proxy. It is a
+  branch ordering heuristic, not a certified computation of the graph parameter
+  linear rankwidth.
 
 ## OpenQASM Import
 
@@ -140,8 +145,8 @@ Relevant tool boundaries:
 - scanners classify unsupported QASM constructs;
 - benchmark runners execute selected solver configurations and collect stats;
 - summary reports distinguish sign-only imports, labelled imports, solver
-  skips, backend-specific rankwidth/treewidth width and table metrics, and
-  largest case-boundaries;
+  skips, source families, backend-specific rankwidth/treewidth width and table
+  metrics, and largest case-boundaries;
 - optional comparison scripts can use external frameworks outside the C core.
 
 ## Labelled Rankwidth Direction

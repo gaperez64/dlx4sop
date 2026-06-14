@@ -4,9 +4,10 @@
 powers (QSOPs). It provides small Unix-style tools to validate, inspect, import,
 benchmark, and solve normalized quadratic SOP text files.
 
-Design notes live in [ARCHITECTURE.md](ARCHITECTURE.md), future performance
-notes in [ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md), and active
-work in [tasks.md](tasks.md).
+Design notes live in [ARCHITECTURE.md](ARCHITECTURE.md), performance notes in
+[ARCHITECTURE_SPEED_ANNEX.md](ARCHITECTURE_SPEED_ANNEX.md), current benchmark
+coverage in [scoreboard.md](scoreboard.md), and active work in
+[tasks.md](tasks.md).
 
 ## Tools
 
@@ -26,30 +27,23 @@ Implemented solver backends:
 - `rankwidth`: decomposition backend with sign/labelled count-table mode,
   CRT-backed large-count output, generated decompositions, and sign-only
   Fourier mode.
-- `treewidth`: bucket-elimination backend with `min-fill|min-degree` orders and
-  CRT-backed large-count output.
+- `treewidth`: bucket-elimination backend with greedy min-fill/min-degree
+  orders and CRT-backed large-count output.
 
 Current solver guidance:
 
 - Use `components` as the default robust exact solver.
-- Use `branch` as the main labelled/CRT baseline for connected instances and
-  branch-cache experiments.
+- Use `branch --branch-heuristic split` as the main labelled/CRT baseline for
+  connected instances; the other branch heuristics are currently experiments.
 - Use `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table`
   as the strongest decomposition DP currently available when it accepts the
-  instance; on the present smoke-scale corpora it reports smaller max tables
-  than treewidth.
+  instance.
 - Use `treewidth` for decomposition comparisons and tracing. `min-fill` and
-  `min-degree` currently tie on table shape in the available benchmark pool.
+  `min-fill-max-degree` are useful tie-break variants to compare against
+  `min-degree`.
 
-Benchmark basis: `tools/bench_qasm_corpus.py` over the checked-in
-`tests/qasm_solver_corpus.json` corpus (32 boundaries) and a larger comparison
-pool (72 boundaries total) drawn from the checked-in cases plus supported
-imports from [PyZX](https://github.com/zxcalc/pyzx) benchmark circuits and
-[MQT Bench](https://github.com/munich-quantum-toolkit/bench). The FeynmanDD
-scanner targets
-[feynman-decision-diagram](https://github.com/cqs-thu/feynman-decision-diagram),
-but that source does not yet contribute supported cases to the cited run. These
-numbers are a tooling baseline, not a final performance ranking.
+Corpus links, current coverage, and solver timing tables live in
+[scoreboard.md](scoreboard.md).
 
 ## Build
 
@@ -108,8 +102,9 @@ Run benchmark summaries and build external corpus manifests:
 ```sh
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components --backend branch --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --top-metric treewidth_max_table_entries --format summary
-tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --report corpus-report.json --output corpus.json
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --treewidth-order min-fill-max-degree --top-metric treewidth_max_table_entries --format summary
+tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --source-name NAME --source-url URL --report corpus-report.json --output corpus.json
+tools/check_qasm_manifest_qiskit.py build/qasm2sop build/sop-solve corpus.json --skip-qiskit-unsupported
 ```
 
 ## Scope

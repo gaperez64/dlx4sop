@@ -10,6 +10,9 @@ typedef enum trail_kind {
   TRAIL_SET_ACTIVE_VAR,
   TRAIL_SET_ACTIVE_EDGE,
   TRAIL_SET_ACTIVE_DEGREE,
+  TRAIL_SET_ACTIVE_INCIDENT_HEAD,
+  TRAIL_SET_INCIDENT_NEXT,
+  TRAIL_SET_INCIDENT_PREV,
 } trail_kind_t;
 
 typedef struct trail_entry {
@@ -18,10 +21,13 @@ typedef struct trail_entry {
   uint64_t old_value;
 } trail_entry_t;
 
+#define RESIDUAL_NIL UINT32_MAX
+
 struct qsop_residual {
   uint32_t r;
   uint32_t nvars;
   uint32_t nedges;
+  uint32_t incident_count;
   uint32_t constant;
 
   uint32_t *unary;
@@ -30,6 +36,12 @@ struct qsop_residual {
   uint32_t *edge_q;
   uint32_t *incident_offset;
   uint32_t *incident_edge;
+  uint32_t *incident_var;
+  uint32_t *incident_next;
+  uint32_t *incident_prev;
+  uint32_t *active_incident_head;
+  uint32_t *edge_slot_u;
+  uint32_t *edge_slot_v;
   uint32_t *active_degree;
   uint8_t *active_var;
   uint8_t *active_edge;
@@ -148,6 +160,82 @@ static bool set_var_active(qsop_residual_t *residual, uint32_t v, bool active,
   return true;
 }
 
+static bool set_active_incident_head(qsop_residual_t *residual, uint32_t v, uint32_t value,
+                                     qsop_error_t *error) {
+  if (residual->active_incident_head[v] == value) {
+    return true;
+  }
+  if (!push_trail(residual, TRAIL_SET_ACTIVE_INCIDENT_HEAD, v,
+                  residual->active_incident_head[v], error)) {
+    return false;
+  }
+  residual->active_incident_head[v] = value;
+  return true;
+}
+
+static bool set_incident_next(qsop_residual_t *residual, uint32_t slot, uint32_t value,
+                              qsop_error_t *error) {
+  if (residual->incident_next[slot] == value) {
+    return true;
+  }
+  if (!push_trail(residual, TRAIL_SET_INCIDENT_NEXT, slot, residual->incident_next[slot],
+                  error)) {
+    return false;
+  }
+  residual->incident_next[slot] = value;
+  return true;
+}
+
+static bool set_incident_prev(qsop_residual_t *residual, uint32_t slot, uint32_t value,
+                              qsop_error_t *error) {
+  if (residual->incident_prev[slot] == value) {
+    return true;
+  }
+  if (!push_trail(residual, TRAIL_SET_INCIDENT_PREV, slot, residual->incident_prev[slot],
+                  error)) {
+    return false;
+  }
+  residual->incident_prev[slot] = value;
+  return true;
+}
+
+static bool unlink_incidence_slot(qsop_residual_t *residual, uint32_t slot,
+                                  qsop_error_t *error) {
+  if (slot == RESIDUAL_NIL) {
+    return true;
+  }
+
+  const uint32_t var = residual->incident_var[slot];
+  const uint32_t prev = residual->incident_prev[slot];
+  const uint32_t next = residual->incident_next[slot];
+  if ((prev == RESIDUAL_NIL &&
+       !set_active_incident_head(residual, var, next, error)) ||
+      (prev != RESIDUAL_NIL && !set_incident_next(residual, prev, next, error)) ||
+      (next != RESIDUAL_NIL && !set_incident_prev(residual, next, prev, error)) ||
+      !set_incident_prev(residual, slot, RESIDUAL_NIL, error) ||
+      !set_incident_next(residual, slot, RESIDUAL_NIL, error)) {
+    return false;
+  }
+  return true;
+}
+
+static bool link_incidence_slot_to_head(qsop_residual_t *residual, uint32_t slot,
+                                        qsop_error_t *error) {
+  if (slot == RESIDUAL_NIL) {
+    return true;
+  }
+
+  const uint32_t var = residual->incident_var[slot];
+  const uint32_t old_head = residual->active_incident_head[var];
+  if (!set_incident_prev(residual, slot, RESIDUAL_NIL, error) ||
+      !set_incident_next(residual, slot, old_head, error) ||
+      (old_head != RESIDUAL_NIL && !set_incident_prev(residual, old_head, slot, error)) ||
+      !set_active_incident_head(residual, var, slot, error)) {
+    return false;
+  }
+  return true;
+}
+
 static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
                             qsop_error_t *error) {
   const uint8_t next = active ? 1U : 0U;
@@ -158,7 +246,8 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
   const uint32_t u = residual->edge_u[e];
   const uint32_t v = residual->edge_v[e];
   const bool self_loop = u == v;
-  const size_t trail_entries = self_loop ? 2U : 3U;
+  const size_t incidence_entries = self_loop ? 4U : 8U;
+  const size_t trail_entries = (self_loop ? 2U : 3U) + incidence_entries;
   if (!active && (residual->active_degree[u] == 0 ||
                   (!self_loop && residual->active_degree[v] == 0))) {
     set_error(error, "internal error: residual degree underflow");
@@ -169,6 +258,16 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
       !push_trail(residual, TRAIL_SET_ACTIVE_DEGREE, u, residual->active_degree[u], error) ||
       (!self_loop &&
        !push_trail(residual, TRAIL_SET_ACTIVE_DEGREE, v, residual->active_degree[v], error))) {
+    return false;
+  }
+
+  if (active) {
+    if (!link_incidence_slot_to_head(residual, residual->edge_slot_u[e], error) ||
+        !link_incidence_slot_to_head(residual, residual->edge_slot_v[e], error)) {
+      return false;
+    }
+  } else if (!unlink_incidence_slot(residual, residual->edge_slot_u[e], error) ||
+             !unlink_incidence_slot(residual, residual->edge_slot_v[e], error)) {
     return false;
   }
 
@@ -190,15 +289,47 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
 }
 
 static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
+  uint32_t incidence_count = 0;
+  for (uint32_t e = 0; e < residual->nedges; e++) {
+    if (residual->edge_u[e] == residual->edge_v[e]) {
+      incidence_count++;
+    } else if (incidence_count <= UINT32_MAX - 2U) {
+      incidence_count += 2U;
+    } else {
+      set_error(error, "too many residual incidence entries");
+      return false;
+    }
+  }
+  residual->incident_count = incidence_count;
+
   residual->incident_offset =
       calloc((size_t)residual->nvars + 1U, sizeof(*residual->incident_offset));
   residual->incident_edge =
-      malloc((residual->nedges == 0 ? 1U : (size_t)residual->nedges * 2U) *
+      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
              sizeof(*residual->incident_edge));
+  residual->incident_var =
+      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+             sizeof(*residual->incident_var));
+  residual->incident_next =
+      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+             sizeof(*residual->incident_next));
+  residual->incident_prev =
+      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+             sizeof(*residual->incident_prev));
+  residual->active_incident_head =
+      malloc((residual->nvars == 0 ? 1U : residual->nvars) *
+             sizeof(*residual->active_incident_head));
+  residual->edge_slot_u =
+      malloc((residual->nedges == 0 ? 1U : residual->nedges) * sizeof(*residual->edge_slot_u));
+  residual->edge_slot_v =
+      malloc((residual->nedges == 0 ? 1U : residual->nedges) * sizeof(*residual->edge_slot_v));
   residual->active_degree =
       calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*residual->active_degree));
   uint32_t *cursor = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*cursor));
   if (residual->incident_offset == NULL || residual->incident_edge == NULL ||
+      residual->incident_var == NULL || residual->incident_next == NULL ||
+      residual->incident_prev == NULL || residual->active_incident_head == NULL ||
+      residual->edge_slot_u == NULL || residual->edge_slot_v == NULL ||
       residual->active_degree == NULL || cursor == NULL) {
     free(cursor);
     set_error(error, "out of memory while building residual incidence lists");
@@ -222,9 +353,27 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
   for (uint32_t e = 0; e < residual->nedges; e++) {
     const uint32_t u = residual->edge_u[e];
     const uint32_t v = residual->edge_v[e];
-    residual->incident_edge[cursor[u]++] = e;
+    uint32_t slot = cursor[u]++;
+    residual->incident_edge[slot] = e;
+    residual->incident_var[slot] = u;
+    residual->edge_slot_u[e] = slot;
     if (v != u) {
-      residual->incident_edge[cursor[v]++] = e;
+      slot = cursor[v]++;
+      residual->incident_edge[slot] = e;
+      residual->incident_var[slot] = v;
+      residual->edge_slot_v[e] = slot;
+    } else {
+      residual->edge_slot_v[e] = RESIDUAL_NIL;
+    }
+  }
+
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    const uint32_t start = residual->incident_offset[v];
+    const uint32_t end = residual->incident_offset[v + 1U];
+    residual->active_incident_head[v] = start == end ? RESIDUAL_NIL : start;
+    for (uint32_t slot = start; slot < end; slot++) {
+      residual->incident_prev[slot] = slot == start ? RESIDUAL_NIL : slot - 1U;
+      residual->incident_next[slot] = slot + 1U == end ? RESIDUAL_NIL : slot + 1U;
     }
   }
 
@@ -299,6 +448,12 @@ void qsop_residual_free(qsop_residual_t *residual) {
   free(residual->edge_q);
   free(residual->incident_offset);
   free(residual->incident_edge);
+  free(residual->incident_var);
+  free(residual->incident_next);
+  free(residual->incident_prev);
+  free(residual->active_incident_head);
+  free(residual->edge_slot_u);
+  free(residual->edge_slot_v);
   free(residual->active_degree);
   free(residual->active_var);
   free(residual->active_edge);
@@ -356,6 +511,15 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
     case TRAIL_SET_ACTIVE_DEGREE:
       residual->active_degree[entry.index] = (uint32_t)entry.old_value;
       break;
+    case TRAIL_SET_ACTIVE_INCIDENT_HEAD:
+      residual->active_incident_head[entry.index] = (uint32_t)entry.old_value;
+      break;
+    case TRAIL_SET_INCIDENT_NEXT:
+      residual->incident_next[entry.index] = (uint32_t)entry.old_value;
+      break;
+    case TRAIL_SET_INCIDENT_PREV:
+      residual->incident_prev[entry.index] = (uint32_t)entry.old_value;
+      break;
     }
   }
 
@@ -386,11 +550,9 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
                       error)) {
       return false;
     }
-    for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U]; i++) {
-      const uint32_t e = residual->incident_edge[i];
-      if (residual->active_edge[e] == 0) {
-        continue;
-      }
+    for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;
+         slot = residual->incident_next[slot]) {
+      const uint32_t e = residual->incident_edge[slot];
 
       uint32_t other = UINT32_MAX;
       if (residual->edge_u[e] == v) {
@@ -408,11 +570,13 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
     }
   }
 
-  for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U]; i++) {
-    const uint32_t e = residual->incident_edge[i];
+  for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;) {
+    const uint32_t next_slot = residual->incident_next[slot];
+    const uint32_t e = residual->incident_edge[slot];
     if (residual->active_edge[e] != 0 && !set_edge_active(residual, e, false, error)) {
       return false;
     }
+    slot = next_slot;
   }
 
   return set_var_active(residual, v, false, error);
@@ -541,12 +705,9 @@ bool qsop_residual_active_components(const qsop_residual_t *residual, uint32_t *
     queue[tail++] = start;
     while (head < tail) {
       const uint32_t v = queue[head++];
-      for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U];
-           i++) {
-        const uint32_t e = residual->incident_edge[i];
-        if (residual->active_edge[e] == 0) {
-          continue;
-        }
+      for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;
+           slot = residual->incident_next[slot]) {
+        const uint32_t e = residual->incident_edge[slot];
 
         uint32_t other = UINT32_MAX;
         if (residual->edge_u[e] == v) {
@@ -615,11 +776,10 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
     queue[tail++] = start;
     while (head < tail) {
       const uint32_t v = queue[head++];
-      for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U];
-           i++) {
-        const uint32_t e = residual->incident_edge[i];
-        if (residual->active_edge[e] == 0 || residual->edge_u[e] == removed ||
-            residual->edge_v[e] == removed) {
+      for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;
+           slot = residual->incident_next[slot]) {
+        const uint32_t e = residual->incident_edge[slot];
+        if (residual->edge_u[e] == removed || residual->edge_v[e] == removed) {
           continue;
         }
 
@@ -677,11 +837,10 @@ static bool validate_active_variable(const qsop_residual_t *residual, uint32_t v
 
 static bool residual_active_edge_between(const qsop_residual_t *residual, uint32_t left,
                                          uint32_t right) {
-  for (uint32_t i = residual->incident_offset[left]; i < residual->incident_offset[left + 1U];
-       i++) {
-    const uint32_t e = residual->incident_edge[i];
-    if (residual->active_edge[e] != 0 &&
-        ((residual->edge_u[e] == left && residual->edge_v[e] == right) ||
+  for (uint32_t slot = residual->active_incident_head[left]; slot != RESIDUAL_NIL;
+       slot = residual->incident_next[slot]) {
+    const uint32_t e = residual->incident_edge[slot];
+    if (((residual->edge_u[e] == left && residual->edge_v[e] == right) ||
          (residual->edge_u[e] == right && residual->edge_v[e] == left))) {
       return true;
     }
@@ -693,11 +852,9 @@ static bool residual_active_neighbors(const qsop_residual_t *residual, uint32_t 
                                       uint32_t *neighbors, uint8_t *is_neighbor,
                                       uint32_t *nneighbors) {
   *nneighbors = 0;
-  for (uint32_t i = residual->incident_offset[v]; i < residual->incident_offset[v + 1U]; i++) {
-    const uint32_t e = residual->incident_edge[i];
-    if (residual->active_edge[e] == 0) {
-      continue;
-    }
+  for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;
+       slot = residual->incident_next[slot]) {
+    const uint32_t e = residual->incident_edge[slot];
     const uint32_t other = residual->edge_u[e] == v ? residual->edge_v[e] : residual->edge_u[e];
     if (other != v && residual->active_var[other] != 0 && is_neighbor[other] == 0) {
       is_neighbor[other] = 1;
@@ -831,11 +988,9 @@ bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v
 
   for (uint32_t row = 0; row < nneighbors; row++) {
     const uint32_t u = neighbors[row];
-    for (uint32_t i = residual->incident_offset[u]; i < residual->incident_offset[u + 1U]; i++) {
-      const uint32_t e = residual->incident_edge[i];
-      if (residual->active_edge[e] == 0) {
-        continue;
-      }
+    for (uint32_t slot = residual->active_incident_head[u]; slot != RESIDUAL_NIL;
+         slot = residual->incident_next[slot]) {
+      const uint32_t e = residual->incident_edge[slot];
       const uint32_t other = residual->edge_u[e] == u ? residual->edge_v[e] : residual->edge_u[e];
       if (other < residual->nvars && col_index[other] != UINT32_MAX) {
         const uint32_t col = col_index[other];

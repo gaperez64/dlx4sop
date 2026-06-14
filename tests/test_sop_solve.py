@@ -816,7 +816,7 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         if expected.returncode != 0:
             raise AssertionError(f"{name}: brute-force solve failed\n{expected.stderr}")
 
-        for order in ["min-fill", "min-degree"]:
+        for order in ["min-fill", "min-degree", "min-fill-max-degree"]:
             completed = subprocess.run(
                 [str(exe), "--backend", "treewidth", "--treewidth-order", order, str(qsop)],
                 check=False,
@@ -866,6 +866,31 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if min_degree_stats.returncode != 0 or "treewidth_order: min-degree" not in min_degree_stats.stdout:
         raise AssertionError(
             f"treewidth min-degree stats failed\n{min_degree_stats.stdout}\n{min_degree_stats.stderr}"
+        )
+
+    max_degree_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "treewidth",
+            "--treewidth-order",
+            "min-fill-max-degree",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        max_degree_stats.returncode != 0
+        or "treewidth_order: min-fill-max-degree" not in max_degree_stats.stdout
+    ):
+        raise AssertionError(
+            f"treewidth min-fill-max-degree stats failed\n"
+            f"{max_degree_stats.stdout}\n{max_degree_stats.stderr}"
         )
 
     guarded = subprocess.run(

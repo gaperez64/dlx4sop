@@ -15,21 +15,15 @@ The current performance roadmap is:
 4. Compare branch heuristics only when traces show the cache and split machinery
    is being exercised on a representative corpus.
 5. Add incremental residual hashing if full-state hashing appears in hot traces.
-6. Consider dancing-cells-style linked mutation only if active-edge traversal or
-   undo costs dominate.
-7. Add specialized residue kernels and CPU dispatch after solver shape is
+6. Add specialized residue kernels and CPU dispatch after solver shape is
    stable.
 
 ## Reversible Mutation And Dancing Cells
 
 The branch solver already uses reversible residual mutation. The state has
 checkpoints, undo, active variables, active edges, active degrees, immutable
-incident-edge lists, residual component splitting, and residual memoization.
-
-The missing dancing-cells step is a linked deletion/reinsertion representation
-for active incidence. It should not be added just for elegance. It is worth doing
-only if traces show that repeatedly walking inactive incident entries or undoing
-large local mutations is a real bottleneck.
+edge storage, linked active-incidence cells, residual component splitting, and
+residual memoization.
 
 The desired invariant is unchanged: branch assignment should mutate only local
 state, record exactly what changed, and restore the residual by replaying the
@@ -61,21 +55,27 @@ the rankwidth and treewidth decomposition backends.
 Near-term experiments should focus on:
 
 - decomposition builders for sign-only and labelled rankwidth/treewidth DP;
-- min-fill, min-degree, and cut-rank split choices;
+- min-fill, min-degree, min-fill/max-degree, and cut-rank split choices;
 - trace summaries that report width, table sizes, join counts, cache hits, and
   wall time on the same manifest;
 - clear separation between branch variable ordering and decomposition
   construction.
 
-The current available internal/external importer-fed corpus is still too easy
-for treewidth: imported cases are sign-only and the largest treewidth tables are
-small. Treat that as a tooling check, not a serious conclusion about
-decomposition quality.
+The current internal/external importer-fed pool now includes labelled cases, but
+it is still low-width: rankwidth width currently tops out at 3 and treewidth at
+2 under the 32-variable comparison cap. Treat that as a tooling check, not a
+serious conclusion about decomposition quality.
 
 Treewidth-style scoring is useful as a cheap proxy when it predicts fewer
 residual components or smaller decomposition tables. Rankwidth-style scoring is
 more directly aligned with the decomposition DP, but is more expensive to
 evaluate.
+
+On the current 32-variable source-attributed pool, the branch `split` heuristic
+is still the practical baseline. The `treewidth` heuristic creates many cache
+hits but spends more overall, and the historical `linear-rankwidth` branch
+heuristic is only a local cut-rank proxy. It is not the graph parameter linear
+rankwidth, and it is too expensive for this pool.
 
 ## Residue And Count Arithmetic
 
@@ -102,8 +102,8 @@ Future import work that affects performance:
 
 - configurable quadratization strategies for gates such as `CCZ`;
 - qgraph/qc/ZX translation that records when a diagram remains quadratic;
-- importer diagnostics that distinguish unsupported syntax from genuinely
-  non-quadratic phase structure.
+- importer diagnostics and source-specific manifest repairs that distinguish
+  unsupported syntax from genuinely non-quadratic phase structure.
 
 ## Labelled Rankwidth
 

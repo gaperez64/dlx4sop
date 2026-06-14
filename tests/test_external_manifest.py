@@ -54,6 +54,13 @@ cnot a b
 END
 """
 
+ALIAS_QASM_SAMPLE = """OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+h qubits[0];
+cz qubits[0],qubits[1];
+"""
+
 
 def run_manifest(builder: pathlib.Path, qasm2sop: pathlib.Path, *args: str) -> tuple[list[dict], str]:
     completed = subprocess.run(
@@ -178,6 +185,36 @@ def main() -> int:
         )
         if len(qc_cases) != 2 or not any(case["name"].endswith("small") for case in qc_cases):
             raise AssertionError(f"unexpected QC manifest:\n{qc_cases}\n{qc_report}")
+
+        alias_root = root / "alias"
+        alias_root.mkdir()
+        (alias_root / "bad_alias.qasm").write_text(ALIAS_QASM_SAMPLE, encoding="utf-8")
+        alias_report_path = root / "alias-report.json"
+        alias_cases, alias_stderr = run_manifest(
+            builder,
+            qasm2sop,
+            str(alias_root),
+            "--source-prefix",
+            "feyn",
+            "--source-name",
+            "FeynmanDD",
+            "--source-url",
+            "https://github.com/cqs-thu/feynman-decision-diagram",
+            "--repair-single-register-alias",
+            "qubits",
+            "--report",
+            str(alias_report_path),
+        )
+        if len(alias_cases) != 1 or alias_cases[0].get("source") != "FeynmanDD":
+            raise AssertionError(f"unexpected alias manifest:\n{alias_cases}\n{alias_stderr}")
+        if alias_cases[0].get("source_url") != "https://github.com/cqs-thu/feynman-decision-diagram":
+            raise AssertionError(f"alias case missing source URL:\n{alias_cases}")
+        alias_qasm = "\n".join(alias_cases[0]["qasm_lines"])
+        if "qubits[" in alias_qasm or "q[0]" not in alias_qasm:
+            raise AssertionError(f"alias QASM was not repaired:\n{alias_qasm}")
+        alias_report = json.loads(alias_report_path.read_text(encoding="utf-8"))
+        if alias_report.get("source") != "FeynmanDD" or alias_report["counts"].get("ok") != 1:
+            raise AssertionError(f"unexpected alias report:\n{alias_report}")
 
     return 0
 

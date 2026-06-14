@@ -16,7 +16,7 @@ DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
 RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
-TREEWIDTH_ORDERS = ("min-fill", "min-degree")
+TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
 BACKEND_ALIAS_METRICS = (
     "rankwidth_width",
     "treewidth_width",
@@ -53,6 +53,9 @@ TOP_METRICS = (
 )
 CSV_FIELDS = [
     "case",
+    "source",
+    "source_url",
+    "source_relative_path",
     "boundary",
     "input",
     "output",
@@ -339,7 +342,7 @@ def iter_case_boundaries(cases: list[dict], limit: int | None):
             if limit is not None and seen >= limit:
                 return
             seen += 1
-            yield case["name"], qasm, input_bits, output_bits
+            yield case, qasm, input_bits, output_bits
 
 
 def iter_backend_configs(args: argparse.Namespace, backend: str):
@@ -371,7 +374,7 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
     }
 
 
-def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
+def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
     cases = load_cases(args.manifest)
     backends = args.backends or list(DEFAULT_BACKENDS)
     records: list[dict] = []
@@ -380,15 +383,21 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
         "imported_sign": 0,
         "imported_labelled": 0,
         "skipped_rankwidth_records": 0,
+        "source_boundaries": {},
     }
 
-    for case, qasm, input_bits, output_bits in iter_case_boundaries(cases, args.limit):
+    for case_data, qasm, input_bits, output_bits in iter_case_boundaries(cases, args.limit):
+        case_name = case_data["name"]
+        source = case_data.get("source", "internal")
+        source_url = case_data.get("source_url", "")
+        source_relative_path = case_data.get("source_relative_path", "")
         qsop, _stderr, import_elapsed_ns = run_command(
             [str(args.qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
             input_text=qasm,
         )
         header = qsop_header(qsop)
         metadata["case_boundaries"] += 1
+        metadata["source_boundaries"][source] = metadata["source_boundaries"].get(source, 0) + 1
         if header["qsop_mode"] == "labelled":
             metadata["imported_labelled"] += 1
         else:
@@ -430,7 +439,10 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict[str, int]]:
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 records.append(
                     {
-                        "case": case,
+                        "case": case_name,
+                        "source": source,
+                        "source_url": source_url,
+                        "source_relative_path": source_relative_path,
                         "boundary": f"{input_bits}->{output_bits}",
                         "input": input_bits,
                         "output": output_bits,
@@ -520,7 +532,7 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
         for record in ranked[: args.top]:
             stats = record["stats"]
             line = (
-                f"    {record['case']} {record['boundary']} "
+                f"    {record['source']}:{record['case']} {record['boundary']} "
                 f"value={record_metric(record, args.top_metric)} "
                 f"nvars={record['nvars']} nedges={record['nedges']} "
                 f"solve_elapsed_ns={record['solve_elapsed_ns']}"
@@ -546,7 +558,7 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
 
 
 def record_label(record: dict) -> str:
-    return f"{record['case']} {record['boundary']}"
+    return f"{record['source']}:{record['case']} {record['boundary']}"
 
 
 def metric_value(record: dict, metric: str) -> int | None:
@@ -592,13 +604,18 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
         )
 
 
-def write_summary(records: list[dict], metadata: dict[str, int], args: argparse.Namespace, file: TextIO) -> None:
+def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace, file: TextIO) -> None:
     print(f"records: {len(records)}", file=file)
     print(f"case_boundaries: {metadata['case_boundaries']}", file=file)
     print(f"solved_records: {len(records)}", file=file)
     print(f"skipped_rankwidth_records: {metadata['skipped_rankwidth_records']}", file=file)
     print(f"imported_sign: {metadata['imported_sign']}", file=file)
     print(f"imported_labelled: {metadata['imported_labelled']}", file=file)
+    source_boundaries = metadata.get("source_boundaries", {})
+    if source_boundaries:
+        print("sources:", file=file)
+        for source in sorted(source_boundaries):
+            print(f"  {source}: boundaries={source_boundaries[source]}", file=file)
     write_largest_overview(records, file)
     summary = summarize_records(records)
     for key in sorted(summary):
