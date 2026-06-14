@@ -61,6 +61,7 @@ typedef struct branch_search_stats {
   residual_cache_t cache;
   qsop_solve_trace_t *trace;
   qsop_branch_heuristic_t heuristic;
+  uint64_t count_modulus;
   uint32_t depth;
 } branch_search_stats_t;
 
@@ -90,10 +91,81 @@ static uint64_t assignment_count(uint32_t nvars) {
   return UINT64_C(1) << nvars;
 }
 
-static bool add_counts(uint32_t r, uint64_t *dst, const uint64_t *src, qsop_error_t *error) {
+static bool branch_count_add(const branch_search_stats_t *stats, uint64_t *dst, uint64_t value,
+                             qsop_error_t *error) {
+  if (stats->count_modulus != 0) {
+    *dst = qsop_mod_add_u64(*dst, value % stats->count_modulus, stats->count_modulus);
+    return true;
+  }
+  return qsop_count_add(dst, value, error);
+}
+
+static bool branch_count_mul(const branch_search_stats_t *stats, uint64_t left, uint64_t right,
+                             uint64_t *out, qsop_error_t *error) {
+  if (stats->count_modulus != 0) {
+    *out = qsop_mod_mul_u64(left, right, stats->count_modulus);
+    return true;
+  }
+  return qsop_count_mul(left, right, out, error);
+}
+
+static bool add_counts(uint32_t r, uint64_t *dst, const uint64_t *src,
+                       const branch_search_stats_t *stats, qsop_error_t *error) {
   for (uint32_t residue = 0; residue < r; residue++) {
-    if (!qsop_count_add(&dst[residue], src[residue], error)) {
+    if (!branch_count_add(stats, &dst[residue], src[residue], error)) {
       return false;
+    }
+  }
+  return true;
+}
+
+static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src,
+                                    uint32_t shift, const branch_search_stats_t *stats,
+                                    qsop_error_t *error) {
+  if (r == 0 || dst == NULL || src == NULL) {
+    set_error(error, "internal error: invalid branch residue shift-add argument");
+    return false;
+  }
+
+  const uint32_t delta = shift % r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    uint32_t target = residue + delta;
+    if (target >= r) {
+      target -= r;
+    }
+    if (!branch_count_add(stats, &dst[target], src[residue], error)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
+                                   const uint64_t *right,
+                                   const branch_search_stats_t *stats, qsop_error_t *error) {
+  if (r == 0 || dst == NULL || left == NULL || right == NULL) {
+    set_error(error, "internal error: invalid branch residue convolution argument");
+    return false;
+  }
+
+  qsop_counts_clear(r, dst);
+  for (uint32_t a = 0; a < r; a++) {
+    if (left[a] == 0) {
+      continue;
+    }
+    for (uint32_t b = 0; b < r; b++) {
+      if (right[b] == 0) {
+        continue;
+      }
+      uint32_t target = a + b;
+      if (target >= r) {
+        target -= r;
+      }
+      uint64_t product = 0;
+      if (!branch_count_mul(stats, left[a], right[b], &product, error) ||
+          !branch_count_add(stats, &dst[target], product, error)) {
+        return false;
+      }
     }
   }
   return true;
@@ -384,6 +456,57 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
   return true;
 }
 
+static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
+                           branch_search_stats_t *stats, qsop_error_t *error);
+
+static void branch_search_free(branch_search_stats_t *search) {
+  if (search == NULL) {
+    return;
+  }
+  residual_cache_free(&search->cache);
+  free(search->work);
+  free(search->tmp);
+  search->work = NULL;
+  search->tmp = NULL;
+}
+
+static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
+                                     qsop_branch_heuristic_t heuristic, uint64_t *counts,
+                                     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                     qsop_error_t *error) {
+  qsop_residual_t *residual = NULL;
+  branch_search_stats_t search = {
+      .trace = trace,
+      .heuristic = heuristic,
+      .count_modulus = count_modulus,
+  };
+
+  if (!qsop_residual_create(qsop, &residual, error) ||
+      !qsop_counts_alloc(qsop->r, &search.work, error) ||
+      !qsop_counts_alloc(qsop->r, &search.tmp, error)) {
+    qsop_residual_free(residual);
+    branch_search_free(&search);
+    return false;
+  }
+
+  if (!branch_sum_rec(residual, counts, &search, error)) {
+    qsop_residual_free(residual);
+    branch_search_free(&search);
+    return false;
+  }
+
+  if (stats != NULL) {
+    stats->search_nodes = search.nodes;
+    stats->leaf_assignments = search.leaves;
+    stats->cache_hits = search.cache_hits;
+    stats->cache_misses = search.cache_misses;
+  }
+
+  qsop_residual_free(residual);
+  branch_search_free(&search);
+  return true;
+}
+
 static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
                                   branch_search_stats_t *stats, bool *out_split,
                                   qsop_error_t *error) {
@@ -422,13 +545,14 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   acc[0] = 1;
   for (uint32_t c = 0; c < ncomponents; c++) {
     qsop_instance_t sub = {0};
-    qsop_result_t *part = NULL;
+    uint64_t *part_counts = NULL;
     qsop_solve_stats_t part_stats = {0};
-    if (!build_residual_subinstance(residual, component, c, &sub, error) ||
-        !qsop_solve_residual_branch_trace_stats(&sub, sub.nvars, &part, &part_stats, stats->trace,
-                                                error)) {
+    if (!qsop_counts_alloc(r, &part_counts, error) ||
+        !build_residual_subinstance(residual, component, c, &sub, error) ||
+        !branch_solve_counts_once(&sub, stats->count_modulus, stats->heuristic, part_counts,
+                                  &part_stats, stats->trace, error)) {
       free_subinstance(&sub);
-      qsop_result_free(part);
+      free(part_counts);
       free(component);
       free(acc);
       free(tmp);
@@ -436,9 +560,9 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
     }
 
     const uint64_t convolve_start = qsop_trace_begin(stats->trace);
-    if (!qsop_counts_convolve(r, tmp, acc, part->counts, error)) {
+    if (!branch_counts_convolve(r, tmp, acc, part_counts, stats, error)) {
       free_subinstance(&sub);
-      qsop_result_free(part);
+      free(part_counts);
       free(component);
       free(acc);
       free(tmp);
@@ -453,10 +577,15 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
 
     memcpy(acc, tmp, (size_t)r * sizeof(*acc));
     free_subinstance(&sub);
-    qsop_result_free(part);
+    free(part_counts);
   }
 
-  qsop_counts_shift_add(r, counts, acc, qsop_residual_constant(residual));
+  if (!branch_counts_shift_add(r, counts, acc, qsop_residual_constant(residual), stats, error)) {
+    free(component);
+    free(acc);
+    free(tmp);
+    return false;
+  }
   free(component);
   free(acc);
   free(tmp);
@@ -576,8 +705,8 @@ static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
       if (count == 0) {
         continue;
       }
-      if (!qsop_count_add(&next[residue], count, error) ||
-          !qsop_count_add(&next[((uint64_t)residue + unary) % r], count, error)) {
+      if (!branch_count_add(stats, &next[residue], count, error) ||
+          !branch_count_add(stats, &next[((uint64_t)residue + unary) % r], count, error)) {
         return false;
       }
     }
@@ -588,7 +717,7 @@ static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
   }
 
   for (uint32_t residue = 0; residue < r; residue++) {
-    if (!qsop_count_add(&counts[residue], current[residue], error)) {
+    if (!branch_count_add(stats, &counts[residue], current[residue], error)) {
       return false;
     }
   }
@@ -599,14 +728,11 @@ static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
   return true;
 }
 
-static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
-                           branch_search_stats_t *stats, qsop_error_t *error);
-
 static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
                                 branch_search_stats_t *stats, qsop_error_t *error) {
   if (qsop_residual_active_vars(residual) == 0) {
     stats->leaves++;
-    return qsop_count_add(&counts[qsop_residual_constant(residual)], 1, error);
+    return branch_count_add(stats, &counts[qsop_residual_constant(residual)], 1, error);
   }
   if (qsop_residual_active_edges(residual) == 0) {
     return edge_free_sum(residual, counts, stats, error);
@@ -656,7 +782,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
                           lookup_start);
   if (entry != NULL) {
     stats->cache_hits++;
-    return add_counts(qsop_residual_modulus(residual), counts, entry->counts, error);
+    return add_counts(qsop_residual_modulus(residual), counts, entry->counts, stats, error);
   }
 
   stats->cache_misses++;
@@ -674,11 +800,83 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     return false;
   }
 
-  if (!add_counts(r, counts, computed, error)) {
+  if (!add_counts(r, counts, computed, stats, error)) {
     free(computed);
     return false;
   }
   free(computed);
+  return true;
+}
+
+static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_t heuristic,
+                             qsop_result_t **out, qsop_solve_stats_t *stats,
+                             qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "branch CRT count table is too large");
+    return false;
+  }
+
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating branch CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating branch CRT result strings");
+    return false;
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!branch_solve_counts_once(qsop, primes[p], heuristic,
+                                  &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                                  trace_for_prime, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                      &result->count_strings[residue], error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
   return true;
 }
 
@@ -724,54 +922,27 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
               qsop->nvars);
     return false;
   }
+  if (qsop->nvars >= 64U) {
+    return solve_branch_crt(qsop, heuristic, out, stats, trace, error);
+  }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  qsop_residual_t *residual = NULL;
   if (result == NULL) {
     set_error(error, "out of memory while allocating result");
     return false;
   }
   result->r = qsop->r;
   result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error) ||
-      !qsop_residual_create(qsop, &residual, error)) {
+  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
     qsop_result_free(result);
-    qsop_residual_free(residual);
     return false;
   }
 
-  branch_search_stats_t search = {
-      .trace = trace,
-      .heuristic = heuristic,
-  };
-  if (!qsop_counts_alloc(qsop->r, &search.work, error) ||
-      !qsop_counts_alloc(qsop->r, &search.tmp, error)) {
+  if (!branch_solve_counts_once(qsop, 0, heuristic, result->counts, stats, trace, error)) {
     qsop_result_free(result);
-    qsop_residual_free(residual);
-    residual_cache_free(&search.cache);
-    free(search.work);
-    free(search.tmp);
     return false;
-  }
-  if (!branch_sum_rec(residual, result->counts, &search, error)) {
-    qsop_result_free(result);
-    qsop_residual_free(residual);
-    residual_cache_free(&search.cache);
-    free(search.work);
-    free(search.tmp);
-    return false;
-  }
-  if (stats != NULL) {
-    stats->search_nodes = search.nodes;
-    stats->leaf_assignments = search.leaves;
-    stats->cache_hits = search.cache_hits;
-    stats->cache_misses = search.cache_misses;
   }
 
-  qsop_residual_free(residual);
-  residual_cache_free(&search.cache);
-  free(search.work);
-  free(search.tmp);
   *out = result;
   return true;
 }

@@ -142,5 +142,5 @@ Coverage should continue to include:
 - backend agreement on small examples;
 - residual undo and cache invariants;
 - importer-fed corpus smoke tests;
-- rankwidth large-count paths;
+- branch and rankwidth large-count paths;
 - the configured coverage threshold.

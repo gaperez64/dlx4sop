@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int expect_counts(const char *name, uint32_t r, const uint64_t *actual,
                          const uint64_t *expected) {
@@ -65,6 +66,44 @@ static int test_convolve_counts(void) {
   return expect_counts("convolve_counts", r, dst, expected);
 }
 
+static int test_crt_reconstruct_decimal(void) {
+  const uint64_t primes[] = {101, 103, 107};
+  const uint64_t value = UINT64_C(123456);
+  uint64_t residues[] = {value % primes[0], value % primes[1], value % primes[2]};
+  qsop_error_t error = {0};
+  char *text = NULL;
+
+  if (!qsop_crt_reconstruct_decimal(residues, primes, 3, &text, &error)) {
+    fprintf(stderr, "crt_reconstruct_decimal failed: %s\n", error.message);
+    return 1;
+  }
+  if (strcmp(text, "123456") != 0) {
+    fprintf(stderr, "crt_reconstruct_decimal expected 123456 got %s\n", text);
+    free(text);
+    return 1;
+  }
+  free(text);
+  return 0;
+}
+
+static int test_crt_prime_count(void) {
+  qsop_error_t error = {0};
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+
+  if (!qsop_crt_find_primes_for_nvars(64, &primes, &nprimes, &error)) {
+    fprintf(stderr, "crt_find_primes failed: %s\n", error.message);
+    return 1;
+  }
+  if (nprimes != 2 || !qsop_mod_is_prime_u64(primes[0]) || !qsop_mod_is_prime_u64(primes[1])) {
+    fprintf(stderr, "crt_find_primes returned invalid prime set\n");
+    free(primes);
+    return 1;
+  }
+  free(primes);
+  return 0;
+}
+
 int main(void) {
   if (test_shift_add() != 0) {
     return 1;
@@ -76,6 +115,12 @@ int main(void) {
     return 1;
   }
   if (test_convolve_counts() != 0) {
+    return 1;
+  }
+  if (test_crt_reconstruct_decimal() != 0) {
+    return 1;
+  }
+  if (test_crt_prime_count() != 0) {
     return 1;
   }
   return 0;

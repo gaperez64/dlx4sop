@@ -21,8 +21,8 @@ Implemented solver backends:
 - `components` (default): split connected components and cache repeated small
   components.
 - `brute-force`: enumerate all assignments for small oracle checks.
-- `branch`: residual branch-and-sum with component splitting and residual cache
-  stats.
+- `branch`: residual branch-and-sum with component splitting, cache stats, and
+  CRT-backed large-count output.
 - `rankwidth`: decomposition backend with sign/labelled count-table mode,
   CRT-backed large-count output, generated decompositions, and sign-only
   Fourier mode.

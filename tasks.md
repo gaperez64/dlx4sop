@@ -15,8 +15,9 @@ than repeated here.
 - Solver status:
   - `components` remains the default exact backend.
   - `branch` has residual mutation, residual fingerprints, memo cache stats,
-    component splitting, edge-free residue-table leaves, and experimental
-    `split|treewidth|linear-rankwidth` variable heuristics.
+    component splitting, edge-free residue-table leaves, CRT-backed large
+    assignment counts, and experimental `split|treewidth|linear-rankwidth`
+    variable heuristics.
   - `rankwidth` handles sign-edge and labelled QSOPs with generated or explicit
     decompositions, count-table mode, CRT-backed large assignment counts, and
     sign-only Fourier mode.
@@ -36,7 +37,7 @@ than repeated here.
     samples remain width/runtime stress cases.
 - Last full validation:
   - `meson test -C build --print-errorlogs`: 17/17 passing.
-  - `tools/check-coverage.sh build-coverage`: 77.9% line coverage.
+  - `tools/check-coverage.sh build-coverage`: 77.5% line coverage.
 
 ## Current Task
 
@@ -44,6 +45,8 @@ than repeated here.
   cases, and rankwidth table-growth limits.
 - Use branch/components as labelled baselines when rankwidth width or table
   growth needs explanation.
+- Recompare branch and rankwidth on large imported cases now that both can emit
+  CRT-backed large histograms.
 
 ## Next Steps
 
@@ -51,8 +54,8 @@ than repeated here.
   `--max-vars` above 63.
 - Use the report categories to choose the next importer fixes that remain
   labelled quadratic.
-- Compare rankwidth count-table fast path versus CRT path below 64 variables to
-  quantify overhead and verify the default path remains cheap.
+- Compare branch/rankwidth fixed-width fast paths versus CRT paths below 64
+  variables to quantify overhead and verify the default paths remain cheap.
 - Use rankwidth sweeps before changing generated-decomposition defaults; recent
   evidence differs between small checked-in cases and larger PyZX-derived
   cases.

@@ -92,15 +92,19 @@ Implemented exact backends:
   solves components independently, and convolves residue histograms.
 - `branch`: mutates a reversible residual state, branches on active variables,
   memoizes repeated residuals, splits residual components, and collapses
-  edge-free unary tails.
+  edge-free unary tails. It uses fixed-width counts when safe and a CRT-backed
+  outer loop for larger final histograms.
 - `rankwidth`: decomposition DP with generated or supplied decompositions,
-  sign/labelled count-table mode, and a small-instance sign-only Fourier mode.
+  sign/labelled count-table mode, CRT-backed larger histograms, and a
+  small-instance sign-only Fourier mode.
 
 The rankwidth backend uses bitset-backed signatures for sign-only instances and
 `Z_r` boundary-signature vectors for labelled instances. Practical limits are
 solver guards, memory, and decomposition width rather than a single machine-word
 mask. Exact result counts use the normal `uint64_t` fast path when possible and
-a CRT-backed path for larger final histograms.
+a CRT-backed path for larger final histograms in branch and rankwidth
+count-table mode. Brute force remains a small-instance oracle with a hard
+variable guard.
 
 Current branch variable-ordering policies are heuristics, not decomposition
 solvers:

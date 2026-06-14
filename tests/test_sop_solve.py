@@ -100,8 +100,22 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if branch.returncode == 0 or "exceeds uint64 capacity" not in branch.stderr:
-        raise AssertionError(f"branch did not report uint64 overflow\n{branch.stdout}\n{branch.stderr}")
+    if branch.returncode != 0 or branch.stdout != expected:
+        raise AssertionError(f"large branch CRT solve failed\n{branch.stdout}\n{branch.stderr}")
+
+    brute_force = subprocess.run(
+        [str(exe), "--backend", "brute-force", "--max-vars", "64", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if brute_force.returncode == 0 or "supports at most 62 variables" not in brute_force.stderr:
+        raise AssertionError(
+            f"brute force did not report the large-variable guard\n"
+            f"{brute_force.stdout}\n{brute_force.stderr}"
+        )
 
     labelled_qsop = "p qsop 8 64 1\nn 0\ncst 0\nq 0 1 3\n"
     labelled = subprocess.run(
@@ -119,6 +133,20 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     )
     if labelled.returncode != 0 or labelled.stdout != labelled_expected:
         raise AssertionError(f"large labelled rankwidth CRT solve failed\n{labelled.stdout}\n{labelled.stderr}")
+
+    labelled_branch = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        input=labelled_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if labelled_branch.returncode != 0 or labelled_branch.stdout != labelled_expected:
+        raise AssertionError(
+            f"large labelled branch CRT solve failed\n{labelled_branch.stdout}\n"
+            f"{labelled_branch.stderr}"
+        )
 
 
 def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
