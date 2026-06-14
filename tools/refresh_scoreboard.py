@@ -9,6 +9,9 @@ import sys
 from typing import Iterable, TextIO
 
 from render_scoreboard import (
+    BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
+    BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
+    branch_skip_reason_text,
     cache_hit_rate,
     comparison_speedup,
     format_ns,
@@ -205,6 +208,20 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"tw skips={format_count(stats.get('branch_treewidth_skips', 0))}, "
             f"rw skips={format_count(stats.get('branch_rankwidth_skips', 0))}"
         )
+        treewidth_skip_reasons = branch_skip_reason_text(
+            stats,
+            BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
+            format_count,
+        )
+        if treewidth_skip_reasons:
+            parts.append(f"tw skip reasons {treewidth_skip_reasons}")
+        rankwidth_skip_reasons = branch_skip_reason_text(
+            stats,
+            BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
+            format_count,
+        )
+        if rankwidth_skip_reasons:
+            parts.append(f"rw skip reasons {rankwidth_skip_reasons}")
     if "max_residual_min_fill_width" in stats or "max_residual_prefix_cut_rank" in stats:
         parts.append(
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "

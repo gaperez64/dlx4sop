@@ -19,6 +19,22 @@ BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
 RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
+BRANCH_TREEWIDTH_SKIP_METRICS = {
+    "branch.treewidth_skip_width": "branch_treewidth_skip_width_events",
+    "branch.treewidth_skip_unavailable": "branch_treewidth_skip_unavailable_events",
+    "branch.treewidth_skip_order_width": "branch_treewidth_skip_order_width_events",
+}
+BRANCH_RANKWIDTH_SKIP_METRICS = {
+    "branch.rankwidth_skip_treewidth_preferred": "branch_rankwidth_skip_treewidth_preferred_events",
+    "branch.rankwidth_skip_prefix_proxy": "branch_rankwidth_skip_prefix_proxy_events",
+    "branch.rankwidth_skip_policy": "branch_rankwidth_skip_policy_events",
+    "branch.rankwidth_skip_width": "branch_rankwidth_skip_width_events",
+    "branch.rankwidth_skip_table_forecast": "branch_rankwidth_skip_table_forecast_events",
+    "branch.rankwidth_skip_join_pair_forecast": "branch_rankwidth_skip_join_pair_forecast_events",
+}
+BRANCH_SKIP_REASON_FIELDS = tuple(BRANCH_TREEWIDTH_SKIP_METRICS.values()) + tuple(
+    BRANCH_RANKWIDTH_SKIP_METRICS.values()
+)
 BACKEND_ALIAS_METRICS = (
     "rankwidth_width",
     "treewidth_width",
@@ -76,6 +92,7 @@ TOP_METRICS = (
     "branch_fallthroughs",
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
+    *BRANCH_SKIP_REASON_FIELDS,
     "max_residual_vars",
     "max_residual_edges",
     "max_residual_components",
@@ -150,6 +167,7 @@ CSV_FIELDS = [
     "branch_fallthroughs",
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
+    *BRANCH_SKIP_REASON_FIELDS,
     "max_residual_vars",
     "max_residual_edges",
     "max_residual_components",
@@ -395,6 +413,19 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
     return metrics
 
 
+def branch_skip_reason_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phase, key in BRANCH_TREEWIDTH_SKIP_METRICS.items():
+        values = trace.get(phase)
+        if values is not None:
+            metrics[key] = values["events"]
+    for phase, key in BRANCH_RANKWIDTH_SKIP_METRICS.items():
+        values = trace.get(phase)
+        if values is not None:
+            metrics[key] = values["events"]
+    return metrics
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -495,6 +526,7 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            *BRANCH_SKIP_REASON_FIELDS,
         ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
@@ -527,6 +559,17 @@ def record_metric(record: dict, metric: str) -> int:
 
 def record_has_metric(record: dict, metric: str) -> bool:
     return isinstance(record.get(metric), int) or isinstance(record["stats"].get(metric), int)
+
+
+def branch_skip_reason_parts(record: dict, fields: tuple[str, ...], prefix: str) -> list[str]:
+    parts = []
+    for field in fields:
+        value = record_metric(record, field)
+        if value == 0:
+            continue
+        label = field.removeprefix(prefix).removesuffix("_events").replace("_", "-")
+        parts.append(f"{label}:{value}")
+    return parts
 
 
 def dominant_trace_phase(record: dict) -> str:
@@ -682,6 +725,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 cache_metrics = cache_record_metrics(stats, trace)
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
+                skip_reason_metrics = branch_skip_reason_metrics(trace)
                 records.append(
                     {
                         "case": case_name,
@@ -709,6 +753,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **cache_metrics,
                         **branch_probe_metrics,
                         **treewidth_probe_metrics,
+                        **skip_reason_metrics,
                         "trace": trace,
                     }
                 )
@@ -771,6 +816,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_fallthroughs",
             "branch_treewidth_skips",
             "branch_rankwidth_skips",
+            *BRANCH_SKIP_REASON_FIELDS,
             "max_residual_vars",
             "max_residual_edges",
             "max_residual_components",
@@ -883,6 +929,20 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f",tw_skips:{stats.get('branch_treewidth_skips', 0)}"
                     f",rw_skips:{stats.get('branch_rankwidth_skips', 0)}"
                 )
+            treewidth_skip_reasons = branch_skip_reason_parts(
+                record,
+                tuple(BRANCH_TREEWIDTH_SKIP_METRICS.values()),
+                "branch_treewidth_skip_",
+            )
+            if treewidth_skip_reasons:
+                line += f" branch_treewidth_skip_reasons={','.join(treewidth_skip_reasons)}"
+            rankwidth_skip_reasons = branch_skip_reason_parts(
+                record,
+                tuple(BRANCH_RANKWIDTH_SKIP_METRICS.values()),
+                "branch_rankwidth_skip_",
+            )
+            if rankwidth_skip_reasons:
+                line += f" branch_rankwidth_skip_reasons={','.join(rankwidth_skip_reasons)}"
             if "max_residual_min_fill_width" in stats or "max_residual_prefix_cut_rank" in stats:
                 line += (
                     f" residual_widths=tw:{stats.get('max_residual_min_fill_width', 0)}"
@@ -1102,6 +1162,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_fallthroughs",
             "branch_treewidth_skips",
             "branch_rankwidth_skips",
+            *BRANCH_SKIP_REASON_FIELDS,
             "max_residual_vars",
             "max_residual_edges",
             "max_residual_components",

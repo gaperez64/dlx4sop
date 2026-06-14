@@ -11,6 +11,26 @@ from summarize_qasm_report import DEFAULT_TIERS, markdown_escape, summarize_repo
 
 
 AMPLITUDE_ABS_TOL = 1e-8
+BRANCH_TREEWIDTH_SKIP_REASON_FIELDS = (
+    ("branch_treewidth_skip_width_events", "width"),
+    ("branch_treewidth_skip_unavailable_events", "unavailable"),
+    ("branch_treewidth_skip_order_width_events", "order-width"),
+)
+BRANCH_RANKWIDTH_SKIP_REASON_FIELDS = (
+    ("branch_rankwidth_skip_treewidth_preferred_events", "treewidth-preferred"),
+    ("branch_rankwidth_skip_prefix_proxy_events", "prefix-proxy"),
+    ("branch_rankwidth_skip_policy_events", "policy"),
+    ("branch_rankwidth_skip_width_events", "width"),
+    ("branch_rankwidth_skip_table_forecast_events", "table-forecast"),
+    ("branch_rankwidth_skip_join_pair_forecast_events", "join-pair-forecast"),
+)
+BRANCH_SKIP_REASON_FIELDS = tuple(
+    field
+    for field, _label in (
+        *BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
+        *BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
+    )
+)
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -97,6 +117,15 @@ def add_max(counter: dict[str, int], key: str, value: int | None) -> None:
         counter[key] = max(counter.get(key, 0), value)
 
 
+def branch_skip_reason_text(stats: dict[str, int], fields: tuple[tuple[str, str], ...], value_formatter=str) -> str:
+    parts = []
+    for field, label in fields:
+        value = stats.get(field, 0)
+        if isinstance(value, int) and value:
+            parts.append(f"{label}={value_formatter(value)}")
+    return ", ".join(parts)
+
+
 def cache_hit_rate(stats: dict[str, int]) -> str:
     hits = stats.get("cache_hits", 0)
     misses = stats.get("cache_misses", 0)
@@ -161,6 +190,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
                 "branch_treewidth_order_probe_elapsed_ns",
+                *BRANCH_SKIP_REASON_FIELDS,
             ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
@@ -252,6 +282,12 @@ def key_stats(stats: dict[str, int]) -> str:
             f"tw skips={stats.get('branch_treewidth_skips', 0)}, "
             f"rw skips={stats.get('branch_rankwidth_skips', 0)}"
         )
+        treewidth_skip_reasons = branch_skip_reason_text(stats, BRANCH_TREEWIDTH_SKIP_REASON_FIELDS)
+        if treewidth_skip_reasons:
+            parts.append(f"tw skip reasons {treewidth_skip_reasons}")
+        rankwidth_skip_reasons = branch_skip_reason_text(stats, BRANCH_RANKWIDTH_SKIP_REASON_FIELDS)
+        if rankwidth_skip_reasons:
+            parts.append(f"rw skip reasons {rankwidth_skip_reasons}")
     if "max_residual_min_fill_width" in stats or "max_residual_prefix_cut_rank" in stats:
         parts.append(
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
