@@ -329,6 +329,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--treewidth-order", "min-degree", str(qsop)], "requires --backend treewidth"),
         ([str(exe), "--branch-heuristic"], "requires a value"),
         ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
+        ([str(exe), "--branch-heuristic", "linear-rankwidth", str(qsop)], "unsupported branch heuristic"),
         ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
         ([str(exe), "--trace"], "requires a value"),
         ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
@@ -770,7 +771,10 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if expected.returncode != 0:
         raise AssertionError(f"default branch solve failed\n{expected.stderr}")
 
-    for heuristic in ["treewidth", "linear-rankwidth"]:
+    for heuristic, reported in [
+        ("treewidth", "treewidth"),
+        ("cutrank-proxy", "cutrank-proxy"),
+    ]:
         completed = subprocess.run(
             [str(exe), "--backend", "branch", "--branch-heuristic", heuristic, str(qsop)],
             check=False,
@@ -799,7 +803,7 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             stderr=subprocess.PIPE,
             text=True,
         )
-        if stats.returncode != 0 or f"branch_heuristic: {heuristic}" not in stats.stdout:
+        if stats.returncode != 0 or f"branch_heuristic: {reported}" not in stats.stdout:
             raise AssertionError(f"{heuristic} stats missing heuristic\n{stats.stdout}\n{stats.stderr}")
 
 

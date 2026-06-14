@@ -309,6 +309,22 @@ if python3.found()
     ],
     depends: qasm2sop,
   )
+  test(
+    'qasm report summary smoke',
+    python3,
+    args: [
+      files('tests/test_summarize_qasm_report.py'),
+      files('tools/summarize_qasm_report.py'),
+    ],
+  )
+  test(
+    'native simulator benchmark help',
+    python3,
+    args: [
+      files('tools/bench_qasm_native_simulator.py'),
+      '--help',
+    ],
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',

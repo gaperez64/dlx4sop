@@ -52,7 +52,7 @@ typedef enum qsop_treewidth_order {
 typedef enum qsop_branch_heuristic {
   QSOP_BRANCH_HEURISTIC_SPLIT,
   QSOP_BRANCH_HEURISTIC_TREEWIDTH,
-  QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH,
+  QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY,
 } qsop_branch_heuristic_t;
 
 typedef struct qsop_solve_trace_event {

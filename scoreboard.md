@@ -13,6 +13,10 @@ available.
 External sources are cited by upstream repository. Generated manifests and
 reports are local benchmark artifacts, not citation targets.
 
+Use `tools/summarize_qasm_report.py` on the generated per-source import reports
+to reproduce tier tables from structured data. The default tiers are `0-32`,
+`33-64`, `65-128`, `129-256`, and `257+` imported SOP variables.
+
 | Source | Upstream | Inputs scanned | Emitted at 32 vars | Too large at 32 vars | Other unsupported |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Internal corpus | `tests/qasm_solver_corpus.json` | 12 cases | 12 cases | 0 | 0 |
@@ -46,7 +50,7 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve \
 | --- | ---: | ---: | --- |
 | `branch --branch-heuristic split` | 133 / 133 | 81.1 ms | 9,781 nodes; 15,314 leaf assignments; cache 0 / 9,781 |
 | `branch --branch-heuristic treewidth` | 133 / 133 | 677.0 ms | 91,543 nodes; cache 42,736 / 48,807; hit rate 0.467 |
-| `branch --branch-heuristic linear-rankwidth` cut-rank proxy | 133 / 133 | 14.48 s | 4,007,973 nodes; cache 62,992 / 3,944,981 |
+| `branch --branch-heuristic cutrank-proxy` | 133 / 133 | 14.48 s | 4,007,973 nodes; cache 62,992 / 3,944,981 |
 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 121 / 133 | 70.5 ms | max width 3; max table 48; max signatures 8 |
 | `treewidth --treewidth-order min-degree` | 133 / 133 | 56.9 ms | max width 2; max table 64; 12,692 join pairs |
 | `treewidth --treewidth-order min-fill` | 133 / 133 | 59.4 ms | max width 2; max table 64; 12,692 join pairs |
@@ -63,14 +67,14 @@ components but is not the current full-pool baseline.
 
 ## Heuristic Note
 
-`linear-rankwidth` in the branch stats is not the exact graph parameter linear
-rankwidth, and it is not the rankwidth DP solver. It is a branch
-variable-ordering heuristic with a historical CLI name. At each residual state,
-it scores candidate variables using a local GF(2) cut-rank proxy between the
-candidate's active neighbors and the remaining active graph, then branches on
-the smallest score with the normal split heuristic as a tie-break. It does not
-compute, optimize, or certify a global linear layout. On the current pool it is
-too expensive relative to the benefit, so `split` remains the branch baseline.
+`cutrank-proxy` is not the exact graph parameter linear rankwidth, and it is not
+the rankwidth DP solver. It is a branch variable-ordering heuristic. At each
+residual state, it scores candidate variables using a local GF(2) cut-rank proxy
+between the candidate's active neighbors and the remaining active graph, then
+branches on the smallest score with the normal split heuristic as a tie-break.
+It does not compute, optimize, or certify a global linear layout. On the current
+pool it is too expensive relative to the benefit, so `split` remains the branch
+baseline.
 
 ## Independent Checks
 
@@ -85,6 +89,12 @@ too expensive relative to the benefit, so `split` remains the branch baseline.
 
 The skipped Qiskit manifest cases use gates this local Qiskit OpenQASM parser did
 not define from the source text, such as `iswap` and `ccz`.
+
+Until `sop2X` exporters exist, competitor speed comparisons should be native-set
+comparisons: run `dlx4sop` on the source cases it can import, and run each
+external simulator on that simulator's native benchmark format. For QASM-backed
+sets, `tools/bench_qasm_native_simulator.py` records Qiskit Statevector or Aer
+fixed-boundary amplitude timings directly from manifest QASM.
 
 ## Current Takeaway
 

@@ -104,7 +104,9 @@ tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend components -
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend rankwidth --rankwidth-sweep --skip-unsupported --trace --format summary
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --backend treewidth --treewidth-order min-fill --treewidth-order min-degree --treewidth-order min-fill-max-degree --top-metric treewidth_max_table_entries --format summary
 tools/build_external_qasm_manifest.py build/qasm2sop path/to/corpus --source-name NAME --source-url URL --report corpus-report.json --output corpus.json
+tools/summarize_qasm_report.py corpus-report.json --format markdown
 tools/check_qasm_manifest_qiskit.py build/qasm2sop build/sop-solve corpus.json --skip-qiskit-unsupported
+tools/bench_qasm_native_simulator.py corpus.json --engine qiskit-statevector --skip-unsupported --format summary
 ```
 
 ## Scope

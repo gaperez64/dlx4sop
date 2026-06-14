@@ -73,9 +73,9 @@ evaluate.
 
 On the current 32-variable source-attributed pool, the branch `split` heuristic
 is still the practical baseline. The `treewidth` heuristic creates many cache
-hits but spends more overall, and the historical `linear-rankwidth` branch
-heuristic is only a local cut-rank proxy. It is not the graph parameter linear
-rankwidth, and it is too expensive for this pool.
+hits but spends more overall, and `cutrank-proxy` is only a local cut-rank
+branch-ordering proxy. It is not the graph parameter linear rankwidth, and it is
+too expensive for this pool.
 
 ## Residue And Count Arithmetic
 
@@ -104,6 +104,8 @@ Future import work that affects performance:
 - qgraph/qc/ZX translation that records when a diagram remains quadratic;
 - importer diagnostics and source-specific manifest repairs that distinguish
   unsupported syntax from genuinely non-quadratic phase structure.
+- native-set simulator baselines for external tools until explicit `sop2X`
+  exporters exist.
 
 ## Labelled Rankwidth
 
@@ -126,6 +128,7 @@ human to inspect verbose traces.
 Useful stable metrics:
 
 - imported/skipped/error counts by corpus;
+- imported-variable tiers by source and mode;
 - variables, terms, components, and modulus;
 - branch internal nodes, leaves, cache hits, and cache misses;
 - decomposition width, table entries, signature entries where applicable, and

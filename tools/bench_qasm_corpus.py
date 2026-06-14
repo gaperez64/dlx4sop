@@ -13,7 +13,7 @@ from typing import TextIO
 
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
-BRANCH_HEURISTICS = ("split", "treewidth", "linear-rankwidth")
+BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
 RANKWIDTH_GENERATORS = ("linear", "balanced", "min-fill", "min-fill-cut")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")

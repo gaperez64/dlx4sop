@@ -20,9 +20,9 @@ than repeated here.
   - `branch` has residual mutation, residual fingerprints, memo cache stats,
     dancing-cells-style active incidence unlink/relink, component splitting,
     edge-free residue-table leaves, CRT-backed large assignment counts, and
-    experimental `split|treewidth|linear-rankwidth` variable heuristics. The
-    `linear-rankwidth` branch option is a local cut-rank proxy, not a certified
-    linear-rankwidth computation.
+    experimental `split|treewidth|cutrank-proxy` variable heuristics. The old
+    branch heuristic name was removed so `linear-rankwidth` remains reserved for
+    an actual linear-rankwidth concept if one is added later.
   - `rankwidth` handles sign-edge and labelled QSOPs with generated or explicit
     decompositions, count-table mode, CRT-backed large assignment counts, and
     sign-only Fourier mode.
@@ -39,6 +39,10 @@ than repeated here.
   - `.qc` benchmark files can be translated through `tools/qc2qasm.py`.
 - Benchmark status:
   - External manifest builds can emit per-source classification reports.
+  - `tools/summarize_qasm_report.py` turns those reports into reproducible
+    source/status/size-tier tables for benchmark promotion.
+  - `tools/bench_qasm_native_simulator.py` starts optional native QASM timing
+    baselines for Qiskit Statevector and Aer.
   - Benchmark summaries report imported sign/labelled counts, rankwidth skips,
     source-family boundary counts, backend-specific rankwidth/treewidth width
     and table metrics, and largest case-boundaries by core size/performance
@@ -49,7 +53,7 @@ than repeated here.
     decomposition guard records in the current benchmark script.
   - Branch heuristic comparison on that pool favors `split`: about 9.8k search
     nodes and 81ms total solve time, versus 91.5k/677ms for `treewidth` and
-    4.0M/14.5s for `linear-rankwidth`.
+    4.0M/14.5s for `cutrank-proxy`.
 - Last full validation:
   - `meson test -C build --print-errorlogs`: 18/18 passing.
   - `tools/check-coverage.sh build-coverage`: 77.2% line coverage.
@@ -67,9 +71,9 @@ than repeated here.
 
 - Raise the benchmark cap selectively and classify the importable-but-filtered
   cases above 32 variables by source, mode, width proxy, and expected solver.
-- Add competitor baseline harnesses for fixed-boundary amplitudes: Qiskit
-  Statevector, Aer when available, MQT simulator tooling, and ZX-calculus
-  simulators where the input format matches.
+- Add competitor baseline harnesses only on native benchmark formats until
+  `sop2X` exporters exist. QASM-native Qiskit/Aer timing has started; MQT and
+  ZX-calculus simulator baselines still need native-corpus runners.
 - Keep `branch --branch-heuristic split` as the branch baseline until a harder
   pool shows that cache-heavy heuristics repay their selection cost.
 - Add stronger rankwidth/treewidth decomposition builders only after larger
@@ -77,7 +81,8 @@ than repeated here.
 - Use external classification reports to choose the next importer fixes that
   remain labelled quadratic.
 - Keep [scoreboard.md](scoreboard.md) as the concise public record for corpus
-  coverage, solver results, and external simulator comparisons.
+  coverage, solver results, native-set external simulator comparisons, and the
+  exact commands used to refresh tables.
 - Keep coverage above the 75% CI gate.
 
 ## Deferred Work
@@ -90,5 +95,5 @@ than repeated here.
 - Decide whether Fourier should stay a small-instance comparison mode or gain a
   labelled/multi-prime CRT variant.
 - More importer syntax support driven by real benchmark misses.
-- Optional exporters for external baselines such as FeynmanDD gate-set JSON or
-  WMC encodings.
+- Optional `sop2X` exporters for external baselines such as FeynmanDD gate-set
+  JSON or WMC encodings.

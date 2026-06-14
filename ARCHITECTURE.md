@@ -119,9 +119,9 @@ solvers:
 
 - `split`: default residual component split estimate;
 - `treewidth`: min-fill estimate on the active graph;
-- `linear-rankwidth`: historical name for a local GF(2) cut-rank proxy. It is a
-  branch ordering heuristic, not a certified computation of the graph parameter
-  linear rankwidth.
+- `cutrank-proxy`: local GF(2) cut-rank proxy. It is a branch ordering
+  heuristic, not a certified computation of the graph parameter linear
+  rankwidth.
 
 ## OpenQASM Import
 
@@ -148,6 +148,9 @@ Relevant tool boundaries:
   skips, source families, backend-specific rankwidth/treewidth width and table
   metrics, and largest case-boundaries;
 - optional comparison scripts can use external frameworks outside the C core.
+  Until `sop2X` exporters exist, those comparisons should use each external
+  simulator on its native benchmark format rather than pretending every backend
+  can consume SOP directly.
 
 ## Labelled Rankwidth Direction
 

@@ -34,7 +34,7 @@ typedef struct csv_trace_writer {
 static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
-        "[--branch-heuristic split|treewidth|linear-rankwidth] "
+        "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate linear|balanced|min-fill|min-fill-cut] "
         "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
@@ -75,8 +75,8 @@ static const char *branch_heuristic_name(qsop_branch_heuristic_t heuristic) {
     return "split";
   case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
     return "treewidth";
-  case QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH:
-    return "linear-rankwidth";
+  case QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY:
+    return "cutrank-proxy";
   }
   return "unknown";
 }
@@ -270,8 +270,8 @@ int main(int argc, char **argv) {
         branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
       } else if (strcmp(value, "treewidth") == 0) {
         branch_heuristic = QSOP_BRANCH_HEURISTIC_TREEWIDTH;
-      } else if (strcmp(value, "linear-rankwidth") == 0) {
-        branch_heuristic = QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH;
+      } else if (strcmp(value, "cutrank-proxy") == 0) {
+        branch_heuristic = QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY;
       } else {
         fprintf(stderr, "error: unsupported branch heuristic '%s'\n", value);
         return 2;

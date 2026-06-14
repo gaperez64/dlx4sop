@@ -629,7 +629,7 @@ static bool branch_candidate_better(qsop_branch_heuristic_t heuristic,
   case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
     return candidate->fill_edges < best->fill_edges ||
            (candidate->fill_edges == best->fill_edges && split_candidate_better(candidate, best));
-  case QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH:
+  case QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY:
     return candidate->cut_rank < best->cut_rank ||
            (candidate->cut_rank == best->cut_rank && split_candidate_better(candidate, best));
   }
@@ -664,7 +664,7 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
           !qsop_residual_fill_edges_without_var(residual, v, &candidate.fill_edges, error)) {
         return false;
       }
-      if (heuristic == QSOP_BRANCH_HEURISTIC_LINEAR_RANKWIDTH &&
+      if (heuristic == QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY &&
           !qsop_residual_neighbor_cut_rank(residual, v, &candidate.cut_rank, error)) {
         return false;
       }
