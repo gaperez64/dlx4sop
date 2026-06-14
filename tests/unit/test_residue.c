@@ -1,3 +1,4 @@
+#include "dlx4sop/qsop.h"
 #include "dlx4sop/residue.h"
 
 #include <inttypes.h>
@@ -34,6 +35,19 @@ static int test_clear(void) {
 
   qsop_counts_clear(r, counts);
   return expect_counts("clear", r, counts, expected);
+}
+
+static int test_shift_add_checked_invalid(void) {
+  qsop_error_t error = {0};
+  if (qsop_counts_shift_add_checked(0, NULL, NULL, 0, &error)) {
+    fprintf(stderr, "shift_add_checked accepted invalid arguments\n");
+    return 1;
+  }
+  if (strstr(error.message, "invalid residue shift-add") == NULL) {
+    fprintf(stderr, "shift_add_checked returned unexpected error: %s\n", error.message);
+    return 1;
+  }
+  return 0;
 }
 
 static int test_convolve_support(void) {
@@ -104,11 +118,61 @@ static int test_crt_prime_count(void) {
   return 0;
 }
 
+static int test_qsop_write_errors(void) {
+  qsop_error_t error = {0};
+  if (qsop_write_file(NULL, NULL, &error)) {
+    fprintf(stderr, "qsop_write_file accepted null arguments\n");
+    return 1;
+  }
+  if (strstr(error.message, "null write argument") == NULL) {
+    fprintf(stderr, "qsop_write_file returned unexpected null error: %s\n", error.message);
+    return 1;
+  }
+
+  uint32_t unary[] = {1, 0};
+  uint32_t edge_u[] = {0};
+  uint32_t edge_v[] = {1};
+  uint32_t edge_q[] = {4};
+  qsop_instance_t qsop = {
+      .r = 8,
+      .nvars = 2,
+      .norm_h = 0,
+      .constant = 3,
+      .mode = QSOP_MODE_SIGN,
+      .unary = unary,
+      .nedges = 1,
+      .edge_u = edge_u,
+      .edge_v = edge_v,
+      .edge_q = edge_q,
+  };
+
+  FILE *full = fopen("/dev/full", "w");
+  if (full == NULL) {
+    return 0;
+  }
+  setvbuf(full, NULL, _IONBF, 0);
+  error = (qsop_error_t){0};
+  const bool ok = qsop_write_file(full, &qsop, &error);
+  fclose(full);
+  if (ok) {
+    fprintf(stderr, "qsop_write_file unexpectedly wrote to /dev/full\n");
+    return 1;
+  }
+  if (strstr(error.message, "write failed") == NULL) {
+    fprintf(stderr, "qsop_write_file returned unexpected write error: %s\n", error.message);
+    return 1;
+  }
+  return 0;
+}
+
 int main(void) {
   if (test_shift_add() != 0) {
     return 1;
   }
   if (test_clear() != 0) {
+    return 1;
+  }
+  if (test_shift_add_checked_invalid() != 0) {
     return 1;
   }
   if (test_convolve_support() != 0) {
@@ -121,6 +185,9 @@ int main(void) {
     return 1;
   }
   if (test_crt_prime_count() != 0) {
+    return 1;
+  }
+  if (test_qsop_write_errors() != 0) {
     return 1;
   }
   return 0;
