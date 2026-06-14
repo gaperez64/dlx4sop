@@ -415,6 +415,13 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   }
 }
 
+static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
+  if (left != 0 && right > UINT64_MAX / left) {
+    return UINT64_MAX;
+  }
+  return left * right;
+}
+
 static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                   uint64_t count_modulus, uint64_t *counts,
                                   qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
@@ -602,6 +609,11 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
     free(acc);
     free(tmp);
     return false;
+  }
+
+  if (stats != NULL) {
+    stats->cache_entries = (uint64_t)cache.len;
+    stats->cache_stored_residue_slots = saturating_mul_u64((uint64_t)cache.len, qsop->r);
   }
 
   free(rowptr);

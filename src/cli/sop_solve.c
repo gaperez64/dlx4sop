@@ -148,6 +148,9 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "components: %" PRIu32 "\n", stats->components);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
+    fprintf(file, "cache_entries: %" PRIu64 "\n", stats->cache_entries);
+    fprintf(file, "cache_stored_residue_slots: %" PRIu64 "\n",
+            stats->cache_stored_residue_slots);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
@@ -158,6 +161,9 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     if (stats->cache_avoided_nodes != 0) {
       fprintf(file, "cache_avoided_nodes: %" PRIu64 "\n", stats->cache_avoided_nodes);
     }
+    fprintf(file, "cache_entries: %" PRIu64 "\n", stats->cache_entries);
+    fprintf(file, "cache_stored_residue_slots: %" PRIu64 "\n",
+            stats->cache_stored_residue_slots);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
     if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0 ||
         stats->branch_fallthroughs != 0 || stats->branch_treewidth_skips != 0 ||

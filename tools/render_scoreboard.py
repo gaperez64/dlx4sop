@@ -143,6 +143,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "rankwidth_width",
                 "rankwidth_max_table_entries",
                 "rankwidth_max_signature_entries",
+                "cache_entries",
+                "cache_stored_residue_slots",
                 "treewidth_width",
                 "treewidth_max_table_entries",
                 "decomposition_width",
@@ -174,6 +176,11 @@ def key_stats(stats: dict[str, int]) -> str:
         cache = f"cache {stats.get('cache_hits', 0)} / {stats.get('cache_misses', 0)}"
         if stats.get("cache_avoided_nodes", 0):
             cache += f", avoided nodes {stats['cache_avoided_nodes']}"
+        if "cache_entries" in stats:
+            cache += (
+                f", entries {stats['cache_entries']}, "
+                f"slots {stats.get('cache_stored_residue_slots', 0)}"
+            )
         parts.append(cache)
     if "components" in stats:
         parts.append(f"{stats['components']} components")

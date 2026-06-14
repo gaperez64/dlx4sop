@@ -2,4 +2,6 @@ backend: components
 components: 2
 cache_hits: 1
 cache_misses: 1
+cache_entries: 1
+cache_stored_residue_slots: 8
 leaf_assignments: 4

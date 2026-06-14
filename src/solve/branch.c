@@ -116,6 +116,13 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   }
 }
 
+static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
+  if (left != 0 && right > UINT64_MAX / left) {
+    return UINT64_MAX;
+  }
+  return left * right;
+}
+
 static void max_u32(uint32_t *dst, uint32_t value) {
   if (value > *dst) {
     *dst = value;
@@ -849,6 +856,9 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_hits = search.cache_hits;
     stats->cache_misses = search.cache_misses;
     stats->cache_avoided_nodes = search.cache_avoided_nodes;
+    stats->cache_entries = (uint64_t)search.cache.len;
+    stats->cache_stored_residue_slots =
+        saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
     stats->table_entries = search.table_entries;
     stats->max_table_entries = search.max_table_entries;
     stats->signature_entries = search.signature_entries;

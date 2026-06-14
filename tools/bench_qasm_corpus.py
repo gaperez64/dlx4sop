@@ -35,6 +35,8 @@ TOP_METRICS = (
     "cache_hits",
     "cache_misses",
     "cache_avoided_nodes",
+    "cache_entries",
+    "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
@@ -99,6 +101,8 @@ CSV_FIELDS = [
     "cache_hits",
     "cache_misses",
     "cache_avoided_nodes",
+    "cache_entries",
+    "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
@@ -349,6 +353,8 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "max_residual_largest_component",
         "max_residual_min_fill_width",
         "max_residual_prefix_cut_rank",
+        "cache_entries",
+        "cache_stored_residue_slots",
         "branch_rankwidth_labelled_width",
         "branch_rankwidth_support_width",
         "branch_treewidth_order_width",
@@ -649,6 +655,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_hits",
             "cache_misses",
             "cache_avoided_nodes",
+            "cache_entries",
+            "cache_stored_residue_slots",
             "cache_hit_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
@@ -744,6 +752,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
             if "cache_avoided_nodes" in stats:
                 line += f" cache_avoided_nodes={stats['cache_avoided_nodes']}"
+            if "cache_entries" in stats:
+                line += (
+                    f" cache_entries={stats['cache_entries']}"
+                    f" cache_slots={stats.get('cache_stored_residue_slots', 0)}"
+                )
             if "cache_lookup_elapsed_ns" in record:
                 line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
             if "branch_rankwidth_labelled_width" in record:
@@ -950,6 +963,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_hits",
             "cache_misses",
             "cache_avoided_nodes",
+            "cache_entries",
+            "cache_stored_residue_slots",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
             "branch_rankwidth_probe_events",

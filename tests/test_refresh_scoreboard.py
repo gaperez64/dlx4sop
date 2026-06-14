@@ -37,7 +37,7 @@ def main() -> int:
         "branch_rankwidth_labelled_width": 4,
         "branch_rankwidth_support_width": 7,
         "branch_treewidth_order_width": 3,
-        "stats": {"search_nodes": 3},
+        "stats": {"search_nodes": 3, "cache_entries": 2, "cache_stored_residue_slots": 16},
     }
     native = {
         "engine": "qiskit-statevector",
@@ -89,6 +89,7 @@ def main() -> int:
             "## Internal Solver Configurations",
             "`treewidth --treewidth-order min-fill`",
             "`branch --branch-heuristic split`",
+            "cache entries=2, slots=16",
             "branch rw probe labelled-cut-signature=4, support=7",
             "branch tw order width=3",
             "## Competitor Comparisons",

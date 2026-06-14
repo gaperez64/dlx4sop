@@ -152,6 +152,11 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"{format_count(stats['search_nodes'])} nodes")
     if stats.get("cache_avoided_nodes", 0):
         parts.append(f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}")
+    if "cache_entries" in stats:
+        parts.append(
+            f"cache entries={format_count(stats['cache_entries'])}, "
+            f"slots={format_count(stats.get('cache_stored_residue_slots', 0))}"
+        )
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
     if "treewidth_width" in stats:
