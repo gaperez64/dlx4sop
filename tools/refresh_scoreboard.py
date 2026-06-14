@@ -191,6 +191,11 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
             f"cut-rank={stats.get('max_residual_prefix_cut_rank', 0)}"
         )
+    if "branch_rankwidth_labelled_width" in stats or "branch_rankwidth_support_width" in stats:
+        parts.append(
+            f"branch rw probe labelled-cut-signature={stats.get('branch_rankwidth_labelled_width', 0)}, "
+            f"support={stats.get('branch_rankwidth_support_width', 0)}"
+        )
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(
             f"max residual vars={format_count(stats.get('max_residual_vars', 0))}, "

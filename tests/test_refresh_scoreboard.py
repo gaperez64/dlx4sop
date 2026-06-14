@@ -34,6 +34,8 @@ def main() -> int:
         "backend": "branch",
         "branch_heuristic": "split",
         "solve_elapsed_ns": 10_000,
+        "branch_rankwidth_labelled_width": 4,
+        "branch_rankwidth_support_width": 7,
         "stats": {"search_nodes": 3},
     }
     native = {
@@ -86,6 +88,7 @@ def main() -> int:
             "## Internal Solver Configurations",
             "`treewidth --treewidth-order min-fill`",
             "`branch --branch-heuristic split`",
+            "branch rw probe labelled-cut-signature=4, support=7",
             "## Competitor Comparisons",
             "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",

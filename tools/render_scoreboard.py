@@ -133,6 +133,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_fallthroughs",
                 "branch_treewidth_skips",
                 "branch_rankwidth_skips",
+                "branch_rankwidth_probe_events",
+                "branch_rankwidth_probe_elapsed_ns",
             ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
@@ -150,6 +152,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "max_residual_largest_component",
                 "max_residual_min_fill_width",
                 "max_residual_prefix_cut_rank",
+                "branch_rankwidth_labelled_width",
+                "branch_rankwidth_support_width",
             ):
                 add_max(stats, stat, stat_value(record, stat))
             for stat in ("join_pairs", "join_signature_pairs"):
@@ -204,6 +208,11 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
             f"cut-rank={stats.get('max_residual_prefix_cut_rank', 0)}"
+        )
+    if "branch_rankwidth_labelled_width" in stats or "branch_rankwidth_support_width" in stats:
+        parts.append(
+            f"branch rw probe labelled-cut-signature={stats.get('branch_rankwidth_labelled_width', 0)}, "
+            f"support={stats.get('branch_rankwidth_support_width', 0)}"
         )
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(

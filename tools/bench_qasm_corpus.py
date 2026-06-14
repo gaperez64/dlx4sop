@@ -38,6 +38,10 @@ TOP_METRICS = (
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "branch_rankwidth_probe_events",
+    "branch_rankwidth_probe_elapsed_ns",
+    "branch_rankwidth_labelled_width",
+    "branch_rankwidth_support_width",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -95,6 +99,10 @@ CSV_FIELDS = [
     "cache_hit_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "branch_rankwidth_probe_events",
+    "branch_rankwidth_probe_elapsed_ns",
+    "branch_rankwidth_labelled_width",
+    "branch_rankwidth_support_width",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -257,9 +265,11 @@ def parse_trace_csv(text: str) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for row in rows[1:]:
         phase, _depth, items, elapsed_ns = row.split(",", 3)
-        entry = summary.setdefault(phase, {"events": 0, "items": 0, "elapsed_ns": 0})
+        entry = summary.setdefault(phase, {"events": 0, "items": 0, "max_items": 0, "elapsed_ns": 0})
+        item_count = int(items)
         entry["events"] += 1
-        entry["items"] += int(items)
+        entry["items"] += item_count
+        entry["max_items"] = max(entry["max_items"], item_count)
         entry["elapsed_ns"] += int(elapsed_ns)
     return summary
 
@@ -287,6 +297,19 @@ def cache_record_metrics(
     return metrics
 
 
+def branch_rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    labelled = trace.get("branch.rankwidth_probe")
+    if labelled is not None:
+        metrics["branch_rankwidth_probe_events"] = labelled["events"]
+        metrics["branch_rankwidth_probe_elapsed_ns"] = labelled["elapsed_ns"]
+        metrics["branch_rankwidth_labelled_width"] = labelled["max_items"]
+    support = trace.get("branch.rankwidth_support_probe")
+    if support is not None:
+        metrics["branch_rankwidth_support_width"] = support["max_items"]
+    return metrics
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -310,6 +333,8 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "max_residual_largest_component",
         "max_residual_min_fill_width",
         "max_residual_prefix_cut_rank",
+        "branch_rankwidth_labelled_width",
+        "branch_rankwidth_support_width",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -362,14 +387,22 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             add_stat(stats_total, stat_key, value)
         for stat_key in BACKEND_ALIAS_METRICS:
             add_stat(stats_total, stat_key, record.get(stat_key))
-        for stat_key in ("cache_lookup_events", "cache_lookup_elapsed_ns"):
+        for stat_key in (
+            "cache_lookup_events",
+            "cache_lookup_elapsed_ns",
+            "branch_rankwidth_probe_events",
+            "branch_rankwidth_probe_elapsed_ns",
+            "branch_rankwidth_labelled_width",
+            "branch_rankwidth_support_width",
+        ):
             add_stat(stats_total, stat_key, record.get(stat_key))
 
         trace_total = entry["trace"]
         for phase, values in record["trace"].items():
-            phase_total = trace_total.setdefault(phase, {"events": 0, "items": 0, "elapsed_ns": 0})
+            phase_total = trace_total.setdefault(phase, {"events": 0, "items": 0, "max_items": 0, "elapsed_ns": 0})
             phase_total["events"] += values["events"]
             phase_total["items"] += values["items"]
+            phase_total["max_items"] = max(phase_total["max_items"], values.get("max_items", 0))
             phase_total["elapsed_ns"] += values["elapsed_ns"]
     return summary
 
@@ -545,6 +578,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 aliases = backend_stat_aliases(backend, stats)
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 cache_metrics = cache_record_metrics(stats, trace)
+                branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
                 records.append(
                     {
                         "case": case_name,
@@ -569,6 +603,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "stats": stats,
                         **aliases,
                         **cache_metrics,
+                        **branch_probe_metrics,
                         "trace": trace,
                     }
                 )
@@ -595,6 +630,10 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_hit_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "branch_rankwidth_probe_events",
+            "branch_rankwidth_probe_elapsed_ns",
+            "branch_rankwidth_labelled_width",
+            "branch_rankwidth_support_width",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -682,6 +721,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache_avoided_nodes={stats['cache_avoided_nodes']}"
             if "cache_lookup_elapsed_ns" in record:
                 line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
+            if "branch_rankwidth_labelled_width" in record:
+                line += (
+                    f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
+                    f",support:{record.get('branch_rankwidth_support_width', 0)}"
+                )
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
@@ -881,6 +925,10 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_avoided_nodes",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "branch_rankwidth_probe_events",
+            "branch_rankwidth_probe_elapsed_ns",
+            "branch_rankwidth_labelled_width",
+            "branch_rankwidth_support_width",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",
@@ -920,7 +968,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
                 values = trace[phase]
                 print(
                     f"    {phase}: events={values['events']} "
-                    f"items={values['items']} elapsed_ns={values['elapsed_ns']}",
+                    f"items={values['items']} max_items={values.get('max_items', 0)} "
+                    f"elapsed_ns={values['elapsed_ns']}",
                     file=file,
                 )
     write_top_records(records, args, file)
