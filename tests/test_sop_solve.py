@@ -1058,6 +1058,15 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "--rankwidth-decomposition",
         str(labelled_decomposition),
     )
+    assert_rankwidth_matches(
+        exe,
+        labelled,
+        labelled_expected.stdout,
+        "--rankwidth-mode",
+        "fourier",
+        "--rankwidth-decomposition",
+        str(labelled_decomposition),
+    )
     assert_rankwidth_matches(exe, labelled, labelled_expected.stdout)
     assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "balanced")
     assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "min-fill-cut")
@@ -1214,15 +1223,19 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
 
-    bad_fourier = subprocess.run(
+    labelled_fourier_trace = subprocess.run(
         [
             str(exe),
+            "--format",
+            "stats",
             "--backend",
             "rankwidth",
             "--rankwidth-mode",
             "fourier",
             "--rankwidth-decomposition",
             str(labelled_decomposition),
+            "--trace",
+            "csv",
             str(labelled),
         ],
         check=False,
@@ -1230,9 +1243,15 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if bad_fourier.returncode == 0 or "sign-only" not in bad_fourier.stderr:
+    if (
+        labelled_fourier_trace.returncode != 0
+        or "rankwidth.labelled_fourier_leaf" not in labelled_fourier_trace.stderr
+        or "rankwidth.labelled_fourier_join_map" not in labelled_fourier_trace.stderr
+        or "rankwidth.labelled_fourier_join" not in labelled_fourier_trace.stderr
+    ):
         raise AssertionError(
-            f"rankwidth Fourier accepted labelled QSOP\n{bad_fourier.stdout}\n{bad_fourier.stderr}"
+            f"labelled rankwidth Fourier trace failed\n"
+            f"{labelled_fourier_trace.stdout}\n{labelled_fourier_trace.stderr}"
         )
 
 
