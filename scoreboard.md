@@ -18,14 +18,6 @@ Counts are fixed-boundary QSOP rows currently used in solver comparisons. The 25
 Total current solved coverage: 447 fixed-boundary benchmark rows.
 The 257-512 exploratory sample contributes 40 solved rows out of 52 attempted under the current timeout cap.
 
-## 257-512 Sample Stratification
-
-Rows with treewidth width at most 18 are the current low-width promotion candidates; timeouts remain the separate high-width residue.
-| Bucket | Rows | Solved | Timeouts | Max width | Max table |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Solved, width <= 18 | 40 | 40 | 0 | 18 | 4194304 |
-| Timeouts | 12 | 0 | 12 | 0 | 0 |
-
 ## Internal Solver Configurations
 
 Rows are grouped by imported-variable tier and sorted by total solve time. `Solved` is successful solver rows over attempted rows.
@@ -46,96 +38,53 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 | 129-256 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 49 / 112 | 748.69 s | rw width 9; rw labelled-cut-signature=9, support=9; max table 4,096; rw table forecast 4,096; rw join forecast 44,880; rw cut estimates exact=8,590, proxy=0, assignments=18,446,744,073,709,551,615; max signatures 512; 6,394,034 join pairs; rankwidth kernels map=4,592/2.72 s max items=1,024, join=4,592/5.27 s max items=4,096, labelled-map=4,295/4.44 s max items=1,024, labelled=4,295/5.35 s max items=4,096; 63 timeouts |
 | 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 40 / 52 | 176.08 s | tw width 18; max table 4,194,304; 21,350,491 join pairs; 12 timeouts |
 
-## Rankwidth Backend Comparison
-
-Rows compare rankwidth against non-rankwidth backends on common source/case/boundary/QSOP-mode keys. Best competitor is the fastest successful non-rankwidth backend for that row.
-
-### Backend Summary
-
-| Tier | QSOP mode | Config | OK / records | Total solve time | Max width | Max table | Rankwidth kernel time | Forecast table pressure | Forecast join pressure |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | labelled | `branch:split` | 9 / 9 | 7.9 ms | 3 | 128 | 0 ns | 0 | 0 |
-| 33-64 | labelled | `branch:split:fourier` | 9 / 9 | 8.5 ms | 3 | 128 | 0 ns | 0 | 0 |
-| 33-64 | labelled | `rankwidth:min-fill-cut:count-table` | 9 / 9 | 146.8 ms | 6 | 512 | 30.6 ms | 800 | 6642 |
-| 33-64 | labelled | `rankwidth:min-fill-cut:fourier` | 9 / 9 | 116.6 ms | 6 | 512 | 27.1 ms | 800 | 6642 |
-| 33-64 | labelled | `treewidth:min-fill-max-degree` | 9 / 9 | 7.6 ms | 3 | 128 | 0 ns | 0 | 0 |
-| 33-64 | labelled | `treewidth:min-fill-max-degree:fourier` | 9 / 9 | 9.8 ms | 3 | 128 | 0 ns | 0 | 0 |
-| 65-128 | labelled | `branch:split` | 28 / 28 | 131.6 ms | 7 | 2048 | 0 ns | 0 | 0 |
-| 65-128 | labelled | `branch:split:fourier` | 28 / 28 | 125.5 ms | 7 | 2048 | 0 ns | 0 | 0 |
-| 65-128 | labelled | `rankwidth:min-fill-cut:count-table` | 28 / 28 | 36.45 s | 9 | 4096 | 5.24 s | 18496 | 218552 |
-| 65-128 | labelled | `rankwidth:min-fill-cut:fourier` | 28 / 28 | 30.59 s | 9 | 4096 | 4.52 s | 18496 | 218552 |
-| 65-128 | labelled | `treewidth:min-fill-max-degree` | 28 / 28 | 127.1 ms | 7 | 2048 | 0 ns | 0 | 0 |
-| 65-128 | labelled | `treewidth:min-fill-max-degree:fourier` | 28 / 28 | 83.1 ms | 7 | 2048 | 0 ns | 0 | 0 |
-
-### Rankwidth Vs Competitors: rankwidth:min-fill-cut:count-table
-
-Rankwidth config: `rankwidth:min-fill-cut:count-table`. Table and forecast comparisons are lower/equal/higher versus the fastest successful treewidth row.
-
-| Tier | QSOP mode | Common rows | Fastest/tied | Slower | Rankwidth time | Best competitor time | Delta vs best | Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | Vs branch faster | Delta vs treewidth/branch | Missing/failed |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | labelled | 9 | 0 | 9 | 146.8 ms | 7.2 ms | 139.6 ms | 0 / 9 | 7 / 1 / 1 | 7 / 1 / 1 | 0 / 9 | 139.4 ms / 139.0 ms | 0 |
-| 65-128 | labelled | 28 | 0 | 28 | 36.45 s | 80.9 ms | 36.37 s | 0 / 28 | 9 / 7 / 12 | 9 / 7 / 12 | 0 / 28 | 36.37 s / 36.33 s | 0 |
-| **Total** | **all** | 37 | 0 | 37 | 36.60 s | 88.1 ms | 36.51 s | 0 / 37 | 16 / 8 / 13 | 16 / 8 / 13 | 0 / 37 | 36.51 s / 36.47 s | 0 |
-
-### Rankwidth Vs Competitors: rankwidth:min-fill-cut:fourier
-
-Rankwidth config: `rankwidth:min-fill-cut:fourier`. Table and forecast comparisons are lower/equal/higher versus the fastest successful treewidth row.
-
-| Tier | QSOP mode | Common rows | Fastest/tied | Slower | Rankwidth time | Best competitor time | Delta vs best | Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | Vs branch faster | Delta vs treewidth/branch | Missing/failed |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | labelled | 9 | 0 | 9 | 116.6 ms | 7.2 ms | 109.4 ms | 0 / 9 | 7 / 1 / 1 | 7 / 1 / 1 | 0 / 9 | 109.2 ms / 108.8 ms | 0 |
-| 65-128 | labelled | 28 | 0 | 28 | 30.59 s | 80.9 ms | 30.51 s | 0 / 28 | 9 / 7 / 12 | 9 / 7 / 12 | 0 / 28 | 30.51 s / 30.47 s | 0 |
-| **Total** | **all** | 37 | 0 | 37 | 30.71 s | 88.1 ms | 30.62 s | 0 / 37 | 16 / 8 / 13 | 16 / 8 / 13 | 0 / 37 | 30.62 s / 30.58 s | 0 |
-
 ## Competitor Comparisons
 
-These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude error columns use completed rows where both sides recorded amplitudes.
+These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude errors are reported for rows where both QSOP and the native tool completed.
 
 ### FeynmanDD
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `aer-statevector` | 4 / 16 | 3.4 ms | 7.6 ms | 2.26x | 4 | 6.86e-16 | 1.02e-15 | 30 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `mqt-ddsim-statevector` | 4 / 16 | 3.4 ms | 12.1 ms | 3.62x | 4 | 0 | 0 | 30 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `pyzx-matrix` | 4 / 16 | 3.4 ms | 3.91 s | 1164.77x | 4 | 2.38e-15 | 4.57e-15 | 30 | 10 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `qiskit-statevector` | 4 / 16 | 3.4 ms | 3.3 ms | 0.98x | 4 | 5.68e-16 | 1.22e-15 | 30 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 35 / 92 | 107.4 ms | 3.98 s | 37.09x | 35 | 2.02e-16 | 2.21e-15 | 100 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 35 / 92 | 107.4 ms | 12.45 s | 115.86x | 35 | 1.95e-17 | 5.74e-17 | 100 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 10 / 92 | 47.2 ms | 13.22 s | 279.82x | 10 | 3.36e-15 | 9.87e-15 | 100 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 35 / 92 | 107.4 ms | 16.92 s | 157.56x | 35 | 2.18e-16 | 2.22e-15 | 100 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 14 / 68 | 644.6 ms | 298.7 ms | 0.46x | 14 | 1.87e-15 | 3.79e-15 | 80 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 14 / 68 | 644.6 ms | 53.8 ms | 0.08x | 14 | 8.4e-17 | 1.18e-15 | 80 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 3 / 68 | 19.4 ms | 7.81 s | 403.40x | 3 | 1.15e-14 | 1.58e-14 | 80 | 10 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 14 / 68 | 644.6 ms | 1.13 s | 1.75x | 14 | 1.26e-15 | 3.66e-15 | 80 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `aer-statevector` | 4 / 16 | 3.4 ms | 7.6 ms | 2.26x | 6.86e-16 | 1.02e-15 | 30 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `mqt-ddsim-statevector` | 4 / 16 | 3.4 ms | 12.1 ms | 3.62x | 0 | 0 | 30 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `pyzx-matrix` | 4 / 16 | 3.4 ms | 3.91 s | 1164.77x | 2.38e-15 | 4.57e-15 | 30 | 10 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `qiskit-statevector` | 4 / 16 | 3.4 ms | 3.3 ms | 0.98x | 5.68e-16 | 1.22e-15 | 30 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 35 / 92 | 107.4 ms | 3.98 s | 37.09x | 2.02e-16 | 2.21e-15 | 100 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 35 / 92 | 107.4 ms | 12.45 s | 115.86x | 1.95e-17 | 5.74e-17 | 100 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 10 / 92 | 47.2 ms | 13.22 s | 279.82x | 3.36e-15 | 9.87e-15 | 100 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 35 / 92 | 107.4 ms | 16.92 s | 157.56x | 2.18e-16 | 2.22e-15 | 100 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 14 / 68 | 644.6 ms | 298.7 ms | 0.46x | 1.87e-15 | 3.79e-15 | 80 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 14 / 68 | 644.6 ms | 53.8 ms | 0.08x | 8.4e-17 | 1.18e-15 | 80 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 3 / 68 | 19.4 ms | 7.81 s | 403.40x | 1.15e-14 | 1.58e-14 | 80 | 10 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 14 / 68 | 644.6 ms | 1.13 s | 1.75x | 1.26e-15 | 3.66e-15 | 80 | 16 | 10.0 | 4096 |
 
 ### MQT Bench
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 2 / 2 | 5.9 ms | 4.9 ms | 0.84x | 2 | 4.33e-17 | 4.33e-17 | 3 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 2 / 2 | 5.9 ms | 7.3 ms | 1.24x | 2 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 2 / 2 | 5.9 ms | 11.6 ms | 1.97x | 2 | 1.3e-16 | 1.3e-16 | 3 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 2 / 2 | 5.9 ms | 1.6 ms | 0.28x | 2 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 2 / 2 | 5.9 ms | 4.9 ms | 0.84x | 4.33e-17 | 4.33e-17 | 3 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 2 / 2 | 5.9 ms | 7.3 ms | 1.24x | 0 | 0 | 3 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 2 / 2 | 5.9 ms | 11.6 ms | 1.97x | 1.3e-16 | 1.3e-16 | 3 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 2 / 2 | 5.9 ms | 1.6 ms | 0.28x | 0 | 0 | 3 | 16 | 10.0 | 4096 |
 
 ### PyZX
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `aer-statevector` | 16 / 16 | 13.8 ms | 56.3 ms | 4.07x | 16 | 6.08e-16 | 1.02e-15 | 7 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `mqt-ddsim-statevector` | 16 / 16 | 13.8 ms | 73.8 ms | 5.34x | 16 | 0 | 0 | 7 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `pyzx-matrix` | 16 / 16 | 13.8 ms | 1.06 s | 76.38x | 16 | 3.54e-15 | 6.82e-15 | 7 | 10 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `qiskit-statevector` | 16 / 16 | 13.8 ms | 24.7 ms | 1.78x | 16 | 9.28e-16 | 1.78e-15 | 7 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 36 / 36 | 186.0 ms | 130.6 ms | 0.70x | 36 | 7.56e-16 | 2.21e-15 | 14 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 36 / 36 | 186.0 ms | 189.7 ms | 1.02x | 36 | 1.18e-16 | 1.18e-15 | 14 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 35 / 36 | 160.2 ms | 45.22 s | 282.33x | 35 | 7.5e-15 | 1.58e-14 | 14 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 36 / 36 | 186.0 ms | 527.8 ms | 2.84x | 36 | 1.54e-15 | 3.44e-15 | 14 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 38 / 44 | 973.8 ms | 1.54 s | 1.58x | 38 | 1.75e-15 | 4e-15 | 19 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 38 / 44 | 973.8 ms | 181.5 ms | 0.19x | 38 | 7.95e-17 | 1.18e-15 | 19 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 20 / 44 | 303.4 ms | 36.05 s | 118.84x | 20 | 2.08e-14 | 3.25e-14 | 19 | 10 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 38 / 44 | 973.8 ms | 5.03 s | 5.16x | 38 | 3.22e-15 | 6e-15 | 19 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `aer-statevector` | 16 / 16 | 13.8 ms | 56.3 ms | 4.07x | 6.08e-16 | 1.02e-15 | 7 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `mqt-ddsim-statevector` | 16 / 16 | 13.8 ms | 73.8 ms | 5.34x | 0 | 0 | 7 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `pyzx-matrix` | 16 / 16 | 13.8 ms | 1.06 s | 76.38x | 3.54e-15 | 6.82e-15 | 7 | 10 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | `qiskit-statevector` | 16 / 16 | 13.8 ms | 24.7 ms | 1.78x | 9.28e-16 | 1.78e-15 | 7 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 36 / 36 | 186.0 ms | 130.6 ms | 0.70x | 7.56e-16 | 2.21e-15 | 14 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 36 / 36 | 186.0 ms | 189.7 ms | 1.02x | 1.18e-16 | 1.18e-15 | 14 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 35 / 36 | 160.2 ms | 45.22 s | 282.33x | 7.5e-15 | 1.58e-14 | 14 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 36 / 36 | 186.0 ms | 527.8 ms | 2.84x | 1.54e-15 | 3.44e-15 | 14 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 38 / 44 | 973.8 ms | 1.54 s | 1.58x | 1.75e-15 | 4e-15 | 19 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 38 / 44 | 973.8 ms | 181.5 ms | 0.19x | 7.95e-17 | 1.18e-15 | 19 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 20 / 44 | 303.4 ms | 36.05 s | 118.84x | 2.08e-14 | 3.25e-14 | 19 | 10 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 38 / 44 | 973.8 ms | 5.03 s | 5.16x | 3.22e-15 | 6e-15 | 19 | 16 | 10.0 | 4096 |
 
 ## Current Takeaway
 
-Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill`; 33-64: `treewidth --treewidth-order min-fill-max-degree`; 65-128: `branch --branch-heuristic split`; 129-256: `branch --branch-heuristic split`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
-The 257-512 stratified sample is not a full tier yet: 40 / 52 rows solve under the current timeout cap.
-Treewidth remains the clean direct-DP baseline. Hybrid branch is the best current widened-tier configuration when component splitting and treewidth handoff trigger. Native comparisons are now capped and source-local; dense statevector tools can still win on low-qubit rows, while QSOP remains strong on many fixed-boundary rows with large imported variable counts.
+Current best internal choices are treewidth through 64 imported variables, hybrid branch from 65 to 256, and treewidth for the solved part of the exploratory 257-512 sample. Native tools remain useful comparison points, especially on smaller low-qubit cases, while QSOP is strongest on many fixed-boundary rows with larger imported variable counts.
