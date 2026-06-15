@@ -325,7 +325,7 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                 apply_one(state, nqubits, qubit, one_qubit[gate])
             continue
 
-        if gate in ("ccz", "ccx", "cswap"):
+        if gate in ("ccz", "ccx", "rccx", "cswap"):
             first = operand_qubits(operands[0], regs)
             second = operand_qubits(operands[1], regs)
             third = operand_qubits(operands[2], regs)
@@ -336,6 +336,22 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                     apply_ccz(state, nqubits, a, b, c)
                 elif gate == "ccx":
                     apply_ccx(state, nqubits, a, b, c)
+                elif gate == "rccx":
+                    u2_0_pi = u3_matrix(math.pi / 2.0, 0.0, math.pi)
+                    t_phase = (1, 0, 0, cmath.exp(1j * math.pi / 4.0))
+                    tdg_phase = (1, 0, 0, cmath.exp(-1j * math.pi / 4.0))
+                    apply_one(state, nqubits, c, u2_0_pi)
+                    apply_one(state, nqubits, a, t_phase)
+                    apply_one(state, nqubits, b, t_phase)
+                    apply_one(state, nqubits, c, t_phase)
+                    apply_controlled_x(state, nqubits, a, b)
+                    apply_controlled_x(state, nqubits, b, c)
+                    apply_one(state, nqubits, c, tdg_phase)
+                    apply_controlled_x(state, nqubits, a, b)
+                    apply_controlled_x(state, nqubits, b, c)
+                    apply_one(state, nqubits, b, tdg_phase)
+                    apply_one(state, nqubits, c, t_phase)
+                    apply_one(state, nqubits, c, u2_0_pi)
                 else:
                     apply_cswap(state, nqubits, a, b, c)
             continue
@@ -578,6 +594,16 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             ccx q[0], q[1], q[2];
             """,
             [("110", "111"), ("111", "110"), ("010", "010")],
+        ),
+        (
+            "rccx_relative_phase",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[3];
+            h q;
+            rccx q[0], q[1], q[2];
+            """,
+            [("000", "000"), ("000", "111"), ("101", "110"), ("011", "010")],
         ),
         (
             "cswap",

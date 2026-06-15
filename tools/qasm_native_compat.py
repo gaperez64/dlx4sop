@@ -13,6 +13,11 @@ NATIVE_COMPAT_GATE_DEFINITIONS = {
     "csx": "gate csx a,b { h b; cu1(pi/2) a,b; h b; }",
     "csxdg": "gate csxdg a,b { h b; cu1(-pi/2) a,b; h b; }",
     "dcx": "gate dcx a,b { cx a,b; cx b,a; }",
+    "rccx": (
+        "gate rccx a,b,c { u2(0,pi) c; u1(pi/4) a; u1(pi/4) b; "
+        "u1(pi/4) c; cx a,b; cx b,c; u1(-pi/4) c; cx a,b; cx b,c; "
+        "u1(-pi/4) b; u1(pi/4) c; u2(0,pi) c; }"
+    ),
 }
 
 

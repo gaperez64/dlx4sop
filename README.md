@@ -31,8 +31,8 @@ tools/check-coverage.sh build-coverage
   the count vector used by benchmark tooling to reconstruct amplitudes.
 - `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
-  controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/cswap`, and
-  `iswap`.
+  controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
+  and `iswap`.
 - `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.

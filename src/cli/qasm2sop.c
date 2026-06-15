@@ -842,6 +842,19 @@ static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, u
          apply_h(importer, target);
 }
 
+static bool apply_rccx_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
+                                     uint32_t target) {
+  return apply_u2(importer, target, 0, 4) && apply_phase(importer, first, 2) &&
+         apply_phase(importer, second, 2) && apply_phase(importer, target, 2) &&
+         apply_cx_decomposition(importer, first, second) &&
+         apply_cx_decomposition(importer, second, target) &&
+         apply_phase(importer, target, 14) &&
+         apply_cx_decomposition(importer, first, second) &&
+         apply_cx_decomposition(importer, second, target) &&
+         apply_phase(importer, second, 14) && apply_phase(importer, target, 2) &&
+         apply_u2(importer, target, 0, 4);
+}
+
 static bool apply_cswap_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t left,
                                       uint32_t right) {
   return apply_cx_decomposition(importer, right, left) &&
@@ -1439,6 +1452,10 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   if (strcmp(gate, "ccx") == 0) {
     return apply_three_qubit_operands(importer, rest, apply_ccx_decomposition);
+  }
+
+  if (strcmp(gate, "rccx") == 0) {
+    return apply_three_qubit_operands(importer, rest, apply_rccx_decomposition);
   }
 
   if (strcmp(gate, "cswap") == 0) {
