@@ -832,6 +832,52 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"rankwidth min-fill-cut stats failed\n{cut_stats.stdout}\n{cut_stats.stderr}")
 
+    zero_var_qsop = "p qsop 8 0 0\nn 4\ncst 3\n"
+    zero_var_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--include-result",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "min-fill-cut",
+            "-",
+        ],
+        input=zero_var_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_zero_var_stats = {
+        "backend: rankwidth",
+        "rankwidth_mode: count-table",
+        "rankwidth_decomposition: min-fill-cut",
+        "decomposition_width: 0",
+        "rankwidth_support_width: 0",
+        "rankwidth_labelled_width: 0",
+        "table_entries: 1",
+        "max_table_entries: 1",
+        "signature_entries: 1",
+        "max_signature_entries: 1",
+        "join_pairs: 0",
+        "join_signature_pairs: 0",
+        "rankwidth_table_forecast: 1",
+        "rankwidth_join_pair_forecast: 0",
+        "rankwidth_labelled_exact_cuts: 0",
+        "rankwidth_labelled_proxy_cuts: 0",
+        "rankwidth_labelled_exact_assignments: 0",
+        "result_counts: 0 0 0 1 0 0 0 0",
+    }
+    if zero_var_stats.returncode != 0 or not all(
+        part in zero_var_stats.stdout for part in expected_zero_var_stats
+    ):
+        raise AssertionError(
+            f"zero-variable rankwidth stats failed\n{zero_var_stats.stdout}\n{zero_var_stats.stderr}"
+        )
+
     traced = subprocess.run(
         [
             str(exe),

@@ -1190,8 +1190,13 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
   }
   *out = NULL;
   if (qsop->nvars == 0) {
-    set_error(error, "rankwidth decomposition generation requires at least one variable");
-    return false;
+    qsop_rankwidth_decomposition_t *empty = calloc(1, sizeof(*empty));
+    if (empty == NULL) {
+      set_error(error, "out of memory while allocating empty rankwidth decomposition");
+      return false;
+    }
+    *out = empty;
+    return true;
   }
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
   uint32_t *leaf_nodes = calloc(qsop->nvars, sizeof(*leaf_nodes));
@@ -3234,6 +3239,52 @@ static bool solve_labelled_count_table(const qsop_instance_t *qsop,
   return true;
 }
 
+static void rankwidth_constant_stats(const qsop_instance_t *qsop, qsop_solve_stats_t *stats) {
+  if (stats == NULL) {
+    return;
+  }
+  stats->table_entries = 1;
+  stats->max_table_entries = 1;
+  stats->signature_entries = 1;
+  stats->max_signature_entries = 1;
+  stats->join_pairs = 0;
+  stats->join_signature_pairs = 0;
+  stats->rankwidth_table_forecast = 1;
+  stats->rankwidth_join_pair_forecast = 0;
+  stats->decomposition_width = 0;
+  stats->rankwidth_support_width = 0;
+  stats->rankwidth_labelled_width = 0;
+  (void)qsop;
+}
+
+static bool solve_rankwidth_constant_result(const qsop_instance_t *qsop, qsop_result_t **out,
+                                            qsop_solve_stats_t *stats,
+                                            qsop_solve_trace_t *trace, qsop_error_t *error) {
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth constant result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->counts[qsop->constant % qsop->r] = 1;
+  rankwidth_constant_stats(qsop, stats);
+  qsop_trace_emit(trace, "rankwidth.constant", 0, 1, 0);
+  *out = result;
+  return true;
+}
+
+static bool solve_rankwidth_constant_mod(const qsop_instance_t *qsop, uint64_t count_modulus,
+                                         uint64_t *counts, qsop_solve_stats_t *stats,
+                                         qsop_solve_trace_t *trace) {
+  qsop_counts_clear(qsop->r, counts);
+  counts[qsop->constant % qsop->r] = count_modulus == 0 ? 1 : 1 % count_modulus;
+  rankwidth_constant_stats(qsop, stats);
+  qsop_trace_emit(trace, "rankwidth.constant", 0, 1, 0);
+  return true;
+}
+
 bool qsop_solve_rankwidth_count_table_mod_stats(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
@@ -3250,6 +3301,9 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
     return false;
   }
   qsop_counts_clear(qsop->r, counts);
+  if (qsop->nvars == 0) {
+    return solve_rankwidth_constant_mod(qsop, count_modulus, counts, stats, trace);
+  }
   if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
     return false;
   }
@@ -3483,6 +3537,9 @@ bool qsop_solve_rankwidth_mode_trace_stats(
               " variables; pass a larger --max-vars",
               qsop->nvars);
     return false;
+  }
+  if (qsop->nvars == 0) {
+    return solve_rankwidth_constant_result(qsop, out, stats, trace, error);
   }
   if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
     return false;
