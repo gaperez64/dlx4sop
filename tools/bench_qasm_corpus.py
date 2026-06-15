@@ -1830,8 +1830,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--solve-mode",
         choices=RANKWIDTH_MODES,
         help=(
-            "Backend-neutral solve mode request. Non-rankwidth Fourier currently "
-            "records a count-table fallback kernel."
+            "Backend-neutral solve mode request. Fourier selects native kernels for "
+            "brute-force, components, treewidth, and rankwidth; branch uses Fourier "
+            "for eligible DP handoffs."
         ),
     )
     parser.add_argument(
