@@ -302,6 +302,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "cache_canonical_store_elapsed_ns",
                 "branch_rankwidth_probe_events",
                 "branch_rankwidth_probe_elapsed_ns",
+                "rankwidth_width_probe_events",
+                "rankwidth_width_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
                 "branch_treewidth_order_probe_elapsed_ns",
                 "branch_root_width_probe_events",
@@ -313,9 +315,12 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
                 "rankwidth_width",
+                "rankwidth_support_width",
+                "rankwidth_labelled_width",
                 "rankwidth_max_table_entries",
                 "rankwidth_table_forecast",
                 "rankwidth_join_pair_forecast",
+                "rankwidth_labelled_exact_assignments",
                 "rankwidth_max_signature_entries",
                 "cache_entries",
                 "cache_canonical_entries",
@@ -336,6 +341,10 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "max_residual_prefix_cut_rank",
                 "branch_rankwidth_labelled_width",
                 "branch_rankwidth_support_width",
+                "rankwidth_width_probe_width",
+                "rankwidth_support_width_probe_width",
+                "rankwidth_trace_table_forecast",
+                "rankwidth_trace_join_pair_forecast",
                 "branch_fallthrough_max_vars",
                 "branch_rankwidth_table_forecast",
                 "branch_rankwidth_join_pair_forecast",
@@ -347,7 +356,12 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 *BRANCH_DISPATCH_MAX_FIELDS,
             ):
                 add_max(stats, stat, stat_value(record, stat))
-            for stat in ("join_pairs", "join_signature_pairs"):
+            for stat in (
+                "join_pairs",
+                "join_signature_pairs",
+                "rankwidth_labelled_exact_cuts",
+                "rankwidth_labelled_proxy_cuts",
+            ):
                 add_sum(stats, stat, stat_value(record, stat))
     return [grouped[key] for key in sorted(grouped)]
 

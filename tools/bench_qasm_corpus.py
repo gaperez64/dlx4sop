@@ -1241,6 +1241,27 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" rankwidth_table_forecast={stats['rankwidth_table_forecast']}"
             if "rankwidth_join_pair_forecast" in stats:
                 line += f" rankwidth_join_pair_forecast={stats['rankwidth_join_pair_forecast']}"
+            if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
+                line += (
+                    f" rankwidth_widths=labelled:{stats.get('rankwidth_labelled_width', 0)}"
+                    f",support:{stats.get('rankwidth_support_width', 0)}"
+                )
+            if (
+                "rankwidth_labelled_exact_cuts" in stats
+                or "rankwidth_labelled_proxy_cuts" in stats
+            ):
+                line += (
+                    f" rankwidth_cut_estimates=exact:{stats.get('rankwidth_labelled_exact_cuts', 0)}"
+                    f",proxy:{stats.get('rankwidth_labelled_proxy_cuts', 0)}"
+                    f",assignments:{stats.get('rankwidth_labelled_exact_assignments', 0)}"
+                )
+            if "rankwidth_width_probe_elapsed_ns" in record:
+                line += (
+                    f" rankwidth_probe=events:{record.get('rankwidth_width_probe_events', 0)}"
+                    f",elapsed:{record['rankwidth_width_probe_elapsed_ns']}"
+                    f",width:{record.get('rankwidth_width_probe_width', 0)}"
+                    f",support:{record.get('rankwidth_support_width_probe_width', 0)}"
+                )
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
             if "cache_avoided_nodes" in stats:
@@ -1496,10 +1517,15 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
         print(f"    solve_elapsed_ns: {sum(int(record['solve_elapsed_ns']) for record in selected)}", file=file)
         for label, metric in (
             ("max_width", "rankwidth_width"),
+            ("max_support_width", "rankwidth_support_width"),
+            ("max_labelled_width", "rankwidth_labelled_width"),
             ("max_table_entries", "rankwidth_max_table_entries"),
             ("max_table_forecast", "rankwidth_table_forecast"),
             ("max_join_pair_forecast", "rankwidth_join_pair_forecast"),
             ("max_signature_entries", "rankwidth_max_signature_entries"),
+            ("labelled_exact_cuts", "rankwidth_labelled_exact_cuts"),
+            ("labelled_proxy_cuts", "rankwidth_labelled_proxy_cuts"),
+            ("labelled_exact_assignments", "rankwidth_labelled_exact_assignments"),
             ("join_pairs", "join_pairs"),
             ("join_signature_pairs", "join_signature_pairs"),
         ):
@@ -1507,8 +1533,22 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
             values = [value for value in values if value is not None]
             if not values:
                 continue
-            value = sum(values) if label in {"join_pairs", "join_signature_pairs"} else max(values)
+            value = (
+                sum(values)
+                if label
+                in {
+                    "join_pairs",
+                    "join_signature_pairs",
+                    "labelled_exact_cuts",
+                    "labelled_proxy_cuts",
+                    "labelled_exact_assignments",
+                }
+                else max(values)
+            )
             print(f"    {label}: {value}", file=file)
+        probe_elapsed = sum(metric_value(record, "rankwidth_width_probe_elapsed_ns") or 0 for record in ok)
+        if probe_elapsed:
+            print(f"    rankwidth_probe_elapsed_ns: {probe_elapsed}", file=file)
         kernel_elapsed = sum(record_rankwidth_kernel_elapsed_ns(record) for record in ok)
         if kernel_elapsed:
             print(f"    rankwidth_kernel_elapsed_ns: {kernel_elapsed}", file=file)

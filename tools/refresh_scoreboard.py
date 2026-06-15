@@ -49,8 +49,10 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("33-64", "dlx4sop-tier-33-64-rankwidth-min-fill-cut-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-treewidth-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-branch-hybrid-fresh.jsonl"),
+    ("65-128", "dlx4sop-tier-65-128-rankwidth-min-fill-cut-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-branch-hybrid-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-treewidth-current.jsonl"),
+    ("129-256", "dlx4sop-tier-129-256-rankwidth-min-fill-cut-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-treewidth-current.jsonl"),
 )
 
@@ -206,6 +208,11 @@ def public_key_stats(stats: dict[str, int]) -> str:
         )
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
+    if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
+        parts.append(
+            f"rw labelled-cut-signature={format_count(stats.get('rankwidth_labelled_width', 0))}, "
+            f"support={format_count(stats.get('rankwidth_support_width', 0))}"
+        )
     if "treewidth_width" in stats:
         parts.append(f"tw width {stats['treewidth_width']}")
     table = max(
@@ -219,6 +226,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"rw table forecast {format_count(stats['rankwidth_table_forecast'])}")
     if "rankwidth_join_pair_forecast" in stats:
         parts.append(f"rw join forecast {format_count(stats['rankwidth_join_pair_forecast'])}")
+    if "rankwidth_labelled_exact_cuts" in stats or "rankwidth_labelled_proxy_cuts" in stats:
+        parts.append(
+            f"rw cut estimates exact={format_count(stats.get('rankwidth_labelled_exact_cuts', 0))}, "
+            f"proxy={format_count(stats.get('rankwidth_labelled_proxy_cuts', 0))}, "
+            f"assignments={format_count(stats.get('rankwidth_labelled_exact_assignments', 0))}"
+        )
     signatures = max(
         stats.get("rankwidth_max_signature_entries", 0),
         stats.get("max_signature_entries", 0),
