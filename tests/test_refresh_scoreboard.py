@@ -168,13 +168,26 @@ def main() -> int:
         "timeout_seconds": 10.0,
         "memory_limit_mib": 4096,
     }
+    rankwidth_comparison = {
+        **fast_solver,
+        "backend": "rankwidth",
+        "rankwidth_decomposition": "min-fill-cut",
+        "rankwidth_mode": "count-table",
+        "solve_elapsed_ns": 900,
+        "rankwidth_width": 1,
+        "rankwidth_max_table_entries": 4,
+        "rankwidth_table_forecast": 4,
+        "rankwidth_join_pair_forecast": 2,
+    }
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = pathlib.Path(tmp)
         solver_path = tmp_path / "solver.jsonl"
         large_path = tmp_path / "large.jsonl"
         native_path = tmp_path / "native.jsonl"
+        rankwidth_comparison_path = tmp_path / "rankwidth-comparison.jsonl"
         output_path = tmp_path / "scoreboard.md"
+        rankwidth_comparison_output = tmp_path / "rankwidth-backends.md"
         solver_path.write_text(
             json.dumps(fast_solver) + "\n" + json.dumps(slow_solver) + "\n",
             encoding="utf-8",
@@ -184,6 +197,12 @@ def main() -> int:
             encoding="utf-8",
         )
         native_path.write_text(json.dumps(native) + "\n", encoding="utf-8")
+        rankwidth_comparison_path.write_text(
+            json.dumps(fast_solver) + "\n"
+            + json.dumps(slow_solver) + "\n"
+            + json.dumps(rankwidth_comparison) + "\n",
+            encoding="utf-8",
+        )
         completed = subprocess.run(
             [
                 str(tool),
@@ -194,6 +213,12 @@ def main() -> int:
                 f"257-512 sample={large_path}",
                 "--native-jsonl",
                 f"33-64={native_path}",
+                "--rankwidth-comparison-jsonl",
+                f"33-64={rankwidth_comparison_path}",
+                "--rankwidth-comparison-output",
+                str(rankwidth_comparison_output),
+                "--rankwidth-comparison-qsop-mode",
+                "labelled",
                 "--output",
                 str(output_path),
             ],
@@ -244,6 +269,15 @@ def main() -> int:
         ):
             if expected not in output:
                 raise AssertionError(f"missing {expected!r} in:\n{output}")
+        rankwidth_output = rankwidth_comparison_output.read_text(encoding="utf-8")
+        for expected in (
+            "# Rankwidth Backend Comparison",
+            "`rankwidth:min-fill-cut:count-table` | 1 / 1 | 900 ns | 1 | 4 | 4 | 2",
+            "| 33-64 | labelled | 1 | 1 | 0 | 900 ns | 1.0 us | -100 ns | 1 / 1 | 1 / 0 / 0 | 1 / 0 / 0 | 1 / 1 | -100 ns / -9.1 us | 0 |",
+            "Synthetic:bell 0->0",
+        ):
+            if expected not in rankwidth_output:
+                raise AssertionError(f"missing {expected!r} in:\n{rankwidth_output}")
     return 0
 
 

@@ -8,6 +8,7 @@ import subprocess
 import sys
 from typing import Iterable, TextIO
 
+import compare_rankwidth_backends
 from render_scoreboard import (
     BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
     BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
@@ -584,6 +585,23 @@ def write_scoreboard(
     write_takeaway(solver_records, file)
 
 
+def read_rankwidth_comparison_records(
+    named_paths: Iterable[tuple[str, pathlib.Path]], allow_missing: bool
+) -> list[dict]:
+    records = []
+    for tier, path in named_paths:
+        if not path.exists():
+            if allow_missing:
+                print(f"warning: missing artifact {path}", file=sys.stderr)
+                continue
+            raise RuntimeError(f"missing artifact {path}")
+        for record in read_jsonl(path):
+            copied = dict(record)
+            copied["_tier"] = tier
+            records.append(copied)
+    return records
+
+
 def run_to_jsonl(command: list[str], output: pathlib.Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as stream:
@@ -660,9 +678,28 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--artifact-dir", type=pathlib.Path, default=pathlib.Path("/tmp"))
     parser.add_argument("--solver-jsonl", action="append", type=labelled_path, default=[], metavar="TIER=PATH")
     parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="TIER=PATH")
+    parser.add_argument(
+        "--rankwidth-comparison-jsonl",
+        action="append",
+        type=labelled_path,
+        default=[],
+        metavar="TIER=PATH",
+        help="JSONL produced by bench_qasm_corpus.py --rankwidth-comparison.",
+    )
     parser.add_argument("--no-default-artifacts", action="store_true")
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("scoreboard.md"))
+    parser.add_argument(
+        "--rankwidth-comparison-output",
+        type=pathlib.Path,
+        help="Optional markdown report comparing rankwidth against treewidth and branch.",
+    )
+    parser.add_argument(
+        "--rankwidth-comparison-qsop-mode",
+        choices=("all", "sign", "labelled"),
+        default="all",
+    )
+    parser.add_argument("--rankwidth-comparison-top", type=int, default=10)
     parser.add_argument("--run-native", action="store_true", help="rerun capped native simulator jobs")
     parser.add_argument("--run-large-sample", action="store_true", help="rerun the 257-512 treewidth sample")
     parser.add_argument("--qasm2sop", type=pathlib.Path, default=pathlib.Path("build/qasm2sop"))
@@ -677,6 +714,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.rankwidth_comparison_top < 0:
+        print("error: --rankwidth-comparison-top must be non-negative", file=sys.stderr)
+        return 2
     try:
         run_selected_jobs(args)
         solver_paths = [] if args.no_default_artifacts else default_solver_jsonl(args.artifact_dir)
@@ -687,6 +727,24 @@ def main(argv: list[str]) -> int:
         native_records = read_named_jsonl(native_paths, args.allow_missing)
         with args.output.open("w", encoding="utf-8") as output:
             write_scoreboard(solver_records, native_records, output)
+        if args.rankwidth_comparison_output is not None:
+            rankwidth_records = read_rankwidth_comparison_records(
+                args.rankwidth_comparison_jsonl,
+                args.allow_missing,
+            )
+            if args.rankwidth_comparison_qsop_mode != "all":
+                rankwidth_records = [
+                    record
+                    for record in rankwidth_records
+                    if record.get("qsop_mode") == args.rankwidth_comparison_qsop_mode
+                ]
+            with args.rankwidth_comparison_output.open("w", encoding="utf-8") as output:
+                compare_rankwidth_backends.write_markdown(
+                    rankwidth_records,
+                    "rankwidth:min-fill-cut:count-table",
+                    args.rankwidth_comparison_top,
+                    output,
+                )
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

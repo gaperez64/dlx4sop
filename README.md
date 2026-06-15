@@ -87,7 +87,7 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
 tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
-tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
+tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl --rankwidth-comparison-output rankwidth-backends.md
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
 tools/compare_rankwidth_backends.py --comparison-jsonl 33-64=rankwidth-comparison.jsonl --qsop-mode labelled
