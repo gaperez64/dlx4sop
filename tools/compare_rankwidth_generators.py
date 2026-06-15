@@ -167,6 +167,62 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
     return [summary[key] for key in sorted(summary)]
 
 
+def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
+    grouped: dict[tuple[str, str, tuple[str, str, str, str, str, str]], dict[str, dict]] = {}
+    for record in records:
+        if status(record) != "ok":
+            continue
+        key = (str(record["_tier"]), str(record.get("qsop_mode") or "unknown"), record_key(record))
+        grouped.setdefault(key, {})[rankwidth_config(record)] = record
+
+    summary: dict[tuple[str, str, str], dict] = {}
+    for (tier, mode, _identity), by_config in grouped.items():
+        if len(by_config) < 2:
+            continue
+        baseline_record = by_config.get(baseline)
+        for config, record in by_config.items():
+            key = (tier, mode, config)
+            entry = summary.setdefault(
+                key,
+                {
+                    "tier": tier,
+                    "mode": mode,
+                    "config": config,
+                    "common_rows": 0,
+                    "elapsed_ns": 0,
+                    "table_pressure": 0,
+                    "signature_pressure": 0,
+                    "join_pair_pressure": 0,
+                    "join_signature_pressure": 0,
+                    "baseline_common_rows": 0,
+                    "elapsed_delta_vs_baseline": 0,
+                    "table_delta_vs_baseline": 0,
+                    "signature_delta_vs_baseline": 0,
+                },
+            )
+            table = metric_or_zero(record, "rankwidth_max_table_entries")
+            signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
+            elapsed = metric_or_zero(record, "solve_elapsed_ns")
+            entry["common_rows"] += 1
+            entry["elapsed_ns"] += elapsed
+            entry["table_pressure"] += table
+            entry["signature_pressure"] += signatures
+            entry["join_pair_pressure"] += metric_or_zero(record, "join_pairs")
+            entry["join_signature_pressure"] += metric_or_zero(record, "join_signature_pairs")
+            if baseline_record is not None:
+                entry["baseline_common_rows"] += 1
+                entry["elapsed_delta_vs_baseline"] += elapsed - metric_or_zero(
+                    baseline_record, "solve_elapsed_ns"
+                )
+                entry["table_delta_vs_baseline"] += table - metric_or_zero(
+                    baseline_record, "rankwidth_max_table_entries"
+                )
+                entry["signature_delta_vs_baseline"] += signatures - metric_or_zero(
+                    baseline_record, "rankwidth_max_signature_entries"
+                )
+    return [summary[key] for key in sorted(summary)]
+
+
 def tied_winners(by_config: dict[str, dict], key_func) -> list[str]:
     best_key = min(key_func(record) for record in by_config.values())
     return sorted(config for config, record in by_config.items() if key_func(record) == best_key)
@@ -174,6 +230,12 @@ def tied_winners(by_config: dict[str, dict], key_func) -> list[str]:
 
 def counter_text(counter: collections.Counter) -> str:
     return "; ".join(f"{markdown_escape(key)} {value}" for key, value in counter.most_common())
+
+
+def format_signed_ns(ns: int) -> str:
+    if ns < 0:
+        return f"-{format_ns(-ns)}"
+    return format_ns(ns)
 
 
 def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
@@ -231,6 +293,37 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
             file=file,
         )
 
+    pressure_rows = common_pressure_summary(records, baseline)
+    if not pressure_rows:
+        return
+    print("\n## Common-Row Pressure\n", file=file)
+    print(
+        "Pressure totals are restricted to rows solved by at least two rankwidth configs. "
+        "Deltas are relative to the baseline on common rows where the baseline also solved.",
+        file=file,
+    )
+    print(
+        "| Tier | QSOP mode | Config | Common rows | Total solve time | Table pressure | "
+        "Signature pressure | Join pairs | Join signature pairs | Baseline rows | "
+        "Delta table/signature/time |",
+        file=file,
+    )
+    print(
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        file=file,
+    )
+    for row in pressure_rows:
+        print(
+            f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
+            f"`{markdown_escape(row['config'])}` | {row['common_rows']} | "
+            f"{format_ns(row['elapsed_ns'])} | {row['table_pressure']} | "
+            f"{row['signature_pressure']} | {row['join_pair_pressure']} | "
+            f"{row['join_signature_pressure']} | {row['baseline_common_rows']} | "
+            f"{row['table_delta_vs_baseline']} / {row['signature_delta_vs_baseline']} / "
+            f"{format_signed_ns(row['elapsed_delta_vs_baseline'])} |",
+            file=file,
+        )
+
 
 def serializable_row(row: dict) -> dict:
     out = dict(row)
@@ -262,6 +355,7 @@ def main(argv: list[str]) -> int:
         payload = {
             "config_summary": config_summary(records),
             "common_row_summary": [serializable_row(row) for row in common_row_summary(records, args.baseline)],
+            "common_pressure_summary": common_pressure_summary(records, args.baseline),
         }
         print(json.dumps(payload, sort_keys=True, indent=2))
     else:
