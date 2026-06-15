@@ -27,6 +27,11 @@ typedef enum solve_trace_format {
   SOLVE_TRACE_CSV,
 } solve_trace_format_t;
 
+typedef enum solve_mode {
+  SOLVE_MODE_COUNT_TABLE,
+  SOLVE_MODE_FOURIER,
+} solve_mode_t;
+
 typedef struct csv_trace_writer {
   FILE *file;
   bool wrote_header;
@@ -37,7 +42,8 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
-        "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
+        "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
+        "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
@@ -107,6 +113,16 @@ static const char *rankwidth_mode_name(qsop_rankwidth_solve_mode_t mode) {
   return "unknown";
 }
 
+static const char *solve_mode_name(solve_mode_t mode) {
+  switch (mode) {
+  case SOLVE_MODE_COUNT_TABLE:
+    return "count-table";
+  case SOLVE_MODE_FOURIER:
+    return "fourier";
+  }
+  return "unknown";
+}
+
 static const char *treewidth_order_name(qsop_treewidth_order_t order) {
   switch (order) {
   case QSOP_TREEWIDTH_ORDER_MIN_FILL:
@@ -117,6 +133,18 @@ static const char *treewidth_order_name(qsop_treewidth_order_t order) {
     return "min-fill-max-degree";
   }
   return "unknown";
+}
+
+static qsop_rankwidth_solve_mode_t rankwidth_mode_from_solve_mode(solve_mode_t mode) {
+  return mode == SOLVE_MODE_FOURIER ? QSOP_RANKWIDTH_SOLVE_FOURIER
+                                    : QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
+}
+
+static const char *solve_mode_kernel_name(solve_backend_t backend, solve_mode_t mode) {
+  if (mode == SOLVE_MODE_COUNT_TABLE) {
+    return "count-table";
+  }
+  return backend == SOLVE_BACKEND_RANKWIDTH ? "fourier" : "count-table-fallback";
 }
 
 static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
@@ -133,6 +161,7 @@ static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *ev
 }
 
 static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_solve_stats_t *stats,
+                               solve_mode_t solve_mode, bool solve_mode_set,
                                qsop_rankwidth_solve_mode_t rankwidth_mode,
                                const char *rankwidth_decomposition,
                                qsop_treewidth_order_t treewidth_order, qsop_error_t *error) {
@@ -146,6 +175,10 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
 
   fprintf(file, "backend: %s\n", backend_name(backend));
+  if (solve_mode_set || solve_mode != SOLVE_MODE_COUNT_TABLE) {
+    fprintf(file, "solve_mode: %s\n", solve_mode_name(solve_mode));
+    fprintf(file, "solve_mode_kernel: %s\n", solve_mode_kernel_name(backend, solve_mode));
+  }
   if (backend == SOLVE_BACKEND_COMPONENTS) {
     fprintf(file, "components: %" PRIu32 "\n", stats->components);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
@@ -401,6 +434,7 @@ int main(int argc, char **argv) {
   const char *rankwidth_decomposition_label = "left-deep";
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
+  solve_mode_t solve_mode = SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
@@ -408,6 +442,7 @@ int main(int argc, char **argv) {
   bool branch_heuristic_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
+  bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
   bool include_probability = false;
@@ -554,6 +589,23 @@ int main(int argc, char **argv) {
       rankwidth_mode_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--solve-mode") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --solve-mode requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "count-table") == 0) {
+        solve_mode = SOLVE_MODE_COUNT_TABLE;
+      } else if (strcmp(value, "fourier") == 0) {
+        solve_mode = SOLVE_MODE_FOURIER;
+      } else {
+        fprintf(stderr, "error: unsupported solve mode '%s'\n", value);
+        return 2;
+      }
+      solve_mode_set = true;
+      continue;
+    }
     if (strcmp(argv[i], "--treewidth-order") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --treewidth-order requires a value\n", stderr);
@@ -604,6 +656,19 @@ int main(int argc, char **argv) {
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_mode_set) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
     return 2;
+  }
+  if (rankwidth_mode_set && solve_mode_set &&
+      rankwidth_mode != rankwidth_mode_from_solve_mode(solve_mode)) {
+    fputs("error: --solve-mode conflicts with --rankwidth-mode\n", stderr);
+    return 2;
+  }
+  if (backend == SOLVE_BACKEND_RANKWIDTH && solve_mode_set) {
+    rankwidth_mode = rankwidth_mode_from_solve_mode(solve_mode);
+  }
+  if (rankwidth_mode_set && !solve_mode_set) {
+    solve_mode =
+        rankwidth_mode == QSOP_RANKWIDTH_SOLVE_FOURIER ? SOLVE_MODE_FOURIER : SOLVE_MODE_COUNT_TABLE;
+    solve_mode_set = true;
   }
   if (backend != SOLVE_BACKEND_TREEWIDTH && treewidth_order_set) {
     fputs("error: --treewidth-order requires --backend treewidth\n", stderr);
@@ -704,7 +769,8 @@ int main(int argc, char **argv) {
   if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
     ok = qsop_result_write_residue_vector(stdout, result, &error);
   } else {
-    ok = write_solver_stats(stdout, backend, &solve_stats, rankwidth_mode,
+    ok = write_solver_stats(stdout, backend, &solve_stats, solve_mode, solve_mode_set,
+                            rankwidth_mode,
                             rankwidth_decomposition_label, treewidth_order, &error);
     if (ok && backend == SOLVE_BACKEND_BRANCH && branch_heuristic_set) {
       printf("branch_heuristic: %s\n", branch_heuristic_name(branch_heuristic));

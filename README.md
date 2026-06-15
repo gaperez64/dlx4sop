@@ -79,6 +79,7 @@ build/sop-stats --format json tests/golden/labelled_expected.qsop
 build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
 build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_labelled.qsop
 build/sop-solve --format stats --include-result tests/golden/solve_labelled.qsop
+build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_labelled.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
 ```
@@ -113,6 +114,11 @@ pressure. Branch benchmark summaries now also surface skip reasons, fallthrough
 size, canonical cache lookup/store counts, cache key/count/estimated bytes,
 root treewidth probes, component splits, and DP-delegate trace counts so hybrid
 handoff decisions are visible without opening the raw trace.
+
+`sop-solve --solve-mode fourier` is the backend-neutral spelling for Fourier
+work. Rankwidth currently uses its Fourier kernel for sign-only QSOPs; branch,
+components, brute-force, and treewidth accept the shared flag and report
+`solve_mode_kernel: count-table-fallback` until native Fourier kernels are added.
 
 ## Current Status And Remaining Gaps
 

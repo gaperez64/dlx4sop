@@ -24,15 +24,21 @@ def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
 
 def backend_config(record: dict) -> str:
     backend = str(record.get("backend") or "unknown")
+    solve_mode = record.get("solve_mode")
+    solve_mode_suffix = (
+        f":{solve_mode}"
+        if isinstance(solve_mode, str) and solve_mode and solve_mode != "count-table"
+        else ""
+    )
     if backend == "rankwidth":
         generator = record.get("rankwidth_decomposition") or "left-deep"
         mode = record.get("rankwidth_mode") or "count-table"
         return f"rankwidth:{generator}:{mode}"
     if backend == "treewidth":
-        return f"treewidth:{record.get('treewidth_order') or 'min-fill'}"
+        return f"treewidth:{record.get('treewidth_order') or 'min-fill'}{solve_mode_suffix}"
     if backend == "branch":
-        return f"branch:{record.get('branch_heuristic') or 'split'}"
-    return backend
+        return f"branch:{record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
+    return backend + solve_mode_suffix
 
 
 def status(record: dict) -> str:

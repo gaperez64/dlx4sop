@@ -631,6 +631,21 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--rankwidth-mode"], "requires a value"),
         ([str(exe), "--rankwidth-mode", "bad", str(qsop)], "unsupported rankwidth mode"),
         ([str(exe), "--rankwidth-mode", "fourier", str(qsop)], "requires --backend rankwidth"),
+        ([str(exe), "--solve-mode"], "requires a value"),
+        ([str(exe), "--solve-mode", "bad", str(qsop)], "unsupported solve mode"),
+        (
+            [
+                str(exe),
+                "--backend",
+                "rankwidth",
+                "--solve-mode",
+                "fourier",
+                "--rankwidth-mode",
+                "count-table",
+                str(qsop),
+            ],
+            "conflicts with --rankwidth-mode",
+        ),
         ([str(exe), "--treewidth-order"], "requires a value"),
         ([str(exe), "--treewidth-order", "bad", str(qsop)], "unsupported treewidth order"),
         ([str(exe), "--treewidth-order", "min-degree", str(qsop)], "requires --backend treewidth"),
@@ -1312,6 +1327,33 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "max_table_entries:" not in stats.stdout
     ):
         raise AssertionError(f"treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
+
+    fourier_fallback_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "fourier",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        fourier_fallback_stats.returncode != 0
+        or "solve_mode: fourier" not in fourier_fallback_stats.stdout
+        or "solve_mode_kernel: count-table-fallback" not in fourier_fallback_stats.stdout
+        or "treewidth_order: min-fill" not in fourier_fallback_stats.stdout
+    ):
+        raise AssertionError(
+            f"treewidth Fourier fallback stats failed\n"
+            f"{fourier_fallback_stats.stdout}\n{fourier_fallback_stats.stderr}"
+        )
 
     min_degree_stats = subprocess.run(
         [

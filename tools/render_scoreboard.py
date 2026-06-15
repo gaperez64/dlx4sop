@@ -109,16 +109,22 @@ def tier_sort_key(tier: str) -> tuple[int, str]:
 
 def solver_config(record: dict) -> str:
     backend = record.get("backend", "")
+    solve_mode = record.get("solve_mode")
+    solve_mode_suffix = (
+        f" --solve-mode {solve_mode}"
+        if isinstance(solve_mode, str) and solve_mode and solve_mode != "count-table"
+        else ""
+    )
     if backend == "branch":
-        return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}"
+        return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
     if backend == "rankwidth":
         return (
             f"rankwidth --rankwidth-generate {record.get('rankwidth_decomposition') or 'left-deep'} "
             f"--rankwidth-mode {record.get('rankwidth_mode') or 'count-table'}"
         )
     if backend == "treewidth":
-        return f"treewidth --treewidth-order {record.get('treewidth_order') or 'min-fill'}"
-    return str(backend)
+        return f"treewidth --treewidth-order {record.get('treewidth_order') or 'min-fill'}{solve_mode_suffix}"
+    return str(backend) + solve_mode_suffix
 
 
 def stat_value(record: dict, key: str) -> int | None:

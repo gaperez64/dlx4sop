@@ -197,6 +197,23 @@ def main() -> int:
 
     if not bench.amplitude_metrics(8, 10, [1, 0, 0, 0, 0, 0, 0, 0]):
         raise AssertionError("small exact counts should emit amplitude metrics")
+    parsed_stats, _parsed_amplitude = bench.parse_stats_and_amplitude(
+        "\n".join(
+            [
+                "backend: treewidth",
+                "solve_mode: fourier",
+                "solve_mode_kernel: count-table-fallback",
+                "treewidth_order: min-fill",
+                "result_modulus: 8",
+                "result_norm_h: 0",
+                "result_counts: 1 0 0 0 0 0 0 0",
+            ]
+        )
+    )
+    if parsed_stats.get("solve_mode") != "fourier":
+        raise AssertionError(f"missing solve_mode in parsed stats: {parsed_stats}")
+    if parsed_stats.get("solve_mode_kernel") != "count-table-fallback":
+        raise AssertionError(f"missing solve_mode_kernel in parsed stats: {parsed_stats}")
     large_counts = [
         81129638414606753753383043072000,
         81129638414606681695789005144064,
