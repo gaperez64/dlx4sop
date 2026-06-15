@@ -90,3 +90,6 @@ is the lower-level table renderer for ad hoc reports. Use
 labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mismatches, and maximum absolute error.
+Branch benchmark summaries now also surface skip reasons plus component-split
+and DP-delegate trace counts so hybrid handoff decisions are visible without
+opening the raw trace.
