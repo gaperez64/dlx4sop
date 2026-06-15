@@ -155,11 +155,13 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
                 "common_rows": 0,
                 "time_wins": collections.Counter(),
                 "table_wins": collections.Counter(),
+                "forecast_wins": collections.Counter(),
                 "signature_wins": collections.Counter(),
                 "kernel_wins": collections.Counter(),
                 "baseline_rows": 0,
                 "baseline_best_time": 0,
                 "baseline_best_table": 0,
+                "baseline_best_forecast": 0,
                 "baseline_best_signatures": 0,
                 "baseline_best_kernel": 0,
             },
@@ -172,6 +174,15 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
         table_configs = tied_winners(
             by_config,
             lambda record: (
+                metric_or_zero(record, "rankwidth_max_table_entries"),
+                metric_or_zero(record, "join_pairs"),
+            ),
+        )
+        forecast_configs = tied_winners(
+            by_config,
+            lambda record: (
+                metric_or_zero(record, "rankwidth_table_forecast"),
+                metric_or_zero(record, "rankwidth_join_pair_forecast"),
                 metric_or_zero(record, "rankwidth_max_table_entries"),
                 metric_or_zero(record, "join_pairs"),
             ),
@@ -191,6 +202,8 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
             entry["time_wins"][config] += 1
         for config in table_configs:
             entry["table_wins"][config] += 1
+        for config in forecast_configs:
+            entry["forecast_wins"][config] += 1
         for config in signature_configs:
             entry["signature_wins"][config] += 1
         for config in kernel_configs:
@@ -199,6 +212,7 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
             entry["baseline_rows"] += 1
             entry["baseline_best_time"] += int(baseline in fastest_configs)
             entry["baseline_best_table"] += int(baseline in table_configs)
+            entry["baseline_best_forecast"] += int(baseline in forecast_configs)
             entry["baseline_best_signatures"] += int(baseline in signature_configs)
             entry["baseline_best_kernel"] += int(baseline in kernel_configs)
     return [summary[key] for key in sorted(summary)]
@@ -340,19 +354,20 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
         file=file,
     )
     print(
-        "| Tier | QSOP mode | Common rows | Time winners | Table winners | Signature winners | "
-        "Kernel winners | Baseline best time/table/signatures/kernel |",
+        "| Tier | QSOP mode | Common rows | Time winners | Table winners | Forecast winners | "
+        "Signature winners | Kernel winners | Baseline best time/table/forecast/signatures/kernel |",
         file=file,
     )
-    print("| --- | --- | ---: | --- | --- | --- | --- | ---: |", file=file)
+    print("| --- | --- | ---: | --- | --- | --- | --- | --- | ---: |", file=file)
     for row in rows:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"{row['common_rows']} | {counter_text(row['time_wins'])} | "
-            f"{counter_text(row['table_wins'])} | {counter_text(row['signature_wins'])} | "
-            f"{counter_text(row['kernel_wins'])} | "
+            f"{counter_text(row['table_wins'])} | {counter_text(row['forecast_wins'])} | "
+            f"{counter_text(row['signature_wins'])} | {counter_text(row['kernel_wins'])} | "
             f"{row['baseline_best_time']} / {row['baseline_best_table']} / "
-            f"{row['baseline_best_signatures']} / {row['baseline_best_kernel']} "
+            f"{row['baseline_best_forecast']} / {row['baseline_best_signatures']} / "
+            f"{row['baseline_best_kernel']} "
             f"of {row['baseline_rows']} |",
             file=file,
         )
@@ -398,7 +413,7 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
 
 def serializable_row(row: dict) -> dict:
     out = dict(row)
-    for key in ("time_wins", "table_wins", "signature_wins", "kernel_wins"):
+    for key in ("time_wins", "table_wins", "forecast_wins", "signature_wins", "kernel_wins"):
         if key in out:
             out[key] = dict(out[key])
     return out

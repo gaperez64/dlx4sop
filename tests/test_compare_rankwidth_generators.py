@@ -78,7 +78,7 @@ def main() -> int:
             "left-deep:count-table 1",
             "balanced:count-table 1",
             "min-fill-cut:count-table 1",
-            "0 / 0 / 0 / 1 of 1",
+            "0 / 0 / 0 / 0 / 1 of 1",
             "## Common-Row Pressure",
             "`balanced:count-table` | 1 | 300 ns | 32 | 800 | 8 | 132 | 1200 | 18 | 182 ns | 1 | -32 / -200 / -8 / -800 / 100 ns / 18 ns",
             "`left-deep:count-table` | 1 | 100 ns | 128 | 1200 | 32 | 228 | 2500 | 42 | 178 ns | 1 | 64 / 200 / 16 / 500 / -100 ns / 14 ns",
@@ -109,6 +109,8 @@ def main() -> int:
             raise AssertionError(f"unexpected time winners: {common}")
         if common["table_wins"] != {"balanced:count-table": 1}:
             raise AssertionError(f"unexpected table winners: {common}")
+        if common["forecast_wins"] != {"balanced:count-table": 1}:
+            raise AssertionError(f"unexpected forecast winners: {common}")
         if common["kernel_wins"] != {"min-fill-cut:count-table": 1}:
             raise AssertionError(f"unexpected kernel winners: {common}")
         config_rows = {row["config"]: row for row in payload["config_summary"]}
