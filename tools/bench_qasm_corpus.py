@@ -37,11 +37,8 @@ BRANCH_SKIP_REASON_FIELDS = tuple(BRANCH_TREEWIDTH_SKIP_METRICS.values()) + tupl
 )
 BRANCH_DISPATCH_TRACE_GROUPS = (
     (("branch.component_split",), "branch_component_split", "max_components"),
-    (
-        ("branch.treewidth_delegate", "branch.root_treewidth_delegate"),
-        "branch_treewidth_delegate",
-        "max_vars",
-    ),
+    (("branch.treewidth_delegate",), "branch_treewidth_delegate", "max_vars"),
+    (("branch.root_treewidth_delegate",), "branch_root_treewidth_delegate", "max_vars"),
     (("branch.rankwidth_delegate",), "branch_rankwidth_delegate", "max_vars"),
 )
 BRANCH_DISPATCH_METRIC_FIELDS = tuple(
@@ -85,6 +82,9 @@ TOP_METRICS = (
     "branch_treewidth_order_width",
     "branch_treewidth_table_forecast",
     "branch_treewidth_join_pair_forecast",
+    "branch_root_treewidth_delegate_events",
+    "branch_root_treewidth_delegate_elapsed_ns",
+    "branch_root_treewidth_delegate_max_vars",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -557,6 +557,9 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "branch_root_treewidth_delegate_events",
+            "branch_root_treewidth_delegate_elapsed_ns",
+            "branch_root_treewidth_delegate_max_vars",
             *BRANCH_SKIP_REASON_FIELDS,
             *BRANCH_DISPATCH_METRIC_FIELDS,
         ):
@@ -829,6 +832,9 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "branch_root_treewidth_delegate_events",
+            "branch_root_treewidth_delegate_elapsed_ns",
+            "branch_root_treewidth_delegate_max_vars",
             "components",
             "decomposition_width",
             "rankwidth_width",
@@ -957,12 +963,14 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             if (
                 record_has_metric(record, "branch_component_split_events")
                 or record_has_metric(record, "branch_treewidth_delegate_events")
+                or record_has_metric(record, "branch_root_treewidth_delegate_events")
                 or record_has_metric(record, "branch_rankwidth_delegate_events")
             ):
                 line += (
                     " branch_dispatch="
                     f"splits:{record_metric(record, 'branch_component_split_events')}"
                     f",tw:{record_metric(record, 'branch_treewidth_delegate_events')}"
+                    f",root_tw:{record_metric(record, 'branch_root_treewidth_delegate_events')}"
                     f",rw:{record_metric(record, 'branch_rankwidth_delegate_events')}"
                 )
                 if record_has_metric(record, "branch_component_split_max_components"):
@@ -974,6 +982,11 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     line += (
                         f",tw_max_vars:"
                         f"{record_metric(record, 'branch_treewidth_delegate_max_vars')}"
+                    )
+                if record_has_metric(record, "branch_root_treewidth_delegate_max_vars"):
+                    line += (
+                        f",root_tw_max_vars:"
+                        f"{record_metric(record, 'branch_root_treewidth_delegate_max_vars')}"
                     )
                 if record_has_metric(record, "branch_rankwidth_delegate_max_vars"):
                     line += (

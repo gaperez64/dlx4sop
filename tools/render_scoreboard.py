@@ -36,12 +36,15 @@ BRANCH_DISPATCH_SUM_FIELDS = (
     "branch_component_split_elapsed_ns",
     "branch_treewidth_delegate_events",
     "branch_treewidth_delegate_elapsed_ns",
+    "branch_root_treewidth_delegate_events",
+    "branch_root_treewidth_delegate_elapsed_ns",
     "branch_rankwidth_delegate_events",
     "branch_rankwidth_delegate_elapsed_ns",
 )
 BRANCH_DISPATCH_MAX_FIELDS = (
     "branch_component_split_max_components",
     "branch_treewidth_delegate_max_vars",
+    "branch_root_treewidth_delegate_max_vars",
     "branch_rankwidth_delegate_max_vars",
 )
 
@@ -154,6 +157,13 @@ def branch_dispatch_text(stats: dict[str, int], value_formatter=str) -> str:
             f"tw delegates={value_formatter(treewidth_events)}/"
             f"{format_ns(stats.get('branch_treewidth_delegate_elapsed_ns', 0))} "
             f"max vars={value_formatter(stats.get('branch_treewidth_delegate_max_vars', 0))}"
+        )
+    root_treewidth_events = stats.get("branch_root_treewidth_delegate_events", 0)
+    if isinstance(root_treewidth_events, int) and root_treewidth_events:
+        parts.append(
+            f"root tw delegates={value_formatter(root_treewidth_events)}/"
+            f"{format_ns(stats.get('branch_root_treewidth_delegate_elapsed_ns', 0))} "
+            f"max vars={value_formatter(stats.get('branch_root_treewidth_delegate_max_vars', 0))}"
         )
     rankwidth_events = stats.get("branch_rankwidth_delegate_events", 0)
     if isinstance(rankwidth_events, int) and rankwidth_events:
