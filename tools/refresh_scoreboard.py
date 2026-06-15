@@ -21,6 +21,7 @@ from render_scoreboard import (
     labelled_path,
     markdown_escape,
     read_jsonl,
+    rankwidth_kernel_text,
     solver_config,
     summarize_native_comparison_records,
     summarize_solver_records,
@@ -201,6 +202,9 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"max signatures {format_count(signatures)}")
     if "join_pairs" in stats:
         parts.append(f"{format_count(stats['join_pairs'])} join pairs")
+    kernel_text = rankwidth_kernel_text(stats, format_count)
+    if kernel_text:
+        parts.append(f"rankwidth kernels {kernel_text}")
     if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
         parts.append(
             f"delegations tw={format_count(stats.get('treewidth_delegations', 0))}, "

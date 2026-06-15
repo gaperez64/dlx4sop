@@ -36,6 +36,16 @@ def main() -> int:
                 "branch.cache_store,0,5,70",
                 "treewidth.multiply,3,16,400",
                 "treewidth.sum_out,2,8,500",
+                "rankwidth.join_map,2,12,120",
+                "rankwidth.crt_join_map,2,20,130",
+                "rankwidth.join,2,18,240",
+                "rankwidth.crt_join,2,22,260",
+                "rankwidth.labelled_join_map,2,9,90",
+                "rankwidth.labelled_crt_join_map,2,11,110",
+                "rankwidth.labelled_join,2,14,210",
+                "rankwidth.labelled_crt_join,2,17,230",
+                "rankwidth.fourier_join_map,2,7,70",
+                "rankwidth.fourier_join,2,8,80",
                 "",
             ]
         )
@@ -92,20 +102,44 @@ def main() -> int:
     if kernel != expected_kernel:
         raise AssertionError(f"unexpected treewidth kernel metrics: {kernel}")
 
-    if bench.trace_elapsed_ns(trace) != 3480:
+    rankwidth_kernel = bench.rankwidth_kernel_metrics(trace)
+    expected_rankwidth_kernel = {
+        "rankwidth_join_map_events": 2,
+        "rankwidth_join_map_elapsed_ns": 250,
+        "rankwidth_join_map_max_items": 20,
+        "rankwidth_join_events": 2,
+        "rankwidth_join_elapsed_ns": 500,
+        "rankwidth_join_max_items": 22,
+        "rankwidth_labelled_join_map_events": 2,
+        "rankwidth_labelled_join_map_elapsed_ns": 200,
+        "rankwidth_labelled_join_map_max_items": 11,
+        "rankwidth_labelled_join_events": 2,
+        "rankwidth_labelled_join_elapsed_ns": 440,
+        "rankwidth_labelled_join_max_items": 17,
+        "rankwidth_fourier_join_map_events": 1,
+        "rankwidth_fourier_join_map_elapsed_ns": 70,
+        "rankwidth_fourier_join_map_max_items": 7,
+        "rankwidth_fourier_join_events": 1,
+        "rankwidth_fourier_join_elapsed_ns": 80,
+        "rankwidth_fourier_join_max_items": 8,
+    }
+    if rankwidth_kernel != expected_rankwidth_kernel:
+        raise AssertionError(f"unexpected rankwidth kernel metrics: {rankwidth_kernel}")
+
+    if bench.trace_elapsed_ns(trace) != 5020:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
-        "branch.rankwidth_delegate:1100:31.6%,"
-        "branch.treewidth_delegate:700:20.1%,"
-        "treewidth.sum_out:500:14.4%"
+        "branch.rankwidth_delegate:1100:21.9%,"
+        "branch.treewidth_delegate:700:13.9%,"
+        "treewidth.sum_out:500:10.0%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 3480,
+        "trace_elapsed_ns": 5020,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 316091,
+        "trace_top_share_ppm": 219123,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")

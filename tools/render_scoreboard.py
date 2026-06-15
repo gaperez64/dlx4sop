@@ -47,6 +47,22 @@ BRANCH_DISPATCH_MAX_FIELDS = (
     "branch_root_treewidth_delegate_max_vars",
     "branch_rankwidth_delegate_max_vars",
 )
+RANKWIDTH_KERNEL_PREFIXES = (
+    "rankwidth_join_map",
+    "rankwidth_join",
+    "rankwidth_labelled_join_map",
+    "rankwidth_labelled_join",
+    "rankwidth_fourier_join_map",
+    "rankwidth_fourier_join",
+)
+RANKWIDTH_KERNEL_SUM_FIELDS = tuple(
+    field
+    for prefix in RANKWIDTH_KERNEL_PREFIXES
+    for field in (f"{prefix}_events", f"{prefix}_elapsed_ns")
+)
+RANKWIDTH_KERNEL_MAX_FIELDS = tuple(
+    f"{prefix}_max_items" for prefix in RANKWIDTH_KERNEL_PREFIXES
+)
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -175,6 +191,27 @@ def branch_dispatch_text(stats: dict[str, int], value_formatter=str) -> str:
     return ", ".join(parts)
 
 
+def rankwidth_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
+    parts = []
+    for prefix, label in (
+        ("rankwidth_join_map", "map"),
+        ("rankwidth_join", "join"),
+        ("rankwidth_labelled_join_map", "labelled-map"),
+        ("rankwidth_labelled_join", "labelled"),
+        ("rankwidth_fourier_join_map", "fourier-map"),
+        ("rankwidth_fourier_join", "fourier"),
+    ):
+        events = stats.get(f"{prefix}_events", 0)
+        elapsed = stats.get(f"{prefix}_elapsed_ns", 0)
+        max_items = stats.get(f"{prefix}_max_items", 0)
+        if isinstance(events, int) and (events or elapsed or max_items):
+            parts.append(
+                f"{label}={value_formatter(events)}/{format_ns(elapsed)} "
+                f"max items={value_formatter(max_items)}"
+            )
+    return ", ".join(parts)
+
+
 def cache_hit_rate(stats: dict[str, int]) -> str:
     hits = stats.get("cache_hits", 0)
     misses = stats.get("cache_misses", 0)
@@ -247,6 +284,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
                 "branch_treewidth_order_probe_elapsed_ns",
+                *RANKWIDTH_KERNEL_SUM_FIELDS,
                 *BRANCH_SKIP_REASON_FIELDS,
                 *BRANCH_DISPATCH_SUM_FIELDS,
             ):
@@ -276,6 +314,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_treewidth_order_width",
                 "branch_treewidth_table_forecast",
                 "branch_treewidth_join_pair_forecast",
+                *RANKWIDTH_KERNEL_MAX_FIELDS,
                 *BRANCH_DISPATCH_MAX_FIELDS,
             ):
                 add_max(stats, stat, stat_value(record, stat))
@@ -333,6 +372,9 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(f"max signatures {max(stats.get('rankwidth_max_signature_entries', 0), stats.get('max_signature_entries', 0))}")
     if "join_pairs" in stats:
         parts.append(f"{stats['join_pairs']} join pairs")
+    kernel_text = rankwidth_kernel_text(stats)
+    if kernel_text:
+        parts.append(f"rankwidth kernels {kernel_text}")
     if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
         parts.append(
             f"delegations tw={stats.get('treewidth_delegations', 0)}, "

@@ -46,6 +46,22 @@ BRANCH_DISPATCH_METRIC_FIELDS = tuple(
     for _phases, prefix, max_key in BRANCH_DISPATCH_TRACE_GROUPS
     for field in (f"{prefix}_events", f"{prefix}_elapsed_ns", f"{prefix}_{max_key}")
 )
+RANKWIDTH_KERNEL_TRACE_GROUPS = (
+    (("rankwidth.join_map", "rankwidth.crt_join_map"), "rankwidth_join_map"),
+    (("rankwidth.join", "rankwidth.crt_join"), "rankwidth_join"),
+    (
+        ("rankwidth.labelled_join_map", "rankwidth.labelled_crt_join_map"),
+        "rankwidth_labelled_join_map",
+    ),
+    (("rankwidth.labelled_join", "rankwidth.labelled_crt_join"), "rankwidth_labelled_join"),
+    (("rankwidth.fourier_join_map",), "rankwidth_fourier_join_map"),
+    (("rankwidth.fourier_join",), "rankwidth_fourier_join"),
+)
+RANKWIDTH_KERNEL_METRIC_FIELDS = tuple(
+    field
+    for _phases, prefix in RANKWIDTH_KERNEL_TRACE_GROUPS
+    for field in (f"{prefix}_events", f"{prefix}_elapsed_ns", f"{prefix}_max_items")
+)
 BACKEND_ALIAS_METRICS = (
     "rankwidth_width",
     "treewidth_width",
@@ -92,6 +108,7 @@ TOP_METRICS = (
     "treewidth_multiply_elapsed_ns",
     "treewidth_sum_out_events",
     "treewidth_sum_out_elapsed_ns",
+    *RANKWIDTH_KERNEL_METRIC_FIELDS,
     "branch_root_treewidth_delegate_events",
     "branch_root_treewidth_delegate_elapsed_ns",
     "branch_root_treewidth_delegate_max_vars",
@@ -182,6 +199,7 @@ CSV_FIELDS = [
     "treewidth_multiply_elapsed_ns",
     "treewidth_sum_out_events",
     "treewidth_sum_out_elapsed_ns",
+    *RANKWIDTH_KERNEL_METRIC_FIELDS,
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -504,6 +522,18 @@ def treewidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]
     return metrics
 
 
+def rankwidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phases, prefix in RANKWIDTH_KERNEL_TRACE_GROUPS:
+        matching = [trace[phase] for phase in phases if phase in trace]
+        if not matching:
+            continue
+        metrics[f"{prefix}_events"] = sum(values["events"] for values in matching)
+        metrics[f"{prefix}_elapsed_ns"] = sum(values["elapsed_ns"] for values in matching)
+        metrics[f"{prefix}_max_items"] = max(values["max_items"] for values in matching)
+    return metrics
+
+
 def branch_skip_reason_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
     for phase, key in BRANCH_TREEWIDTH_SKIP_METRICS.items():
@@ -637,6 +667,7 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
             "treewidth_sum_out_elapsed_ns",
+            *RANKWIDTH_KERNEL_METRIC_FIELDS,
             "branch_root_treewidth_delegate_events",
             "branch_root_treewidth_delegate_elapsed_ns",
             "branch_root_treewidth_delegate_max_vars",
@@ -841,6 +872,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 kernel_metrics = treewidth_kernel_metrics(trace)
+                rankwidth_metrics = rankwidth_kernel_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
                 dispatch_metrics = branch_dispatch_metrics(trace)
                 trace_metrics = trace_record_metrics(trace)
@@ -872,6 +904,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **branch_probe_metrics,
                         **treewidth_probe_metrics,
                         **kernel_metrics,
+                        **rankwidth_metrics,
                         **skip_reason_metrics,
                         **dispatch_metrics,
                         **trace_metrics,
@@ -923,6 +956,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
             "treewidth_sum_out_elapsed_ns",
+            *RANKWIDTH_KERNEL_METRIC_FIELDS,
             "branch_root_treewidth_delegate_events",
             "branch_root_treewidth_delegate_elapsed_ns",
             "branch_root_treewidth_delegate_max_vars",
@@ -1058,6 +1092,29 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f"{record.get('treewidth_multiply_elapsed_ns', 0)},"
                     f"sum:{record.get('treewidth_sum_out_events', 0)}/"
                     f"{record.get('treewidth_sum_out_elapsed_ns', 0)}"
+                )
+            if (
+                "rankwidth_join_map_elapsed_ns" in record
+                or "rankwidth_join_elapsed_ns" in record
+                or "rankwidth_labelled_join_map_elapsed_ns" in record
+                or "rankwidth_labelled_join_elapsed_ns" in record
+                or "rankwidth_fourier_join_map_elapsed_ns" in record
+                or "rankwidth_fourier_join_elapsed_ns" in record
+            ):
+                line += (
+                    " rankwidth_kernels="
+                    f"map:{record.get('rankwidth_join_map_events', 0)}/"
+                    f"{record.get('rankwidth_join_map_elapsed_ns', 0)},"
+                    f"join:{record.get('rankwidth_join_events', 0)}/"
+                    f"{record.get('rankwidth_join_elapsed_ns', 0)},"
+                    f"labelled_map:{record.get('rankwidth_labelled_join_map_events', 0)}/"
+                    f"{record.get('rankwidth_labelled_join_map_elapsed_ns', 0)},"
+                    f"labelled:{record.get('rankwidth_labelled_join_events', 0)}/"
+                    f"{record.get('rankwidth_labelled_join_elapsed_ns', 0)},"
+                    f"fourier_map:{record.get('rankwidth_fourier_join_map_events', 0)}/"
+                    f"{record.get('rankwidth_fourier_join_map_elapsed_ns', 0)},"
+                    f"fourier:{record.get('rankwidth_fourier_join_events', 0)}/"
+                    f"{record.get('rankwidth_fourier_join_elapsed_ns', 0)}"
                 )
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
@@ -1326,6 +1383,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
             "treewidth_sum_out_elapsed_ns",
+            *RANKWIDTH_KERNEL_METRIC_FIELDS,
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",
