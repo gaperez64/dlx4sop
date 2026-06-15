@@ -283,7 +283,7 @@ def main() -> int:
         rankwidth_output = rankwidth_comparison_output.read_text(encoding="utf-8")
         for expected in (
             "# Rankwidth Backend Comparison",
-            "`rankwidth:min-fill-cut:count-table` | 1 / 1 | 900 ns | 1 | 4 | 4 | 2",
+            "`rankwidth:min-fill-cut:count-table` | 1 / 1 | 900 ns | 1 | 4 | 0 ns | 4 | 2",
             "| 33-64 | labelled | 1 | 1 | 0 | 900 ns | 1.0 us | -100 ns | 1 / 1 | 1 / 0 / 0 | 1 / 0 / 0 | 1 / 1 | -100 ns / -9.1 us | 0 |",
             "Synthetic:bell 0->0",
         ):

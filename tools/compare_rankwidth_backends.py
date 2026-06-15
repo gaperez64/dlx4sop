@@ -11,6 +11,18 @@ from render_scoreboard import format_ns, labelled_path, read_jsonl
 from summarize_qasm_report import markdown_escape
 
 
+RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
+    "rankwidth_join_map_elapsed_ns",
+    "rankwidth_join_elapsed_ns",
+    "rankwidth_labelled_join_map_elapsed_ns",
+    "rankwidth_labelled_join_elapsed_ns",
+    "rankwidth_fourier_join_map_elapsed_ns",
+    "rankwidth_fourier_join_elapsed_ns",
+    "rankwidth_labelled_fourier_join_map_elapsed_ns",
+    "rankwidth_labelled_fourier_join_elapsed_ns",
+)
+
+
 def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
     return (
         str(record.get("source") or "unknown"),
@@ -76,6 +88,10 @@ def max_table(record: dict) -> int:
     return metric_or_zero(record, "max_table_entries")
 
 
+def rankwidth_kernel_elapsed_ns(record: dict) -> int:
+    return sum(metric_or_zero(record, key) for key in RANKWIDTH_KERNEL_ELAPSED_FIELDS)
+
+
 def load_records(named_paths: Iterable[tuple[str, pathlib.Path]]) -> list[dict]:
     rows: list[dict] = []
     for tier, path in named_paths:
@@ -100,6 +116,7 @@ def backend_summary(records: list[dict]) -> list[dict]:
                 "ok": 0,
                 "timeouts": 0,
                 "elapsed_ns": 0,
+                "rankwidth_kernel_elapsed_ns": 0,
                 "max_width": 0,
                 "max_table": 0,
                 "table_forecast_pressure": 0,
@@ -110,6 +127,7 @@ def backend_summary(records: list[dict]) -> list[dict]:
         if status(record) == "ok":
             entry["ok"] += 1
             entry["elapsed_ns"] += metric_or_zero(record, "solve_elapsed_ns")
+            entry["rankwidth_kernel_elapsed_ns"] += rankwidth_kernel_elapsed_ns(record)
             entry["max_width"] = max(
                 entry["max_width"],
                 rankwidth_width(record)
@@ -305,15 +323,16 @@ def write_markdown(records: list[dict], rankwidth_config: str, top: int, file: T
     print("\n## Backend Summary\n", file=file)
     print(
         "| Tier | QSOP mode | Config | OK / records | Total solve time | Max width | "
-        "Max table | Forecast table pressure | Forecast join pressure |",
+        "Max table | Rankwidth kernel time | Forecast table pressure | Forecast join pressure |",
         file=file,
     )
-    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in backend_summary(records):
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"`{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
             f"{format_ns(row['elapsed_ns'])} | {row['max_width']} | {row['max_table']} | "
+            f"{format_ns(row['rankwidth_kernel_elapsed_ns'])} | "
             f"{row['table_forecast_pressure']} | {row['join_pair_forecast_pressure']} |",
             file=file,
         )

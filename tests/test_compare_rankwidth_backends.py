@@ -31,6 +31,8 @@ def rankwidth_record(case: str, elapsed_ns: int, max_table: int, table_forecast:
             "rankwidth_max_table_entries": max_table,
             "rankwidth_table_forecast": table_forecast,
             "rankwidth_join_pair_forecast": 80,
+            "rankwidth_labelled_join_map_elapsed_ns": 10,
+            "rankwidth_labelled_join_elapsed_ns": 20,
         }
     )
     return record
@@ -94,7 +96,7 @@ def main() -> int:
             raise AssertionError(f"rankwidth backend comparison failed:\n{completed.stdout}\n{completed.stderr}")
         for expected in (
             "# Rankwidth Backend Comparison",
-            "`rankwidth:min-fill-cut:count-table` | 2 / 2 | 350 ns | 2 | 32 | 60 | 160",
+            "`rankwidth:min-fill-cut:count-table` | 2 / 2 | 350 ns | 2 | 32 | 60 ns | 60 | 160",
             "| 33-64 | labelled | 2 | 1 | 1 | 350 ns | 350 ns | 0 ns | 1 / 2 | 1 / 0 / 1 | 1 / 0 / 1 | 1 / 2 | -50 ns / -20 ns | 1 |",
             "Synthetic:rankwidth-win 0->0",
             "`branch:split` 250 ns",
@@ -120,6 +122,12 @@ def main() -> int:
         if completed.returncode != 0:
             raise AssertionError(f"rankwidth backend comparison json failed:\n{completed.stdout}\n{completed.stderr}")
         payload = json.loads(completed.stdout)
+        backend_summary = payload["backend_summary"]
+        rankwidth_summary = [
+            row for row in backend_summary if row["config"] == "rankwidth:min-fill-cut:count-table"
+        ]
+        if not rankwidth_summary or rankwidth_summary[0]["rankwidth_kernel_elapsed_ns"] != 60:
+            raise AssertionError(f"unexpected rankwidth kernel summary: {backend_summary}")
         summary = payload["comparison_summary"][0]
         if summary["rankwidth_fastest_or_tied"] != 1 or summary["rankwidth_slower"] != 1:
             raise AssertionError(f"unexpected win/loss summary: {summary}")
