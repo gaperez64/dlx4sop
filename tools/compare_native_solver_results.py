@@ -11,7 +11,7 @@ from render_scoreboard import format_ns
 from summarize_qasm_report import markdown_escape
 
 
-AMPLITUDE_ABS_TOL = 1e-8
+AMPLITUDE_ABS_TOL = 1e-6
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:

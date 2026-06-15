@@ -343,7 +343,12 @@ def qsop_header(qsop: str) -> dict[str, int | str]:
     return header
 
 
+UINT64_MAX = (1 << 64) - 1
+
+
 def amplitude_metrics(modulus: int, norm_h: int, counts: list[int]) -> dict[str, float]:
+    if norm_h >= 64 and all(0 <= count <= UINT64_MAX for count in counts):
+        return {}
     omega = cmath.exp(2j * math.pi / modulus)
     total = sum(count * (omega**residue) for residue, count in enumerate(counts))
     amplitude = total * (2.0 ** (-norm_h / 2.0))

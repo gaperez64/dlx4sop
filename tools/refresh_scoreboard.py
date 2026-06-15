@@ -485,7 +485,9 @@ def write_competitor_tables(
         "native tool is compared only on the QASM rows from that source that it can "
         "parse and fit under its cap. Speedup is native elapsed time divided by "
         "QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude "
-        "mismatch columns use completed rows where both sides recorded amplitudes.\n",
+        "mismatch columns use completed rows where both sides recorded amplitudes. "
+        "Rows with nonzero mismatches are correctness investigation targets, not "
+        "accepted benchmark wins.\n",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}, key=source_sort_key):

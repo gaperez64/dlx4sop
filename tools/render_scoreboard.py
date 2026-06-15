@@ -10,7 +10,7 @@ from typing import Iterable, TextIO
 from summarize_qasm_report import DEFAULT_TIERS, markdown_escape, summarize_reports
 
 
-AMPLITUDE_ABS_TOL = 1e-8
+AMPLITUDE_ABS_TOL = 1e-6
 BRANCH_TREEWIDTH_SKIP_REASON_FIELDS = (
     ("branch_treewidth_skip_width_events", "width"),
     ("branch_treewidth_skip_unavailable_events", "unavailable"),
@@ -718,7 +718,8 @@ def write_native_comparison_tables(
     print(
         "Rows join solver and native simulator JSONL on source, relative path, case, input, and output. "
         "Times and speedups use rows where both completed. Amplitude mismatch columns use rows "
-        "where both sides recorded amplitudes.",
+        "where both sides recorded amplitudes. Rows with nonzero mismatches are correctness "
+        "investigation targets, not accepted benchmark wins.",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}):

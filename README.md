@@ -111,8 +111,9 @@ data show corpus-level wins over treewidth.
 
 Known gaps before the long-term plan is complete:
 
-- Refresh promoted corpus and native baselines after importer, cache, and
-  rankwidth scoring changes.
+- Refresh native baselines after importer, cache, and rankwidth scoring changes.
+- Resolve widened-tier native amplitude mismatches before treating those rows as
+  accepted benchmark wins.
 - Promote rankwidth only from labelled-tier benchmark evidence, not isolated
   microbenchmarks.
 - Split 257+ rows into low-width promotable cases and high-width timeout cases.

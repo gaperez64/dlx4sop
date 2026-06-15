@@ -180,6 +180,13 @@ def main() -> int:
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")
 
+    if not bench.amplitude_metrics(8, 10, [1, 0, 0, 0, 0, 0, 0, 0]):
+        raise AssertionError("small exact counts should emit amplitude metrics")
+    if bench.amplitude_metrics(8, 64, [bench.UINT64_MAX, 0, 0, 0, 0, 0, 0, 0]):
+        raise AssertionError("large non-CRT uint64 counts should not emit amplitude metrics")
+    if not bench.amplitude_metrics(8, 64, [bench.UINT64_MAX + 1, 0, 0, 0, 0, 0, 0, 0]):
+        raise AssertionError("CRT-sized decimal counts should emit amplitude metrics")
+
     return 0
 
 
