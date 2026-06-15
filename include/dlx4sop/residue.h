@@ -31,4 +31,11 @@ bool qsop_crt_find_primes_for_nvars(uint32_t nvars, uint64_t **out_primes, size_
 bool qsop_crt_reconstruct_decimal(const uint64_t *residues, const uint64_t *primes,
                                   size_t nprimes, char **out, qsop_error_t *error);
 
+bool qsop_fourier_find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime,
+                                 qsop_error_t *error);
+bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
+                                  qsop_error_t *error);
+bool qsop_fourier_make_root_powers(uint32_t r, uint64_t root, uint64_t prime,
+                                   uint64_t **out, qsop_error_t *error);
+
 #endif

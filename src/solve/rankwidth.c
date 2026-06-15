@@ -2416,89 +2416,6 @@ static bool solve_labelled_join_mod(const qsop_instance_t *qsop, const rw_join_m
   return solve_join_mod(qsop, map, left, right, modulus, out, words, join_pairs, error);
 }
 
-static uint32_t factor_u32(uint32_t value, uint32_t *factors, uint32_t cap) {
-  uint32_t len = 0;
-  uint32_t remaining = value;
-  for (uint32_t p = 2; p <= remaining / p; p++) {
-    if (remaining % p != 0) {
-      continue;
-    }
-    if (len < cap) {
-      factors[len++] = p;
-    }
-    while (remaining % p == 0) {
-      remaining /= p;
-    }
-  }
-  if (remaining > 1 && len < cap) {
-    factors[len++] = remaining;
-  }
-  return len;
-}
-
-static bool find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime, qsop_error_t *error) {
-  const uint64_t count_bound = UINT64_C(1) << nvars;
-  uint64_t k = (UINT64_MAX - 1U) / r;
-  for (uint64_t attempts = 0; attempts < UINT64_C(2000000) && k > 0; attempts++, k--) {
-    const uint64_t candidate = k * (uint64_t)r + 1U;
-    if (candidate <= count_bound) {
-      break;
-    }
-    if (qsop_mod_is_prime_u64(candidate)) {
-      *prime = candidate;
-      return true;
-    }
-  }
-  set_error(error, "rankwidth Fourier mode could not find a 64-bit NTT prime for modulus %" PRIu32,
-            r);
-  return false;
-}
-
-static bool find_order_root(uint64_t prime, uint32_t r, uint64_t *root, qsop_error_t *error) {
-  uint32_t factors[32] = {0};
-  const uint32_t nfactors = factor_u32(r, factors, 32);
-  for (uint64_t g = 2; g < UINT64_C(1000000); g++) {
-    const uint64_t candidate = qsop_mod_pow_u64(g, (prime - 1U) / r, prime);
-    if (candidate == 1) {
-      continue;
-    }
-    bool exact = true;
-    for (uint32_t i = 0; i < nfactors; i++) {
-      if (qsop_mod_pow_u64(candidate, r / factors[i], prime) == 1) {
-        exact = false;
-        break;
-      }
-    }
-    if (exact) {
-      *root = candidate;
-      return true;
-    }
-  }
-  set_error(error, "rankwidth Fourier mode could not find an order-%" PRIu32 " root", r);
-  return false;
-}
-
-static bool make_root_powers(uint32_t r, uint64_t root, uint64_t prime, uint64_t **out,
-                             qsop_error_t *error) {
-  if ((size_t)r > SIZE_MAX / (r == 0 ? 1U : (size_t)r) / sizeof(uint64_t)) {
-    set_error(error, "rankwidth Fourier modulus is too large for dense mode tables");
-    return false;
-  }
-  uint64_t *powers = calloc((size_t)r * r, sizeof(*powers));
-  if (powers == NULL) {
-    set_error(error, "out of memory while allocating rankwidth Fourier powers");
-    return false;
-  }
-  for (uint32_t mode = 0; mode < r; mode++) {
-    for (uint32_t residue = 0; residue < r; residue++) {
-      powers[(size_t)mode * r + residue] =
-          qsop_mod_pow_u64(root, ((uint64_t)mode * residue) % r, prime);
-    }
-  }
-  *out = powers;
-  return true;
-}
-
 static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t signature,
                                           const uint64_t *assignment, uint32_t r, size_t words,
                                           size_t *out, qsop_error_t *error) {
@@ -3376,13 +3293,13 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   uint64_t inv_root = 0;
   uint64_t *powers = NULL;
   uint64_t *inv_powers = NULL;
-  if (!find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
-      !find_order_root(prime, qsop->r, &root, error)) {
+  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
+      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
     return false;
   }
   inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
-  if (!make_root_powers(qsop->r, root, prime, &powers, error) ||
-      !make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
+  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
     free(powers);
     free(inv_powers);
     return false;

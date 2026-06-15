@@ -388,6 +388,114 @@ bool qsop_crt_find_primes_for_nvars(uint32_t nvars, uint64_t **out_primes, size_
   return true;
 }
 
+static uint32_t factor_u32(uint32_t value, uint32_t *factors, uint32_t cap) {
+  uint32_t len = 0;
+  uint32_t remaining = value;
+  for (uint32_t p = 2; p <= remaining / p; p++) {
+    if (remaining % p != 0) {
+      continue;
+    }
+    if (len < cap) {
+      factors[len++] = p;
+    }
+    while (remaining % p == 0) {
+      remaining /= p;
+    }
+  }
+  if (remaining > 1 && len < cap) {
+    factors[len++] = remaining;
+  }
+  return len;
+}
+
+bool qsop_fourier_find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime,
+                                 qsop_error_t *error) {
+  if (prime == NULL) {
+    set_error(error, "internal error: null Fourier prime output");
+    return false;
+  }
+  *prime = 0;
+  if (r == 0 || nvars >= 64U) {
+    set_error(error, "Fourier NTT prime search requires nonzero modulus and fewer than 64 variables");
+    return false;
+  }
+  const uint64_t count_bound = UINT64_C(1) << nvars;
+  uint64_t k = (UINT64_MAX - 1U) / r;
+  for (uint64_t attempts = 0; attempts < UINT64_C(2000000) && k > 0; attempts++, k--) {
+    const uint64_t candidate = k * (uint64_t)r + 1U;
+    if (candidate <= count_bound) {
+      break;
+    }
+    if (qsop_mod_is_prime_u64(candidate)) {
+      *prime = candidate;
+      return true;
+    }
+  }
+  set_error(error, "Fourier mode could not find a 64-bit NTT prime for modulus %" PRIu32, r);
+  return false;
+}
+
+bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
+                                  qsop_error_t *error) {
+  if (root == NULL) {
+    set_error(error, "internal error: null Fourier root output");
+    return false;
+  }
+  *root = 0;
+  if (r == 0 || prime <= 2U || (prime - 1U) % r != 0) {
+    set_error(error, "Fourier root search requires prime congruent to 1 modulo %" PRIu32, r);
+    return false;
+  }
+
+  uint32_t factors[32] = {0};
+  const uint32_t nfactors = factor_u32(r, factors, 32);
+  for (uint64_t g = 2; g < UINT64_C(1000000); g++) {
+    const uint64_t candidate = qsop_mod_pow_u64(g, (prime - 1U) / r, prime);
+    if (candidate == 1) {
+      continue;
+    }
+    bool exact = true;
+    for (uint32_t i = 0; i < nfactors; i++) {
+      if (qsop_mod_pow_u64(candidate, r / factors[i], prime) == 1) {
+        exact = false;
+        break;
+      }
+    }
+    if (exact) {
+      *root = candidate;
+      return true;
+    }
+  }
+  set_error(error, "Fourier mode could not find an order-%" PRIu32 " root", r);
+  return false;
+}
+
+bool qsop_fourier_make_root_powers(uint32_t r, uint64_t root, uint64_t prime,
+                                   uint64_t **out, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null Fourier powers output");
+    return false;
+  }
+  *out = NULL;
+  if ((size_t)r > SIZE_MAX / (r == 0 ? 1U : (size_t)r) / sizeof(uint64_t)) {
+    set_error(error, "Fourier modulus is too large for dense mode tables");
+    return false;
+  }
+  uint64_t *powers = calloc((size_t)r * r, sizeof(*powers));
+  if (powers == NULL) {
+    set_error(error, "out of memory while allocating Fourier powers");
+    return false;
+  }
+  for (uint32_t mode = 0; mode < r; mode++) {
+    for (uint32_t residue = 0; residue < r; residue++) {
+      powers[(size_t)mode * r + residue] =
+          qsop_mod_pow_u64(root, ((uint64_t)mode * residue) % r, prime);
+    }
+  }
+  *out = powers;
+  return true;
+}
+
 void qsop_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift) {
   if (r == 0 || dst == NULL || src == NULL) {
     return;

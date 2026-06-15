@@ -118,6 +118,49 @@ static int test_crt_prime_count(void) {
   return 0;
 }
 
+static int test_fourier_helpers(void) {
+  const uint32_t r = 8;
+  qsop_error_t error = {0};
+  uint64_t prime = 0;
+  uint64_t root = 0;
+  uint64_t *powers = NULL;
+
+  if (!qsop_fourier_find_ntt_prime(r, 4, &prime, &error)) {
+    fprintf(stderr, "fourier_find_ntt_prime failed: %s\n", error.message);
+    return 1;
+  }
+  if (!qsop_mod_is_prime_u64(prime) || (prime - 1U) % r != 0 || prime <= (UINT64_C(1) << 4U)) {
+    fprintf(stderr, "fourier_find_ntt_prime returned invalid prime %" PRIu64 "\n", prime);
+    return 1;
+  }
+  if (!qsop_fourier_find_order_root(prime, r, &root, &error)) {
+    fprintf(stderr, "fourier_find_order_root failed: %s\n", error.message);
+    return 1;
+  }
+  if (qsop_mod_pow_u64(root, r, prime) != 1 ||
+      qsop_mod_pow_u64(root, r / 2U, prime) == 1) {
+    fprintf(stderr, "fourier root does not have exact order %" PRIu32 "\n", r);
+    return 1;
+  }
+  if (!qsop_fourier_make_root_powers(r, root, prime, &powers, &error)) {
+    fprintf(stderr, "fourier_make_root_powers failed: %s\n", error.message);
+    return 1;
+  }
+  for (uint32_t mode = 0; mode < r; mode++) {
+    for (uint32_t residue = 0; residue < r; residue++) {
+      const uint64_t expected = qsop_mod_pow_u64(root, ((uint64_t)mode * residue) % r, prime);
+      if (powers[(size_t)mode * r + residue] != expected) {
+        fprintf(stderr, "fourier power mismatch at mode %" PRIu32 " residue %" PRIu32 "\n",
+                mode, residue);
+        free(powers);
+        return 1;
+      }
+    }
+  }
+  free(powers);
+  return 0;
+}
+
 static int test_qsop_write_errors(void) {
   qsop_error_t error = {0};
   if (qsop_write_file(NULL, NULL, &error)) {
@@ -185,6 +228,9 @@ int main(void) {
     return 1;
   }
   if (test_crt_prime_count() != 0) {
+    return 1;
+  }
+  if (test_fourier_helpers() != 0) {
     return 1;
   }
   if (test_qsop_write_errors() != 0) {
