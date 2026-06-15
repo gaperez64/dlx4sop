@@ -1375,16 +1375,38 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
     return false;
   }
 
-  char *rest = text;
-  while (*rest != '\0' && !isspace((unsigned char)*rest)) {
-    rest++;
+  char *gate_end = text;
+  while (*gate_end != '\0' && !isspace((unsigned char)*gate_end)) {
+    gate_end++;
   }
-  if (*rest == '\0') {
+  if (*gate_end == '\0') {
     set_error(importer, "gate statement is missing operands");
     return false;
   }
-  *rest = '\0';
-  rest = trim(rest + 1);
+
+  char *rest = NULL;
+  char *after_gate = trim(gate_end);
+  if (*after_gate == '(' && memchr(text, '(', (size_t)(gate_end - text)) == NULL) {
+    char *close = strchr(after_gate + 1, ')');
+    if (close == NULL) {
+      set_error(importer, "parameterized gate is missing ')'");
+      return false;
+    }
+    rest = trim(close + 1);
+    if (*rest == '\0') {
+      set_error(importer, "gate statement is missing operands");
+      return false;
+    }
+
+    const size_t name_len = (size_t)(gate_end - text);
+    const size_t params_len = (size_t)(close - after_gate + 1);
+    memmove(text + name_len, after_gate, params_len);
+    text[name_len + params_len] = '\0';
+  } else {
+    *gate_end = '\0';
+    rest = trim(gate_end + 1);
+  }
+
   lowercase_ascii(text);
   return apply_gate(importer, text, rest);
 }

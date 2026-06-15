@@ -91,6 +91,18 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if bad_phase.returncode == 0 or "unsupported u1 phase angle" not in bad_phase.stderr:
         raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
 
+    spaced_phase = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nh q[0];\nu1 (3*pi/4) q[0];\nh q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    u1_expected = source_root / "tests" / "golden" / "qasm_u1.expected"
+    if spaced_phase.returncode != 0 or spaced_phase.stdout != u1_expected.read_text():
+        raise AssertionError(f"unexpected spaced u1 result:\n{spaced_phase.stdout}\n{spaced_phase.stderr}")
+
     mismatched_qregs = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg a[1];\nqreg b[2];\ncx a, b;\n",
@@ -133,6 +145,24 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(
             f"unexpected bad controlled phase result:\n{bad_controlled_phase.stderr}"
+        )
+
+    spaced_controlled_phase = subprocess.run(
+        [str(exe), "--input", "11", "--output", "11", "-"],
+        input="OPENQASM 2.0;\nqreg q[2];\ncu1 (pi/4) q[0], q[1];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    cu1_expected = source_root / "tests" / "golden" / "qasm_cu1.expected"
+    if (
+        spaced_controlled_phase.returncode != 0
+        or spaced_controlled_phase.stdout != cu1_expected.read_text()
+    ):
+        raise AssertionError(
+            "unexpected spaced controlled phase result:\n"
+            f"{spaced_controlled_phase.stdout}\n{spaced_controlled_phase.stderr}"
         )
 
     bad_rz = subprocess.run(
