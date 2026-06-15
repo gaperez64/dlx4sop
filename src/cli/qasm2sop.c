@@ -1363,6 +1363,9 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
   if (starts_with_keyword(text, "include")) {
     return true;
   }
+  if (starts_with_keyword(text, "opaque")) {
+    return true;
+  }
   if (starts_with_keyword(text, "qreg")) {
     return parse_qreg(importer, trim(text + strlen("qreg")));
   }

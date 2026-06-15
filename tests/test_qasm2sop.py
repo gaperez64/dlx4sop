@@ -69,6 +69,19 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if stdin_result.returncode != 0 or stdin_result.stdout != expected.read_text():
         raise AssertionError(f"unexpected stdin result:\n{stdin_result.stdout}\n{stdin_result.stderr}")
 
+    opaque_result = subprocess.run(
+        [str(exe), "-"],
+        input=qasm.read_text().replace('include "qelib1.inc";\n', 'include "qelib1.inc";\nopaque vendor_gate a;\n'),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if opaque_result.returncode != 0 or opaque_result.stdout != expected.read_text():
+        raise AssertionError(
+            f"unexpected opaque declaration result:\n{opaque_result.stdout}\n{opaque_result.stderr}"
+        )
+
     unsupported = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nmeasure q[0] -> c[0];\n",
