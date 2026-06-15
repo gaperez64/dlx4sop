@@ -77,6 +77,10 @@ def config_summary(records: list[dict]) -> list[dict]:
                 "max_signatures": 0,
                 "join_pairs": 0,
                 "join_signature_pairs": 0,
+                "table_pressure": 0,
+                "signature_pressure": 0,
+                "join_pair_pressure": 0,
+                "join_signature_pressure": 0,
             },
         )
         entry["records"] += 1
@@ -84,12 +88,20 @@ def config_summary(records: list[dict]) -> list[dict]:
             entry["ok"] += 1
             entry["elapsed_ns"] += metric_or_zero(record, "solve_elapsed_ns")
             entry["max_width"] = max(entry["max_width"], metric_or_zero(record, "rankwidth_width"))
-            entry["max_table"] = max(entry["max_table"], metric_or_zero(record, "rankwidth_max_table_entries"))
+            table = metric_or_zero(record, "rankwidth_max_table_entries")
+            signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
+            join_pairs = metric_or_zero(record, "join_pairs")
+            join_signature_pairs = metric_or_zero(record, "join_signature_pairs")
+            entry["max_table"] = max(entry["max_table"], table)
             entry["max_signatures"] = max(
-                entry["max_signatures"], metric_or_zero(record, "rankwidth_max_signature_entries")
+                entry["max_signatures"], signatures
             )
-            entry["join_pairs"] += metric_or_zero(record, "join_pairs")
-            entry["join_signature_pairs"] += metric_or_zero(record, "join_signature_pairs")
+            entry["join_pairs"] += join_pairs
+            entry["join_signature_pairs"] += join_signature_pairs
+            entry["table_pressure"] += table
+            entry["signature_pressure"] += signatures
+            entry["join_pair_pressure"] += join_pairs
+            entry["join_signature_pressure"] += join_signature_pairs
         elif status(record) == "timeout":
             entry["timeouts"] += 1
     return [grouped[key] for key in sorted(grouped)]
@@ -175,16 +187,23 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     print("\n## Config Summary\n", file=file)
     print(
         "| Tier | QSOP mode | Config | OK / records | Total solve time | Max width | "
-        "Max table | Max signatures | Join pairs | Join signature pairs |",
+        "Max table | Max signatures | Join pairs | Join signature pairs | Mean table | "
+        "Mean signatures |",
         file=file,
     )
-    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print(
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        file=file,
+    )
     for row in config_summary(records):
+        mean_table = row["table_pressure"] / row["ok"] if row["ok"] else 0.0
+        mean_signatures = row["signature_pressure"] / row["ok"] if row["ok"] else 0.0
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"`{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
             f"{format_ns(row['elapsed_ns'])} | {row['max_width']} | {row['max_table']} | "
-            f"{row['max_signatures']} | {row['join_pairs']} | {row['join_signature_pairs']} |",
+            f"{row['max_signatures']} | {row['join_pairs']} | {row['join_signature_pairs']} | "
+            f"{mean_table:.1f} | {mean_signatures:.1f} |",
             file=file,
         )
 

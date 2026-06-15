@@ -62,6 +62,7 @@ def main() -> int:
             "# Rankwidth Generator Comparison",
             "`min-fill-cut:count-table`",
             "`balanced:count-table`",
+            "Mean table",
             "left-deep:count-table 1",
             "balanced:count-table 1",
             "0 / 0 / 0 of 1",
@@ -92,6 +93,11 @@ def main() -> int:
             raise AssertionError(f"unexpected time winners: {common}")
         if common["table_wins"] != {"balanced:count-table": 1}:
             raise AssertionError(f"unexpected table winners: {common}")
+        config_rows = {row["config"]: row for row in payload["config_summary"]}
+        if config_rows["left-deep:count-table"]["table_pressure"] != 128:
+            raise AssertionError(f"unexpected left-deep pressure: {config_rows['left-deep:count-table']}")
+        if config_rows["balanced:count-table"]["signature_pressure"] != 8:
+            raise AssertionError(f"unexpected balanced pressure: {config_rows['balanced:count-table']}")
     return 0
 
 
