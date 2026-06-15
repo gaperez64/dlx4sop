@@ -369,6 +369,25 @@ def trace_summary_text(trace: dict[str, dict[str, int]]) -> str:
     )
 
 
+def trace_elapsed_ns(trace: dict[str, dict[str, int]]) -> int:
+    return sum(values["elapsed_ns"] for values in trace.values())
+
+
+def trace_top_phase_text(trace: dict[str, dict[str, int]], limit: int = 3) -> str:
+    total = trace_elapsed_ns(trace)
+    if total <= 0 or limit <= 0:
+        return ""
+    ranked = sorted(
+        trace.items(),
+        key=lambda item: (-item[1]["elapsed_ns"], item[0]),
+    )
+    parts = []
+    for phase, values in ranked[:limit]:
+        elapsed = values["elapsed_ns"]
+        parts.append(f"{phase}:{elapsed}:{(elapsed * 100.0 / total):.1f}%")
+    return ",".join(parts)
+
+
 def cache_record_metrics(
     stats: dict[str, int | str], trace: dict[str, dict[str, int]]
 ) -> dict[str, int]:
@@ -1252,6 +1271,10 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
 
         trace = entry["trace"]
         if trace:
+            print(f"  trace_elapsed_ns: {trace_elapsed_ns(trace)}", file=file)
+            top_phases = trace_top_phase_text(trace)
+            if top_phases:
+                print(f"  trace_top: {top_phases}", file=file)
             print("  trace:", file=file)
             for phase in sorted(trace):
                 values = trace[phase]

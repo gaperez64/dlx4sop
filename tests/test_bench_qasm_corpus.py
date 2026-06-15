@@ -76,6 +76,16 @@ def main() -> int:
     if dispatch != expected_dispatch:
         raise AssertionError(f"unexpected dispatch metrics: {dispatch}")
 
+    if bench.trace_elapsed_ns(trace) != 2580:
+        raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
+    expected_top = (
+        "branch.rankwidth_delegate:1100:42.6%,"
+        "branch.treewidth_delegate:700:27.1%,"
+        "branch.component_split:300:11.6%"
+    )
+    if bench.trace_top_phase_text(trace) != expected_top:
+        raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
+
     return 0
 
 
