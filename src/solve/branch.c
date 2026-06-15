@@ -28,6 +28,7 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
 
 typedef struct residual_cache_key {
   uint64_t fingerprint;
+  bool canonical;
   uint32_t r;
   uint32_t nvars;
   uint32_t nedges;
@@ -96,6 +97,9 @@ typedef struct branch_search_stats {
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 5U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
+
+static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
+                                             qsop_error_t *error);
 
 static void free_subinstance(qsop_instance_t *sub) {
   if (sub == NULL) {
@@ -353,8 +357,131 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   return true;
 }
 
+static uint64_t residual_cache_key_fingerprint(const residual_cache_key_t *key) {
+  uint64_t fingerprint = UINT64_C(1469598103934665603);
+  fingerprint ^= key->canonical ? 1U : 0U;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->r;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->nvars;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->nedges;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->constant;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->active_vars;
+  fingerprint *= UINT64_C(1099511628211);
+  fingerprint ^= key->active_edges;
+  fingerprint *= UINT64_C(1099511628211);
+  for (uint32_t v = 0; v < key->nvars; v++) {
+    fingerprint ^= key->active_var[v];
+    fingerprint *= UINT64_C(1099511628211);
+    fingerprint ^= key->unary[v];
+    fingerprint *= UINT64_C(1099511628211);
+  }
+  for (uint32_t e = 0; e < key->nedges; e++) {
+    fingerprint ^= key->active_edge[e];
+    fingerprint *= UINT64_C(1099511628211);
+    fingerprint ^= key->edge_u[e];
+    fingerprint *= UINT64_C(1099511628211);
+    fingerprint ^= key->edge_v[e];
+    fingerprint *= UINT64_C(1099511628211);
+    fingerprint ^= key->edge_q[e];
+    fingerprint *= UINT64_C(1099511628211);
+  }
+  return fingerprint;
+}
+
+static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, uint32_t constant,
+                                                    residual_cache_key_t *key,
+                                                    qsop_error_t *error) {
+  if (key == NULL) {
+    set_error(error, "internal error: null residual cache key output");
+    return false;
+  }
+  *key = (residual_cache_key_t){0};
+
+  key->canonical = true;
+  key->r = sub->r;
+  key->nvars = sub->nvars;
+  key->nedges = sub->nedges;
+  key->constant = constant;
+  key->active_vars = sub->nvars;
+  key->active_edges = sub->nedges;
+
+  key->active_var = malloc(sub->nvars == 0 ? 1U : sub->nvars);
+  key->active_edge = malloc(sub->nedges == 0 ? 1U : sub->nedges);
+  key->unary = malloc((sub->nvars == 0 ? 1U : sub->nvars) * sizeof(*key->unary));
+  key->edge_u = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_u));
+  key->edge_v = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_v));
+  key->edge_q = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_q));
+  if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
+      key->edge_u == NULL || key->edge_v == NULL || key->edge_q == NULL) {
+    residual_cache_key_free(key);
+    set_error(error, "out of memory while allocating canonical residual cache key");
+    return false;
+  }
+
+  memset(key->active_var, 1, (size_t)sub->nvars * sizeof(*key->active_var));
+  memset(key->active_edge, 1, (size_t)sub->nedges * sizeof(*key->active_edge));
+  memcpy(key->unary, sub->unary, (size_t)sub->nvars * sizeof(*key->unary));
+  memcpy(key->edge_u, sub->edge_u, (size_t)sub->nedges * sizeof(*key->edge_u));
+  memcpy(key->edge_v, sub->edge_v, (size_t)sub->nedges * sizeof(*key->edge_v));
+  memcpy(key->edge_q, sub->edge_q, (size_t)sub->nedges * sizeof(*key->edge_q));
+  key->fingerprint = residual_cache_key_fingerprint(key);
+  return true;
+}
+
+static bool residual_cache_key_create_canonical_small(const qsop_residual_t *residual,
+                                                      residual_cache_key_t *key,
+                                                      qsop_error_t *error) {
+  qsop_instance_t sub = {0};
+  if (!build_active_residual_subinstance(residual, &sub, error)) {
+    return false;
+  }
+  const bool ok = residual_cache_key_create_from_instance(
+      &sub, qsop_residual_constant(residual), key, error);
+  free_subinstance(&sub);
+  return ok;
+}
+
+static bool residual_cache_key_create_for_store(const qsop_residual_t *residual,
+                                                residual_cache_key_t *key,
+                                                qsop_error_t *error) {
+  if (qsop_residual_active_vars(residual) <= BRANCH_SMALL_COMPONENT_CANONICAL_NVARS) {
+    return residual_cache_key_create_canonical_small(residual, key, error);
+  }
+  return residual_cache_key_create(residual, key, error);
+}
+
+static bool residual_cache_key_matches_key(const residual_cache_key_t *lhs,
+                                           const residual_cache_key_t *rhs) {
+  if (lhs->fingerprint != rhs->fingerprint || lhs->canonical != rhs->canonical ||
+      lhs->r != rhs->r || lhs->nvars != rhs->nvars || lhs->nedges != rhs->nedges ||
+      lhs->constant != rhs->constant || lhs->active_vars != rhs->active_vars ||
+      lhs->active_edges != rhs->active_edges) {
+    return false;
+  }
+
+  for (uint32_t v = 0; v < lhs->nvars; v++) {
+    if (lhs->active_var[v] != rhs->active_var[v] || lhs->unary[v] != rhs->unary[v]) {
+      return false;
+    }
+  }
+  for (uint32_t e = 0; e < lhs->nedges; e++) {
+    if (lhs->active_edge[e] != rhs->active_edge[e] || lhs->edge_u[e] != rhs->edge_u[e] ||
+        lhs->edge_v[e] != rhs->edge_v[e] || lhs->edge_q[e] != rhs->edge_q[e]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
                                                 const qsop_residual_t *residual) {
+  if (key->canonical) {
+    return false;
+  }
   if (key->fingerprint != qsop_residual_fingerprint(residual) ||
       key->r != qsop_residual_modulus(residual) || key->nvars != qsop_residual_nvars(residual) ||
       key->nedges != qsop_residual_nedges(residual) ||
@@ -391,10 +518,29 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
   return true;
 }
 
-static const residual_cache_entry_t *residual_cache_find(const residual_cache_t *cache,
-                                                         const qsop_residual_t *residual) {
+static bool residual_cache_find(const residual_cache_t *cache, const qsop_residual_t *residual,
+                                const residual_cache_entry_t **out, qsop_error_t *error) {
+  *out = NULL;
   if (cache->bucket_count == 0) {
-    return NULL;
+    return true;
+  }
+
+  if (qsop_residual_active_vars(residual) <= BRANCH_SMALL_COMPONENT_CANONICAL_NVARS) {
+    residual_cache_key_t lookup = {0};
+    if (!residual_cache_key_create_canonical_small(residual, &lookup, error)) {
+      return false;
+    }
+
+    const size_t bucket = (size_t)(lookup.fingerprint % cache->bucket_count);
+    for (size_t i = cache->buckets[bucket]; i != SIZE_MAX; i = cache->entries[i].next) {
+      const residual_cache_entry_t *entry = &cache->entries[i];
+      if (residual_cache_key_matches_key(&entry->key, &lookup)) {
+        *out = entry;
+        break;
+      }
+    }
+    residual_cache_key_free(&lookup);
+    return true;
   }
 
   const uint64_t fingerprint = qsop_residual_fingerprint(residual);
@@ -403,10 +549,11 @@ static const residual_cache_entry_t *residual_cache_find(const residual_cache_t 
     const residual_cache_entry_t *entry = &cache->entries[i];
     if (entry->key.fingerprint == fingerprint &&
         residual_cache_key_matches_residual(&entry->key, residual)) {
-      return entry;
+      *out = entry;
+      return true;
     }
   }
-  return NULL;
+  return true;
 }
 
 static bool residual_cache_reserve(residual_cache_t *cache, size_t needed, qsop_error_t *error) {
@@ -472,7 +619,7 @@ static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t 
   residual_cache_entry_t entry = {0};
   entry.next = SIZE_MAX;
   entry.search_nodes = search_nodes;
-  if (!residual_cache_key_create(residual, &entry.key, error)) {
+  if (!residual_cache_key_create_for_store(residual, &entry.key, error)) {
     return false;
   }
 
@@ -1227,7 +1374,10 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
   stats->nodes++;
 
   const uint64_t lookup_start = qsop_trace_begin(stats->trace);
-  const residual_cache_entry_t *entry = residual_cache_find(&stats->cache, residual);
+  const residual_cache_entry_t *entry = NULL;
+  if (!residual_cache_find(&stats->cache, residual, &entry, error)) {
+    return false;
+  }
   qsop_trace_emit_elapsed(stats->trace, "branch.cache_lookup", stats->depth, stats->cache.len,
                           lookup_start);
   if (entry != NULL) {
