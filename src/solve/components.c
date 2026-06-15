@@ -422,6 +422,38 @@ static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
   return left * right;
 }
 
+static uint64_t component_cache_key_bytes(const component_cache_t *cache) {
+  uint64_t bytes = 0;
+  for (size_t i = 0; i < cache->len; i++) {
+    const qsop_instance_t *key = &cache->entries[i].key;
+    const uint32_t nvars_alloc = key->nvars == 0 ? 1U : key->nvars;
+    const uint32_t nedges_alloc = key->nedges == 0 ? 1U : key->nedges;
+    add_saturating_u64(&bytes,
+                       saturating_mul_u64((uint64_t)nvars_alloc, sizeof(*key->unary)));
+    add_saturating_u64(
+        &bytes, saturating_mul_u64(saturating_mul_u64((uint64_t)nedges_alloc, 3U),
+                                   sizeof(*key->edge_u)));
+  }
+  return bytes;
+}
+
+static uint64_t component_cache_count_bytes(const component_cache_t *cache) {
+  uint64_t bytes = 0;
+  for (size_t i = 0; i < cache->len; i++) {
+    add_saturating_u64(
+        &bytes, saturating_mul_u64((uint64_t)cache->entries[i].key.r,
+                                   sizeof(*cache->entries[i].counts)));
+  }
+  return bytes;
+}
+
+static uint64_t component_cache_estimated_bytes(const component_cache_t *cache) {
+  uint64_t bytes = saturating_mul_u64((uint64_t)cache->cap, sizeof(*cache->entries));
+  add_saturating_u64(&bytes, component_cache_key_bytes(cache));
+  add_saturating_u64(&bytes, component_cache_count_bytes(cache));
+  return bytes;
+}
+
 static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                   uint64_t count_modulus, uint64_t *counts,
                                   qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
@@ -627,6 +659,9 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
   if (stats != NULL) {
     stats->cache_entries = (uint64_t)cache.len;
     stats->cache_stored_residue_slots = saturating_mul_u64((uint64_t)cache.len, qsop->r);
+    stats->cache_key_bytes = component_cache_key_bytes(&cache);
+    stats->cache_count_bytes = component_cache_count_bytes(&cache);
+    stats->cache_estimated_bytes = component_cache_estimated_bytes(&cache);
   }
 
   free(rowptr);
