@@ -7,6 +7,9 @@ from collections.abc import Iterable
 NATIVE_COMPAT_GATE_DEFINITIONS = {
     "ccz": "gate ccz a,b,c { h c; ccx a,b,c; h c; }",
     "iswap": "gate iswap a,b { s a; s b; h a; cx a,b; cx b,a; h b; }",
+    "rxx": "gate rxx(theta) a,b { h a; h b; cx a,b; rz(theta) b; cx a,b; h a; h b; }",
+    "ryy": "gate ryy(theta) a,b { sdg a; h a; sdg b; h b; cx a,b; rz(theta) b; cx a,b; h a; s a; h b; s b; }",
+    "rzz": "gate rzz(theta) a,b { cx a,b; rz(theta) b; cx a,b; }",
 }
 
 

@@ -18,9 +18,21 @@ include "qelib1.inc";
 qreg q[3];
 iswap q[0],q[1];
 ccz q[0],q[1],q[2];
+rxx(pi/4) q[0],q[1];
+ryy(-pi/2) q[1],q[2];
+rzz(pi/4) q[0],q[2];
 """
     patched = qasm_with_native_compat_definitions(qasm)
-    if "gate iswap a,b" not in patched or "gate ccz a,b,c" not in patched:
+    for expected in (
+        "gate iswap a,b",
+        "gate ccz a,b,c",
+        "gate rxx(theta) a,b",
+        "gate ryy(theta) a,b",
+        "gate rzz(theta) a,b",
+    ):
+        if expected not in patched:
+            raise AssertionError(f"missing compatibility definition {expected!r}:\n{patched}")
+    if "rz(theta) b" not in patched:
         raise AssertionError(f"missing compatibility definitions:\n{patched}")
     if patched.index("gate iswap") > patched.index("qreg q[3];"):
         raise AssertionError(f"compatibility definitions were inserted after qreg:\n{patched}")
