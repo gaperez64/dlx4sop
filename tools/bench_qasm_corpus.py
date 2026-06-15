@@ -67,7 +67,9 @@ TOP_METRICS = (
     "cache_hits",
     "cache_misses",
     "cache_avoided_nodes",
+    "cache_canonical_hits",
     "cache_entries",
+    "cache_canonical_entries",
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
@@ -151,7 +153,9 @@ CSV_FIELDS = [
     "cache_hits",
     "cache_misses",
     "cache_avoided_nodes",
+    "cache_canonical_hits",
     "cache_entries",
+    "cache_canonical_entries",
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
@@ -527,6 +531,7 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "max_residual_min_fill_width",
         "max_residual_prefix_cut_rank",
         "cache_entries",
+        "cache_canonical_entries",
         "cache_stored_residue_slots",
         "branch_rankwidth_labelled_width",
         "branch_rankwidth_support_width",
@@ -865,7 +870,9 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_hits",
             "cache_misses",
             "cache_avoided_nodes",
+            "cache_canonical_hits",
             "cache_entries",
+            "cache_canonical_entries",
             "cache_stored_residue_slots",
             "cache_hit_rate_ppm",
             "cache_avoided_node_rate_ppm",
@@ -976,9 +983,12 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache_avoided_nodes={stats['cache_avoided_nodes']}"
             if "cache_avoided_node_rate_ppm" in record:
                 line += f" cache_avoided_node_rate_ppm={record['cache_avoided_node_rate_ppm']}"
+            if "cache_canonical_hits" in stats:
+                line += f" cache_canonical_hits={stats['cache_canonical_hits']}"
             if "cache_entries" in stats:
                 line += (
                     f" cache_entries={stats['cache_entries']}"
+                    f" cache_canonical_entries={stats.get('cache_canonical_entries', 0)}"
                     f" cache_slots={stats.get('cache_stored_residue_slots', 0)}"
                 )
             if "cache_lookup_elapsed_ns" in record:
@@ -1253,7 +1263,9 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_hits",
             "cache_misses",
             "cache_avoided_nodes",
+            "cache_canonical_hits",
             "cache_entries",
+            "cache_canonical_entries",
             "cache_stored_residue_slots",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",

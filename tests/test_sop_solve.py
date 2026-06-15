@@ -524,6 +524,10 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
             raise AssertionError(f"{name}: expected a shared branch component cache hit")
         if stats["cache_hits"] + stats["cache_misses"] != stats["search_nodes"]:
             raise AssertionError(f"{name}: branch cache hits + misses do not match search nodes")
+        if stats.get("cache_canonical_hits", 0) < 1:
+            raise AssertionError(f"{name}: expected a canonical branch cache hit")
+        if stats.get("cache_canonical_entries", 0) < 1:
+            raise AssertionError(f"{name}: expected canonical branch cache entries")
 
     repeated_triangle = (
         "p qsop 8 6 6\n"

@@ -20,7 +20,9 @@ typedef struct qsop_solve_stats {
   uint64_t cache_hits;
   uint64_t cache_misses;
   uint64_t cache_avoided_nodes;
+  uint64_t cache_canonical_hits;
   uint64_t cache_entries;
+  uint64_t cache_canonical_entries;
   uint64_t cache_stored_residue_slots;
   uint64_t table_entries;
   uint64_t max_table_entries;

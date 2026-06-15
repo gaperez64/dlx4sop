@@ -64,6 +64,7 @@ typedef struct branch_search_stats {
   uint64_t cache_hits;
   uint64_t cache_misses;
   uint64_t cache_avoided_nodes;
+  uint64_t cache_canonical_hits;
   uint64_t table_entries;
   uint64_t max_table_entries;
   uint64_t signature_entries;
@@ -669,6 +670,16 @@ static void residual_cache_free(residual_cache_t *cache) {
   *cache = (residual_cache_t){0};
 }
 
+static uint64_t residual_cache_canonical_entries(const residual_cache_t *cache) {
+  uint64_t entries = 0;
+  for (size_t i = 0; i < cache->len; i++) {
+    if (cache->entries[i].key.canonical) {
+      entries++;
+    }
+  }
+  return entries;
+}
+
 static bool build_residual_subinstance(const qsop_residual_t *residual, const uint32_t *component,
                                        uint32_t wanted, qsop_instance_t *sub, qsop_error_t *error) {
   const uint32_t source_vars = qsop_residual_nvars(residual);
@@ -1051,7 +1062,9 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_hits = search.cache_hits;
     stats->cache_misses = search.cache_misses;
     stats->cache_avoided_nodes = search.cache_avoided_nodes;
+    stats->cache_canonical_hits = search.cache_canonical_hits;
     stats->cache_entries = (uint64_t)search.cache.len;
+    stats->cache_canonical_entries = residual_cache_canonical_entries(&search.cache);
     stats->cache_stored_residue_slots =
         saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
     stats->table_entries = search.table_entries;
@@ -1382,6 +1395,9 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
                           lookup_start);
   if (entry != NULL) {
     stats->cache_hits++;
+    if (entry->key.canonical) {
+      stats->cache_canonical_hits++;
+    }
     if (entry->search_nodes > 1U) {
       add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
     }

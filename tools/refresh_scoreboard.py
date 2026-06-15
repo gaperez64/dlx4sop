@@ -167,9 +167,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}, "
             f"rate={cache_avoided_node_rate(stats)}"
         )
+    if stats.get("cache_canonical_hits", 0):
+        parts.append(f"cache canonical hits={format_count(stats['cache_canonical_hits'])}")
     if "cache_entries" in stats:
         parts.append(
             f"cache entries={format_count(stats['cache_entries'])}, "
+            f"canonical={format_count(stats.get('cache_canonical_entries', 0))}, "
             f"slots={format_count(stats.get('cache_stored_residue_slots', 0))}"
         )
     if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:

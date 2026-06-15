@@ -3,6 +3,7 @@ search_nodes: 5
 cache_hits: 0
 cache_misses: 5
 cache_entries: 5
+cache_canonical_entries: 5
 cache_stored_residue_slots: 40
 leaf_assignments: 6
 treewidth_delegations: 0

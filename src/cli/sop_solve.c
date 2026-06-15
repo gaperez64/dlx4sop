@@ -162,7 +162,13 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     if (stats->cache_avoided_nodes != 0) {
       fprintf(file, "cache_avoided_nodes: %" PRIu64 "\n", stats->cache_avoided_nodes);
     }
+    if (stats->cache_canonical_hits != 0) {
+      fprintf(file, "cache_canonical_hits: %" PRIu64 "\n", stats->cache_canonical_hits);
+    }
     fprintf(file, "cache_entries: %" PRIu64 "\n", stats->cache_entries);
+    if (stats->cache_canonical_entries != 0) {
+      fprintf(file, "cache_canonical_entries: %" PRIu64 "\n", stats->cache_canonical_entries);
+    }
     fprintf(file, "cache_stored_residue_slots: %" PRIu64 "\n",
             stats->cache_stored_residue_slots);
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
