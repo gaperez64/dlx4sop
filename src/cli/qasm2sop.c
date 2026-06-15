@@ -42,6 +42,7 @@ typedef enum qasm_one_qubit_op {
 typedef enum qasm_two_qubit_op {
   QASM_TWO_CZ,
   QASM_TWO_CPHASE,
+  QASM_TWO_CH,
   QASM_TWO_CX,
   QASM_TWO_CY,
   QASM_TWO_SWAP,
@@ -1045,6 +1046,9 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
     return apply_cz(importer, left, right);
   case QASM_TWO_CPHASE:
     return apply_controlled_phase(importer, left, right, phase_coeff);
+  case QASM_TWO_CH:
+    return apply_h(importer, right) && apply_cz(importer, left, right) &&
+           apply_h(importer, right);
   case QASM_TWO_CX:
     return apply_cx_decomposition(importer, left, right);
   case QASM_TWO_CY:
@@ -1290,6 +1294,10 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   if (strcmp(gate, "cz") == 0) {
     return apply_two_qubit_operands(importer, rest, QASM_TWO_CZ, 0);
+  }
+
+  if (strcmp(gate, "ch") == 0) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CH, 0);
   }
 
   if (strcmp(gate, "cx") == 0) {

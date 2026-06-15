@@ -332,6 +332,7 @@ def main() -> int:
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
     )
+    run_boundary_case(exe, source_root, "qasm_ch", ["--input", "10", "--output", "10"])
     run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
     run_boundary_case(exe, source_root, "qasm_crz", ["--input", "10", "--output", "10"])
     run_boundary_case(
