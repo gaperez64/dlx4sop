@@ -407,6 +407,11 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(f"{stats['components']} components")
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
+    if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
+        parts.append(
+            f"rw labelled-cut-signature={stats.get('rankwidth_labelled_width', 0)}, "
+            f"support={stats.get('rankwidth_support_width', 0)}"
+        )
     if "treewidth_width" in stats:
         parts.append(f"tw width {stats['treewidth_width']}")
     table = max(
@@ -420,6 +425,12 @@ def key_stats(stats: dict[str, int]) -> str:
         parts.append(f"rw table forecast {stats['rankwidth_table_forecast']}")
     if "rankwidth_join_pair_forecast" in stats:
         parts.append(f"rw join forecast {stats['rankwidth_join_pair_forecast']}")
+    if "rankwidth_labelled_exact_cuts" in stats or "rankwidth_labelled_proxy_cuts" in stats:
+        parts.append(
+            f"rw cut estimates exact={stats.get('rankwidth_labelled_exact_cuts', 0)}, "
+            f"proxy={stats.get('rankwidth_labelled_proxy_cuts', 0)}, "
+            f"assignments={stats.get('rankwidth_labelled_exact_assignments', 0)}"
+        )
     if "rankwidth_max_signature_entries" in stats or "max_signature_entries" in stats:
         parts.append(f"max signatures {max(stats.get('rankwidth_max_signature_entries', 0), stats.get('max_signature_entries', 0))}")
     if "join_pairs" in stats:

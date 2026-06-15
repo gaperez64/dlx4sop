@@ -100,7 +100,9 @@ is the lower-level table renderer for ad hoc reports. Use
 labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mean absolute error, and maximum
-absolute error. Rankwidth generator comparisons include kernel-time
+absolute error. Rankwidth records include support width, labelled cut-signature
+width, exact/proxy cut-estimator counts, forecast pressure, probe time, and
+kernel time. Rankwidth generator comparisons include kernel-time
 winners alongside table, join-pair, signature, and forecast pressure. Branch
 benchmark summaries now also surface skip reasons, fallthrough size, canonical
 cache lookup/store counts, cache key/count/estimated bytes, root treewidth
@@ -121,8 +123,9 @@ Known gaps before the long-term plan is complete:
 - Refresh native baselines after importer, cache, and rankwidth scoring changes.
 - Keep native amplitude agreement checks passing when importer or native-harness
   changes alter the shared QASM comparison set.
-- Promote rankwidth only from labelled-tier benchmark evidence, not isolated
-  microbenchmarks.
+- Promote rankwidth only from full labelled-tier benchmark evidence, not
+  isolated microbenchmarks; the remaining work is to refresh 65-128 and
+  129-256 rankwidth rows against treewidth and branch under the same caps.
 - Split 257+ rows into low-width promotable cases and high-width timeout cases.
 - Keep importer expansion limited to static gates or quadratizations that stay
   in labelled quadratic QSOP with controlled ancilla growth.

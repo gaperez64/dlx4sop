@@ -69,6 +69,11 @@ BACKEND_ALIAS_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
+    "rankwidth_support_width",
+    "rankwidth_labelled_width",
+    "rankwidth_labelled_exact_cuts",
+    "rankwidth_labelled_proxy_cuts",
+    "rankwidth_labelled_exact_assignments",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "rankwidth_signature_entries",
@@ -111,6 +116,12 @@ TOP_METRICS = (
     "branch_rankwidth_support_width",
     "branch_rankwidth_table_forecast",
     "branch_rankwidth_join_pair_forecast",
+    "rankwidth_width_probe_events",
+    "rankwidth_width_probe_elapsed_ns",
+    "rankwidth_width_probe_width",
+    "rankwidth_support_width_probe_width",
+    "rankwidth_trace_table_forecast",
+    "rankwidth_trace_join_pair_forecast",
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
@@ -137,6 +148,11 @@ TOP_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
+    "rankwidth_support_width",
+    "rankwidth_labelled_width",
+    "rankwidth_labelled_exact_cuts",
+    "rankwidth_labelled_proxy_cuts",
+    "rankwidth_labelled_exact_assignments",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -219,6 +235,12 @@ CSV_FIELDS = [
     "branch_rankwidth_support_width",
     "branch_rankwidth_table_forecast",
     "branch_rankwidth_join_pair_forecast",
+    "rankwidth_width_probe_events",
+    "rankwidth_width_probe_elapsed_ns",
+    "rankwidth_width_probe_width",
+    "rankwidth_support_width_probe_width",
+    "rankwidth_trace_table_forecast",
+    "rankwidth_trace_join_pair_forecast",
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
@@ -242,6 +264,11 @@ CSV_FIELDS = [
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
+    "rankwidth_support_width",
+    "rankwidth_labelled_width",
+    "rankwidth_labelled_exact_cuts",
+    "rankwidth_labelled_proxy_cuts",
+    "rankwidth_labelled_exact_assignments",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -406,6 +433,11 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
             "max_table_entries": "rankwidth_max_table_entries",
             "rankwidth_table_forecast": "rankwidth_table_forecast",
             "rankwidth_join_pair_forecast": "rankwidth_join_pair_forecast",
+            "rankwidth_support_width": "rankwidth_support_width",
+            "rankwidth_labelled_width": "rankwidth_labelled_width",
+            "rankwidth_labelled_exact_cuts": "rankwidth_labelled_exact_cuts",
+            "rankwidth_labelled_proxy_cuts": "rankwidth_labelled_proxy_cuts",
+            "rankwidth_labelled_exact_assignments": "rankwidth_labelled_exact_assignments",
             "signature_entries": "rankwidth_signature_entries",
             "max_signature_entries": "rankwidth_max_signature_entries",
         }
@@ -604,6 +636,25 @@ def rankwidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]
     return metrics
 
 
+def rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    width = trace.get("rankwidth.width_probe")
+    if width is not None:
+        metrics["rankwidth_width_probe_events"] = width["events"]
+        metrics["rankwidth_width_probe_elapsed_ns"] = width["elapsed_ns"]
+        metrics["rankwidth_width_probe_width"] = width["max_items"]
+    support = trace.get("rankwidth.support_width_probe")
+    if support is not None:
+        metrics["rankwidth_support_width_probe_width"] = support["max_items"]
+    table_forecast = trace.get("rankwidth.table_forecast")
+    if table_forecast is not None:
+        metrics["rankwidth_trace_table_forecast"] = table_forecast["max_items"]
+    join_forecast = trace.get("rankwidth.join_pair_forecast")
+    if join_forecast is not None:
+        metrics["rankwidth_trace_join_pair_forecast"] = join_forecast["max_items"]
+    return metrics
+
+
 def branch_skip_reason_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
     for phase, key in BRANCH_TREEWIDTH_SKIP_METRICS.items():
@@ -655,6 +706,8 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "rankwidth_max_table_entries",
         "rankwidth_table_forecast",
         "rankwidth_join_pair_forecast",
+        "rankwidth_support_width",
+        "rankwidth_labelled_width",
         "treewidth_max_table_entries",
         "max_signature_entries",
         "rankwidth_max_signature_entries",
@@ -674,6 +727,10 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "branch_rankwidth_support_width",
         "branch_rankwidth_table_forecast",
         "branch_rankwidth_join_pair_forecast",
+        "rankwidth_width_probe_width",
+        "rankwidth_support_width_probe_width",
+        "rankwidth_trace_table_forecast",
+        "rankwidth_trace_join_pair_forecast",
         "branch_treewidth_order_width",
         "branch_root_width_probe_width",
         "branch_treewidth_table_forecast",
@@ -750,6 +807,12 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_rankwidth_support_width",
             "branch_rankwidth_table_forecast",
             "branch_rankwidth_join_pair_forecast",
+            "rankwidth_width_probe_events",
+            "rankwidth_width_probe_elapsed_ns",
+            "rankwidth_width_probe_width",
+            "rankwidth_support_width_probe_width",
+            "rankwidth_trace_table_forecast",
+            "rankwidth_trace_join_pair_forecast",
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
@@ -975,6 +1038,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 trace = parse_trace_csv(trace_text) if args.trace else {}
                 cache_metrics = cache_record_metrics(stats, trace)
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
+                rankwidth_probe = rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 kernel_metrics = treewidth_kernel_metrics(trace)
                 rankwidth_metrics = rankwidth_kernel_metrics(trace)
@@ -1008,6 +1072,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **aliases,
                         **cache_metrics,
                         **branch_probe_metrics,
+                        **rankwidth_probe,
                         **treewidth_probe_metrics,
                         **kernel_metrics,
                         **rankwidth_metrics,
@@ -1092,6 +1157,11 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "rankwidth_max_table_entries",
             "rankwidth_table_forecast",
             "rankwidth_join_pair_forecast",
+            "rankwidth_support_width",
+            "rankwidth_labelled_width",
+            "rankwidth_labelled_exact_cuts",
+            "rankwidth_labelled_proxy_cuts",
+            "rankwidth_labelled_exact_assignments",
             "treewidth_table_entries",
             "treewidth_max_table_entries",
             "signature_entries",

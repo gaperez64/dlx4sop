@@ -37,6 +37,9 @@ typedef struct qsop_solve_stats {
   uint64_t join_signature_pairs;
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
+  uint64_t rankwidth_labelled_exact_cuts;
+  uint64_t rankwidth_labelled_proxy_cuts;
+  uint64_t rankwidth_labelled_exact_assignments;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;
@@ -50,6 +53,8 @@ typedef struct qsop_solve_stats {
   uint32_t max_residual_prefix_cut_rank;
   uint32_t components;
   uint32_t decomposition_width;
+  uint32_t rankwidth_support_width;
+  uint32_t rankwidth_labelled_width;
 } qsop_solve_stats_t;
 
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;

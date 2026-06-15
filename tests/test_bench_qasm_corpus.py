@@ -33,6 +33,10 @@ def main() -> int:
                 "branch.fallthrough,2,19,0",
                 "branch.rankwidth_skip_join_pair_forecast,1,128,0",
                 "branch.treewidth_skip_width,1,15,0",
+                "rankwidth.width_probe,0,5,10",
+                "rankwidth.support_width_probe,0,4,0",
+                "rankwidth.table_forecast,0,64,0",
+                "rankwidth.join_pair_forecast,0,512,0",
                 "branch.cache_lookup,0,4,50",
                 "branch.cache_canonical_lookup,0,6,30",
                 "components.cache_lookup,0,2,60",
@@ -158,24 +162,35 @@ def main() -> int:
     }
     if rankwidth_kernel != expected_rankwidth_kernel:
         raise AssertionError(f"unexpected rankwidth kernel metrics: {rankwidth_kernel}")
+    rankwidth_probe = bench.rankwidth_probe_metrics(trace)
+    expected_rankwidth_probe = {
+        "rankwidth_width_probe_events": 1,
+        "rankwidth_width_probe_elapsed_ns": 10,
+        "rankwidth_width_probe_width": 5,
+        "rankwidth_support_width_probe_width": 4,
+        "rankwidth_trace_table_forecast": 64,
+        "rankwidth_trace_join_pair_forecast": 512,
+    }
+    if rankwidth_probe != expected_rankwidth_probe:
+        raise AssertionError(f"unexpected rankwidth probe metrics: {rankwidth_probe}")
     kernel_record = {"stats": {}, **rankwidth_kernel}
     if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1540:
         raise AssertionError(f"unexpected rankwidth kernel elapsed: {kernel_record}")
 
-    if bench.trace_elapsed_ns(trace) != 5090:
+    if bench.trace_elapsed_ns(trace) != 5100:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
         "branch.rankwidth_delegate:1100:21.6%,"
-        "branch.treewidth_delegate:700:13.8%,"
+        "branch.treewidth_delegate:700:13.7%,"
         "treewidth.sum_out:500:9.8%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 5090,
+        "trace_elapsed_ns": 5100,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 216110,
+        "trace_top_share_ppm": 215686,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")

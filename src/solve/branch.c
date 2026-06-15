@@ -73,6 +73,11 @@ typedef struct branch_search_stats {
   uint64_t max_signature_entries;
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
+  uint64_t rankwidth_table_forecast;
+  uint64_t rankwidth_join_pair_forecast;
+  uint64_t rankwidth_labelled_exact_cuts;
+  uint64_t rankwidth_labelled_proxy_cuts;
+  uint64_t rankwidth_labelled_exact_assignments;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;
@@ -92,6 +97,8 @@ typedef struct branch_search_stats {
   uint64_t count_modulus;
   uint32_t depth;
   uint32_t decomposition_width;
+  uint32_t rankwidth_support_width;
+  uint32_t rankwidth_labelled_width;
 } branch_search_stats_t;
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 32U
@@ -838,6 +845,12 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
   add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
   add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
+  add_saturating_u64(&stats->rankwidth_labelled_exact_cuts,
+                     delegated->rankwidth_labelled_exact_cuts);
+  add_saturating_u64(&stats->rankwidth_labelled_proxy_cuts,
+                     delegated->rankwidth_labelled_proxy_cuts);
+  add_saturating_u64(&stats->rankwidth_labelled_exact_assignments,
+                     delegated->rankwidth_labelled_exact_assignments);
   add_saturating_u64(&stats->branch_fallthroughs, delegated->branch_fallthroughs);
   add_saturating_u64(&stats->branch_treewidth_skips, delegated->branch_treewidth_skips);
   add_saturating_u64(&stats->branch_rankwidth_skips, delegated->branch_rankwidth_skips);
@@ -849,6 +862,18 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   }
   if (delegated->decomposition_width > stats->decomposition_width) {
     stats->decomposition_width = delegated->decomposition_width;
+  }
+  if (delegated->rankwidth_support_width > stats->rankwidth_support_width) {
+    stats->rankwidth_support_width = delegated->rankwidth_support_width;
+  }
+  if (delegated->rankwidth_labelled_width > stats->rankwidth_labelled_width) {
+    stats->rankwidth_labelled_width = delegated->rankwidth_labelled_width;
+  }
+  if (delegated->rankwidth_table_forecast > stats->rankwidth_table_forecast) {
+    stats->rankwidth_table_forecast = delegated->rankwidth_table_forecast;
+  }
+  if (delegated->rankwidth_join_pair_forecast > stats->rankwidth_join_pair_forecast) {
+    stats->rankwidth_join_pair_forecast = delegated->rankwidth_join_pair_forecast;
   }
   max_u32(&stats->max_residual_vars, delegated->max_residual_vars);
   max_u32(&stats->max_residual_edges, delegated->max_residual_edges);
@@ -911,6 +936,8 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, labelled_width,
                           generate_start);
   branch_trace_event(stats, "branch.rankwidth_support_probe", support_width);
+  max_u32(&stats->rankwidth_support_width, support_width);
+  max_u32(&stats->rankwidth_labelled_width, labelled_width);
   uint64_t rankwidth_table_forecast =
       saturating_mul_u64(binary_assignment_forecast(labelled_width), sub->r);
   uint64_t rankwidth_join_pair_forecast = 0;
@@ -921,6 +948,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   }
   branch_trace_event(stats, "branch.rankwidth_table_forecast", rankwidth_table_forecast);
   branch_trace_event(stats, "branch.rankwidth_join_pair_forecast", rankwidth_join_pair_forecast);
+  if (rankwidth_table_forecast > stats->rankwidth_table_forecast) {
+    stats->rankwidth_table_forecast = rankwidth_table_forecast;
+  }
+  if (rankwidth_join_pair_forecast > stats->rankwidth_join_pair_forecast) {
+    stats->rankwidth_join_pair_forecast = rankwidth_join_pair_forecast;
+  }
 
   const bool rankwidth_table_forecast_wins =
       !treewidth_available || rankwidth_table_forecast < treewidth_table;
@@ -1129,6 +1162,11 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_signature_entries = search.max_signature_entries;
     stats->join_pairs = search.join_pairs;
     stats->join_signature_pairs = search.join_signature_pairs;
+    stats->rankwidth_table_forecast = search.rankwidth_table_forecast;
+    stats->rankwidth_join_pair_forecast = search.rankwidth_join_pair_forecast;
+    stats->rankwidth_labelled_exact_cuts = search.rankwidth_labelled_exact_cuts;
+    stats->rankwidth_labelled_proxy_cuts = search.rankwidth_labelled_proxy_cuts;
+    stats->rankwidth_labelled_exact_assignments = search.rankwidth_labelled_exact_assignments;
     stats->treewidth_delegations = search.treewidth_delegations;
     stats->rankwidth_delegations = search.rankwidth_delegations;
     stats->branch_fallthroughs = search.branch_fallthroughs;
@@ -1141,6 +1179,8 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_residual_min_fill_width = search.max_residual_min_fill_width;
     stats->max_residual_prefix_cut_rank = search.max_residual_prefix_cut_rank;
     stats->decomposition_width = search.decomposition_width;
+    stats->rankwidth_support_width = search.rankwidth_support_width;
+    stats->rankwidth_labelled_width = search.rankwidth_labelled_width;
   }
 
   qsop_residual_free(residual);

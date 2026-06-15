@@ -97,7 +97,18 @@ typedef struct rw_decomposition_score {
   uint32_t support_width;
   uint64_t table_forecast;
   uint64_t join_pair_forecast;
+  uint64_t labelled_exact_cuts;
+  uint64_t labelled_proxy_cuts;
+  uint64_t labelled_exact_assignments;
 } rw_decomposition_score_t;
+
+typedef struct rw_labelled_cut_stats {
+  uint64_t exact_cuts;
+  uint64_t proxy_cuts;
+  uint64_t exact_assignments;
+} rw_labelled_cut_stats_t;
+
+#define RW_LABELLED_EXACT_SIGNATURE_MAX_ASSIGNMENTS UINT64_C(1048576)
 
 static int compare_decomposition_scores(rw_decomposition_score_t left,
                                         rw_decomposition_score_t right) {
@@ -375,11 +386,13 @@ static uint32_t *coefficient_matrix(const qsop_instance_t *qsop, qsop_error_t *e
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
                                  const uint64_t *right, size_t words, qsop_error_t *error);
 static uint32_t ceil_log2_u64(uint64_t value);
+static uint64_t saturating_add_u64(uint64_t left, uint64_t right);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                     const uint64_t *adj, qsop_error_t *error);
 static bool decomposition_score(const qsop_instance_t *qsop,
                                 const qsop_rankwidth_decomposition_t *decomposition,
                                 const uint64_t *adj, const uint32_t *coeffs,
+                                rw_labelled_cut_stats_t *cut_stats,
                                 rw_decomposition_score_t *out, qsop_error_t *error);
 
 static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error) {
@@ -1314,7 +1327,8 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     }
 
     rw_decomposition_score_t selected_score = {0};
-    if (!decomposition_score(qsop, decomposition, adj, score_coeffs, &selected_score, error)) {
+    if (!decomposition_score(qsop, decomposition, adj, score_coeffs, NULL, &selected_score,
+                             error)) {
       free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(decomposition);
@@ -1330,7 +1344,8 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       return false;
     }
     rw_decomposition_score_t min_fill_score = {0};
-    if (!decomposition_score(qsop, min_fill, adj, score_coeffs, &min_fill_score, error)) {
+    if (!decomposition_score(qsop, min_fill, adj, score_coeffs, NULL, &min_fill_score,
+                             error)) {
       free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(min_fill);
@@ -1353,7 +1368,8 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       return false;
     }
     rw_decomposition_score_t left_deep_score = {0};
-    if (!decomposition_score(qsop, left_deep, adj, score_coeffs, &left_deep_score, error)) {
+    if (!decomposition_score(qsop, left_deep, adj, score_coeffs, NULL, &left_deep_score,
+                             error)) {
       free(score_coeffs);
       free(adj);
       qsop_rankwidth_decomposition_free(left_deep);
@@ -1558,9 +1574,109 @@ static uint32_t labelled_cut_signature_proxy_width(const qsop_instance_t *qsop,
   return ceil_log2_u64((uint64_t)distinct_rows + 1U);
 }
 
-static uint32_t labelled_decomposition_proxy_width(
+static bool labelled_cut_signature_exact_width(const qsop_instance_t *qsop, const uint32_t *coeffs,
+                                               const uint64_t *left, const uint64_t *right,
+                                               uint32_t *width_out,
+                                               uint64_t *assignments_out,
+                                               bool *computed_out,
+                                               qsop_error_t *error) {
+  if (computed_out == NULL) {
+    set_error(error, "internal error: null labelled rankwidth exact-estimator flag");
+    return false;
+  }
+  *computed_out = false;
+  const uint32_t nleft = qsop_bitset_popcount(left, qsop_bitset_words(qsop->nvars));
+  if (nleft >= 63U) {
+    return true;
+  }
+  const uint64_t assignments = UINT64_C(1) << nleft;
+  if (assignments > RW_LABELLED_EXACT_SIGNATURE_MAX_ASSIGNMENTS) {
+    return true;
+  }
+
+  uint32_t *left_vars = calloc(nleft == 0 ? 1U : nleft, sizeof(*left_vars));
+  uint32_t *signature = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*signature));
+  rw_label_signature_pool_t pool = {0};
+  if (left_vars == NULL || signature == NULL ||
+      !label_signature_pool_init(&pool, qsop->nvars, error)) {
+    free(left_vars);
+    free(signature);
+    label_signature_pool_free(&pool);
+    set_error(error, "out of memory while exactly estimating labelled rankwidth cut");
+    return false;
+  }
+
+  uint32_t index = 0;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (qsop_bitset_get(left, v)) {
+      left_vars[index++] = v;
+    }
+  }
+
+  bool ok = true;
+  for (uint64_t assignment = 0; assignment < assignments; assignment++) {
+    memset(signature, 0, (size_t)qsop->nvars * sizeof(*signature));
+    for (uint32_t bit = 0; bit < nleft; bit++) {
+      if (((assignment >> bit) & UINT64_C(1)) == 0) {
+        continue;
+      }
+      const uint32_t v = left_vars[bit];
+      for (uint32_t u = 0; u < qsop->nvars; u++) {
+        if (!qsop_bitset_get(right, u)) {
+          continue;
+        }
+        signature[u] =
+            (uint32_t)(((uint64_t)signature[u] + coeffs[(size_t)v * qsop->nvars + u]) %
+                       qsop->r);
+      }
+    }
+    uint32_t signature_id = 0;
+    if (!label_signature_pool_intern(&pool, signature, &signature_id, error)) {
+      ok = false;
+      break;
+    }
+  }
+
+  if (ok) {
+    *width_out = ceil_log2_u64((uint64_t)pool.len);
+    *assignments_out = assignments;
+    *computed_out = true;
+  }
+  free(left_vars);
+  free(signature);
+  label_signature_pool_free(&pool);
+  return ok;
+}
+
+static uint32_t labelled_cut_signature_width(const qsop_instance_t *qsop, const uint32_t *coeffs,
+                                             const uint64_t *left, const uint64_t *right,
+                                             rw_labelled_cut_stats_t *stats,
+                                             qsop_error_t *error) {
+  uint32_t exact_width = 0;
+  uint64_t exact_assignments = 0;
+  bool exact_computed = false;
+  if (!labelled_cut_signature_exact_width(qsop, coeffs, left, right, &exact_width,
+                                          &exact_assignments, &exact_computed, error)) {
+    return UINT32_MAX;
+  }
+  if (exact_computed) {
+    if (stats != NULL) {
+      stats->exact_cuts++;
+      stats->exact_assignments =
+          saturating_add_u64(stats->exact_assignments, exact_assignments);
+    }
+    return exact_width;
+  }
+
+  if (stats != NULL) {
+    stats->proxy_cuts++;
+  }
+  return labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+}
+
+static uint32_t labelled_decomposition_width(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    const uint32_t *coeffs, qsop_error_t *error) {
+    const uint32_t *coeffs, rw_labelled_cut_stats_t *stats, qsop_error_t *error) {
   uint64_t *all = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*all));
   uint64_t *right = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*right));
   if (all == NULL || right == NULL) {
@@ -1581,8 +1697,8 @@ static uint32_t labelled_decomposition_proxy_width(
     const uint64_t *left = node_vars_const(decomposition, i);
     qsop_bitset_copy(right, all, decomposition->words);
     qsop_bitset_and_not(right, left, decomposition->words);
-    const uint32_t cut_width =
-        labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+    const uint32_t cut_width = labelled_cut_signature_width(qsop, coeffs, left, right, stats,
+                                                            error);
     if (cut_width == UINT32_MAX) {
       free(all);
       free(right);
@@ -1601,6 +1717,7 @@ static uint32_t labelled_decomposition_proxy_width(
 static bool decomposition_score(const qsop_instance_t *qsop,
                                 const qsop_rankwidth_decomposition_t *decomposition,
                                 const uint64_t *adj, const uint32_t *coeffs,
+                                rw_labelled_cut_stats_t *cut_stats,
                                 rw_decomposition_score_t *out, qsop_error_t *error) {
   if (out == NULL) {
     set_error(error, "internal error: null rankwidth decomposition score output");
@@ -1612,7 +1729,8 @@ static bool decomposition_score(const qsop_instance_t *qsop,
   }
   uint32_t labelled_width = support_width;
   if (coeffs != NULL) {
-    labelled_width = labelled_decomposition_proxy_width(qsop, decomposition, coeffs, error);
+    labelled_width = labelled_decomposition_width(qsop, decomposition, coeffs, cut_stats,
+                                                  error);
     if (labelled_width == UINT32_MAX) {
       return false;
     }
@@ -1628,6 +1746,9 @@ static bool decomposition_score(const qsop_instance_t *qsop,
       .support_width = support_width,
       .table_forecast = table_forecast,
       .join_pair_forecast = join_pair_forecast,
+      .labelled_exact_cuts = cut_stats == NULL ? 0 : cut_stats->exact_cuts,
+      .labelled_proxy_cuts = cut_stats == NULL ? 0 : cut_stats->proxy_cuts,
+      .labelled_exact_assignments = cut_stats == NULL ? 0 : cut_stats->exact_assignments,
   };
   return true;
 }
@@ -1665,8 +1786,10 @@ bool qsop_rankwidth_decomposition_widths(
     }
   }
 
+  rw_labelled_cut_stats_t cut_stats = {0};
   rw_decomposition_score_t score = {0};
-  const bool ok = decomposition_score(qsop, decomposition, adj, coeffs, &score, error);
+  const bool ok = decomposition_score(qsop, decomposition, adj, coeffs, &cut_stats, &score,
+                                      error);
   free(coeffs);
   free(adj);
   if (!ok) {
@@ -1749,6 +1872,7 @@ bool qsop_rankwidth_decomposition_forecast(
     qsop_bitset_set(all, v);
   }
 
+  rw_labelled_cut_stats_t cut_stats = {0};
   uint64_t max_table_entries = 0;
   uint64_t join_pairs = 0;
   bool ok = true;
@@ -1763,7 +1887,7 @@ bool qsop_rankwidth_decomposition_forecast(
       qsop_bitset_and_not(right, left, decomposition->words);
       uint32_t width = 0;
       if (coeffs != NULL) {
-        width = labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+        width = labelled_cut_signature_width(qsop, coeffs, left, right, &cut_stats, error);
       } else {
         width = cut_rank_bitsets(decomposition->nvars, adj, left, right,
                                  decomposition->words, error);
@@ -1805,6 +1929,53 @@ bool qsop_rankwidth_decomposition_forecast(
   if (join_pairs_out != NULL) {
     *join_pairs_out = join_pairs;
   }
+  return true;
+}
+
+static bool rankwidth_record_decomposition_diagnostics(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats == NULL && trace == NULL) {
+    return true;
+  }
+
+  const uint64_t start = qsop_trace_begin(trace);
+  uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+  uint32_t *coeffs = NULL;
+  if (adj == NULL) {
+    return false;
+  }
+  if (!qsop_is_sign_edge_instance(qsop)) {
+    coeffs = coefficient_matrix(qsop, error);
+    if (coeffs == NULL) {
+      free(adj);
+      return false;
+    }
+  }
+
+  rw_labelled_cut_stats_t cut_stats = {0};
+  rw_decomposition_score_t score = {0};
+  const bool ok = decomposition_score(qsop, decomposition, adj, coeffs, &cut_stats, &score,
+                                      error);
+  free(coeffs);
+  free(adj);
+  if (!ok) {
+    return false;
+  }
+
+  if (stats != NULL) {
+    stats->rankwidth_support_width = score.support_width;
+    stats->rankwidth_labelled_width = score.labelled_width;
+    stats->rankwidth_table_forecast = score.table_forecast;
+    stats->rankwidth_join_pair_forecast = score.join_pair_forecast;
+    stats->rankwidth_labelled_exact_cuts = score.labelled_exact_cuts;
+    stats->rankwidth_labelled_proxy_cuts = score.labelled_proxy_cuts;
+    stats->rankwidth_labelled_exact_assignments = score.labelled_exact_assignments;
+  }
+  qsop_trace_emit_elapsed(trace, "rankwidth.width_probe", 0, score.labelled_width, start);
+  qsop_trace_emit(trace, "rankwidth.support_width_probe", 0, score.support_width, 0);
+  qsop_trace_emit(trace, "rankwidth.table_forecast", 0, score.table_forecast, 0);
+  qsop_trace_emit(trace, "rankwidth.join_pair_forecast", 0, score.join_pair_forecast, 0);
   return true;
 }
 
@@ -3062,6 +3233,9 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
     return false;
   }
   qsop_counts_clear(qsop->r, counts);
+  if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
+    return false;
+  }
 
   if (count_modulus == 0) {
     if (qsop->nvars >= 64U) {
@@ -3291,6 +3465,9 @@ bool qsop_solve_rankwidth_mode_trace_stats(
               "rankwidth solver refuses %" PRIu32
               " variables; pass a larger --max-vars",
               qsop->nvars);
+    return false;
+  }
+  if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
     return false;
   }
   if (qsop_is_sign_edge_instance(qsop)) {

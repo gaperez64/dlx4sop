@@ -770,6 +770,8 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "rankwidth_mode: count-table",
         "rankwidth_decomposition: explicit",
         "decomposition_width: 1",
+        "rankwidth_support_width:",
+        "rankwidth_labelled_width:",
         "table_entries:",
         "max_table_entries:",
         "signature_entries:",
@@ -778,6 +780,9 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "join_signature_pairs:",
         "rankwidth_table_forecast:",
         "rankwidth_join_pair_forecast:",
+        "rankwidth_labelled_exact_cuts:",
+        "rankwidth_labelled_proxy_cuts:",
+        "rankwidth_labelled_exact_assignments:",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
@@ -1016,6 +1021,10 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         labelled_stats.returncode != 0
         or "rankwidth_mode: count-table" not in labelled_stats.stdout
         or "decomposition_width: 1" not in labelled_stats.stdout
+        or "rankwidth_support_width: 1" not in labelled_stats.stdout
+        or "rankwidth_labelled_width: 1" not in labelled_stats.stdout
+        or "rankwidth_labelled_exact_cuts: 2" not in labelled_stats.stdout
+        or "rankwidth_labelled_proxy_cuts: 0" not in labelled_stats.stdout
         or "join_signature_pairs: 4" not in labelled_stats.stdout
     ):
         raise AssertionError(f"labelled rankwidth stats failed\n{labelled_stats.stdout}\n{labelled_stats.stderr}")
