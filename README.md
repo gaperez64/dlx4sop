@@ -22,6 +22,11 @@ CI enforces at least 75% line coverage over production `src` files:
 tools/check-coverage.sh build-coverage
 ```
 
+Release binaries are built by `.github/workflows/release-binaries.yml` when a
+`v*` tag is pushed, or manually through GitHub Actions. The workflow packages
+`qasm2sop` and `sop-solve` as `linux-x86_64` and `macos-arm64` tarballs with
+SHA-256 sidecar files.
+
 ## Tools
 
 - `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
