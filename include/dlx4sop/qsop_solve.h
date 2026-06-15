@@ -33,6 +33,8 @@ typedef struct qsop_solve_stats {
   uint64_t max_signature_entries;
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
+  uint64_t rankwidth_table_forecast;
+  uint64_t rankwidth_join_pair_forecast;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;

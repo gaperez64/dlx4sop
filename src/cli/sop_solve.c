@@ -214,6 +214,10 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "max_signature_entries: %" PRIu64 "\n", stats->max_signature_entries);
     fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
     fprintf(file, "join_signature_pairs: %" PRIu64 "\n", stats->join_signature_pairs);
+    fprintf(file, "rankwidth_table_forecast: %" PRIu64 "\n",
+            stats->rankwidth_table_forecast);
+    fprintf(file, "rankwidth_join_pair_forecast: %" PRIu64 "\n",
+            stats->rankwidth_join_pair_forecast);
   } else {
     fprintf(file, "treewidth_order: %s\n", treewidth_order_name(treewidth_order));
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
@@ -560,6 +564,12 @@ int main(int argc, char **argv) {
     } else {
       ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
                                                  &rankwidth_decomposition, &error);
+    }
+    if (ok) {
+      ok = qsop_rankwidth_decomposition_forecast(qsop, rankwidth_decomposition,
+                                                 &solve_stats.rankwidth_table_forecast,
+                                                 &solve_stats.rankwidth_join_pair_forecast,
+                                                 &error);
     }
     if (ok) {
       ok = qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,

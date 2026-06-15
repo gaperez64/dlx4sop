@@ -202,6 +202,10 @@ def public_key_stats(stats: dict[str, int]) -> str:
     )
     if table:
         parts.append(f"max table {format_count(table)}")
+    if "rankwidth_table_forecast" in stats:
+        parts.append(f"rw table forecast {format_count(stats['rankwidth_table_forecast'])}")
+    if "rankwidth_join_pair_forecast" in stats:
+        parts.append(f"rw join forecast {format_count(stats['rankwidth_join_pair_forecast'])}")
     signatures = max(
         stats.get("rankwidth_max_signature_entries", 0),
         stats.get("max_signature_entries", 0),

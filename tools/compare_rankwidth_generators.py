@@ -93,8 +93,12 @@ def config_summary(records: list[dict]) -> list[dict]:
                 "join_pairs": 0,
                 "join_signature_pairs": 0,
                 "table_pressure": 0,
+                "table_forecast_pressure": 0,
+                "max_table_forecast": 0,
                 "signature_pressure": 0,
                 "join_pair_pressure": 0,
+                "join_pair_forecast_pressure": 0,
+                "max_join_pair_forecast": 0,
                 "join_signature_pressure": 0,
             },
         )
@@ -105,18 +109,26 @@ def config_summary(records: list[dict]) -> list[dict]:
             entry["kernel_elapsed_ns"] += rankwidth_kernel_elapsed_ns(record)
             entry["max_width"] = max(entry["max_width"], metric_or_zero(record, "rankwidth_width"))
             table = metric_or_zero(record, "rankwidth_max_table_entries")
+            table_forecast = metric_or_zero(record, "rankwidth_table_forecast")
             signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
+            join_pair_forecast = metric_or_zero(record, "rankwidth_join_pair_forecast")
             join_pairs = metric_or_zero(record, "join_pairs")
             join_signature_pairs = metric_or_zero(record, "join_signature_pairs")
             entry["max_table"] = max(entry["max_table"], table)
+            entry["max_table_forecast"] = max(entry["max_table_forecast"], table_forecast)
             entry["max_signatures"] = max(
                 entry["max_signatures"], signatures
+            )
+            entry["max_join_pair_forecast"] = max(
+                entry["max_join_pair_forecast"], join_pair_forecast
             )
             entry["join_pairs"] += join_pairs
             entry["join_signature_pairs"] += join_signature_pairs
             entry["table_pressure"] += table
+            entry["table_forecast_pressure"] += table_forecast
             entry["signature_pressure"] += signatures
             entry["join_pair_pressure"] += join_pairs
+            entry["join_pair_forecast_pressure"] += join_pair_forecast
             entry["join_signature_pressure"] += join_signature_pairs
         elif status(record) == "timeout":
             entry["timeouts"] += 1
@@ -217,26 +229,34 @@ def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
                     "elapsed_ns": 0,
                     "kernel_elapsed_ns": 0,
                     "table_pressure": 0,
+                    "table_forecast_pressure": 0,
                     "signature_pressure": 0,
                     "join_pair_pressure": 0,
+                    "join_pair_forecast_pressure": 0,
                     "join_signature_pressure": 0,
                     "baseline_common_rows": 0,
                     "elapsed_delta_vs_baseline": 0,
                     "kernel_delta_vs_baseline": 0,
                     "table_delta_vs_baseline": 0,
+                    "table_forecast_delta_vs_baseline": 0,
                     "signature_delta_vs_baseline": 0,
+                    "join_pair_forecast_delta_vs_baseline": 0,
                 },
             )
             table = metric_or_zero(record, "rankwidth_max_table_entries")
+            table_forecast = metric_or_zero(record, "rankwidth_table_forecast")
             signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
+            join_pair_forecast = metric_or_zero(record, "rankwidth_join_pair_forecast")
             elapsed = metric_or_zero(record, "solve_elapsed_ns")
             kernel_elapsed = rankwidth_kernel_elapsed_ns(record)
             entry["common_rows"] += 1
             entry["elapsed_ns"] += elapsed
             entry["kernel_elapsed_ns"] += kernel_elapsed
             entry["table_pressure"] += table
+            entry["table_forecast_pressure"] += table_forecast
             entry["signature_pressure"] += signatures
             entry["join_pair_pressure"] += metric_or_zero(record, "join_pairs")
+            entry["join_pair_forecast_pressure"] += join_pair_forecast
             entry["join_signature_pressure"] += metric_or_zero(record, "join_signature_pairs")
             if baseline_record is not None:
                 entry["baseline_common_rows"] += 1
@@ -249,8 +269,15 @@ def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
                 entry["table_delta_vs_baseline"] += table - metric_or_zero(
                     baseline_record, "rankwidth_max_table_entries"
                 )
+                entry["table_forecast_delta_vs_baseline"] += table_forecast - metric_or_zero(
+                    baseline_record, "rankwidth_table_forecast"
+                )
                 entry["signature_delta_vs_baseline"] += signatures - metric_or_zero(
                     baseline_record, "rankwidth_max_signature_entries"
+                )
+                entry["join_pair_forecast_delta_vs_baseline"] += (
+                    join_pair_forecast
+                    - metric_or_zero(baseline_record, "rankwidth_join_pair_forecast")
                 )
     return [summary[key] for key in sorted(summary)]
 
@@ -281,24 +308,26 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     print("\n## Config Summary\n", file=file)
     print(
         "| Tier | QSOP mode | Config | OK / records | Total solve time | Kernel time | Max width | "
-        "Max table | Max signatures | Join pairs | Join signature pairs | Mean table | "
-        "Mean signatures |",
+        "Max table | Forecast table | Max signatures | Join pairs | Forecast join pairs | "
+        "Join signature pairs | Mean table | Mean forecast table | Mean signatures |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         file=file,
     )
     for row in config_summary(records):
         mean_table = row["table_pressure"] / row["ok"] if row["ok"] else 0.0
+        mean_table_forecast = row["table_forecast_pressure"] / row["ok"] if row["ok"] else 0.0
         mean_signatures = row["signature_pressure"] / row["ok"] if row["ok"] else 0.0
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"`{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
             f"{format_ns(row['elapsed_ns'])} | {format_ns(row['kernel_elapsed_ns'])} | "
-            f"{row['max_width']} | {row['max_table']} | {row['max_signatures']} | "
-            f"{row['join_pairs']} | {row['join_signature_pairs']} | "
-            f"{mean_table:.1f} | {mean_signatures:.1f} |",
+            f"{row['max_width']} | {row['max_table']} | {row['max_table_forecast']} | "
+            f"{row['max_signatures']} | {row['join_pairs']} | "
+            f"{row['max_join_pair_forecast']} | {row['join_signature_pairs']} | "
+            f"{mean_table:.1f} | {mean_table_forecast:.1f} | {mean_signatures:.1f} |",
             file=file,
         )
 
@@ -339,12 +368,13 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     )
     print(
         "| Tier | QSOP mode | Config | Common rows | Total solve time | Table pressure | "
-        "Signature pressure | Join pairs | Join signature pairs | Kernel time | Baseline rows | "
-        "Delta table/signature/time/kernel |",
+        "Forecast table | Signature pressure | Join pairs | Forecast join pairs | "
+        "Join signature pairs | Kernel time | Baseline rows | "
+        "Delta table/forecast table/signature/forecast joins/time/kernel |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         file=file,
     )
     for row in pressure_rows:
@@ -352,10 +382,14 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"`{markdown_escape(row['config'])}` | {row['common_rows']} | "
             f"{format_ns(row['elapsed_ns'])} | {row['table_pressure']} | "
-            f"{row['signature_pressure']} | {row['join_pair_pressure']} | "
+            f"{row['table_forecast_pressure']} | {row['signature_pressure']} | "
+            f"{row['join_pair_pressure']} | {row['join_pair_forecast_pressure']} | "
             f"{row['join_signature_pressure']} | {format_ns(row['kernel_elapsed_ns'])} | "
             f"{row['baseline_common_rows']} | "
-            f"{row['table_delta_vs_baseline']} / {row['signature_delta_vs_baseline']} / "
+            f"{row['table_delta_vs_baseline']} / "
+            f"{row['table_forecast_delta_vs_baseline']} / "
+            f"{row['signature_delta_vs_baseline']} / "
+            f"{row['join_pair_forecast_delta_vs_baseline']} / "
             f"{format_signed_ns(row['elapsed_delta_vs_baseline'])} / "
             f"{format_signed_ns(row['kernel_delta_vs_baseline'])} |",
             file=file,

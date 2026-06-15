@@ -302,6 +302,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             for stat in (
                 "rankwidth_width",
                 "rankwidth_max_table_entries",
+                "rankwidth_table_forecast",
+                "rankwidth_join_pair_forecast",
                 "rankwidth_max_signature_entries",
                 "cache_entries",
                 "cache_canonical_entries",
@@ -390,6 +392,10 @@ def key_stats(stats: dict[str, int]) -> str:
     )
     if table:
         parts.append(f"max table {table}")
+    if "rankwidth_table_forecast" in stats:
+        parts.append(f"rw table forecast {stats['rankwidth_table_forecast']}")
+    if "rankwidth_join_pair_forecast" in stats:
+        parts.append(f"rw join forecast {stats['rankwidth_join_pair_forecast']}")
     if "rankwidth_max_signature_entries" in stats or "max_signature_entries" in stats:
         parts.append(f"max signatures {max(stats.get('rankwidth_max_signature_entries', 0), stats.get('max_signature_entries', 0))}")
     if "join_pairs" in stats:

@@ -67,6 +67,8 @@ BACKEND_ALIAS_METRICS = (
     "treewidth_width",
     "rankwidth_table_entries",
     "rankwidth_max_table_entries",
+    "rankwidth_table_forecast",
+    "rankwidth_join_pair_forecast",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "rankwidth_signature_entries",
@@ -127,6 +129,8 @@ TOP_METRICS = (
     "max_table_entries",
     "rankwidth_table_entries",
     "rankwidth_max_table_entries",
+    "rankwidth_table_forecast",
+    "rankwidth_join_pair_forecast",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -224,6 +228,8 @@ CSV_FIELDS = [
     "max_table_entries",
     "rankwidth_table_entries",
     "rankwidth_max_table_entries",
+    "rankwidth_table_forecast",
+    "rankwidth_join_pair_forecast",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -382,6 +388,8 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
             "decomposition_width": "rankwidth_width",
             "table_entries": "rankwidth_table_entries",
             "max_table_entries": "rankwidth_max_table_entries",
+            "rankwidth_table_forecast": "rankwidth_table_forecast",
+            "rankwidth_join_pair_forecast": "rankwidth_join_pair_forecast",
             "signature_entries": "rankwidth_signature_entries",
             "max_signature_entries": "rankwidth_max_signature_entries",
         }
@@ -610,6 +618,8 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "treewidth_width",
         "max_table_entries",
         "rankwidth_max_table_entries",
+        "rankwidth_table_forecast",
+        "rankwidth_join_pair_forecast",
         "treewidth_max_table_entries",
         "max_signature_entries",
         "rankwidth_max_signature_entries",
@@ -1035,6 +1045,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "max_table_entries",
             "rankwidth_table_entries",
             "rankwidth_max_table_entries",
+            "rankwidth_table_forecast",
+            "rankwidth_join_pair_forecast",
             "treewidth_table_entries",
             "treewidth_max_table_entries",
             "signature_entries",
@@ -1110,6 +1122,10 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" max_table={stats['max_table_entries']}"
             if "max_signature_entries" in stats:
                 line += f" max_signatures={stats['max_signature_entries']}"
+            if "rankwidth_table_forecast" in stats:
+                line += f" rankwidth_table_forecast={stats['rankwidth_table_forecast']}"
+            if "rankwidth_join_pair_forecast" in stats:
+                line += f" rankwidth_join_pair_forecast={stats['rankwidth_join_pair_forecast']}"
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
             if "cache_avoided_nodes" in stats:
@@ -1352,6 +1368,8 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
         for label, metric in (
             ("max_width", "rankwidth_width"),
             ("max_table_entries", "rankwidth_max_table_entries"),
+            ("max_table_forecast", "rankwidth_table_forecast"),
+            ("max_join_pair_forecast", "rankwidth_join_pair_forecast"),
             ("max_signature_entries", "rankwidth_max_signature_entries"),
             ("join_pairs", "join_pairs"),
             ("join_signature_pairs", "join_signature_pairs"),
@@ -1386,6 +1404,8 @@ def write_largest_overview(records: list[dict], file: TextIO) -> None:
         ("largest_decomposition_table", "max_table_entries"),
         ("largest_rankwidth_width", "rankwidth_width"),
         ("largest_rankwidth_table", "rankwidth_max_table_entries"),
+        ("largest_rankwidth_table_forecast", "rankwidth_table_forecast"),
+        ("largest_rankwidth_join_pair_forecast", "rankwidth_join_pair_forecast"),
         ("largest_treewidth_width", "treewidth_width"),
         ("largest_treewidth_table", "treewidth_max_table_entries"),
         ("largest_residual_min_fill_width", "max_residual_min_fill_width"),
@@ -1485,6 +1505,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "max_table_entries",
             "rankwidth_table_entries",
             "rankwidth_max_table_entries",
+            "rankwidth_table_forecast",
+            "rankwidth_join_pair_forecast",
             "treewidth_table_entries",
             "treewidth_max_table_entries",
             "signature_entries",

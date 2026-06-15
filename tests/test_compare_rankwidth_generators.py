@@ -7,7 +7,14 @@ import sys
 import tempfile
 
 
-def rankwidth_record(generator: str, elapsed_ns: int, max_table: int, max_signatures: int) -> dict:
+def rankwidth_record(
+    generator: str,
+    elapsed_ns: int,
+    max_table: int,
+    max_signatures: int,
+    table_forecast: int,
+    join_pair_forecast: int,
+) -> dict:
     return {
         "backend": "rankwidth",
         "rankwidth_decomposition": generator,
@@ -22,6 +29,8 @@ def rankwidth_record(generator: str, elapsed_ns: int, max_table: int, max_signat
         "solve_elapsed_ns": elapsed_ns,
         "rankwidth_width": 3,
         "rankwidth_max_table_entries": max_table,
+        "rankwidth_table_forecast": table_forecast,
+        "rankwidth_join_pair_forecast": join_pair_forecast,
         "rankwidth_max_signature_entries": max_signatures,
         "rankwidth_join_map_elapsed_ns": max_table,
         "rankwidth_join_elapsed_ns": elapsed_ns // 2,
@@ -42,9 +51,9 @@ def main() -> int:
 
     tool = pathlib.Path(sys.argv[1])
     records = [
-        rankwidth_record("min-fill-cut", 200, 64, 16),
-        rankwidth_record("balanced", 300, 32, 8),
-        rankwidth_record("left-deep", 100, 128, 32),
+        rankwidth_record("min-fill-cut", 200, 64, 16, 1000, 2000),
+        rankwidth_record("balanced", 300, 32, 8, 800, 1200),
+        rankwidth_record("left-deep", 100, 128, 32, 1200, 2500),
     ]
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -65,13 +74,14 @@ def main() -> int:
             "`min-fill-cut:count-table`",
             "`balanced:count-table`",
             "Mean table",
+            "Mean forecast table",
             "left-deep:count-table 1",
             "balanced:count-table 1",
             "min-fill-cut:count-table 1",
             "0 / 0 / 0 / 1 of 1",
             "## Common-Row Pressure",
-            "`balanced:count-table` | 1 | 300 ns | 32 | 8 | 132 | 18 | 182 ns | 1 | -32 / -8 / 100 ns / 18 ns",
-            "`left-deep:count-table` | 1 | 100 ns | 128 | 32 | 228 | 42 | 178 ns | 1 | 64 / 16 / -100 ns / 14 ns",
+            "`balanced:count-table` | 1 | 300 ns | 32 | 800 | 8 | 132 | 1200 | 18 | 182 ns | 1 | -32 / -200 / -8 / -800 / 100 ns / 18 ns",
+            "`left-deep:count-table` | 1 | 100 ns | 128 | 1200 | 32 | 228 | 2500 | 42 | 178 ns | 1 | 64 / 200 / 16 / 500 / -100 ns / 14 ns",
         ):
             if expected not in completed.stdout:
                 raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")
@@ -104,6 +114,14 @@ def main() -> int:
         config_rows = {row["config"]: row for row in payload["config_summary"]}
         if config_rows["left-deep:count-table"]["table_pressure"] != 128:
             raise AssertionError(f"unexpected left-deep pressure: {config_rows['left-deep:count-table']}")
+        if config_rows["left-deep:count-table"]["table_forecast_pressure"] != 1200:
+            raise AssertionError(
+                f"unexpected left-deep forecast pressure: {config_rows['left-deep:count-table']}"
+            )
+        if config_rows["balanced:count-table"]["join_pair_forecast_pressure"] != 1200:
+            raise AssertionError(
+                f"unexpected balanced join forecast pressure: {config_rows['balanced:count-table']}"
+            )
         if config_rows["balanced:count-table"]["signature_pressure"] != 8:
             raise AssertionError(f"unexpected balanced pressure: {config_rows['balanced:count-table']}")
         if config_rows["min-fill-cut:count-table"]["kernel_elapsed_ns"] != 164:
@@ -111,6 +129,14 @@ def main() -> int:
         pressure_rows = {row["config"]: row for row in payload["common_pressure_summary"]}
         if pressure_rows["balanced:count-table"]["table_delta_vs_baseline"] != -32:
             raise AssertionError(f"unexpected balanced common pressure: {pressure_rows['balanced:count-table']}")
+        if pressure_rows["balanced:count-table"]["table_forecast_delta_vs_baseline"] != -200:
+            raise AssertionError(
+                f"unexpected balanced forecast pressure: {pressure_rows['balanced:count-table']}"
+            )
+        if pressure_rows["left-deep:count-table"]["join_pair_forecast_delta_vs_baseline"] != 500:
+            raise AssertionError(
+                f"unexpected left-deep join forecast pressure: {pressure_rows['left-deep:count-table']}"
+            )
         if pressure_rows["left-deep:count-table"]["elapsed_delta_vs_baseline"] != -100:
             raise AssertionError(f"unexpected left-deep common pressure: {pressure_rows['left-deep:count-table']}")
         if pressure_rows["balanced:count-table"]["kernel_delta_vs_baseline"] != 18:
