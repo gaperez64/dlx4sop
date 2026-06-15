@@ -90,6 +90,7 @@ tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
 tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
+tools/compare_rankwidth_backends.py --comparison-jsonl 33-64=rankwidth-comparison.jsonl --qsop-mode labelled
 tools/compare_rankwidth_generators.py --rankwidth-jsonl 33-64=rankwidth-sweep.jsonl --qsop-mode labelled
 tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --engine-qubit-cap pyzx-matrix=10 --timeout 10
@@ -105,12 +106,13 @@ amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mean absolute error, and maximum
 absolute error. Rankwidth records include support width, labelled cut-signature
 width, exact/proxy cut-estimator counts, forecast pressure, probe time, and
-kernel time. Rankwidth generator comparisons include kernel-time
-winners alongside table, join-pair, signature, and forecast pressure. Branch
-benchmark summaries now also surface skip reasons, fallthrough size, canonical
-cache lookup/store counts, cache key/count/estimated bytes, root treewidth
-probes, component splits, and DP-delegate trace counts so hybrid handoff
-decisions are visible without opening the raw trace.
+kernel time. Rankwidth backend comparisons summarize common-row wins/losses
+against treewidth and branch, while rankwidth generator comparisons include
+kernel-time winners alongside table, join-pair, signature, and forecast
+pressure. Branch benchmark summaries now also surface skip reasons, fallthrough
+size, canonical cache lookup/store counts, cache key/count/estimated bytes,
+root treewidth probes, component splits, and DP-delegate trace counts so hybrid
+handoff decisions are visible without opening the raw trace.
 
 ## Current Status And Remaining Gaps
 
