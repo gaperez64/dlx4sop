@@ -407,6 +407,39 @@ static bool shift_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_
   return true;
 }
 
+static bool component_counts_to_fourier(uint32_t r, const uint64_t *counts,
+                                        const uint64_t *powers, uint64_t prime,
+                                        uint64_t *modes, qsop_error_t *error) {
+  if (r == 0 || counts == NULL || powers == NULL || modes == NULL) {
+    set_error(error, "internal error: invalid component Fourier transform argument");
+    return false;
+  }
+  qsop_counts_clear(r, modes);
+  for (uint32_t mode = 0; mode < r; mode++) {
+    for (uint32_t residue = 0; residue < r; residue++) {
+      if (counts[residue] == 0) {
+        continue;
+      }
+      const uint64_t value =
+          qsop_mod_mul_u64(counts[residue] % prime, powers[(size_t)mode * r + residue], prime);
+      modes[mode] = qsop_mod_add_u64(modes[mode], value, prime);
+    }
+  }
+  return true;
+}
+
+static bool component_fourier_multiply(uint32_t r, uint64_t *acc, const uint64_t *part,
+                                       uint64_t prime, qsop_error_t *error) {
+  if (r == 0 || acc == NULL || part == NULL) {
+    set_error(error, "internal error: invalid component Fourier multiply argument");
+    return false;
+  }
+  for (uint32_t mode = 0; mode < r; mode++) {
+    acc[mode] = qsop_mod_mul_u64(acc[mode], part[mode], prime);
+  }
+  return true;
+}
+
 static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   if (UINT64_MAX - *dst < value) {
     *dst = UINT64_MAX;
@@ -459,6 +492,10 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
                                   qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                   qsop_error_t *error);
 
+static bool solve_components_fourier(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                     qsop_result_t **out, qsop_solve_stats_t *stats,
+                                     qsop_solve_trace_t *trace, qsop_error_t *error);
+
 static bool solve_components_crt(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                  qsop_result_t **out, qsop_solve_stats_t *stats,
                                  qsop_solve_trace_t *trace, qsop_error_t *error);
@@ -479,6 +516,14 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
                                                   uint32_t max_component_vars, qsop_result_t **out,
                                                   qsop_solve_stats_t *stats,
                                                   qsop_solve_trace_t *trace, qsop_error_t *error) {
+  return qsop_solve_components_bruteforce_mode_trace_stats(
+      qsop, max_component_vars, QSOP_SOLVE_MODE_COUNT_TABLE, out, stats, trace, error);
+}
+
+bool qsop_solve_components_bruteforce_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_component_vars, qsop_solve_mode_t mode,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
   if (out == NULL) {
     set_error(error, "internal error: null result pointer");
     return false;
@@ -486,6 +531,13 @@ bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
   *out = NULL;
   if (qsop == NULL) {
     set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (mode == QSOP_SOLVE_MODE_FOURIER) {
+    return solve_components_fourier(qsop, max_component_vars, out, stats, trace, error);
+  }
+  if (mode != QSOP_SOLVE_MODE_COUNT_TABLE) {
+    set_error(error, "internal error: unsupported components solve mode");
     return false;
   }
   if (qsop->nvars >= 64U) {
@@ -670,6 +722,228 @@ static bool solve_components_once(const qsop_instance_t *qsop, uint32_t max_comp
   free_component_cache(&cache);
   free(acc);
   free(tmp);
+  return true;
+}
+
+static bool solve_components_fourier(const qsop_instance_t *qsop, uint32_t max_component_vars,
+                                     qsop_result_t **out, qsop_solve_stats_t *stats,
+                                     qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null result pointer");
+    return false;
+  }
+  *out = NULL;
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (qsop->nvars >= 64U) {
+    set_error(error,
+              "components Fourier mode currently requires fewer than 64 variables; use "
+              "count-table mode for CRT-backed larger solves");
+    return false;
+  }
+
+  uint64_t prime = 0;
+  uint64_t root = 0;
+  uint64_t inv_root = 0;
+  uint64_t *powers = NULL;
+  uint64_t *inv_powers = NULL;
+  uint64_t *acc = NULL;
+  uint64_t *part_modes = NULL;
+  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
+      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
+    return false;
+  }
+  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
+  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error) ||
+      !qsop_counts_alloc(qsop->r, &acc, error) || !qsop_counts_alloc(qsop->r, &part_modes, error)) {
+    free(powers);
+    free(inv_powers);
+    free(acc);
+    free(part_modes);
+    return false;
+  }
+
+  uint64_t *rowptr = NULL;
+  uint32_t *colind = NULL;
+  uint32_t *component = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*component));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (component == NULL || result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    free(powers);
+    free(inv_powers);
+    free(acc);
+    free(part_modes);
+    free(component);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating components Fourier solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+
+  if (!alloc_graph(qsop, &rowptr, &colind, error)) {
+    free(powers);
+    free(inv_powers);
+    free(acc);
+    free(part_modes);
+    free(component);
+    qsop_result_free(result);
+    return false;
+  }
+
+  uint32_t ncomponents = 0;
+  const uint64_t label_start = qsop_trace_begin(trace);
+  if (!label_components(qsop, rowptr, colind, component, &ncomponents, error)) {
+    free(rowptr);
+    free(colind);
+    free(powers);
+    free(inv_powers);
+    free(acc);
+    free(part_modes);
+    free(component);
+    qsop_result_free(result);
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, "components.label_components", 0, ncomponents, label_start);
+
+  for (uint32_t mode = 0; mode < qsop->r; mode++) {
+    acc[mode] = 1;
+  }
+  component_cache_t cache = {0};
+  if (stats != NULL) {
+    stats->components = ncomponents;
+    if (ncomponents == 0) {
+      stats->leaf_assignments = 1;
+    }
+  }
+
+  for (uint32_t c = 0; c < ncomponents; c++) {
+    qsop_instance_t sub = {0};
+    qsop_result_t *part = NULL;
+    qsop_solve_stats_t part_stats = {0};
+    if (!build_subinstance(qsop, component, c, &sub, error)) {
+      free_subinstance(&sub);
+      free_component_cache(&cache);
+      free(rowptr);
+      free(colind);
+      free(powers);
+      free(inv_powers);
+      free(acc);
+      free(part_modes);
+      free(component);
+      qsop_result_free(result);
+      return false;
+    }
+
+    const uint64_t lookup_start = qsop_trace_begin(trace);
+    const component_cache_entry_t *cached = find_cached_component(&cache, &sub);
+    qsop_trace_emit_elapsed(trace, "components.cache_lookup", 0, cache.len, lookup_start);
+    const uint64_t *part_counts = NULL;
+    if (cached != NULL) {
+      part_counts = cached->counts;
+      if (stats != NULL) {
+        stats->cache_hits++;
+      }
+    } else {
+      const uint64_t solve_start = qsop_trace_begin(trace);
+      const bool solved = qsop_solve_bruteforce_trace_stats(&sub, max_component_vars, &part,
+                                                            &part_stats, trace, error);
+      if (!solved) {
+        free_subinstance(&sub);
+        qsop_result_free(part);
+        free_component_cache(&cache);
+        free(rowptr);
+        free(colind);
+        free(powers);
+        free(inv_powers);
+        free(acc);
+        free(part_modes);
+        free(component);
+        qsop_result_free(result);
+        return false;
+      }
+      qsop_trace_emit_elapsed(trace, "components.solve_component", 0, sub.nvars, solve_start);
+      const uint64_t store_start = qsop_trace_begin(trace);
+      if (!store_cached_component(&cache, &sub, part->counts, error)) {
+        free_subinstance(&sub);
+        qsop_result_free(part);
+        free_component_cache(&cache);
+        free(rowptr);
+        free(colind);
+        free(powers);
+        free(inv_powers);
+        free(acc);
+        free(part_modes);
+        free(component);
+        qsop_result_free(result);
+        return false;
+      }
+      qsop_trace_emit_elapsed(trace, "components.cache_store", 0, cache.len, store_start);
+      part_counts = part->counts;
+      if (stats != NULL) {
+        stats->cache_misses++;
+        add_saturating_u64(&stats->leaf_assignments, part_stats.leaf_assignments);
+      }
+    }
+
+    const uint64_t transform_start = qsop_trace_begin(trace);
+    if (!component_counts_to_fourier(qsop->r, part_counts, powers, prime, part_modes, error) ||
+        !component_fourier_multiply(qsop->r, acc, part_modes, prime, error)) {
+      free_subinstance(&sub);
+      qsop_result_free(part);
+      free_component_cache(&cache);
+      free(rowptr);
+      free(colind);
+      free(powers);
+      free(inv_powers);
+      free(acc);
+      free(part_modes);
+      free(component);
+      qsop_result_free(result);
+      return false;
+    }
+    qsop_trace_emit_elapsed(trace, "components.fourier_multiply", 0, qsop->r, transform_start);
+
+    free_subinstance(&sub);
+    qsop_result_free(part);
+  }
+
+  if (!qsop_fourier_inverse_counts(qsop->r, acc, qsop->constant, powers, inv_powers, prime,
+                                   result->counts, error)) {
+    free_component_cache(&cache);
+    free(rowptr);
+    free(colind);
+    free(powers);
+    free(inv_powers);
+    free(acc);
+    free(part_modes);
+    free(component);
+    qsop_result_free(result);
+    return false;
+  }
+
+  if (stats != NULL) {
+    stats->cache_entries = (uint64_t)cache.len;
+    stats->cache_stored_residue_slots = saturating_mul_u64((uint64_t)cache.len, qsop->r);
+    stats->cache_key_bytes = component_cache_key_bytes(&cache);
+    stats->cache_count_bytes = component_cache_count_bytes(&cache);
+    stats->cache_estimated_bytes = component_cache_estimated_bytes(&cache);
+  }
+
+  free(rowptr);
+  free(colind);
+  free_component_cache(&cache);
+  free(powers);
+  free(inv_powers);
+  free(acc);
+  free(part_modes);
+  free(component);
+  *out = result;
   return true;
 }
 

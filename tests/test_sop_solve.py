@@ -74,6 +74,22 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{branch.stdout}\n"
         )
 
+    components_fourier = subprocess.run(
+        [str(exe), "--backend", "components", "--solve-mode", "fourier", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if components_fourier.returncode != 0:
+        raise AssertionError(f"{name}: components Fourier backend failed\n{components_fourier.stderr}")
+    if components_fourier.stdout != expected_text:
+        raise AssertionError(
+            f"{name}: components Fourier residue-vector mismatch\n"
+            f"expected:\n{expected_text}\n"
+            f"actual:\n{components_fourier.stdout}\n"
+        )
+
     brute_force_fourier_stats = subprocess.run(
         [
             str(exe),
@@ -98,6 +114,32 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
         raise AssertionError(
             f"{name}: brute-force Fourier stats failed\n"
             f"{brute_force_fourier_stats.stdout}\n{brute_force_fourier_stats.stderr}"
+        )
+
+    components_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "components",
+            "--solve-mode",
+            "fourier",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        components_fourier_stats.returncode != 0
+        or "solve_mode: fourier" not in components_fourier_stats.stdout
+        or "solve_mode_kernel: fourier" not in components_fourier_stats.stdout
+    ):
+        raise AssertionError(
+            f"{name}: components Fourier stats failed\n"
+            f"{components_fourier_stats.stdout}\n{components_fourier_stats.stderr}"
         )
 
 

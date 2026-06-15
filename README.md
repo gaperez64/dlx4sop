@@ -116,10 +116,10 @@ root treewidth probes, component splits, and DP-delegate trace counts so hybrid
 handoff decisions are visible without opening the raw trace.
 
 `sop-solve --solve-mode fourier` is the backend-neutral spelling for Fourier
-work. Rankwidth, treewidth, and brute-force have labelled Fourier kernels below
-the current 64-variable exact-count limit. Branch and components accept the
-shared flag and report `solve_mode_kernel: count-table-fallback` until native
-Fourier kernels are added.
+work. Rankwidth, treewidth, components, and brute-force have labelled Fourier
+kernels below the current 64-variable exact-count limit. Branch accepts the
+shared flag and reports `solve_mode_kernel: count-table-fallback` until a native
+Fourier kernel is added.
 
 ## Current Status And Remaining Gaps
 
