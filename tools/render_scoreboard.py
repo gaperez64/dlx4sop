@@ -65,6 +65,15 @@ RANKWIDTH_KERNEL_SUM_FIELDS = tuple(
 RANKWIDTH_KERNEL_MAX_FIELDS = tuple(
     f"{prefix}_max_items" for prefix in RANKWIDTH_KERNEL_PREFIXES
 )
+COMPONENT_KERNEL_PREFIXES = (
+    "components_convolution",
+    "components_fourier_multiply",
+)
+COMPONENT_KERNEL_SUM_FIELDS = tuple(
+    field
+    for prefix in COMPONENT_KERNEL_PREFIXES
+    for field in (f"{prefix}_events", f"{prefix}_elapsed_ns")
+)
 LEGACY_STAT_ALIASES = {
     "max_residual_prefix_cut_rank": "max_residual_linear_cut_rank",
 }
@@ -228,6 +237,19 @@ def rankwidth_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
     return ", ".join(parts)
 
 
+def component_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
+    parts = []
+    for prefix, label in (
+        ("components_convolution", "convolution"),
+        ("components_fourier_multiply", "fourier"),
+    ):
+        events = stats.get(f"{prefix}_events", 0)
+        elapsed = stats.get(f"{prefix}_elapsed_ns", 0)
+        if isinstance(events, int) and (events or elapsed):
+            parts.append(f"{label}={value_formatter(events)}/{format_ns(elapsed)}")
+    return ", ".join(parts)
+
+
 def cache_hit_rate(stats: dict[str, int]) -> str:
     hits = stats.get("cache_hits", 0)
     misses = stats.get("cache_misses", 0)
@@ -318,6 +340,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_treewidth_order_probe_elapsed_ns",
                 "branch_root_width_probe_events",
                 "branch_root_width_probe_elapsed_ns",
+                *COMPONENT_KERNEL_SUM_FIELDS,
                 *RANKWIDTH_KERNEL_SUM_FIELDS,
                 *BRANCH_SKIP_REASON_FIELDS,
                 *BRANCH_DISPATCH_SUM_FIELDS,
@@ -429,6 +452,9 @@ def key_stats(stats: dict[str, int]) -> str:
         )
     if "components" in stats:
         parts.append(f"{stats['components']} components")
+    component_kernel = component_kernel_text(stats)
+    if component_kernel:
+        parts.append(f"component kernels {component_kernel}")
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
     if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:

@@ -67,6 +67,15 @@ RANKWIDTH_KERNEL_METRIC_FIELDS = tuple(
     for _phases, prefix in RANKWIDTH_KERNEL_TRACE_GROUPS
     for field in (f"{prefix}_events", f"{prefix}_elapsed_ns", f"{prefix}_max_items")
 )
+COMPONENT_KERNEL_TRACE_GROUPS = (
+    (("components.convolution",), "components_convolution"),
+    (("components.fourier_multiply",), "components_fourier_multiply"),
+)
+COMPONENT_KERNEL_METRIC_FIELDS = tuple(
+    field
+    for _phases, prefix in COMPONENT_KERNEL_TRACE_GROUPS
+    for field in (f"{prefix}_events", f"{prefix}_elapsed_ns")
+)
 BACKEND_ALIAS_METRICS = (
     "rankwidth_width",
     "treewidth_width",
@@ -139,6 +148,7 @@ TOP_METRICS = (
     "treewidth_multiply_elapsed_ns",
     "treewidth_sum_out_events",
     "treewidth_sum_out_elapsed_ns",
+    *COMPONENT_KERNEL_METRIC_FIELDS,
     *RANKWIDTH_KERNEL_METRIC_FIELDS,
     "branch_root_treewidth_delegate_events",
     "branch_root_treewidth_delegate_elapsed_ns",
@@ -258,6 +268,7 @@ CSV_FIELDS = [
     "treewidth_multiply_elapsed_ns",
     "treewidth_sum_out_events",
     "treewidth_sum_out_elapsed_ns",
+    *COMPONENT_KERNEL_METRIC_FIELDS,
     *RANKWIDTH_KERNEL_METRIC_FIELDS,
     "components",
     "decomposition_width",
@@ -631,6 +642,17 @@ def treewidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]
     return metrics
 
 
+def component_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phases, prefix in COMPONENT_KERNEL_TRACE_GROUPS:
+        matching = [trace[phase] for phase in phases if phase in trace]
+        if not matching:
+            continue
+        metrics[f"{prefix}_events"] = sum(values["events"] for values in matching)
+        metrics[f"{prefix}_elapsed_ns"] = sum(values["elapsed_ns"] for values in matching)
+    return metrics
+
+
 def rankwidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
     for phases, prefix in RANKWIDTH_KERNEL_TRACE_GROUPS:
@@ -837,6 +859,7 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str, str
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
             "treewidth_sum_out_elapsed_ns",
+            *COMPONENT_KERNEL_METRIC_FIELDS,
             *RANKWIDTH_KERNEL_METRIC_FIELDS,
             "branch_root_treewidth_delegate_events",
             "branch_root_treewidth_delegate_elapsed_ns",
@@ -1054,6 +1077,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 rankwidth_probe = rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 kernel_metrics = treewidth_kernel_metrics(trace)
+                component_metrics = component_kernel_metrics(trace)
                 rankwidth_metrics = rankwidth_kernel_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
                 dispatch_metrics = branch_dispatch_metrics(trace)
@@ -1090,6 +1114,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **rankwidth_probe,
                         **treewidth_probe_metrics,
                         **kernel_metrics,
+                        **component_metrics,
                         **rankwidth_metrics,
                         **skip_reason_metrics,
                         **dispatch_metrics,
@@ -1246,6 +1271,17 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" leaf_assignments={stats['leaf_assignments']}"
             if "components" in stats:
                 line += f" components={stats['components']}"
+            if (
+                "components_convolution_elapsed_ns" in record
+                or "components_fourier_multiply_elapsed_ns" in record
+            ):
+                line += (
+                    " component_kernels="
+                    f"convolution:{record.get('components_convolution_events', 0)}/"
+                    f"{record.get('components_convolution_elapsed_ns', 0)},"
+                    f"fourier:{record.get('components_fourier_multiply_events', 0)}/"
+                    f"{record.get('components_fourier_multiply_elapsed_ns', 0)}"
+                )
             if "decomposition_width" in stats:
                 line += f" width={stats['decomposition_width']}"
             if "max_table_entries" in stats:

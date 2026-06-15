@@ -17,6 +17,7 @@ from render_scoreboard import (
     cache_avoided_node_rate,
     cache_canonical_entry_rate,
     cache_hit_rate,
+    component_kernel_text,
     comparison_speedup,
     format_ns,
     has_comparison_identity,
@@ -207,6 +208,9 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"store={format_count(stats.get('cache_canonical_store_events', 0))} events/"
             f"{format_ns(stats.get('cache_canonical_store_elapsed_ns', 0))}"
         )
+    component_kernel = component_kernel_text(stats, format_count)
+    if component_kernel:
+        parts.append(f"component kernels {component_kernel}")
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
     if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
