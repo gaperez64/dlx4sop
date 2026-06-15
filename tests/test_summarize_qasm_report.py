@@ -86,6 +86,7 @@ def main() -> int:
             "| 0-32 | 0-32 | 2 | 1 | 1 | 0 | 0 | 2 | 0 | 0 |",
             "| 33-64 | 33-64 | 1 | 0 | 0 | 1 | 0 | 0 | 1 | 0 |",
             "| 257+ | 257+ | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |",
+            "| Example | unsupported_gate | 1 |",
             "| unsupported_gate | 1 | unsupported OpenQASM operation 'foo' |",
         ]:
             if expected not in markdown:
@@ -107,6 +108,8 @@ def main() -> int:
             summary["records"] != 5
             or summary["sources"][0]["too_many_vars"] != 2
             or summary["sources"][0]["below_min_vars"] != 1
+            or {"source": "Example", "status": "unsupported_gate", "records": 1}
+            not in summary["status_summary"]
         ):
             raise AssertionError(f"unexpected JSON summary:\n{summary}")
 

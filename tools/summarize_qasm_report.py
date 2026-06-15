@@ -110,6 +110,7 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
                 diagnostics[(status, str(diagnostic))] += 1
 
     source_rows = []
+    status_rows = []
     for source in sorted(sources):
         entry = sources[source]
         statuses = entry["statuses"]
@@ -128,6 +129,8 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
                 "unsupported": unsupported,
             }
         )
+        for status, count in sorted(statuses.items()):
+            status_rows.append({"source": source, "status": status, "records": count})
 
     tier_rows = []
     labels = [name for name, _, _ in tiers] + ["unknown", "unclassified"]
@@ -174,6 +177,7 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
         "records": total_records,
         "tiers": [{"name": name, "min": minimum, "max": maximum} for name, minimum, maximum in tiers],
         "sources": source_rows,
+        "status_summary": status_rows,
         "tier_summary": tier_rows,
         "too_large": too_large_rows,
         "diagnostics": diagnostic_rows,
@@ -190,6 +194,16 @@ def write_markdown(summary: dict, top_diagnostics: int, file) -> None:
         print(
             f"| {markdown_escape(row['source'])} | {markdown_escape(url)} | {row['inputs']} | "
             f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} |",
+            file=file,
+        )
+
+    print("\n## Status Breakdown\n", file=file)
+    print("| Source | Status | Records |", file=file)
+    print("| --- | --- | ---: |", file=file)
+    for row in summary["status_summary"]:
+        print(
+            f"| {markdown_escape(row['source'])} | {markdown_escape(row['status'])} | "
+            f"{row['records']} |",
             file=file,
         )
 
