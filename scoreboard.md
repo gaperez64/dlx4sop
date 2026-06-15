@@ -1,6 +1,6 @@
 # Scoreboard
 
-Last updated: 2026-06-14.
+Last updated: 2026-06-15.
 
 This tracks progress toward a competitive exact strong simulator based on labelled quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, reconstruct the requested amplitude, and compare with native simulators where possible.
 
@@ -17,6 +17,15 @@ Counts are fixed-boundary QSOP rows currently used in solver comparisons. The 25
 
 Total current solved coverage: 441 fixed-boundary benchmark rows.
 The 257-512 exploratory sample contributes 34 solved rows out of 52 attempted under the current timeout cap.
+
+## 257-512 Sample Stratification
+
+Rows with treewidth width at most 11 are the current low-width promotion candidates; timeouts remain the separate high-width residue.
+
+| Bucket | Rows | Solved | Timeouts | Max width | Max table |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Solved, width <= 11 | 34 | 34 | 0 | 11 | 32,768 |
+| Timeouts | 18 | 0 | 18 | 0 | 0 |
 
 ## Internal Solver Configurations
 
