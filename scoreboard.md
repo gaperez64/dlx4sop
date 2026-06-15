@@ -70,18 +70,22 @@ Rows compare rankwidth against non-rankwidth backends on common source/case/boun
 ### Rankwidth Vs Competitors: rankwidth:min-fill-cut:count-table
 
 Rankwidth config: `rankwidth:min-fill-cut:count-table`. Table and forecast comparisons are lower/equal/higher versus the fastest successful treewidth row.
+
 | Tier | QSOP mode | Common rows | Fastest/tied | Slower | Rankwidth time | Best competitor time | Delta vs best | Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | Vs branch faster | Delta vs treewidth/branch | Missing/failed |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 33-64 | labelled | 9 | 0 | 9 | 146.8 ms | 7.2 ms | 139.6 ms | 0 / 9 | 7 / 1 / 1 | 7 / 1 / 1 | 0 / 9 | 139.4 ms / 139.0 ms | 0 |
 | 65-128 | labelled | 28 | 0 | 28 | 36.45 s | 80.9 ms | 36.37 s | 0 / 28 | 9 / 7 / 12 | 9 / 7 / 12 | 0 / 28 | 36.37 s / 36.33 s | 0 |
+| **Total** | **all** | 37 | 0 | 37 | 36.60 s | 88.1 ms | 36.51 s | 0 / 37 | 16 / 8 / 13 | 16 / 8 / 13 | 0 / 37 | 36.51 s / 36.47 s | 0 |
 
 ### Rankwidth Vs Competitors: rankwidth:min-fill-cut:fourier
 
 Rankwidth config: `rankwidth:min-fill-cut:fourier`. Table and forecast comparisons are lower/equal/higher versus the fastest successful treewidth row.
+
 | Tier | QSOP mode | Common rows | Fastest/tied | Slower | Rankwidth time | Best competitor time | Delta vs best | Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | Vs branch faster | Delta vs treewidth/branch | Missing/failed |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 33-64 | labelled | 9 | 0 | 9 | 116.6 ms | 7.2 ms | 109.4 ms | 0 / 9 | 7 / 1 / 1 | 7 / 1 / 1 | 0 / 9 | 109.2 ms / 108.8 ms | 0 |
 | 65-128 | labelled | 28 | 0 | 28 | 30.59 s | 80.9 ms | 30.51 s | 0 / 28 | 9 / 7 / 12 | 9 / 7 / 12 | 0 / 28 | 30.51 s / 30.47 s | 0 |
+| **Total** | **all** | 37 | 0 | 37 | 30.71 s | 88.1 ms | 30.62 s | 0 / 37 | 16 / 8 / 13 | 16 / 8 / 13 | 0 / 37 | 30.62 s / 30.58 s | 0 |
 
 ## Competitor Comparisons
 

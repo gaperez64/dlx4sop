@@ -311,6 +311,58 @@ def format_signed_ns(ns: int) -> str:
     return format_ns(ns)
 
 
+def comparison_summary_totals(rows: list[dict]) -> dict[str, int | str]:
+    totals: dict[str, int | str] = {
+        "tier": "all",
+        "mode": "all",
+        "rows": 0,
+        "rankwidth_ok": 0,
+        "rankwidth_missing_or_failed": 0,
+        "common_rows": 0,
+        "rankwidth_fastest_or_tied": 0,
+        "rankwidth_slower": 0,
+        "rankwidth_elapsed_ns": 0,
+        "best_competitor_elapsed_ns": 0,
+        "elapsed_delta_vs_best_competitor": 0,
+        "treewidth_common_rows": 0,
+        "rankwidth_faster_than_treewidth": 0,
+        "elapsed_delta_vs_treewidth": 0,
+        "table_delta_vs_treewidth": 0,
+        "forecast_delta_vs_treewidth_table": 0,
+        "table_comparison": collections.Counter(),
+        "forecast_comparison": collections.Counter(),
+        "branch_common_rows": 0,
+        "rankwidth_faster_than_branch": 0,
+        "elapsed_delta_vs_branch": 0,
+    }
+    for row in rows:
+        totals["rows"] = int(totals["rows"]) + 1
+        for key in (
+            "rankwidth_ok",
+            "rankwidth_missing_or_failed",
+            "common_rows",
+            "rankwidth_fastest_or_tied",
+            "rankwidth_slower",
+            "rankwidth_elapsed_ns",
+            "best_competitor_elapsed_ns",
+            "elapsed_delta_vs_best_competitor",
+            "treewidth_common_rows",
+            "rankwidth_faster_than_treewidth",
+            "elapsed_delta_vs_treewidth",
+            "table_delta_vs_treewidth",
+            "forecast_delta_vs_treewidth_table",
+            "branch_common_rows",
+            "rankwidth_faster_than_branch",
+            "elapsed_delta_vs_branch",
+        ):
+            totals[key] = int(totals[key]) + int(row.get(key, 0))
+        totals["table_comparison"].update(collections.Counter(row.get("table_comparison", {})))
+        totals["forecast_comparison"].update(
+            collections.Counter(row.get("forecast_comparison", {}))
+        )
+    return totals
+
+
 def rankwidth_configs(records: list[dict]) -> list[str]:
     configs = {
         backend_config(record)
@@ -368,6 +420,7 @@ def write_markdown(
             "successful treewidth row.",
             file=file,
         )
+        print("", file=file)
         print(
             "| Tier | QSOP mode | Common rows | Fastest/tied | Slower | "
             "Rankwidth time | Best competitor time | Delta vs best | "
@@ -379,7 +432,8 @@ def write_markdown(
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             file=file,
         )
-        for row in comparison_summary(records, config):
+        rows = comparison_summary(records, config)
+        for row in rows:
             print(
                 f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
                 f"{row['common_rows']} | {row['rankwidth_fastest_or_tied']} | "
@@ -395,6 +449,22 @@ def write_markdown(
                 f"{row['rankwidth_missing_or_failed']} |",
                 file=file,
             )
+        totals = comparison_summary_totals(rows)
+        print(
+            "| **Total** | **all** | "
+            f"{totals['common_rows']} | {totals['rankwidth_fastest_or_tied']} | "
+            f"{totals['rankwidth_slower']} | {format_ns(int(totals['rankwidth_elapsed_ns']))} | "
+            f"{format_ns(int(totals['best_competitor_elapsed_ns']))} | "
+            f"{format_signed_ns(int(totals['elapsed_delta_vs_best_competitor']))} | "
+            f"{totals['rankwidth_faster_than_treewidth']} / {totals['treewidth_common_rows']} | "
+            f"{counter_triplet(totals['table_comparison'])} | "
+            f"{counter_triplet(totals['forecast_comparison'])} | "
+            f"{totals['rankwidth_faster_than_branch']} / {totals['branch_common_rows']} | "
+            f"{format_signed_ns(int(totals['elapsed_delta_vs_treewidth']))} / "
+            f"{format_signed_ns(int(totals['elapsed_delta_vs_branch']))} | "
+            f"{totals['rankwidth_missing_or_failed']} |",
+            file=file,
+        )
 
         wins = top_rankwidth_wins(records, config, top)
         if not wins:
