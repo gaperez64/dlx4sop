@@ -236,6 +236,20 @@ def main() -> int:
         raise AssertionError(f"missing solve_mode in parsed stats: {parsed_stats}")
     if parsed_stats.get("solve_mode_kernel") != "fourier":
         raise AssertionError(f"missing solve_mode_kernel in parsed stats: {parsed_stats}")
+    parsed_branch_stats, _parsed_branch_amplitude = bench.parse_stats_and_amplitude(
+        "\n".join(
+            [
+                "backend: branch",
+                "solve_mode: fourier",
+                "solve_mode_kernel: hybrid-fourier",
+                "result_modulus: 8",
+                "result_norm_h: 0",
+                "result_counts: 1 0 0 0 0 0 0 0",
+            ]
+        )
+    )
+    if parsed_branch_stats.get("solve_mode_kernel") != "hybrid-fourier":
+        raise AssertionError(f"missing branch solve_mode_kernel: {parsed_branch_stats}")
     large_counts = [
         81129638414606753753383043072000,
         81129638414606681695789005144064,
