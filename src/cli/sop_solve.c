@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +38,7 @@ static void print_usage(FILE *file) {
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
         "[--rankwidth-mode count-table|fourier] [--treewidth-order min-fill|min-degree|min-fill-max-degree] "
-        "[--include-result] "
+        "[--include-result] [--include-probability] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -276,6 +277,82 @@ static bool write_result_stats(FILE *file, const qsop_result_t *result, qsop_err
   return true;
 }
 
+static bool result_count_long_double(const qsop_result_t *result, uint32_t residue,
+                                     long double *out, qsop_error_t *error) {
+  if (result->count_strings != NULL) {
+    errno = 0;
+    char *end = NULL;
+    long double value = strtold(result->count_strings[residue], &end);
+    if (end == result->count_strings[residue] || *end != '\0') {
+      error->path = NULL;
+      error->line = 0;
+      error->column = 0;
+      snprintf(error->message, sizeof(error->message),
+               "could not parse exact count for residue %" PRIu32, residue);
+      return false;
+    }
+    *out = value;
+    return true;
+  }
+
+  *out = (long double)result->counts[residue];
+  return true;
+}
+
+static bool write_probability_stats(FILE *file, const qsop_result_t *result, qsop_error_t *error) {
+  if (file == NULL || result == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "internal error: null probability-stats write argument");
+    return false;
+  }
+
+  static const long double two_pi =
+      6.283185307179586476925286766559005768394338798750211641949889L;
+  long double real = 0.0L;
+  long double imag = 0.0L;
+  if (result->r % 2U == 0U) {
+    const uint32_t half = result->r / 2U;
+    for (uint32_t residue = 0; residue < half; residue++) {
+      long double lower = 0.0L;
+      long double upper = 0.0L;
+      if (!result_count_long_double(result, residue, &lower, error) ||
+          !result_count_long_double(result, residue + half, &upper, error)) {
+        return false;
+      }
+      const long double count = lower - upper;
+      const long double angle = two_pi * (long double)residue / (long double)result->r;
+      real += count * cosl(angle);
+      imag += count * sinl(angle);
+    }
+  } else {
+    for (uint32_t residue = 0; residue < result->r; residue++) {
+      long double count = 0.0L;
+      if (!result_count_long_double(result, residue, &count, error)) {
+        return false;
+      }
+      const long double angle = two_pi * (long double)residue / (long double)result->r;
+      real += count * cosl(angle);
+      imag += count * sinl(angle);
+    }
+  }
+
+  const long double unnormalized = real * real + imag * imag;
+  const long double probability = unnormalized * powl(2.0L, -(long double)result->norm_h);
+  fprintf(file, "result_probability: %.17Lg\n", probability);
+
+  if (ferror(file)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
 static bool parse_max_vars(const char *text, uint32_t *out) {
   if (text == NULL || text[0] == '-' || text[0] == '\0') {
     return false;
@@ -307,6 +384,7 @@ int main(int argc, char **argv) {
   bool rankwidth_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
+  bool include_probability = false;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -333,6 +411,10 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--include-result") == 0) {
       include_result = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--include-probability") == 0) {
+      include_probability = true;
       continue;
     }
     if (strcmp(argv[i], "--max-vars") == 0) {
@@ -510,6 +592,10 @@ int main(int argc, char **argv) {
     fputs("error: --include-result requires --format stats\n", stderr);
     return 2;
   }
+  if (include_probability && format != SOLVE_FORMAT_STATS) {
+    fputs("error: --include-probability requires --format stats\n", stderr);
+    return 2;
+  }
 
   FILE *input = stdin;
   const char *diagnostic_path = "<stdin>";
@@ -605,6 +691,9 @@ int main(int argc, char **argv) {
     }
     if (ok && include_result) {
       ok = write_result_stats(stdout, result, &error);
+    }
+    if (ok && include_probability) {
+      ok = write_probability_stats(stdout, result, &error);
     }
   }
   qsop_result_free(result);

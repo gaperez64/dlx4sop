@@ -33,7 +33,8 @@ sidecar files.
 - `sop-stats`: print structural statistics, with opt-in exact small-width
   support-graph diagnostics.
 - `sop-solve`: solve exact residue-count histograms; stats mode can include
-  the count vector used by benchmark tooling to reconstruct amplitudes.
+  the count vector used by benchmark tooling to reconstruct amplitudes and a
+  convenience probability estimate via `--include-probability`.
 - `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
@@ -79,6 +80,7 @@ build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign
 build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_labelled.qsop
 build/sop-solve --format stats --include-result tests/golden/solve_labelled.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
+build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
 ```
 
 Benchmark tables can be refreshed from generated JSONL and import reports:

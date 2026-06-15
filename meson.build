@@ -1,12 +1,13 @@
 project(
   'dlx4sop',
   'c',
-  version: '0.1.0',
+  version: '0.1.1',
   default_options: ['c_std=c2x', 'warning_level=3'],
 )
 
 cc = meson.get_compiler('c')
 inc = include_directories('include')
+m_dep = cc.find_library('m', required: false)
 
 if get_option('developer_warnings')
   warning_flags = [
@@ -59,7 +60,7 @@ sop_check = executable(
 sop_solve = executable(
   'sop-solve',
   'src/cli/sop_solve.c',
-  dependencies: dlx4sop_core_dep,
+  dependencies: [dlx4sop_core_dep, m_dep],
   install: true,
 )
 

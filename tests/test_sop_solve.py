@@ -467,7 +467,7 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
     completed = subprocess.run(
-        [str(exe), "--format", "stats", "--include-result", str(qsop)],
+        [str(exe), "--format", "stats", "--include-result", "--include-probability", str(qsop)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -480,6 +480,14 @@ def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> No
     }
     if completed.returncode != 0 or not expected_result.issubset(set(completed.stdout.splitlines())):
         raise AssertionError(f"include-result stats failed\n{completed.stdout}\n{completed.stderr}")
+    probability_lines = [
+        line for line in completed.stdout.splitlines() if line.startswith("result_probability: ")
+    ]
+    if len(probability_lines) != 1:
+        raise AssertionError(f"missing probability line\n{completed.stdout}\n{completed.stderr}")
+    probability = float(probability_lines[0].split(": ", 1)[1])
+    if abs(probability - 0.21338834764831843) > 1e-15:
+        raise AssertionError(f"unexpected probability {probability}\n{completed.stdout}")
 
     invalid = subprocess.run(
         [str(exe), "--include-result", str(qsop)],
@@ -490,6 +498,21 @@ def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> No
     )
     if invalid.returncode == 0 or "--include-result requires --format stats" not in invalid.stderr:
         raise AssertionError(f"include-result guard failed\n{invalid.stdout}\n{invalid.stderr}")
+
+    invalid_probability = subprocess.run(
+        [str(exe), "--include-probability", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        invalid_probability.returncode == 0
+        or "--include-probability requires --format stats" not in invalid_probability.stderr
+    ):
+        raise AssertionError(
+            f"include-probability guard failed\n{invalid_probability.stdout}\n{invalid_probability.stderr}"
+        )
 
 
 def parse_solver_stats(text: str) -> dict[str, int | str]:
