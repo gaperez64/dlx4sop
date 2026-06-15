@@ -108,7 +108,8 @@ typedef struct rw_labelled_cut_stats {
   uint64_t exact_assignments;
 } rw_labelled_cut_stats_t;
 
-#define RW_LABELLED_EXACT_SIGNATURE_MAX_ASSIGNMENTS UINT64_C(1048576)
+#define RW_LABELLED_EXACT_SIGNATURE_MAX_SIGNATURES UINT64_C(4096)
+#define RW_LABELLED_EXACT_SIGNATURE_MAX_TRANSITIONS UINT64_C(65536)
 
 static int compare_decomposition_scores(rw_decomposition_score_t left,
                                         rw_decomposition_score_t right) {
@@ -1593,67 +1594,82 @@ static bool labelled_cut_signature_exact_width(const qsop_instance_t *qsop, cons
   }
   *computed_out = false;
   const uint32_t nleft = qsop_bitset_popcount(left, qsop_bitset_words(qsop->nvars));
-  if (nleft >= 63U) {
-    return true;
-  }
-  const uint64_t assignments = UINT64_C(1) << nleft;
-  if (assignments > RW_LABELLED_EXACT_SIGNATURE_MAX_ASSIGNMENTS) {
-    return true;
-  }
-
-  uint32_t *left_vars = calloc(nleft == 0 ? 1U : nleft, sizeof(*left_vars));
+  const uint64_t assignment_space = nleft >= 64U ? UINT64_MAX : (UINT64_C(1) << nleft);
+  uint32_t *row = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*row));
   uint32_t *signature = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*signature));
   rw_label_signature_pool_t pool = {0};
-  if (left_vars == NULL || signature == NULL ||
-      !label_signature_pool_init(&pool, qsop->nvars, error)) {
-    free(left_vars);
+  if (row == NULL || signature == NULL || !label_signature_pool_init(&pool, qsop->nvars, error)) {
+    free(row);
     free(signature);
     label_signature_pool_free(&pool);
     set_error(error, "out of memory while exactly estimating labelled rankwidth cut");
     return false;
   }
 
-  uint32_t index = 0;
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    if (qsop_bitset_get(left, v)) {
-      left_vars[index++] = v;
-    }
+  uint32_t zero_signature = 0;
+  if (!label_signature_pool_intern(&pool, signature, &zero_signature, error)) {
+    free(row);
+    free(signature);
+    label_signature_pool_free(&pool);
+    return false;
   }
 
+  /* Exact frontier over distinct signatures; avoids enumerating duplicate assignments. */
   bool ok = true;
-  for (uint64_t assignment = 0; assignment < assignments; assignment++) {
-    memset(signature, 0, (size_t)qsop->nvars * sizeof(*signature));
-    for (uint32_t bit = 0; bit < nleft; bit++) {
-      if (((assignment >> bit) & UINT64_C(1)) == 0) {
+  uint64_t transitions = 0;
+  for (uint32_t v = 0; ok && v < qsop->nvars; v++) {
+    if (!qsop_bitset_get(left, v)) {
+      continue;
+    }
+
+    memset(row, 0, (size_t)qsop->nvars * sizeof(*row));
+    bool any = false;
+    for (uint32_t u = 0; u < qsop->nvars; u++) {
+      if (!qsop_bitset_get(right, u)) {
         continue;
       }
-      const uint32_t v = left_vars[bit];
-      for (uint32_t u = 0; u < qsop->nvars; u++) {
-        if (!qsop_bitset_get(right, u)) {
-          continue;
-        }
-        signature[u] =
-            (uint32_t)(((uint64_t)signature[u] + coeffs[(size_t)v * qsop->nvars + u]) %
-                       qsop->r);
-      }
+      row[u] = coeffs[(size_t)v * qsop->nvars + u] % qsop->r;
+      any = any || row[u] != 0;
     }
-    uint32_t signature_id = 0;
-    if (!label_signature_pool_intern(&pool, signature, &signature_id, error)) {
+    if (!any) {
+      continue;
+    }
+
+    const size_t current_len = pool.len;
+    if (current_len > RW_LABELLED_EXACT_SIGNATURE_MAX_TRANSITIONS - transitions) {
       ok = false;
       break;
+    }
+    transitions += current_len;
+    for (size_t i = 0; i < current_len; i++) {
+      const uint32_t *base = label_signature_coeffs_const(&pool, (uint32_t)i);
+      for (uint32_t u = 0; u < qsop->nvars; u++) {
+        signature[u] = (uint32_t)(((uint64_t)base[u] + row[u]) % qsop->r);
+      }
+      uint32_t signature_id = 0;
+      if (!label_signature_pool_intern(&pool, signature, &signature_id, error)) {
+        free(row);
+        free(signature);
+        label_signature_pool_free(&pool);
+        return false;
+      }
+      if (pool.len > RW_LABELLED_EXACT_SIGNATURE_MAX_SIGNATURES) {
+        ok = false;
+        break;
+      }
     }
   }
 
   if (ok) {
     *width_out = ceil_log2_u64((uint64_t)pool.len);
     *signature_count_out = (uint64_t)pool.len;
-    *assignments_out = assignments;
+    *assignments_out = assignment_space;
     *computed_out = true;
   }
-  free(left_vars);
+  free(row);
   free(signature);
   label_signature_pool_free(&pool);
-  return ok;
+  return true;
 }
 
 static uint32_t labelled_cut_signature_width(const qsop_instance_t *qsop, const uint32_t *coeffs,

@@ -614,6 +614,61 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             f"{expected_fourier_trace - fourier_trace_phases}\n{fourier_stats.stderr}"
         )
 
+    labelled_edges = "\n".join(f"q {u} {v} 3" for u in range(16) for v in range(16, 32))
+    labelled_qsop = f"p qsop 8 32 256\nn 0\ncst 5\n{labelled_edges}\n"
+    labelled_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "32",
+            "--solve-mode",
+            "fourier",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=labelled_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_labelled_stats = {
+        "backend: branch",
+        "solve_mode: fourier",
+        "rankwidth_delegations: 1",
+        "rankwidth_labelled_width: 3",
+        "rankwidth_labelled_proxy_cuts: 0",
+    }
+    if labelled_fourier_stats.returncode != 0 or not all(
+        part in labelled_fourier_stats.stdout for part in expected_labelled_stats
+    ):
+        raise AssertionError(
+            f"branch labelled rankwidth Fourier handoff stats failed\n"
+            f"{labelled_fourier_stats.stdout}\n{labelled_fourier_stats.stderr}"
+        )
+    labelled_trace_phases = {
+        line.split(",", 1)[0]
+        for line in labelled_fourier_stats.stderr.splitlines()[1:]
+        if line
+    }
+    expected_labelled_trace = {
+        "branch.rankwidth_delegate",
+        "rankwidth.labelled_fourier_leaf",
+        "rankwidth.labelled_fourier_join_map",
+        "rankwidth.labelled_fourier_join",
+    }
+    if not expected_labelled_trace.issubset(labelled_trace_phases):
+        raise AssertionError(
+            f"branch labelled rankwidth Fourier trace missing "
+            f"{expected_labelled_trace - labelled_trace_phases}\n"
+            f"{labelled_fourier_stats.stderr}"
+        )
+
 
 def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     cases = [
