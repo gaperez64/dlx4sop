@@ -59,6 +59,9 @@ BACKEND_ALIAS_METRICS = (
 TOP_METRICS = (
     "solve_elapsed_ns",
     "import_elapsed_ns",
+    "trace_elapsed_ns",
+    "trace_top_elapsed_ns",
+    "trace_top_share_ppm",
     "search_nodes",
     "leaf_assignments",
     "cache_hits",
@@ -136,6 +139,10 @@ CSV_FIELDS = [
     "nedges",
     "import_elapsed_ns",
     "solve_elapsed_ns",
+    "trace_elapsed_ns",
+    "trace_top_phase",
+    "trace_top_elapsed_ns",
+    "trace_top_share_ppm",
     "amplitude_real",
     "amplitude_imag",
     "search_nodes",
@@ -386,6 +393,23 @@ def trace_top_phase_text(trace: dict[str, dict[str, int]], limit: int = 3) -> st
         elapsed = values["elapsed_ns"]
         parts.append(f"{phase}:{elapsed}:{(elapsed * 100.0 / total):.1f}%")
     return ",".join(parts)
+
+
+def trace_record_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int | str]:
+    total = trace_elapsed_ns(trace)
+    if total <= 0:
+        return {}
+    phase, values = sorted(
+        trace.items(),
+        key=lambda item: (-item[1]["elapsed_ns"], item[0]),
+    )[0]
+    elapsed = values["elapsed_ns"]
+    return {
+        "trace_elapsed_ns": total,
+        "trace_top_phase": phase,
+        "trace_top_elapsed_ns": elapsed,
+        "trace_top_share_ppm": (elapsed * 1_000_000) // total,
+    }
 
 
 def cache_record_metrics(
@@ -781,6 +805,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
                 dispatch_metrics = branch_dispatch_metrics(trace)
+                trace_metrics = trace_record_metrics(trace)
                 records.append(
                     {
                         "case": case_name,
@@ -810,6 +835,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **treewidth_probe_metrics,
                         **skip_reason_metrics,
                         **dispatch_metrics,
+                        **trace_metrics,
                         "trace": trace,
                     }
                 )

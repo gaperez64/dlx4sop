@@ -85,6 +85,14 @@ def main() -> int:
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
+    expected_trace_metrics = {
+        "trace_elapsed_ns": 2580,
+        "trace_top_phase": "branch.rankwidth_delegate",
+        "trace_top_elapsed_ns": 1100,
+        "trace_top_share_ppm": 426356,
+    }
+    if bench.trace_record_metrics(trace) != expected_trace_metrics:
+        raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")
 
     return 0
 
