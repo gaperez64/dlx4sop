@@ -88,6 +88,10 @@ TOP_METRICS = (
     "branch_treewidth_order_width",
     "branch_treewidth_table_forecast",
     "branch_treewidth_join_pair_forecast",
+    "treewidth_multiply_events",
+    "treewidth_multiply_elapsed_ns",
+    "treewidth_sum_out_events",
+    "treewidth_sum_out_elapsed_ns",
     "branch_root_treewidth_delegate_events",
     "branch_root_treewidth_delegate_elapsed_ns",
     "branch_root_treewidth_delegate_max_vars",
@@ -174,6 +178,10 @@ CSV_FIELDS = [
     "branch_treewidth_order_width",
     "branch_treewidth_table_forecast",
     "branch_treewidth_join_pair_forecast",
+    "treewidth_multiply_events",
+    "treewidth_multiply_elapsed_ns",
+    "treewidth_sum_out_events",
+    "treewidth_sum_out_elapsed_ns",
     "components",
     "decomposition_width",
     "rankwidth_width",
@@ -482,6 +490,20 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
     return metrics
 
 
+def treewidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phase, prefix in (
+        ("treewidth.multiply", "treewidth_multiply"),
+        ("treewidth.sum_out", "treewidth_sum_out"),
+    ):
+        values = trace.get(phase)
+        if values is None:
+            continue
+        metrics[f"{prefix}_events"] = values["events"]
+        metrics[f"{prefix}_elapsed_ns"] = values["elapsed_ns"]
+    return metrics
+
+
 def branch_skip_reason_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
     for phase, key in BRANCH_TREEWIDTH_SKIP_METRICS.items():
@@ -611,6 +633,10 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "treewidth_multiply_events",
+            "treewidth_multiply_elapsed_ns",
+            "treewidth_sum_out_events",
+            "treewidth_sum_out_elapsed_ns",
             "branch_root_treewidth_delegate_events",
             "branch_root_treewidth_delegate_elapsed_ns",
             "branch_root_treewidth_delegate_max_vars",
@@ -814,6 +840,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 cache_metrics = cache_record_metrics(stats, trace)
                 branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
                 treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
+                kernel_metrics = treewidth_kernel_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
                 dispatch_metrics = branch_dispatch_metrics(trace)
                 trace_metrics = trace_record_metrics(trace)
@@ -844,6 +871,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **cache_metrics,
                         **branch_probe_metrics,
                         **treewidth_probe_metrics,
+                        **kernel_metrics,
                         **skip_reason_metrics,
                         **dispatch_metrics,
                         **trace_metrics,
@@ -891,6 +919,10 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "treewidth_multiply_events",
+            "treewidth_multiply_elapsed_ns",
+            "treewidth_sum_out_events",
+            "treewidth_sum_out_elapsed_ns",
             "branch_root_treewidth_delegate_events",
             "branch_root_treewidth_delegate_elapsed_ns",
             "branch_root_treewidth_delegate_max_vars",
@@ -1019,6 +1051,14 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 )
             if "branch_treewidth_order_width" in record:
                 line += f" branch_treewidth_order_width={record['branch_treewidth_order_width']}"
+            if "treewidth_multiply_elapsed_ns" in record or "treewidth_sum_out_elapsed_ns" in record:
+                line += (
+                    " treewidth_kernels="
+                    f"multiply:{record.get('treewidth_multiply_events', 0)}/"
+                    f"{record.get('treewidth_multiply_elapsed_ns', 0)},"
+                    f"sum:{record.get('treewidth_sum_out_events', 0)}/"
+                    f"{record.get('treewidth_sum_out_elapsed_ns', 0)}"
+                )
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
                     f" delegations={stats.get('treewidth_delegations', 0)}/"
@@ -1282,6 +1322,10 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_treewidth_order_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "treewidth_multiply_events",
+            "treewidth_multiply_elapsed_ns",
+            "treewidth_sum_out_events",
+            "treewidth_sum_out_elapsed_ns",
             "decomposition_width",
             "rankwidth_width",
             "treewidth_width",

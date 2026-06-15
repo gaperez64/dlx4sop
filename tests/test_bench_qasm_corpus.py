@@ -34,6 +34,8 @@ def main() -> int:
                 "branch.cache_lookup,0,4,50",
                 "components.cache_lookup,0,2,60",
                 "branch.cache_store,0,5,70",
+                "treewidth.multiply,3,16,400",
+                "treewidth.sum_out,2,8,500",
                 "",
             ]
         )
@@ -80,20 +82,30 @@ def main() -> int:
     if dispatch != expected_dispatch:
         raise AssertionError(f"unexpected dispatch metrics: {dispatch}")
 
-    if bench.trace_elapsed_ns(trace) != 2580:
+    kernel = bench.treewidth_kernel_metrics(trace)
+    expected_kernel = {
+        "treewidth_multiply_events": 1,
+        "treewidth_multiply_elapsed_ns": 400,
+        "treewidth_sum_out_events": 1,
+        "treewidth_sum_out_elapsed_ns": 500,
+    }
+    if kernel != expected_kernel:
+        raise AssertionError(f"unexpected treewidth kernel metrics: {kernel}")
+
+    if bench.trace_elapsed_ns(trace) != 3480:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
-        "branch.rankwidth_delegate:1100:42.6%,"
-        "branch.treewidth_delegate:700:27.1%,"
-        "branch.component_split:300:11.6%"
+        "branch.rankwidth_delegate:1100:31.6%,"
+        "branch.treewidth_delegate:700:20.1%,"
+        "treewidth.sum_out:500:14.4%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 2580,
+        "trace_elapsed_ns": 3480,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 426356,
+        "trace_top_share_ppm": 316091,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")
