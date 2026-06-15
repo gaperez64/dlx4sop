@@ -11,6 +11,16 @@ from render_scoreboard import format_ns, labelled_path, read_jsonl
 from summarize_qasm_report import markdown_escape
 
 
+RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
+    "rankwidth_join_map_elapsed_ns",
+    "rankwidth_join_elapsed_ns",
+    "rankwidth_labelled_join_map_elapsed_ns",
+    "rankwidth_labelled_join_elapsed_ns",
+    "rankwidth_fourier_join_map_elapsed_ns",
+    "rankwidth_fourier_join_elapsed_ns",
+)
+
+
 def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
     return (
         str(record.get("source") or "unknown"),
@@ -46,6 +56,10 @@ def metric_or_zero(record: dict, key: str) -> int:
     return value if value is not None else 0
 
 
+def rankwidth_kernel_elapsed_ns(record: dict) -> int:
+    return sum(metric_or_zero(record, key) for key in RANKWIDTH_KERNEL_ELAPSED_FIELDS)
+
+
 def load_records(named_paths: Iterable[tuple[str, pathlib.Path]]) -> list[dict]:
     rows: list[dict] = []
     for tier, path in named_paths:
@@ -72,6 +86,7 @@ def config_summary(records: list[dict]) -> list[dict]:
                 "ok": 0,
                 "timeouts": 0,
                 "elapsed_ns": 0,
+                "kernel_elapsed_ns": 0,
                 "max_width": 0,
                 "max_table": 0,
                 "max_signatures": 0,
@@ -87,6 +102,7 @@ def config_summary(records: list[dict]) -> list[dict]:
         if status(record) == "ok":
             entry["ok"] += 1
             entry["elapsed_ns"] += metric_or_zero(record, "solve_elapsed_ns")
+            entry["kernel_elapsed_ns"] += rankwidth_kernel_elapsed_ns(record)
             entry["max_width"] = max(entry["max_width"], metric_or_zero(record, "rankwidth_width"))
             table = metric_or_zero(record, "rankwidth_max_table_entries")
             signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
@@ -190,12 +206,14 @@ def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
                     "config": config,
                     "common_rows": 0,
                     "elapsed_ns": 0,
+                    "kernel_elapsed_ns": 0,
                     "table_pressure": 0,
                     "signature_pressure": 0,
                     "join_pair_pressure": 0,
                     "join_signature_pressure": 0,
                     "baseline_common_rows": 0,
                     "elapsed_delta_vs_baseline": 0,
+                    "kernel_delta_vs_baseline": 0,
                     "table_delta_vs_baseline": 0,
                     "signature_delta_vs_baseline": 0,
                 },
@@ -203,8 +221,10 @@ def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
             table = metric_or_zero(record, "rankwidth_max_table_entries")
             signatures = metric_or_zero(record, "rankwidth_max_signature_entries")
             elapsed = metric_or_zero(record, "solve_elapsed_ns")
+            kernel_elapsed = rankwidth_kernel_elapsed_ns(record)
             entry["common_rows"] += 1
             entry["elapsed_ns"] += elapsed
+            entry["kernel_elapsed_ns"] += kernel_elapsed
             entry["table_pressure"] += table
             entry["signature_pressure"] += signatures
             entry["join_pair_pressure"] += metric_or_zero(record, "join_pairs")
@@ -213,6 +233,9 @@ def common_pressure_summary(records: list[dict], baseline: str) -> list[dict]:
                 entry["baseline_common_rows"] += 1
                 entry["elapsed_delta_vs_baseline"] += elapsed - metric_or_zero(
                     baseline_record, "solve_elapsed_ns"
+                )
+                entry["kernel_delta_vs_baseline"] += kernel_elapsed - rankwidth_kernel_elapsed_ns(
+                    baseline_record
                 )
                 entry["table_delta_vs_baseline"] += table - metric_or_zero(
                     baseline_record, "rankwidth_max_table_entries"
@@ -248,13 +271,13 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     )
     print("\n## Config Summary\n", file=file)
     print(
-        "| Tier | QSOP mode | Config | OK / records | Total solve time | Max width | "
+        "| Tier | QSOP mode | Config | OK / records | Total solve time | Kernel time | Max width | "
         "Max table | Max signatures | Join pairs | Join signature pairs | Mean table | "
         "Mean signatures |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         file=file,
     )
     for row in config_summary(records):
@@ -263,8 +286,9 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"`{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
-            f"{format_ns(row['elapsed_ns'])} | {row['max_width']} | {row['max_table']} | "
-            f"{row['max_signatures']} | {row['join_pairs']} | {row['join_signature_pairs']} | "
+            f"{format_ns(row['elapsed_ns'])} | {format_ns(row['kernel_elapsed_ns'])} | "
+            f"{row['max_width']} | {row['max_table']} | {row['max_signatures']} | "
+            f"{row['join_pairs']} | {row['join_signature_pairs']} | "
             f"{mean_table:.1f} | {mean_signatures:.1f} |",
             file=file,
         )
@@ -304,12 +328,12 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     )
     print(
         "| Tier | QSOP mode | Config | Common rows | Total solve time | Table pressure | "
-        "Signature pressure | Join pairs | Join signature pairs | Baseline rows | "
-        "Delta table/signature/time |",
+        "Signature pressure | Join pairs | Join signature pairs | Kernel time | Baseline rows | "
+        "Delta table/signature/time/kernel |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         file=file,
     )
     for row in pressure_rows:
@@ -318,9 +342,11 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
             f"`{markdown_escape(row['config'])}` | {row['common_rows']} | "
             f"{format_ns(row['elapsed_ns'])} | {row['table_pressure']} | "
             f"{row['signature_pressure']} | {row['join_pair_pressure']} | "
-            f"{row['join_signature_pressure']} | {row['baseline_common_rows']} | "
+            f"{row['join_signature_pressure']} | {format_ns(row['kernel_elapsed_ns'])} | "
+            f"{row['baseline_common_rows']} | "
             f"{row['table_delta_vs_baseline']} / {row['signature_delta_vs_baseline']} / "
-            f"{format_signed_ns(row['elapsed_delta_vs_baseline'])} |",
+            f"{format_signed_ns(row['elapsed_delta_vs_baseline'])} / "
+            f"{format_signed_ns(row['kernel_delta_vs_baseline'])} |",
             file=file,
         )
 

@@ -23,6 +23,8 @@ def rankwidth_record(generator: str, elapsed_ns: int, max_table: int, max_signat
         "rankwidth_width": 3,
         "rankwidth_max_table_entries": max_table,
         "rankwidth_max_signature_entries": max_signatures,
+        "rankwidth_join_map_elapsed_ns": max_table,
+        "rankwidth_join_elapsed_ns": elapsed_ns // 2,
         "stats": {
             "decomposition_width": 3,
             "max_table_entries": max_table,
@@ -67,8 +69,8 @@ def main() -> int:
             "balanced:count-table 1",
             "0 / 0 / 0 of 1",
             "## Common-Row Pressure",
-            "`balanced:count-table` | 1 | 300 ns | 32 | 8 | 132 | 18 | 1 | -32 / -8 / 100 ns",
-            "`left-deep:count-table` | 1 | 100 ns | 128 | 32 | 228 | 42 | 1 | 64 / 16 / -100 ns",
+            "`balanced:count-table` | 1 | 300 ns | 32 | 8 | 132 | 18 | 182 ns | 1 | -32 / -8 / 100 ns / 18 ns",
+            "`left-deep:count-table` | 1 | 100 ns | 128 | 32 | 228 | 42 | 178 ns | 1 | 64 / 16 / -100 ns / 14 ns",
         ):
             if expected not in completed.stdout:
                 raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")
@@ -101,11 +103,15 @@ def main() -> int:
             raise AssertionError(f"unexpected left-deep pressure: {config_rows['left-deep:count-table']}")
         if config_rows["balanced:count-table"]["signature_pressure"] != 8:
             raise AssertionError(f"unexpected balanced pressure: {config_rows['balanced:count-table']}")
+        if config_rows["min-fill-cut:count-table"]["kernel_elapsed_ns"] != 164:
+            raise AssertionError(f"unexpected baseline kernel time: {config_rows['min-fill-cut:count-table']}")
         pressure_rows = {row["config"]: row for row in payload["common_pressure_summary"]}
         if pressure_rows["balanced:count-table"]["table_delta_vs_baseline"] != -32:
             raise AssertionError(f"unexpected balanced common pressure: {pressure_rows['balanced:count-table']}")
         if pressure_rows["left-deep:count-table"]["elapsed_delta_vs_baseline"] != -100:
             raise AssertionError(f"unexpected left-deep common pressure: {pressure_rows['left-deep:count-table']}")
+        if pressure_rows["balanced:count-table"]["kernel_delta_vs_baseline"] != 18:
+            raise AssertionError(f"unexpected balanced kernel delta: {pressure_rows['balanced:count-table']}")
     return 0
 
 
