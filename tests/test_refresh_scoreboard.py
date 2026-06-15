@@ -199,7 +199,7 @@ def main() -> int:
             "branch join forecast rw=9, tw=64",
             "branch tw order width=3",
             "## Competitor Comparisons",
-            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
+            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",
         ):
             if expected not in output:

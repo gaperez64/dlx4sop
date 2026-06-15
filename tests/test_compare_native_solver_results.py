@@ -100,7 +100,7 @@ def main() -> int:
             "`aer-statevector`",
             "1 / 2",
             "4.00x",
-            "1 | 1 | 0.25",
+            "1 | 1 | 0.25 | 0.25",
             "16",
             "512",
         ):
@@ -130,6 +130,7 @@ def main() -> int:
             or rows[0]["native_ok_solver_skip"] != 1
             or rows[0]["amplitude_checked"] != 1
             or rows[0]["amplitude_mismatches"] != 1
+            or rows[0]["amplitude_mean_abs_error"] != 0.25
             or rows[0]["amplitude_max_abs_error"] != 0.25
         ):
             raise AssertionError(f"unexpected json rows:\n{completed.stdout}")

@@ -457,12 +457,13 @@ def write_competitor_tables(
         print(f"### {markdown_escape(source)}\n", file=file)
         print(
             "| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | "
-            "Native time | QSOP speedup | Amplitude checked | Mismatches | Max amplitude error | "
+            "Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | "
+            "Max amplitude error | "
             "Max boundary qubits | Qubit cap | Timeout | Memory cap |",
             file=file,
         )
         print(
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             file=file,
         )
         source_rows = [row for row in rows if row["source"] == source]
@@ -471,13 +472,18 @@ def write_competitor_tables(
             qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
             timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
             memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
+            mean_error = (
+                row["amplitude_abs_error_sum"] / row["amplitude_checked"]
+                if row["amplitude_checked"]
+                else 0.0
+            )
             print(
                 f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
                 f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
                 f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
                 f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
                 f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
-                f"{row['amplitude_max_abs_error']:.3g} | "
+                f"{mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
                 f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
                 f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} |",
                 file=file,

@@ -130,6 +130,7 @@ def summarize(
                         "native_elapsed_ns": 0,
                         "amplitude_checked": 0,
                         "amplitude_mismatches": 0,
+                        "amplitude_abs_error_sum": 0.0,
                         "amplitude_max_abs_error": 0.0,
                         "max_boundary_qubits": 0,
                         "qubit_caps": collections.Counter(),
@@ -154,6 +155,7 @@ def summarize(
                     if solver_amplitude is not None and native_amplitude is not None:
                         entry["amplitude_checked"] += 1
                         error = abs(solver_amplitude - native_amplitude)
+                        entry["amplitude_abs_error_sum"] += error
                         entry["amplitude_max_abs_error"] = max(
                             entry["amplitude_max_abs_error"], error
                         )
@@ -180,6 +182,11 @@ def serializable_row(row: dict) -> dict:
     for key in ("qubit_caps", "timeouts", "memory_caps", "native_errors"):
         out[key] = dict(out[key])
     out["qsop_speedup_vs_native"] = speedup_text(out["native_elapsed_ns"], out["solver_elapsed_ns"])
+    out["amplitude_mean_abs_error"] = (
+        out["amplitude_abs_error_sum"] / out["amplitude_checked"]
+        if out["amplitude_checked"]
+        else 0.0
+    )
     return out
 
 
@@ -200,23 +207,29 @@ def write_markdown(rows: list[dict], file: TextIO) -> None:
     print("", file=file)
     print(
         "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | "
-        "Native time | QSOP speedup | Amplitude checked | Mismatches | Max amplitude error | "
+        "Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | "
+        "Max amplitude error | "
         "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         file=file,
     )
     for row in rows:
         reason = most_common(row["native_errors"])
+        mean_error = (
+            row["amplitude_abs_error_sum"] / row["amplitude_checked"]
+            if row["amplitude_checked"]
+            else 0.0
+        )
         print(
             f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['solver_config'])}` | "
             f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
             f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
             f"{speedup_text(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
             f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
-            f"{row['amplitude_max_abs_error']:.3g} | "
+            f"{mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
             f"{row['max_boundary_qubits']} | {markdown_escape(most_common(row['qubit_caps']))} | "
             f"{markdown_escape(most_common(row['timeouts']))} | "
             f"{markdown_escape(most_common(row['memory_caps']))} | {markdown_escape(reason)} |",

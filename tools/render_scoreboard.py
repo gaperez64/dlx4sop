@@ -543,6 +543,7 @@ def summarize_native_comparison_records(
                         "native_elapsed_ns": 0,
                         "amplitude_checked": 0,
                         "amplitude_mismatches": 0,
+                        "amplitude_abs_error_sum": 0.0,
                         "amplitude_max_abs_error": 0.0,
                         "max_boundary_qubits": 0,
                         "qubit_caps": collections.Counter(),
@@ -569,6 +570,7 @@ def summarize_native_comparison_records(
                     if solver_amplitude is not None and native_amplitude is not None:
                         entry["amplitude_checked"] += 1
                         error = abs(solver_amplitude - native_amplitude)
+                        entry["amplitude_abs_error_sum"] += error
                         entry["amplitude_max_abs_error"] = max(
                             entry["amplitude_max_abs_error"], error
                         )
@@ -661,12 +663,12 @@ def write_native_comparison_tables(
         print(f"\n### {markdown_escape(source)}\n", file=file)
         print(
             "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | Native time | "
-            "QSOP speedup | Amplitude checked | Mismatches | Max amplitude error | "
+            "QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | Max amplitude error | "
             "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
             file=file,
         )
         print(
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
             file=file,
         )
         for row in [candidate for candidate in rows if candidate["source"] == source]:
@@ -674,13 +676,18 @@ def write_native_comparison_tables(
             timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
             memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
             reason = row["errors"].most_common(1)[0][0] if row["errors"] else ""
+            mean_error = (
+                row["amplitude_abs_error_sum"] / row["amplitude_checked"]
+                if row["amplitude_checked"]
+                else 0.0
+            )
             print(
                 f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
                 f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
                 f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
                 f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
                 f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
-                f"{row['amplitude_max_abs_error']:.3g} | "
+                f"{mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
                 f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
                 f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} | {markdown_escape(reason)} |",
                 file=file,
