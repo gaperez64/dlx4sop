@@ -591,7 +591,7 @@ def write_scoreboard(
         print("", file=file)
         compare_rankwidth_backends.write_markdown(
             rankwidth_comparison_records,
-            "rankwidth:min-fill-cut:count-table",
+            "all",
             rankwidth_comparison_top,
             file,
             heading_level=2,

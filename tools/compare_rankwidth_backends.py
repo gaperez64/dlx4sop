@@ -311,6 +311,15 @@ def format_signed_ns(ns: int) -> str:
     return format_ns(ns)
 
 
+def rankwidth_configs(records: list[dict]) -> list[str]:
+    configs = {
+        backend_config(record)
+        for record in records
+        if record.get("backend") == "rankwidth" and status(record) == "ok"
+    }
+    return sorted(configs)
+
+
 def markdown_heading(level: int, title: str) -> str:
     return f"{'#' * max(1, level)} {title}"
 
@@ -347,62 +356,70 @@ def write_markdown(
             file=file,
         )
 
-    print(f"\n{markdown_heading(heading_level + 1, 'Rankwidth Vs Competitors')}\n", file=file)
-    print(
-        f"Rankwidth config: `{markdown_escape(rankwidth_config)}`. "
-        "Table and forecast comparisons are lower/equal/higher versus the fastest "
-        "successful treewidth row.",
-        file=file,
-    )
-    print(
-        "| Tier | QSOP mode | Common rows | Fastest/tied | Slower | "
-        "Rankwidth time | Best competitor time | Delta vs best | "
-        "Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | "
-        "Vs branch faster | Delta vs treewidth/branch | Missing/failed |",
-        file=file,
-    )
-    print(
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        file=file,
-    )
-    for row in comparison_summary(records, rankwidth_config):
+    configs = rankwidth_configs(records) if rankwidth_config == "all" else [rankwidth_config]
+    for config in configs:
+        title = "Rankwidth Vs Competitors"
+        if len(configs) > 1:
+            title += f": {config}"
+        print(f"\n{markdown_heading(heading_level + 1, title)}\n", file=file)
         print(
-            f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
-            f"{row['common_rows']} | {row['rankwidth_fastest_or_tied']} | "
-            f"{row['rankwidth_slower']} | {format_ns(row['rankwidth_elapsed_ns'])} | "
-            f"{format_ns(row['best_competitor_elapsed_ns'])} | "
-            f"{format_signed_ns(row['elapsed_delta_vs_best_competitor'])} | "
-            f"{row['rankwidth_faster_than_treewidth']} / {row['treewidth_common_rows']} | "
-            f"{counter_triplet(row['table_comparison'])} | "
-            f"{counter_triplet(row['forecast_comparison'])} | "
-            f"{row['rankwidth_faster_than_branch']} / {row['branch_common_rows']} | "
-            f"{format_signed_ns(row['elapsed_delta_vs_treewidth'])} / "
-            f"{format_signed_ns(row['elapsed_delta_vs_branch'])} | "
-            f"{row['rankwidth_missing_or_failed']} |",
+            f"Rankwidth config: `{markdown_escape(config)}`. "
+            "Table and forecast comparisons are lower/equal/higher versus the fastest "
+            "successful treewidth row.",
             file=file,
         )
+        print(
+            "| Tier | QSOP mode | Common rows | Fastest/tied | Slower | "
+            "Rankwidth time | Best competitor time | Delta vs best | "
+            "Vs treewidth faster | Table lower/equal/higher | Forecast lower/equal/higher | "
+            "Vs branch faster | Delta vs treewidth/branch | Missing/failed |",
+            file=file,
+        )
+        print(
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            file=file,
+        )
+        for row in comparison_summary(records, config):
+            print(
+                f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
+                f"{row['common_rows']} | {row['rankwidth_fastest_or_tied']} | "
+                f"{row['rankwidth_slower']} | {format_ns(row['rankwidth_elapsed_ns'])} | "
+                f"{format_ns(row['best_competitor_elapsed_ns'])} | "
+                f"{format_signed_ns(row['elapsed_delta_vs_best_competitor'])} | "
+                f"{row['rankwidth_faster_than_treewidth']} / {row['treewidth_common_rows']} | "
+                f"{counter_triplet(row['table_comparison'])} | "
+                f"{counter_triplet(row['forecast_comparison'])} | "
+                f"{row['rankwidth_faster_than_branch']} / {row['branch_common_rows']} | "
+                f"{format_signed_ns(row['elapsed_delta_vs_treewidth'])} / "
+                f"{format_signed_ns(row['elapsed_delta_vs_branch'])} | "
+                f"{row['rankwidth_missing_or_failed']} |",
+                file=file,
+            )
 
-    wins = top_rankwidth_wins(records, rankwidth_config, top)
-    if not wins:
-        return
-    print(f"\n{markdown_heading(heading_level + 1, 'Largest Rankwidth Time Wins')}\n", file=file)
-    print(
-        "| Tier | QSOP mode | Row | Rankwidth | Best competitor | Win | "
-        "Table / forecast / join forecast |",
-        file=file,
-    )
-    print("| --- | --- | --- | ---: | ---: | ---: | ---: |", file=file)
-    for row in wins:
-        label = f"{row['source']}:{row['case']} {row['input']}->{row['output']}"
+        wins = top_rankwidth_wins(records, config, top)
+        if not wins:
+            continue
+        wins_title = "Largest Rankwidth Time Wins"
+        if len(configs) > 1:
+            wins_title += f": {config}"
+        print(f"\n{markdown_heading(heading_level + 1, wins_title)}\n", file=file)
         print(
-            f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
-            f"{markdown_escape(label)} | {format_ns(row['rankwidth_elapsed_ns'])} | "
-            f"`{markdown_escape(row['best_competitor'])}` {format_ns(row['best_competitor_elapsed_ns'])} | "
-            f"{format_ns(row['elapsed_win_ns'])} | "
-            f"{row['rankwidth_table']} / {row['rankwidth_table_forecast']} / "
-            f"{row['rankwidth_join_pair_forecast']} |",
+            "| Tier | QSOP mode | Row | Rankwidth | Best competitor | Win | "
+            "Table / forecast / join forecast |",
             file=file,
         )
+        print("| --- | --- | --- | ---: | ---: | ---: | ---: |", file=file)
+        for row in wins:
+            label = f"{row['source']}:{row['case']} {row['input']}->{row['output']}"
+            print(
+                f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
+                f"{markdown_escape(label)} | {format_ns(row['rankwidth_elapsed_ns'])} | "
+                f"`{markdown_escape(row['best_competitor'])}` {format_ns(row['best_competitor_elapsed_ns'])} | "
+                f"{format_ns(row['elapsed_win_ns'])} | "
+                f"{row['rankwidth_table']} / {row['rankwidth_table_forecast']} / "
+                f"{row['rankwidth_join_pair_forecast']} |",
+                file=file,
+            )
 
 
 def serializable_row(row: dict) -> dict:

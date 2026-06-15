@@ -949,26 +949,31 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
                 yield {
                     "rankwidth_generate": generator,
                     "rankwidth_mode": mode,
+                    "solve_mode": mode,
                     "branch_heuristic": "",
                     "treewidth_order": "",
                 }
         return
     if backend == "treewidth":
         for order in args.treewidth_orders:
-            yield {
-                "rankwidth_generate": "",
-                "rankwidth_mode": "",
-                "branch_heuristic": "",
-                "treewidth_order": order,
-            }
+            for mode in args.backend_solve_modes:
+                yield {
+                    "rankwidth_generate": "",
+                    "rankwidth_mode": "",
+                    "solve_mode": mode,
+                    "branch_heuristic": "",
+                    "treewidth_order": order,
+                }
         return
 
-    yield {
-        "rankwidth_generate": "",
-        "rankwidth_mode": "",
-        "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
-        "treewidth_order": "",
-    }
+    for mode in args.backend_solve_modes:
+        yield {
+            "rankwidth_generate": "",
+            "rankwidth_mode": "",
+            "solve_mode": mode,
+            "branch_heuristic": args.branch_heuristic if backend == "branch" else "",
+            "treewidth_order": "",
+        }
 
 
 def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
@@ -1027,8 +1032,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "--rankwidth-mode",
                         config["rankwidth_mode"],
                     ]
-                elif args.solve_mode is not None:
-                    cmd += ["--solve-mode", args.solve_mode]
+                elif config["solve_mode"] != "count-table":
+                    cmd += ["--solve-mode", config["solve_mode"]]
                 if backend == "treewidth":
                     cmd += ["--treewidth-order", config["treewidth_order"]]
                 cmd.append("-")
@@ -1048,7 +1053,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                             "input": input_bits,
                             "output": output_bits,
                             "backend": backend,
-                            "solve_mode": args.solve_mode or config["rankwidth_mode"] or "count-table",
+                            "solve_mode": config["solve_mode"],
                             "branch_heuristic": config["branch_heuristic"],
                             "rankwidth_mode": config["rankwidth_mode"],
                             "rankwidth_decomposition": config["rankwidth_generate"],
@@ -1094,8 +1099,10 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "input": input_bits,
                         "output": output_bits,
                         "backend": backend,
-                        "solve_mode": str(stats.get("solve_mode", args.solve_mode or config["rankwidth_mode"] or "count-table")),
-                        "solve_mode_kernel": str(stats.get("solve_mode_kernel", args.solve_mode or config["rankwidth_mode"] or "count-table")),
+                        "solve_mode": str(stats.get("solve_mode", config["solve_mode"])),
+                        "solve_mode_kernel": str(
+                            stats.get("solve_mode_kernel", config["solve_mode"])
+                        ),
                         "branch_heuristic": config["branch_heuristic"],
                         "rankwidth_mode": config["rankwidth_mode"],
                         "rankwidth_decomposition": config["rankwidth_generate"],
@@ -1907,6 +1914,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if args.solve_mode is not None and args.rankwidth_modes is not None:
         if any(mode != args.solve_mode for mode in args.rankwidth_modes):
             parser.error("--solve-mode conflicts with --rankwidth-mode")
+    args.backend_solve_modes = [args.solve_mode or "count-table"]
     if args.rankwidth_comparison:
         if args.rankwidth_diagnostics or args.rankwidth_sweep:
             parser.error("--rankwidth-comparison cannot be combined with rankwidth sweep modes")
@@ -1915,7 +1923,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         args.backends = ["treewidth", "branch", "rankwidth"]
         args.branch_heuristic = "split"
         args.rankwidth_generators = ["min-fill-cut"]
-        args.rankwidth_modes = [args.solve_mode or "count-table"]
+        args.rankwidth_modes = [args.solve_mode] if args.solve_mode is not None else list(RANKWIDTH_MODES)
+        args.backend_solve_modes = list(args.rankwidth_modes)
         args.treewidth_orders = ["min-fill-max-degree"]
         args.skip_unsupported = True
         args.trace = True

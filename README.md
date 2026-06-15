@@ -102,7 +102,8 @@ is the lower-level table renderer for ad hoc reports. Use
 `bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
 labelled-rankwidth generator sweeps, or `--rankwidth-comparison` for the
 treewidth/branch/rankwidth comparison set used to decide whether rankwidth is a
-serious backend candidate. Solver benchmark JSONL includes QSOP
+serious backend candidate. Rankwidth comparison runs include count-table and
+Fourier rows unless `--solve-mode` pins one mode. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mean absolute error, and maximum
 absolute error. Rankwidth records include support width, labelled cut-signature
