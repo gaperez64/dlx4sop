@@ -30,6 +30,7 @@ def main() -> int:
                 "branch.root_treewidth_delegate,0,32,300",
                 "branch.root_width_probe,0,6,0",
                 "branch.rankwidth_delegate,2,40,1100",
+                "branch.fallthrough,2,19,0",
                 "branch.rankwidth_skip_join_pair_forecast,1,128,0",
                 "branch.treewidth_skip_width,1,15,0",
                 "branch.cache_lookup,0,4,50",
@@ -101,6 +102,14 @@ def main() -> int:
     }
     if dispatch != expected_dispatch:
         raise AssertionError(f"unexpected dispatch metrics: {dispatch}")
+
+    fallthrough = bench.branch_fallthrough_metrics(trace)
+    expected_fallthrough = {
+        "branch_fallthrough_trace_events": 1,
+        "branch_fallthrough_max_vars": 19,
+    }
+    if fallthrough != expected_fallthrough:
+        raise AssertionError(f"unexpected fallthrough metrics: {fallthrough}")
 
     kernel = bench.treewidth_kernel_metrics(trace)
     expected_kernel = {

@@ -134,6 +134,8 @@ TOP_METRICS = (
     "treewidth_delegations",
     "rankwidth_delegations",
     "branch_fallthroughs",
+    "branch_fallthrough_trace_events",
+    "branch_fallthrough_max_vars",
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
     *BRANCH_SKIP_REASON_FIELDS,
@@ -225,6 +227,8 @@ CSV_FIELDS = [
     "treewidth_delegations",
     "rankwidth_delegations",
     "branch_fallthroughs",
+    "branch_fallthrough_trace_events",
+    "branch_fallthrough_max_vars",
     "branch_treewidth_skips",
     "branch_rankwidth_skips",
     *BRANCH_SKIP_REASON_FIELDS,
@@ -570,6 +574,16 @@ def branch_dispatch_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     return metrics
 
 
+def branch_fallthrough_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    values = trace.get("branch.fallthrough")
+    if values is None:
+        return {}
+    return {
+        "branch_fallthrough_trace_events": values["events"],
+        "branch_fallthrough_max_vars": values["max_items"],
+    }
+
+
 def add_counter(total: dict[str, int], key: str, value: int | str | None) -> None:
     if isinstance(value, int):
         total[key] = total.get(key, 0) + value
@@ -608,6 +622,7 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "branch_treewidth_delegate_max_vars",
         "branch_root_treewidth_delegate_max_vars",
         "branch_rankwidth_delegate_max_vars",
+        "branch_fallthrough_max_vars",
     }:
         total[key] = max(total.get(key, 0), value)
     else:
@@ -679,6 +694,8 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "branch_fallthrough_trace_events",
+            "branch_fallthrough_max_vars",
             "treewidth_multiply_events",
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
@@ -899,6 +916,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 rankwidth_metrics = rankwidth_kernel_metrics(trace)
                 skip_reason_metrics = branch_skip_reason_metrics(trace)
                 dispatch_metrics = branch_dispatch_metrics(trace)
+                fallthrough_metrics = branch_fallthrough_metrics(trace)
                 trace_metrics = trace_record_metrics(trace)
                 records.append(
                     {
@@ -931,6 +949,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         **rankwidth_metrics,
                         **skip_reason_metrics,
                         **dispatch_metrics,
+                        **fallthrough_metrics,
                         **trace_metrics,
                         "trace": trace,
                     }
@@ -979,6 +998,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "branch_fallthrough_trace_events",
+            "branch_fallthrough_max_vars",
             "treewidth_multiply_events",
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",
@@ -1197,6 +1218,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f",tw_skips:{stats.get('branch_treewidth_skips', 0)}"
                     f",rw_skips:{stats.get('branch_rankwidth_skips', 0)}"
                 )
+                if "branch_fallthrough_max_vars" in record:
+                    line += f",fallthrough_max_vars:{record['branch_fallthrough_max_vars']}"
             treewidth_skip_reasons = branch_skip_reason_parts(
                 record,
                 tuple(BRANCH_TREEWIDTH_SKIP_METRICS.values()),
@@ -1418,6 +1441,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
+            "branch_fallthrough_trace_events",
+            "branch_fallthrough_max_vars",
             "treewidth_multiply_events",
             "treewidth_multiply_elapsed_ns",
             "treewidth_sum_out_events",

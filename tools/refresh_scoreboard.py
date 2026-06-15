@@ -223,6 +223,10 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"tw skips={format_count(stats.get('branch_treewidth_skips', 0))}, "
             f"rw skips={format_count(stats.get('branch_rankwidth_skips', 0))}"
         )
+        if "branch_fallthrough_max_vars" in stats:
+            parts.append(
+                f"branch fallthrough max vars={format_count(stats['branch_fallthrough_max_vars'])}"
+            )
         treewidth_skip_reasons = branch_skip_reason_text(
             stats,
             BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,

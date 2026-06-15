@@ -274,6 +274,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "treewidth_delegations",
                 "rankwidth_delegations",
                 "branch_fallthroughs",
+                "branch_fallthrough_trace_events",
                 "branch_treewidth_skips",
                 "branch_rankwidth_skips",
                 "cache_lookup_events",
@@ -311,6 +312,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "max_residual_prefix_cut_rank",
                 "branch_rankwidth_labelled_width",
                 "branch_rankwidth_support_width",
+                "branch_fallthrough_max_vars",
                 "branch_rankwidth_table_forecast",
                 "branch_rankwidth_join_pair_forecast",
                 "branch_treewidth_order_width",
@@ -396,6 +398,10 @@ def key_stats(stats: dict[str, int]) -> str:
             f"tw skips={stats.get('branch_treewidth_skips', 0)}, "
             f"rw skips={stats.get('branch_rankwidth_skips', 0)}"
         )
+        if "branch_fallthrough_max_vars" in stats:
+            parts.append(
+                f"branch fallthrough max vars={stats['branch_fallthrough_max_vars']}"
+            )
         treewidth_skip_reasons = branch_skip_reason_text(stats, BRANCH_TREEWIDTH_SKIP_REASON_FIELDS)
         if treewidth_skip_reasons:
             parts.append(f"tw skip reasons {treewidth_skip_reasons}")
