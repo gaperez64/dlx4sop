@@ -387,6 +387,7 @@ static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint
                                  const uint64_t *right, size_t words, qsop_error_t *error);
 static uint32_t ceil_log2_u64(uint64_t value);
 static uint64_t saturating_add_u64(uint64_t left, uint64_t right);
+static uint64_t binary_signature_bound(uint32_t width);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                     const uint64_t *adj, qsop_error_t *error);
 static bool decomposition_score(const qsop_instance_t *qsop,
@@ -1577,6 +1578,7 @@ static uint32_t labelled_cut_signature_proxy_width(const qsop_instance_t *qsop,
 static bool labelled_cut_signature_exact_width(const qsop_instance_t *qsop, const uint32_t *coeffs,
                                                const uint64_t *left, const uint64_t *right,
                                                uint32_t *width_out,
+                                               uint64_t *signature_count_out,
                                                uint64_t *assignments_out,
                                                bool *computed_out,
                                                qsop_error_t *error) {
@@ -1639,6 +1641,7 @@ static bool labelled_cut_signature_exact_width(const qsop_instance_t *qsop, cons
 
   if (ok) {
     *width_out = ceil_log2_u64((uint64_t)pool.len);
+    *signature_count_out = (uint64_t)pool.len;
     *assignments_out = assignments;
     *computed_out = true;
   }
@@ -1650,16 +1653,22 @@ static bool labelled_cut_signature_exact_width(const qsop_instance_t *qsop, cons
 
 static uint32_t labelled_cut_signature_width(const qsop_instance_t *qsop, const uint32_t *coeffs,
                                              const uint64_t *left, const uint64_t *right,
+                                             uint64_t *signature_count_out,
                                              rw_labelled_cut_stats_t *stats,
                                              qsop_error_t *error) {
   uint32_t exact_width = 0;
+  uint64_t exact_signatures = 0;
   uint64_t exact_assignments = 0;
   bool exact_computed = false;
   if (!labelled_cut_signature_exact_width(qsop, coeffs, left, right, &exact_width,
-                                          &exact_assignments, &exact_computed, error)) {
+                                          &exact_signatures, &exact_assignments,
+                                          &exact_computed, error)) {
     return UINT32_MAX;
   }
   if (exact_computed) {
+    if (signature_count_out != NULL) {
+      *signature_count_out = exact_signatures;
+    }
     if (stats != NULL) {
       stats->exact_cuts++;
       stats->exact_assignments =
@@ -1671,7 +1680,12 @@ static uint32_t labelled_cut_signature_width(const qsop_instance_t *qsop, const 
   if (stats != NULL) {
     stats->proxy_cuts++;
   }
-  return labelled_cut_signature_proxy_width(qsop, coeffs, left, right, error);
+  const uint32_t proxy_width = labelled_cut_signature_proxy_width(qsop, coeffs, left, right,
+                                                                 error);
+  if (proxy_width != UINT32_MAX && signature_count_out != NULL) {
+    *signature_count_out = binary_signature_bound(proxy_width);
+  }
+  return proxy_width;
 }
 
 static uint32_t labelled_decomposition_width(
@@ -1697,7 +1711,7 @@ static uint32_t labelled_decomposition_width(
     const uint64_t *left = node_vars_const(decomposition, i);
     qsop_bitset_copy(right, all, decomposition->words);
     qsop_bitset_and_not(right, left, decomposition->words);
-    const uint32_t cut_width = labelled_cut_signature_width(qsop, coeffs, left, right, stats,
+    const uint32_t cut_width = labelled_cut_signature_width(qsop, coeffs, left, right, NULL, stats,
                                                             error);
     if (cut_width == UINT32_MAX) {
       free(all);
@@ -1887,7 +1901,8 @@ bool qsop_rankwidth_decomposition_forecast(
       qsop_bitset_and_not(right, left, decomposition->words);
       uint32_t width = 0;
       if (coeffs != NULL) {
-        width = labelled_cut_signature_width(qsop, coeffs, left, right, &cut_stats, error);
+        width = labelled_cut_signature_width(qsop, coeffs, left, right, &signature_cap,
+                                             &cut_stats, error);
       } else {
         width = cut_rank_bitsets(decomposition->nvars, adj, left, right,
                                  decomposition->words, error);
@@ -1896,7 +1911,9 @@ bool qsop_rankwidth_decomposition_forecast(
         ok = false;
         break;
       }
-      signature_cap = binary_signature_bound(width);
+      if (coeffs == NULL) {
+        signature_cap = binary_signature_bound(width);
+      }
     }
 
     uint64_t signatures = 0;

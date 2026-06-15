@@ -1029,6 +1029,46 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"labelled rankwidth stats failed\n{labelled_stats.stdout}\n{labelled_stats.stderr}")
 
+    three_signature_qsop = "p qsop 4 3 2\nn 0\ncst 0\nq 0 2 1\nq 1 2 1\n"
+    three_signature_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "left-deep",
+            "-",
+        ],
+        input=three_signature_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if three_signature_stats.returncode != 0:
+        raise AssertionError(
+            f"three-signature rankwidth stats failed\n"
+            f"{three_signature_stats.stdout}\n{three_signature_stats.stderr}"
+        )
+    three_stats = parse_solver_stats(three_signature_stats.stdout)
+    expected_three_stats = {
+        "rankwidth_support_width": 1,
+        "rankwidth_labelled_width": 2,
+        "max_table_entries": 3,
+        "rankwidth_table_forecast": 12,
+        "rankwidth_join_pair_forecast": 10,
+        "rankwidth_labelled_exact_cuts": 4,
+        "rankwidth_labelled_proxy_cuts": 0,
+    }
+    for key, value in expected_three_stats.items():
+        if three_stats.get(key) != value:
+            raise AssertionError(
+                f"three-signature forecast mismatch for {key}: expected {value}, got "
+                f"{three_stats.get(key)}\n{three_signature_stats.stdout}"
+            )
+
     labelled_left_deep_stats = subprocess.run(
         [
             str(exe),
