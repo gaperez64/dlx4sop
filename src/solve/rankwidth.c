@@ -95,6 +95,8 @@ typedef struct rw_label_signature_pool {
 typedef struct rw_decomposition_score {
   uint32_t labelled_width;
   uint32_t support_width;
+  uint64_t table_forecast;
+  uint64_t join_pair_forecast;
 } rw_decomposition_score_t;
 
 static int compare_decomposition_scores(rw_decomposition_score_t left,
@@ -104,6 +106,12 @@ static int compare_decomposition_scores(rw_decomposition_score_t left,
   }
   if (left.support_width != right.support_width) {
     return left.support_width < right.support_width ? -1 : 1;
+  }
+  if (left.table_forecast != right.table_forecast) {
+    return left.table_forecast < right.table_forecast ? -1 : 1;
+  }
+  if (left.join_pair_forecast != right.join_pair_forecast) {
+    return left.join_pair_forecast < right.join_pair_forecast ? -1 : 1;
   }
   return 0;
 }
@@ -1171,11 +1179,6 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     set_error(error, "rankwidth decomposition generation requires at least one variable");
     return false;
   }
-  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT &&
-      !qsop_is_sign_edge_instance(qsop)) {
-    return make_left_deep_generated_decomposition(qsop, out, error);
-  }
-
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
   uint32_t *leaf_nodes = calloc(qsop->nvars, sizeof(*leaf_nodes));
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
@@ -1614,9 +1617,17 @@ static bool decomposition_score(const qsop_instance_t *qsop,
       return false;
     }
   }
+  uint64_t table_forecast = 0;
+  uint64_t join_pair_forecast = 0;
+  if (!qsop_rankwidth_decomposition_forecast(qsop, decomposition, &table_forecast,
+                                             &join_pair_forecast, error)) {
+    return false;
+  }
   *out = (rw_decomposition_score_t){
       .labelled_width = labelled_width,
       .support_width = support_width,
+      .table_forecast = table_forecast,
+      .join_pair_forecast = join_pair_forecast,
   };
   return true;
 }
