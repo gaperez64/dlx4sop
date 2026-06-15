@@ -65,6 +65,8 @@ typedef struct branch_search_stats {
   uint64_t cache_misses;
   uint64_t cache_avoided_nodes;
   uint64_t cache_canonical_hits;
+  uint64_t cache_canonical_lookups;
+  uint64_t cache_canonical_stores;
   uint64_t table_entries;
   uint64_t max_table_entries;
   uint64_t signature_entries;
@@ -520,13 +522,20 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
 }
 
 static bool residual_cache_find(const residual_cache_t *cache, const qsop_residual_t *residual,
-                                const residual_cache_entry_t **out, qsop_error_t *error) {
+                                const residual_cache_entry_t **out,
+                                bool *out_canonical_lookup, qsop_error_t *error) {
   *out = NULL;
+  if (out_canonical_lookup != NULL) {
+    *out_canonical_lookup = false;
+  }
   if (cache->bucket_count == 0) {
     return true;
   }
 
   if (qsop_residual_active_vars(residual) <= BRANCH_SMALL_COMPONENT_CANONICAL_NVARS) {
+    if (out_canonical_lookup != NULL) {
+      *out_canonical_lookup = true;
+    }
     residual_cache_key_t lookup = {0};
     if (!residual_cache_key_create_canonical_small(residual, &lookup, error)) {
       return false;
@@ -616,12 +625,18 @@ static bool residual_cache_rehash(residual_cache_t *cache, size_t bucket_count,
 
 static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t *residual,
                                  const uint64_t *counts, uint64_t search_nodes,
-                                 qsop_error_t *error) {
+                                 bool *out_canonical_store, qsop_error_t *error) {
   residual_cache_entry_t entry = {0};
   entry.next = SIZE_MAX;
   entry.search_nodes = search_nodes;
+  if (out_canonical_store != NULL) {
+    *out_canonical_store = false;
+  }
   if (!residual_cache_key_create_for_store(residual, &entry.key, error)) {
     return false;
+  }
+  if (out_canonical_store != NULL) {
+    *out_canonical_store = entry.key.canonical;
   }
 
   if (!qsop_counts_alloc(entry.key.r, &entry.counts, error)) {
@@ -1099,6 +1114,8 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_misses = search.cache_misses;
     stats->cache_avoided_nodes = search.cache_avoided_nodes;
     stats->cache_canonical_hits = search.cache_canonical_hits;
+    stats->cache_canonical_lookups = search.cache_canonical_lookups;
+    stats->cache_canonical_stores = search.cache_canonical_stores;
     stats->cache_entries = (uint64_t)search.cache.len;
     stats->cache_canonical_entries = residual_cache_canonical_entries(&search.cache);
     stats->cache_stored_residue_slots =
@@ -1427,11 +1444,17 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 
   const uint64_t lookup_start = qsop_trace_begin(stats->trace);
   const residual_cache_entry_t *entry = NULL;
-  if (!residual_cache_find(&stats->cache, residual, &entry, error)) {
+  bool canonical_lookup = false;
+  if (!residual_cache_find(&stats->cache, residual, &entry, &canonical_lookup, error)) {
     return false;
   }
-  qsop_trace_emit_elapsed(stats->trace, "branch.cache_lookup", stats->depth, stats->cache.len,
-                          lookup_start);
+  if (canonical_lookup) {
+    stats->cache_canonical_lookups++;
+  }
+  qsop_trace_emit_elapsed(stats->trace,
+                          canonical_lookup ? "branch.cache_canonical_lookup"
+                                           : "branch.cache_lookup",
+                          stats->depth, stats->cache.len, lookup_start);
   if (entry != NULL) {
     stats->cache_hits++;
     if (entry->key.canonical) {
@@ -1456,12 +1479,19 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
   }
   const uint64_t subtree_search_nodes = stats->nodes - subtree_start_nodes + 1U;
   const uint64_t store_start = qsop_trace_begin(stats->trace);
-  if (!residual_cache_store(&stats->cache, residual, computed, subtree_search_nodes, error)) {
+  bool canonical_store = false;
+  if (!residual_cache_store(&stats->cache, residual, computed, subtree_search_nodes,
+                            &canonical_store, error)) {
     free(computed);
     return false;
   }
-  qsop_trace_emit_elapsed(stats->trace, "branch.cache_store", stats->depth, stats->cache.len,
-                          store_start);
+  if (canonical_store) {
+    stats->cache_canonical_stores++;
+  }
+  qsop_trace_emit_elapsed(stats->trace,
+                          canonical_store ? "branch.cache_canonical_store"
+                                          : "branch.cache_store",
+                          stats->depth, stats->cache.len, store_start);
 
   if (!add_counts(r, counts, computed, stats, error)) {
     free(computed);

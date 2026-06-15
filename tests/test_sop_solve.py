@@ -526,6 +526,10 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
             raise AssertionError(f"{name}: branch cache hits + misses do not match search nodes")
         if stats.get("cache_canonical_hits", 0) < 1:
             raise AssertionError(f"{name}: expected a canonical branch cache hit")
+        if stats.get("cache_canonical_lookups", 0) < stats.get("cache_canonical_hits", 0):
+            raise AssertionError(f"{name}: canonical lookups should cover canonical hits")
+        if stats.get("cache_canonical_stores", 0) < 1:
+            raise AssertionError(f"{name}: expected canonical branch cache stores")
         if stats.get("cache_canonical_entries", 0) < 1:
             raise AssertionError(f"{name}: expected canonical branch cache entries")
         if stats.get("cache_estimated_bytes", 0) <= 0:
@@ -1293,14 +1297,16 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     rows = [line.split(",") for line in lines[1:]]
     phases = {row[0] for row in rows}
     expected_phases = {
-        "branch.cache_lookup",
-        "branch.cache_store",
         "branch.component_split",
         "branch.select_variable",
         "branch.edge_free_leaf",
     }
     if not expected_phases.issubset(phases):
         raise AssertionError(f"missing trace phases {expected_phases - phases}:\n{completed.stderr}")
+    if not ({"branch.cache_lookup", "branch.cache_canonical_lookup"} & phases):
+        raise AssertionError(f"missing cache lookup trace phase:\n{completed.stderr}")
+    if not ({"branch.cache_store", "branch.cache_canonical_store"} & phases):
+        raise AssertionError(f"missing cache store trace phase:\n{completed.stderr}")
     for row in rows:
         if len(row) != 4:
             raise AssertionError(f"bad trace row: {row}")

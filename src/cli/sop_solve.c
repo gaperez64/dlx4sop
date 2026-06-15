@@ -170,6 +170,14 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     if (stats->cache_canonical_hits != 0) {
       fprintf(file, "cache_canonical_hits: %" PRIu64 "\n", stats->cache_canonical_hits);
     }
+    if (stats->cache_canonical_lookups != 0) {
+      fprintf(file, "cache_canonical_lookups: %" PRIu64 "\n",
+              stats->cache_canonical_lookups);
+    }
+    if (stats->cache_canonical_stores != 0) {
+      fprintf(file, "cache_canonical_stores: %" PRIu64 "\n",
+              stats->cache_canonical_stores);
+    }
     fprintf(file, "cache_entries: %" PRIu64 "\n", stats->cache_entries);
     if (stats->cache_canonical_entries != 0) {
       fprintf(file, "cache_canonical_entries: %" PRIu64 "\n", stats->cache_canonical_entries);

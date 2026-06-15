@@ -171,6 +171,11 @@ def public_key_stats(stats: dict[str, int]) -> str:
         )
     if stats.get("cache_canonical_hits", 0):
         parts.append(f"cache canonical hits={format_count(stats['cache_canonical_hits'])}")
+    if stats.get("cache_canonical_lookups", 0) or stats.get("cache_canonical_stores", 0):
+        parts.append(
+            f"cache canonical lookups={format_count(stats.get('cache_canonical_lookups', 0))}, "
+            f"stores={format_count(stats.get('cache_canonical_stores', 0))}"
+        )
     if "cache_entries" in stats:
         parts.append(
             f"cache entries={format_count(stats['cache_entries'])}, "
@@ -190,6 +195,14 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"{format_ns(stats.get('cache_lookup_elapsed_ns', 0))}, "
             f"store={format_count(stats.get('cache_store_events', 0))} events/"
             f"{format_ns(stats.get('cache_store_elapsed_ns', 0))}"
+        )
+    if "cache_canonical_lookup_elapsed_ns" in stats or "cache_canonical_store_elapsed_ns" in stats:
+        parts.append(
+            "canonical cache trace "
+            f"lookup={format_count(stats.get('cache_canonical_lookup_events', 0))} events/"
+            f"{format_ns(stats.get('cache_canonical_lookup_elapsed_ns', 0))}, "
+            f"store={format_count(stats.get('cache_canonical_store_events', 0))} events/"
+            f"{format_ns(stats.get('cache_canonical_store_elapsed_ns', 0))}"
         )
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")

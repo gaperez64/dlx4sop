@@ -274,6 +274,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "cache_misses",
                 "cache_avoided_nodes",
                 "cache_canonical_hits",
+                "cache_canonical_lookups",
+                "cache_canonical_stores",
                 "components",
             ):
                 add_sum(stats, stat, stat_value(record, stat))
@@ -286,8 +288,12 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_skips",
                 "cache_lookup_events",
                 "cache_lookup_elapsed_ns",
+                "cache_canonical_lookup_events",
+                "cache_canonical_lookup_elapsed_ns",
                 "cache_store_events",
                 "cache_store_elapsed_ns",
+                "cache_canonical_store_events",
+                "cache_canonical_store_elapsed_ns",
                 "branch_rankwidth_probe_events",
                 "branch_rankwidth_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
@@ -358,6 +364,11 @@ def key_stats(stats: dict[str, int]) -> str:
             )
         if stats.get("cache_canonical_hits", 0):
             cache += f", canonical hits {stats['cache_canonical_hits']}"
+        if stats.get("cache_canonical_lookups", 0) or stats.get("cache_canonical_stores", 0):
+            cache += (
+                f", canonical lookups {stats.get('cache_canonical_lookups', 0)}, "
+                f"canonical stores {stats.get('cache_canonical_stores', 0)}"
+            )
         if "cache_entries" in stats:
             cache += (
                 f", entries {stats['cache_entries']}, "
@@ -378,6 +389,13 @@ def key_stats(stats: dict[str, int]) -> str:
             f"{format_ns(stats.get('cache_lookup_elapsed_ns', 0))}, "
             f"store={stats.get('cache_store_events', 0)} events/"
             f"{format_ns(stats.get('cache_store_elapsed_ns', 0))}"
+        )
+    if "cache_canonical_lookup_elapsed_ns" in stats or "cache_canonical_store_elapsed_ns" in stats:
+        parts.append(
+            f"canonical cache trace lookup={stats.get('cache_canonical_lookup_events', 0)} events/"
+            f"{format_ns(stats.get('cache_canonical_lookup_elapsed_ns', 0))}, "
+            f"store={stats.get('cache_canonical_store_events', 0)} events/"
+            f"{format_ns(stats.get('cache_canonical_store_elapsed_ns', 0))}"
         )
     if "components" in stats:
         parts.append(f"{stats['components']} components")

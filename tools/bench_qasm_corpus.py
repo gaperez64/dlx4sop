@@ -86,6 +86,8 @@ TOP_METRICS = (
     "cache_misses",
     "cache_avoided_nodes",
     "cache_canonical_hits",
+    "cache_canonical_lookups",
+    "cache_canonical_stores",
     "cache_entries",
     "cache_canonical_entries",
     "cache_stored_residue_slots",
@@ -97,8 +99,12 @@ TOP_METRICS = (
     "cache_canonical_entry_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "cache_canonical_lookup_events",
+    "cache_canonical_lookup_elapsed_ns",
     "cache_store_events",
     "cache_store_elapsed_ns",
+    "cache_canonical_store_events",
+    "cache_canonical_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
@@ -188,6 +194,8 @@ CSV_FIELDS = [
     "cache_misses",
     "cache_avoided_nodes",
     "cache_canonical_hits",
+    "cache_canonical_lookups",
+    "cache_canonical_stores",
     "cache_entries",
     "cache_canonical_entries",
     "cache_stored_residue_slots",
@@ -199,8 +207,12 @@ CSV_FIELDS = [
     "cache_canonical_entry_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
+    "cache_canonical_lookup_events",
+    "cache_canonical_lookup_elapsed_ns",
     "cache_store_events",
     "cache_store_elapsed_ns",
+    "cache_canonical_store_events",
+    "cache_canonical_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
     "branch_rankwidth_labelled_width",
@@ -488,14 +500,33 @@ def cache_record_metrics(
     entries = stats.get("cache_entries")
     if isinstance(canonical_entries, int) and isinstance(entries, int) and entries:
         metrics["cache_canonical_entry_rate_ppm"] = (canonical_entries * 1_000_000) // entries
-    for phase, events_key, elapsed_key in (
-        ("cache_lookup", "cache_lookup_events", "cache_lookup_elapsed_ns"),
-        ("cache_store", "cache_store_events", "cache_store_elapsed_ns"),
+    for phases, events_key, elapsed_key in (
+        (
+            ("cache_lookup", "cache_canonical_lookup"),
+            "cache_lookup_events",
+            "cache_lookup_elapsed_ns",
+        ),
+        (
+            ("cache_store", "cache_canonical_store"),
+            "cache_store_events",
+            "cache_store_elapsed_ns",
+        ),
+        (
+            ("cache_canonical_lookup",),
+            "cache_canonical_lookup_events",
+            "cache_canonical_lookup_elapsed_ns",
+        ),
+        (
+            ("cache_canonical_store",),
+            "cache_canonical_store_events",
+            "cache_canonical_store_elapsed_ns",
+        ),
     ):
         matching = [
             values
             for event, values in trace.items()
-            if event.endswith(f".{phase}") and event.rsplit(".", 1)[0] in {"branch", "components"}
+            if event.rsplit(".", 1)[0] in {"branch", "components"}
+            and event.rsplit(".", 1)[1] in phases
         ]
         if matching:
             metrics[events_key] = sum(values["events"] for values in matching)
@@ -703,8 +734,12 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
         for stat_key in (
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_canonical_lookup_events",
+            "cache_canonical_lookup_elapsed_ns",
             "cache_store_events",
             "cache_store_elapsed_ns",
+            "cache_canonical_store_events",
+            "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
@@ -1000,6 +1035,8 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_misses",
             "cache_avoided_nodes",
             "cache_canonical_hits",
+            "cache_canonical_lookups",
+            "cache_canonical_stores",
             "cache_entries",
             "cache_canonical_entries",
             "cache_stored_residue_slots",
@@ -1011,8 +1048,12 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_canonical_entry_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_canonical_lookup_events",
+            "cache_canonical_lookup_elapsed_ns",
             "cache_store_events",
             "cache_store_elapsed_ns",
+            "cache_canonical_store_events",
+            "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
@@ -1134,6 +1175,10 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache_avoided_node_rate_ppm={record['cache_avoided_node_rate_ppm']}"
             if "cache_canonical_hits" in stats:
                 line += f" cache_canonical_hits={stats['cache_canonical_hits']}"
+            if "cache_canonical_lookups" in stats:
+                line += f" cache_canonical_lookups={stats['cache_canonical_lookups']}"
+            if "cache_canonical_stores" in stats:
+                line += f" cache_canonical_stores={stats['cache_canonical_stores']}"
             if "cache_entries" in stats:
                 line += (
                     f" cache_entries={stats['cache_entries']}"
@@ -1150,8 +1195,18 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache_canonical_entry_rate_ppm={record['cache_canonical_entry_rate_ppm']}"
             if "cache_lookup_elapsed_ns" in record:
                 line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
+            if "cache_canonical_lookup_elapsed_ns" in record:
+                line += (
+                    " cache_canonical_lookup_elapsed_ns="
+                    f"{record['cache_canonical_lookup_elapsed_ns']}"
+                )
             if "cache_store_elapsed_ns" in record:
                 line += f" cache_store_elapsed_ns={record['cache_store_elapsed_ns']}"
+            if "cache_canonical_store_elapsed_ns" in record:
+                line += (
+                    " cache_canonical_store_elapsed_ns="
+                    f"{record['cache_canonical_store_elapsed_ns']}"
+                )
             if "branch_rankwidth_labelled_width" in record:
                 line += (
                     f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
@@ -1467,6 +1522,8 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_misses",
             "cache_avoided_nodes",
             "cache_canonical_hits",
+            "cache_canonical_lookups",
+            "cache_canonical_stores",
             "cache_entries",
             "cache_canonical_entries",
             "cache_stored_residue_slots",
@@ -1475,8 +1532,12 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_estimated_bytes",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
+            "cache_canonical_lookup_events",
+            "cache_canonical_lookup_elapsed_ns",
             "cache_store_events",
             "cache_store_elapsed_ns",
+            "cache_canonical_store_events",
+            "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
             "branch_rankwidth_labelled_width",
