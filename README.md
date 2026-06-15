@@ -92,6 +92,7 @@ amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mismatches, mean absolute error, and
 maximum absolute error. Rankwidth generator comparisons include kernel-time
 winners alongside table and signature pressure. Branch benchmark summaries now
-also surface skip reasons, fallthrough size, cache canonical-entry rate, root
-treewidth probes, component splits, and DP-delegate trace counts so hybrid
-handoff decisions are visible without opening the raw trace.
+also surface skip reasons, fallthrough size, cache canonical-entry rate, cache
+key/count/estimated bytes, root treewidth probes, component splits, and
+DP-delegate trace counts so hybrid handoff decisions are visible without
+opening the raw trace.
