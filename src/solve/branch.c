@@ -680,6 +680,42 @@ static uint64_t residual_cache_canonical_entries(const residual_cache_t *cache) 
   return entries;
 }
 
+static uint64_t residual_cache_key_bytes(const residual_cache_t *cache) {
+  uint64_t bytes = 0;
+  for (size_t i = 0; i < cache->len; i++) {
+    const residual_cache_key_t *key = &cache->entries[i].key;
+    add_saturating_u64(&bytes,
+                       saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
+    add_saturating_u64(&bytes,
+                       saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
+    add_saturating_u64(&bytes,
+                       saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
+    add_saturating_u64(
+        &bytes, saturating_mul_u64(saturating_mul_u64((uint64_t)key->nedges, 3U),
+                                   sizeof(*key->edge_u)));
+  }
+  return bytes;
+}
+
+static uint64_t residual_cache_count_bytes(const residual_cache_t *cache) {
+  uint64_t bytes = 0;
+  for (size_t i = 0; i < cache->len; i++) {
+    add_saturating_u64(
+        &bytes, saturating_mul_u64((uint64_t)cache->entries[i].key.r,
+                                   sizeof(*cache->entries[i].counts)));
+  }
+  return bytes;
+}
+
+static uint64_t residual_cache_estimated_bytes(const residual_cache_t *cache) {
+  uint64_t bytes = saturating_mul_u64((uint64_t)cache->cap, sizeof(*cache->entries));
+  add_saturating_u64(
+      &bytes, saturating_mul_u64((uint64_t)cache->bucket_count, sizeof(*cache->buckets)));
+  add_saturating_u64(&bytes, residual_cache_key_bytes(cache));
+  add_saturating_u64(&bytes, residual_cache_count_bytes(cache));
+  return bytes;
+}
+
 static bool build_residual_subinstance(const qsop_residual_t *residual, const uint32_t *component,
                                        uint32_t wanted, qsop_instance_t *sub, qsop_error_t *error) {
   const uint32_t source_vars = qsop_residual_nvars(residual);
@@ -1067,6 +1103,9 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_canonical_entries = residual_cache_canonical_entries(&search.cache);
     stats->cache_stored_residue_slots =
         saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
+    stats->cache_key_bytes = residual_cache_key_bytes(&search.cache);
+    stats->cache_count_bytes = residual_cache_count_bytes(&search.cache);
+    stats->cache_estimated_bytes = residual_cache_estimated_bytes(&search.cache);
     stats->table_entries = search.table_entries;
     stats->max_table_entries = search.max_table_entries;
     stats->signature_entries = search.signature_entries;

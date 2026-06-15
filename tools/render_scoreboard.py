@@ -306,6 +306,9 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "cache_entries",
                 "cache_canonical_entries",
                 "cache_stored_residue_slots",
+                "cache_key_bytes",
+                "cache_count_bytes",
+                "cache_estimated_bytes",
                 "treewidth_width",
                 "treewidth_max_table_entries",
                 "decomposition_width",
@@ -359,6 +362,12 @@ def key_stats(stats: dict[str, int]) -> str:
                 f"canonical entries {stats.get('cache_canonical_entries', 0)}, "
                 f"canonical entry rate {cache_canonical_entry_rate(stats)}, "
                 f"slots {stats.get('cache_stored_residue_slots', 0)}"
+            )
+        if stats.get("cache_estimated_bytes", 0):
+            cache += (
+                f", key bytes {stats.get('cache_key_bytes', 0)}, "
+                f"count bytes {stats.get('cache_count_bytes', 0)}, "
+                f"estimated bytes {stats['cache_estimated_bytes']}"
             )
         parts.append(cache)
     if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:

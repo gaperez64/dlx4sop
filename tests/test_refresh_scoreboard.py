@@ -96,6 +96,9 @@ def main() -> int:
             "cache_entries": 2,
             "cache_canonical_entries": 2,
             "cache_stored_residue_slots": 16,
+            "cache_key_bytes": 96,
+            "cache_count_bytes": 64,
+            "cache_estimated_bytes": 256,
         },
     }
     large_solver = {
@@ -193,6 +196,7 @@ def main() -> int:
             "cache avoided nodes=1, rate=0.333",
             "cache canonical hits=1",
             "cache entries=2, canonical=2, canonical rate=1.000, slots=16",
+            "cache bytes key=96, counts=64, estimated=256",
             "cache trace lookup=2 events/2.0 us, store=1 events/3.0 us",
             "rankwidth kernels map=2/250 ns max items=20, join=2/500 ns max items=22, labelled-map=2/200 ns max items=11, labelled=2/440 ns max items=17, fourier-map=1/70 ns max items=7, fourier=1/80 ns max items=8",
             "branch dispatch splits=3/5.0 us max components=2, tw delegates=1/7.0 us max vars=33, root tw delegates=1/3.0 us max vars=32, rw delegates=1/11.0 us max vars=40",

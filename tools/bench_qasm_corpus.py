@@ -87,6 +87,9 @@ TOP_METRICS = (
     "cache_entries",
     "cache_canonical_entries",
     "cache_stored_residue_slots",
+    "cache_key_bytes",
+    "cache_count_bytes",
+    "cache_estimated_bytes",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
     "cache_canonical_entry_rate_ppm",
@@ -184,6 +187,9 @@ CSV_FIELDS = [
     "cache_entries",
     "cache_canonical_entries",
     "cache_stored_residue_slots",
+    "cache_key_bytes",
+    "cache_count_bytes",
+    "cache_estimated_bytes",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
     "cache_canonical_entry_rate_ppm",
@@ -616,6 +622,9 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "cache_entries",
         "cache_canonical_entries",
         "cache_stored_residue_slots",
+        "cache_key_bytes",
+        "cache_count_bytes",
+        "cache_estimated_bytes",
         "branch_rankwidth_labelled_width",
         "branch_rankwidth_support_width",
         "branch_rankwidth_table_forecast",
@@ -984,6 +993,9 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_entries",
             "cache_canonical_entries",
             "cache_stored_residue_slots",
+            "cache_key_bytes",
+            "cache_count_bytes",
+            "cache_estimated_bytes",
             "cache_hit_rate_ppm",
             "cache_avoided_node_rate_ppm",
             "cache_canonical_entry_rate_ppm",
@@ -1111,6 +1123,12 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f" cache_entries={stats['cache_entries']}"
                     f" cache_canonical_entries={stats.get('cache_canonical_entries', 0)}"
                     f" cache_slots={stats.get('cache_stored_residue_slots', 0)}"
+                )
+            if "cache_estimated_bytes" in stats:
+                line += (
+                    f" cache_key_bytes={stats.get('cache_key_bytes', 0)}"
+                    f" cache_count_bytes={stats.get('cache_count_bytes', 0)}"
+                    f" cache_estimated_bytes={stats['cache_estimated_bytes']}"
                 )
             if "cache_canonical_entry_rate_ppm" in record:
                 line += f" cache_canonical_entry_rate_ppm={record['cache_canonical_entry_rate_ppm']}"
@@ -1432,6 +1450,9 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_entries",
             "cache_canonical_entries",
             "cache_stored_residue_slots",
+            "cache_key_bytes",
+            "cache_count_bytes",
+            "cache_estimated_bytes",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
             "cache_store_events",

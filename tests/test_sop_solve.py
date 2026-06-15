@@ -528,6 +528,10 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
             raise AssertionError(f"{name}: expected a canonical branch cache hit")
         if stats.get("cache_canonical_entries", 0) < 1:
             raise AssertionError(f"{name}: expected canonical branch cache entries")
+        if stats.get("cache_estimated_bytes", 0) <= 0:
+            raise AssertionError(f"{name}: expected branch cache byte accounting")
+        if stats.get("cache_estimated_bytes", 0) < stats.get("cache_count_bytes", 0):
+            raise AssertionError(f"{name}: cache estimate is smaller than count storage")
 
     repeated_triangle = (
         "p qsop 8 6 6\n"
@@ -553,6 +557,8 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
     stats = parse_solver_stats(completed.stdout)
     if stats.get("cache_avoided_nodes", 0) < 1:
         raise AssertionError("repeated triangle: expected branch cache to report avoided nodes")
+    if stats.get("cache_key_bytes", 0) <= 0 or stats.get("cache_count_bytes", 0) <= 0:
+        raise AssertionError("repeated triangle: expected branch cache key/count bytes")
 
 
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:

@@ -178,6 +178,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"canonical rate={cache_canonical_entry_rate(stats)}, "
             f"slots={format_count(stats.get('cache_stored_residue_slots', 0))}"
         )
+    if stats.get("cache_estimated_bytes", 0):
+        parts.append(
+            f"cache bytes key={format_count(stats.get('cache_key_bytes', 0))}, "
+            f"counts={format_count(stats.get('cache_count_bytes', 0))}, "
+            f"estimated={format_count(stats['cache_estimated_bytes'])}"
+        )
     if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:
         parts.append(
             f"cache trace lookup={format_count(stats.get('cache_lookup_events', 0))} events/"
