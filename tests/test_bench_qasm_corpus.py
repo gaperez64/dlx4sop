@@ -202,7 +202,7 @@ def main() -> int:
             [
                 "backend: treewidth",
                 "solve_mode: fourier",
-                "solve_mode_kernel: count-table-fallback",
+                "solve_mode_kernel: fourier",
                 "treewidth_order: min-fill",
                 "result_modulus: 8",
                 "result_norm_h: 0",
@@ -212,7 +212,7 @@ def main() -> int:
     )
     if parsed_stats.get("solve_mode") != "fourier":
         raise AssertionError(f"missing solve_mode in parsed stats: {parsed_stats}")
-    if parsed_stats.get("solve_mode_kernel") != "count-table-fallback":
+    if parsed_stats.get("solve_mode_kernel") != "fourier":
         raise AssertionError(f"missing solve_mode_kernel in parsed stats: {parsed_stats}")
     large_counts = [
         81129638414606753753383043072000,

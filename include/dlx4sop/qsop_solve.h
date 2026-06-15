@@ -59,6 +59,11 @@ typedef struct qsop_solve_stats {
 
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
 
+typedef enum qsop_solve_mode {
+  QSOP_SOLVE_MODE_COUNT_TABLE,
+  QSOP_SOLVE_MODE_FOURIER,
+} qsop_solve_mode_t;
+
 typedef enum qsop_rankwidth_generator {
   QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,
   QSOP_RANKWIDTH_GENERATOR_BALANCED,
@@ -133,10 +138,20 @@ bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_
                                       qsop_result_t **out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_treewidth_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_solve_mode_t mode,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
+
 bool qsop_solve_treewidth_order_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
     qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error);
+
+bool qsop_solve_treewidth_order_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
+    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order,
                                 uint32_t **order_out, uint32_t *width_out,
@@ -146,6 +161,11 @@ bool qsop_solve_treewidth_precomputed_order_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
     uint32_t order_width, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_treewidth_order_count_mod_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,

@@ -1310,6 +1310,27 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                     f"{name}: treewidth {order} solve mismatch\n{completed.stdout}\n"
                     f"{completed.stderr}"
                 )
+            fourier_completed = subprocess.run(
+                [
+                    str(exe),
+                    "--backend",
+                    "treewidth",
+                    "--treewidth-order",
+                    order,
+                    "--solve-mode",
+                    "fourier",
+                    str(qsop),
+                ],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if fourier_completed.returncode != 0 or fourier_completed.stdout != expected.stdout:
+                raise AssertionError(
+                    f"{name}: treewidth Fourier {order} solve mismatch\n"
+                    f"{fourier_completed.stdout}\n{fourier_completed.stderr}"
+                )
 
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
     stats = subprocess.run(
@@ -1328,7 +1349,7 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
 
-    fourier_fallback_stats = subprocess.run(
+    fourier_stats = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1345,14 +1366,14 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         text=True,
     )
     if (
-        fourier_fallback_stats.returncode != 0
-        or "solve_mode: fourier" not in fourier_fallback_stats.stdout
-        or "solve_mode_kernel: count-table-fallback" not in fourier_fallback_stats.stdout
-        or "treewidth_order: min-fill" not in fourier_fallback_stats.stdout
+        fourier_stats.returncode != 0
+        or "solve_mode: fourier" not in fourier_stats.stdout
+        or "solve_mode_kernel: fourier" not in fourier_stats.stdout
+        or "treewidth_order: min-fill" not in fourier_stats.stdout
     ):
         raise AssertionError(
-            f"treewidth Fourier fallback stats failed\n"
-            f"{fourier_fallback_stats.stdout}\n{fourier_fallback_stats.stderr}"
+            f"treewidth Fourier stats failed\n"
+            f"{fourier_stats.stdout}\n{fourier_stats.stderr}"
         )
 
     min_degree_stats = subprocess.run(
