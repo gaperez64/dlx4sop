@@ -119,22 +119,29 @@ def parse_csv_operands(text: str) -> list[str]:
     return [chunk.strip() for chunk in text.split(",") if chunk.strip()]
 
 
+def split_gate_invocation(text: str) -> tuple[str, list[str], str]:
+    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?(?:\s+(.*))?$", text.strip())
+    if match is None:
+        raise RuntimeError("invalid gate invocation")
+    name = match.group(1)
+    params = parse_csv_operands(match.group(2) or "")
+    operands = (match.group(3) or "").strip()
+    return name, params, operands
+
+
 def split_name_params(text: str) -> tuple[str, list[str]]:
-    if "(" not in text:
-        return text, []
-    if not text.endswith(")"):
+    name, params, operands = split_gate_invocation(text)
+    if operands:
         raise RuntimeError("invalid parameterized gate name")
-    name, params = text[:-1].split("(", 1)
-    return name, parse_csv_operands(params)
+    return name, params
 
 
 def parse_gate_definition(header: str) -> tuple[str, list[str], list[str]]:
     declaration = header.split("{", 1)[0].strip()
-    parts = declaration.split(None, 2)
-    if len(parts) < 2 or parts[0] != "gate":
+    if not starts_with_keyword(declaration, "gate"):
         raise RuntimeError("invalid simple gate definition")
-    name, params = split_name_params(parts[1])
-    formals = parse_csv_operands(parts[2]) if len(parts) == 3 else []
+    name, params, formal_text = split_gate_invocation(declaration[len("gate"):])
+    formals = parse_csv_operands(formal_text)
     return name, params, formals
 
 
@@ -148,11 +155,15 @@ def inline_simple_gates(qasm: str) -> str:
     lines = qasm.splitlines()
     i = 0
 
-    def rewrite_gate_name(gate: str, param_mapping: dict[str, str]) -> str:
-        name, params = split_name_params(gate)
+    def rewrite_gate_name(name: str, params: list[str], param_mapping: dict[str, str]) -> str:
         if not params:
             return name
-        rewritten = [param_mapping.get(param, param) for param in params]
+        rewritten = []
+        for param in params:
+            expr = param
+            for formal, actual in param_mapping.items():
+                expr = re.sub(rf"\b{re.escape(formal)}\b", actual, expr)
+            rewritten.append(expr)
         return f"{name}({','.join(rewritten)})"
 
     def expand_statement(statement: str, depth: int = 0) -> list[str]:
@@ -163,8 +174,7 @@ def inline_simple_gates(qasm: str) -> str:
         bare = statement[:-1].strip()
         if not bare:
             return []
-        op, _, operand_text = bare.partition(" ")
-        name, params = split_name_params(op)
+        name, params, operand_text = split_gate_invocation(bare)
         if name not in macros:
             return [statement]
         param_formals, formals, body = macros[name]
@@ -177,10 +187,10 @@ def inline_simple_gates(qasm: str) -> str:
         operand_mapping = dict(zip(formals, actuals, strict=True))
         expanded: list[str] = []
         for body_statement in body:
-            body_op, _, body_operand_text = body_statement.partition(" ")
+            body_name, body_params, body_operand_text = split_gate_invocation(body_statement)
             operands = parse_csv_operands(body_operand_text)
             rewritten_operands = [operand_mapping.get(operand, operand) for operand in operands]
-            rewritten = rewrite_gate_name(body_op, param_mapping)
+            rewritten = rewrite_gate_name(body_name, body_params, param_mapping)
             if rewritten_operands:
                 rewritten += " " + ",".join(rewritten_operands)
             rewritten += ";"

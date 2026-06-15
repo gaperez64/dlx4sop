@@ -46,6 +46,21 @@ h q;
 phasepair(pi/4) q[0],q[1];
 """
 
+NESTED_PARAM_GATE_QASM_SAMPLE = """OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+gate cu1fixed (a) c,t {
+u1 (-a) t;
+cx c,t;
+u1 (a) t;
+cx c,t;
+}
+gate cu c,t {
+cu1fixed (3*pi/8) c,t;
+}
+cu q[0],q[1];
+"""
+
 
 QC_SAMPLE = """.v a b
 BEGIN
@@ -100,6 +115,7 @@ def main() -> int:
         (root / "measured.qasm").write_text(MEASURED_QASM_SAMPLE, encoding="utf-8")
         (root / "macro.qasm").write_text(SIMPLE_GATE_QASM_SAMPLE, encoding="utf-8")
         (root / "param.qasm").write_text(PARAM_GATE_QASM_SAMPLE, encoding="utf-8")
+        (root / "nested_param.qasm").write_text(NESTED_PARAM_GATE_QASM_SAMPLE, encoding="utf-8")
         (root / "small.qc").write_text(QC_SAMPLE, encoding="utf-8")
         (root / "bad.qasm").write_text("OPENQASM 2.0;\nqreg q[1];\nu1(pi/3) q[0];\n", encoding="utf-8")
         report_path = root / "report.json"
@@ -118,12 +134,12 @@ def main() -> int:
         if len(qasm_cases) != 1 or len(qasm_cases[0]["boundaries"]) != 2:
             raise AssertionError(f"unexpected QASM manifest:\n{qasm_cases}\n{qasm_report}")
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        if report["inputs"] != 5 or report["emitted"] != 1 or len(report["records"]) != 5:
+        if report["inputs"] != 6 or report["emitted"] != 1 or len(report["records"]) != 6:
             raise AssertionError(f"unexpected report shape:\n{report}")
         if (
             report["counts"].get("ok") != 1
             or report["counts"].get("unsupported_angle") != 1
-            or report["counts"].get("unsupported_gate_definition") != 2
+            or report["counts"].get("unsupported_gate_definition") != 3
         ):
             raise AssertionError(f"unexpected report counts:\n{report}")
         ok_records = [record for record in report["records"] if record["status"] == "ok"]
@@ -156,9 +172,12 @@ def main() -> int:
             "--strip-terminal-measurements",
             "--inline-simple-gates",
         )
-        macro = [case for case in inlined_cases if case["name"].endswith("macro")]
-        param = [case for case in inlined_cases if case["name"].endswith("param")]
-        if len(inlined_cases) != 4 or len(macro) != 1 or len(param) != 1:
+        macro = [case for case in inlined_cases if case["source_relative_path"] == "macro.qasm"]
+        param = [case for case in inlined_cases if case["source_relative_path"] == "param.qasm"]
+        nested_param = [
+            case for case in inlined_cases if case["source_relative_path"] == "nested_param.qasm"
+        ]
+        if len(inlined_cases) != 5 or len(macro) != 1 or len(param) != 1 or len(nested_param) != 1:
             raise AssertionError(f"unexpected inlined manifest:\n{inlined_cases}\n{inlined_report}")
         macro_qasm = "\n".join(macro[0]["qasm_lines"])
         if "gate" in macro_qasm or "makebell" in macro_qasm or "measure" in macro_qasm:
@@ -170,6 +189,11 @@ def main() -> int:
             raise AssertionError(f"parameterized macro was not inlined:\n{param_qasm}")
         if "u1(pi/4) q[0];" not in param_qasm or "cp(pi/4) q[0],q[1];" not in param_qasm:
             raise AssertionError(f"parameterized macro missing expanded body:\n{param_qasm}")
+        nested_param_qasm = "\n".join(nested_param[0]["qasm_lines"])
+        if "cu1fixed" in nested_param_qasm or "cu " in nested_param_qasm or " a" in nested_param_qasm:
+            raise AssertionError(f"nested parameterized macro was not fully inlined:\n{nested_param_qasm}")
+        if "u1(-3*pi/8) q[1];" not in nested_param_qasm or "u1(3*pi/8) q[1];" not in nested_param_qasm:
+            raise AssertionError(f"nested parameterized macro missing expanded body:\n{nested_param_qasm}")
 
         qc_cases, qc_report = run_manifest(
             builder,
