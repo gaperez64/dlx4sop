@@ -102,6 +102,9 @@ TOP_METRICS = (
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
+    "branch_root_width_probe_events",
+    "branch_root_width_probe_elapsed_ns",
+    "branch_root_width_probe_width",
     "branch_treewidth_table_forecast",
     "branch_treewidth_join_pair_forecast",
     "treewidth_multiply_events",
@@ -193,6 +196,9 @@ CSV_FIELDS = [
     "branch_treewidth_order_probe_events",
     "branch_treewidth_order_probe_elapsed_ns",
     "branch_treewidth_order_width",
+    "branch_root_width_probe_events",
+    "branch_root_width_probe_elapsed_ns",
+    "branch_root_width_probe_width",
     "branch_treewidth_table_forecast",
     "branch_treewidth_join_pair_forecast",
     "treewidth_multiply_events",
@@ -499,6 +505,11 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
         metrics["branch_treewidth_order_probe_events"] = order["events"]
         metrics["branch_treewidth_order_probe_elapsed_ns"] = order["elapsed_ns"]
         metrics["branch_treewidth_order_width"] = order["max_items"]
+    root = trace.get("branch.root_width_probe")
+    if root is not None:
+        metrics["branch_root_width_probe_events"] = root["events"]
+        metrics["branch_root_width_probe_elapsed_ns"] = root["elapsed_ns"]
+        metrics["branch_root_width_probe_width"] = root["max_items"]
     table_forecast = trace.get("branch.treewidth_table_forecast")
     if table_forecast is not None:
         metrics["branch_treewidth_table_forecast"] = table_forecast["max_items"]
@@ -590,10 +601,12 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "branch_rankwidth_table_forecast",
         "branch_rankwidth_join_pair_forecast",
         "branch_treewidth_order_width",
+        "branch_root_width_probe_width",
         "branch_treewidth_table_forecast",
         "branch_treewidth_join_pair_forecast",
         "branch_component_split_max_components",
         "branch_treewidth_delegate_max_vars",
+        "branch_root_treewidth_delegate_max_vars",
         "branch_rankwidth_delegate_max_vars",
     }:
         total[key] = max(total.get(key, 0), value)
@@ -661,6 +674,9 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str], di
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_root_width_probe_events",
+            "branch_root_width_probe_elapsed_ns",
+            "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
             "treewidth_multiply_events",
@@ -958,6 +974,9 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_root_width_probe_events",
+            "branch_root_width_probe_elapsed_ns",
+            "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
             "treewidth_multiply_events",
@@ -1093,6 +1112,12 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 )
             if "branch_treewidth_order_width" in record:
                 line += f" branch_treewidth_order_width={record['branch_treewidth_order_width']}"
+            if "branch_root_width_probe_width" in record:
+                line += (
+                    f" branch_root_width_probe_width={record['branch_root_width_probe_width']}"
+                    f" branch_root_width_probe_elapsed_ns="
+                    f"{record.get('branch_root_width_probe_elapsed_ns', 0)}"
+                )
             if "treewidth_multiply_elapsed_ns" in record or "treewidth_sum_out_elapsed_ns" in record:
                 line += (
                     " treewidth_kernels="
@@ -1388,6 +1413,9 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "branch_treewidth_order_probe_events",
             "branch_treewidth_order_probe_elapsed_ns",
             "branch_treewidth_order_width",
+            "branch_root_width_probe_events",
+            "branch_root_width_probe_elapsed_ns",
+            "branch_root_width_probe_width",
             "branch_treewidth_table_forecast",
             "branch_treewidth_join_pair_forecast",
             "treewidth_multiply_events",

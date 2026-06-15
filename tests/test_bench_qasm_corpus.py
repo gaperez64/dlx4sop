@@ -28,6 +28,7 @@ def main() -> int:
                 "branch.component_split,1,3,200",
                 "branch.treewidth_delegate,1,33,700",
                 "branch.root_treewidth_delegate,0,32,300",
+                "branch.root_width_probe,0,6,0",
                 "branch.rankwidth_delegate,2,40,1100",
                 "branch.rankwidth_skip_join_pair_forecast,1,128,0",
                 "branch.treewidth_skip_width,1,15,0",
@@ -73,6 +74,15 @@ def main() -> int:
     }
     if skip != expected_skip:
         raise AssertionError(f"unexpected skip metrics: {skip}")
+
+    treewidth_probe = bench.branch_treewidth_probe_metrics(trace)
+    expected_treewidth_probe = {
+        "branch_root_width_probe_events": 1,
+        "branch_root_width_probe_elapsed_ns": 0,
+        "branch_root_width_probe_width": 6,
+    }
+    if treewidth_probe != expected_treewidth_probe:
+        raise AssertionError(f"unexpected treewidth probe metrics: {treewidth_probe}")
 
     dispatch = bench.branch_dispatch_metrics(trace)
     expected_dispatch = {

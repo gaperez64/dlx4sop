@@ -261,6 +261,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
         )
     if "branch_treewidth_order_width" in stats:
         parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")
+    if "branch_root_width_probe_width" in stats:
+        parts.append(
+            f"branch root tw probe width={stats['branch_root_width_probe_width']}, "
+            f"{format_count(stats.get('branch_root_width_probe_events', 0))} events/"
+            f"{format_ns(stats.get('branch_root_width_probe_elapsed_ns', 0))}"
+        )
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(
             f"max residual vars={format_count(stats.get('max_residual_vars', 0))}, "

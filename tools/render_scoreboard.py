@@ -284,6 +284,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_probe_elapsed_ns",
                 "branch_treewidth_order_probe_events",
                 "branch_treewidth_order_probe_elapsed_ns",
+                "branch_root_width_probe_events",
+                "branch_root_width_probe_elapsed_ns",
                 *RANKWIDTH_KERNEL_SUM_FIELDS,
                 *BRANCH_SKIP_REASON_FIELDS,
                 *BRANCH_DISPATCH_SUM_FIELDS,
@@ -312,6 +314,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_rankwidth_table_forecast",
                 "branch_rankwidth_join_pair_forecast",
                 "branch_treewidth_order_width",
+                "branch_root_width_probe_width",
                 "branch_treewidth_table_forecast",
                 "branch_treewidth_join_pair_forecast",
                 *RANKWIDTH_KERNEL_MAX_FIELDS,
@@ -421,6 +424,12 @@ def key_stats(stats: dict[str, int]) -> str:
         )
     if "branch_treewidth_order_width" in stats:
         parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")
+    if "branch_root_width_probe_width" in stats:
+        parts.append(
+            f"branch root tw probe width={stats['branch_root_width_probe_width']}, "
+            f"{stats.get('branch_root_width_probe_events', 0)} events/"
+            f"{format_ns(stats.get('branch_root_width_probe_elapsed_ns', 0))}"
+        )
     if "max_residual_vars" in stats or "max_residual_components" in stats:
         parts.append(
             f"max residual vars={stats.get('max_residual_vars', 0)}, "
