@@ -72,6 +72,35 @@ def main() -> int:
             "cache_stored_residue_slots": 16,
         },
     }
+    large_solver = {
+        **fast_solver,
+        "source_relative_path": "large.qasm",
+        "case": "large",
+        "input": "1",
+        "output": "1",
+        "solve_elapsed_ns": 2_000,
+        "treewidth_width": 11,
+        "treewidth_max_table_entries": 32_768,
+        "stats": {
+            "decomposition_width": 11,
+            "max_table_entries": 32_768,
+            "join_pairs": 512,
+        },
+    }
+    large_timeout = {
+        "backend": "treewidth",
+        "treewidth_order": "min-fill-max-degree",
+        "source": "Synthetic",
+        "source_url": "https://example.invalid/synthetic",
+        "source_relative_path": "timeout.qasm",
+        "case": "timeout",
+        "input": "0",
+        "output": "0",
+        "qsop_mode": "labelled",
+        "solve_elapsed_ns": 3_000_000_000,
+        "status": "timeout",
+        "stats": {},
+    }
     native = {
         "engine": "qiskit-statevector",
         "source": "Synthetic",
@@ -92,10 +121,15 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = pathlib.Path(tmp)
         solver_path = tmp_path / "solver.jsonl"
+        large_path = tmp_path / "large.jsonl"
         native_path = tmp_path / "native.jsonl"
         output_path = tmp_path / "scoreboard.md"
         solver_path.write_text(
             json.dumps(fast_solver) + "\n" + json.dumps(slow_solver) + "\n",
+            encoding="utf-8",
+        )
+        large_path.write_text(
+            json.dumps(large_solver) + "\n" + json.dumps(large_timeout) + "\n",
             encoding="utf-8",
         )
         native_path.write_text(json.dumps(native) + "\n", encoding="utf-8")
@@ -105,6 +139,8 @@ def main() -> int:
                 "--no-default-artifacts",
                 "--solver-jsonl",
                 f"33-64={solver_path}",
+                "--solver-jsonl",
+                f"257-512 sample={large_path}",
                 "--native-jsonl",
                 f"33-64={native_path}",
                 "--output",
@@ -120,7 +156,10 @@ def main() -> int:
         output = output_path.read_text(encoding="utf-8")
         for expected in (
             "## Benchmarks Used",
-            "| Synthetic | https://example.invalid/synthetic | 1 | 0 | 1 | 0 | 0 | 0 | labelled 1 |",
+            "| Synthetic | https://example.invalid/synthetic | 2 | 0 | 1 | 0 | 0 | 1 / 2 | labelled 2 |",
+            "## 257-512 Sample Stratification",
+            "| Solved, width <= 11 | 1 | 1 | 0 | 11 | 32768 |",
+            "| Timeouts | 1 | 0 | 1 | 0 | 0 |",
             "## Internal Solver Configurations",
             "`treewidth --treewidth-order min-fill`",
             "`branch --branch-heuristic split`",

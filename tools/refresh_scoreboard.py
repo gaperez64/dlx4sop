@@ -276,6 +276,38 @@ def tier_cell(entry: dict, tier: str) -> str:
     return str(solved)
 
 
+def stratify_large_sample(records: list[dict]) -> list[dict]:
+    buckets = {
+        "Solved, width <= 11": {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
+        "Solved, width > 11": {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
+        "Timeouts": {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
+    }
+    for record in records:
+        status = str(record.get("status") or "ok")
+        width = record.get("treewidth_width")
+        table = record.get("treewidth_max_table_entries")
+        if status == "timeout":
+            bucket = buckets["Timeouts"]
+        elif isinstance(width, int) and width <= 11:
+            bucket = buckets["Solved, width <= 11"]
+        else:
+            bucket = buckets["Solved, width > 11"]
+        bucket["rows"] += 1
+        if status == "ok":
+            bucket["solved"] += 1
+        elif status == "timeout":
+            bucket["timeouts"] += 1
+        if isinstance(width, int):
+            bucket["max_width"] = max(bucket["max_width"], width)
+        if isinstance(table, int):
+            bucket["max_table"] = max(bucket["max_table"], table)
+    return [
+        {"bucket": bucket, **values}
+        for bucket, values in buckets.items()
+        if values["rows"] > 0
+    ]
+
+
 def best_solver_configs(named_records: list[tuple[str, list[dict]]]) -> dict[str, str]:
     rows = summarize_solver_records(named_records)
     best: dict[str, tuple[int, str]] = {}
@@ -345,6 +377,22 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
             f"out of {total_attempted_large} attempted under the current timeout cap.",
             file=file,
         )
+    sample_rows = [record for tier, records in named_records for record in records if tier == "257-512 sample"]
+    if sample_rows:
+        print("\n## 257-512 Sample Stratification\n", file=file)
+        print(
+            "Rows with treewidth width at most 11 are the current low-width promotion candidates; "
+            "timeouts remain the separate high-width residue.",
+            file=file,
+        )
+        print("| Bucket | Rows | Solved | Timeouts | Max width | Max table |", file=file)
+        print("| --- | ---: | ---: | ---: | ---: | ---: |", file=file)
+        for row in stratify_large_sample(sample_rows):
+            print(
+                f"| {markdown_escape(row['bucket'])} | {row['rows']} | {row['solved']} | "
+                f"{row['timeouts']} | {row['max_width']} | {row['max_table']} |",
+                file=file,
+            )
 
 
 def write_solver_table(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
