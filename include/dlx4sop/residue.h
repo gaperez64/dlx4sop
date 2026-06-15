@@ -37,5 +37,8 @@ bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
                                   qsop_error_t *error);
 bool qsop_fourier_make_root_powers(uint32_t r, uint64_t root, uint64_t prime,
                                    uint64_t **out, qsop_error_t *error);
+bool qsop_fourier_inverse_counts(uint32_t r, const uint64_t *modes, uint32_t shift,
+                                 const uint64_t *powers, const uint64_t *inv_powers,
+                                 uint64_t prime, uint64_t *counts, qsop_error_t *error);
 
 #endif

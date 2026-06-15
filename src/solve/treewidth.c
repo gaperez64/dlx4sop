@@ -1093,29 +1093,6 @@ static bool shift_result_counts(uint32_t r, uint64_t *dst, const uint64_t *src, 
   return true;
 }
 
-static bool inverse_fourier_counts(uint32_t r, const uint64_t *modes, uint32_t constant,
-                                   const uint64_t *powers, const uint64_t *inv_powers,
-                                   uint64_t prime, uint64_t *counts, qsop_error_t *error) {
-  if (r == 0) {
-    set_error(error, "internal error: zero Fourier modulus");
-    return false;
-  }
-  const uint64_t inv_r = qsop_mod_pow_u64(r, prime - 2U, prime);
-  const uint32_t shift = constant % r;
-  for (uint32_t residue = 0; residue < r; residue++) {
-    uint64_t sum = 0;
-    for (uint32_t mode = 0; mode < r; mode++) {
-      const uint64_t shifted =
-          qsop_mod_mul_u64(modes[mode], powers[(size_t)mode * r + shift], prime);
-      const uint64_t term =
-          qsop_mod_mul_u64(shifted, inv_powers[(size_t)mode * r + residue], prime);
-      sum = qsop_mod_add_u64(sum, term, prime);
-    }
-    counts[residue] = qsop_mod_mul_u64(sum, inv_r, prime);
-  }
-  return true;
-}
-
 static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                  const uint32_t *order, uint32_t order_width,
                                  uint64_t count_modulus, uint64_t *counts,
@@ -1272,8 +1249,8 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
     set_error(error, "internal error: treewidth Fourier solve left an uneliminated factor");
     return false;
   }
-  const bool ok = inverse_fourier_counts(qsop->r, final.counts, qsop->constant, powers,
-                                         inv_powers, prime, counts, error);
+  const bool ok = qsop_fourier_inverse_counts(qsop->r, final.counts, qsop->constant, powers,
+                                              inv_powers, prime, counts, error);
 
   free(powers);
   free(inv_powers);

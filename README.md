@@ -116,11 +116,10 @@ root treewidth probes, component splits, and DP-delegate trace counts so hybrid
 handoff decisions are visible without opening the raw trace.
 
 `sop-solve --solve-mode fourier` is the backend-neutral spelling for Fourier
-work. Rankwidth currently uses its Fourier kernel for sign-only QSOPs, and
-treewidth uses a labelled Fourier factor kernel below the current 64-variable
-exact-count limit. Branch, components, and brute-force accept the shared flag
-and report `solve_mode_kernel: count-table-fallback` until native Fourier
-kernels are added.
+work. Rankwidth and treewidth both have labelled Fourier kernels below the
+current 64-variable exact-count limit. Branch, components, and brute-force
+accept the shared flag and report `solve_mode_kernel: count-table-fallback`
+until native Fourier kernels are added.
 
 ## Current Status And Remaining Gaps
 

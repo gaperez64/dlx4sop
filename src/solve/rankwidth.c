@@ -2704,27 +2704,17 @@ static bool fourier_table_find_signature(const rw_fourier_table_t *table, uint32
   return false;
 }
 
-static void fourier_root_counts_to_result(const qsop_instance_t *qsop,
+static bool fourier_root_counts_to_result(const qsop_instance_t *qsop,
                                           const rw_fourier_table_t *root_table,
                                           const uint64_t *powers, const uint64_t *inv_powers,
-                                          uint64_t prime, uint64_t *counts) {
+                                          uint64_t prime, uint64_t *counts,
+                                          qsop_error_t *error) {
   size_t root_index = 0;
   if (!fourier_table_find_signature(root_table, 0, &root_index)) {
-    return;
+    return true;
   }
-  const uint64_t inv_r = qsop_mod_pow_u64(qsop->r, prime - 2U, prime);
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
-    uint64_t sum = 0;
-    for (uint32_t mode = 0; mode < qsop->r; mode++) {
-      uint64_t value = root_table->values[root_index * (size_t)qsop->r + mode];
-      value = qsop_mod_mul_u64(value,
-                               powers[(size_t)mode * qsop->r + (qsop->constant % qsop->r)],
-                               prime);
-      value = qsop_mod_mul_u64(value, inv_powers[(size_t)mode * qsop->r + residue], prime);
-      sum = qsop_mod_add_u64(sum, value, prime);
-    }
-    counts[residue] = qsop_mod_mul_u64(sum, inv_r, prime);
-  }
+  return qsop_fourier_inverse_counts(qsop->r, &root_table->values[root_index * (size_t)qsop->r],
+                                     qsop->constant, powers, inv_powers, prime, counts, error);
 }
 
 static bool solve_rankwidth_count_table_mod_once(
@@ -3519,7 +3509,18 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   }
 
   const rw_fourier_table_t *root_table = &tables[decomposition->root];
-  fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts);
+  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts,
+                                     error)) {
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      fourier_table_free(&tables[t]);
+    }
+    free(tables);
+    free(powers);
+    free(inv_powers);
+    signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
 
   if (stats != NULL) {
     stats->table_entries = table_entries;
@@ -3657,7 +3658,18 @@ static bool solve_rankwidth_labelled_fourier(
   }
 
   const rw_fourier_table_t *root_table = &tables[decomposition->root];
-  fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts);
+  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts,
+                                     error)) {
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      fourier_table_free(&tables[t]);
+    }
+    free(tables);
+    free(powers);
+    free(inv_powers);
+    label_signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
 
   if (stats != NULL) {
     stats->table_entries = table_entries;

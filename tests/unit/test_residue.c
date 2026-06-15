@@ -123,7 +123,9 @@ static int test_fourier_helpers(void) {
   qsop_error_t error = {0};
   uint64_t prime = 0;
   uint64_t root = 0;
+  uint64_t inv_root = 0;
   uint64_t *powers = NULL;
+  uint64_t *inv_powers = NULL;
 
   if (!qsop_fourier_find_ntt_prime(r, 4, &prime, &error)) {
     fprintf(stderr, "fourier_find_ntt_prime failed: %s\n", error.message);
@@ -146,6 +148,12 @@ static int test_fourier_helpers(void) {
     fprintf(stderr, "fourier_make_root_powers failed: %s\n", error.message);
     return 1;
   }
+  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
+  if (!qsop_fourier_make_root_powers(r, inv_root, prime, &inv_powers, &error)) {
+    fprintf(stderr, "fourier_make_root_powers inverse failed: %s\n", error.message);
+    free(powers);
+    return 1;
+  }
   for (uint32_t mode = 0; mode < r; mode++) {
     for (uint32_t residue = 0; residue < r; residue++) {
       const uint64_t expected = qsop_mod_pow_u64(root, ((uint64_t)mode * residue) % r, prime);
@@ -153,11 +161,34 @@ static int test_fourier_helpers(void) {
         fprintf(stderr, "fourier power mismatch at mode %" PRIu32 " residue %" PRIu32 "\n",
                 mode, residue);
         free(powers);
+        free(inv_powers);
         return 1;
       }
     }
   }
+  uint64_t modes[8] = {0};
+  for (uint32_t mode = 0; mode < r; mode++) {
+    modes[mode] = qsop_mod_add_u64(2, powers[(size_t)mode * r + 2], prime);
+  }
+  uint64_t counts[8] = {0};
+  if (!qsop_fourier_inverse_counts(r, modes, 3, powers, inv_powers, prime, counts, &error)) {
+    fprintf(stderr, "fourier_inverse_counts failed: %s\n", error.message);
+    free(powers);
+    free(inv_powers);
+    return 1;
+  }
+  for (uint32_t residue = 0; residue < r; residue++) {
+    const uint64_t expected = residue == 3 ? 2 : (residue == 5 ? 1 : 0);
+    if (counts[residue] != expected) {
+      fprintf(stderr, "fourier inverse mismatch at residue %" PRIu32 ": got %" PRIu64 "\n",
+              residue, counts[residue]);
+      free(powers);
+      free(inv_powers);
+      return 1;
+    }
+  }
   free(powers);
+  free(inv_powers);
   return 0;
 }
 

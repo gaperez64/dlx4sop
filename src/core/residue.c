@@ -496,6 +496,27 @@ bool qsop_fourier_make_root_powers(uint32_t r, uint64_t root, uint64_t prime,
   return true;
 }
 
+bool qsop_fourier_inverse_counts(uint32_t r, const uint64_t *modes, uint32_t shift,
+                                 const uint64_t *powers, const uint64_t *inv_powers,
+                                 uint64_t prime, uint64_t *counts, qsop_error_t *error) {
+  if (r == 0 || modes == NULL || powers == NULL || inv_powers == NULL || counts == NULL) {
+    set_error(error, "internal error: null Fourier inverse argument");
+    return false;
+  }
+  const uint64_t inv_r = qsop_mod_pow_u64(r, prime - 2U, prime);
+  const uint32_t delta = shift % r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    uint64_t sum = 0;
+    for (uint32_t mode = 0; mode < r; mode++) {
+      uint64_t value = qsop_mod_mul_u64(modes[mode], powers[(size_t)mode * r + delta], prime);
+      value = qsop_mod_mul_u64(value, inv_powers[(size_t)mode * r + residue], prime);
+      sum = qsop_mod_add_u64(sum, value, prime);
+    }
+    counts[residue] = qsop_mod_mul_u64(sum, inv_r, prime);
+  }
+  return true;
+}
+
 void qsop_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift) {
   if (r == 0 || dst == NULL || src == NULL) {
     return;
