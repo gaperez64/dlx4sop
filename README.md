@@ -89,6 +89,7 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
 tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
+tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
 tools/compare_rankwidth_generators.py --rankwidth-jsonl 33-64=rankwidth-sweep.jsonl --qsop-mode labelled
 tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --engine-qubit-cap pyzx-matrix=10 --timeout 10
@@ -97,7 +98,9 @@ tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --
 `refresh_scoreboard.py` is the public scoreboard path; `render_scoreboard.py`
 is the lower-level table renderer for ad hoc reports. Use
 `bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
-labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
+labelled-rankwidth generator sweeps, or `--rankwidth-comparison` for the
+treewidth/branch/rankwidth comparison set used to decide whether rankwidth is a
+serious backend candidate. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mean absolute error, and maximum
 absolute error. Rankwidth records include support width, labelled cut-signature

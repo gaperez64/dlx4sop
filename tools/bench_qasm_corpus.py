@@ -1798,6 +1798,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Convenience mode: rankwidth count-table sweep with trace and timeout-aware summary rows.",
     )
     parser.add_argument(
+        "--rankwidth-comparison",
+        action="store_true",
+        help=(
+            "Convenience mode: compare treewidth min-fill-max-degree, branch split, "
+            "and rankwidth min-fill-cut count-table with trace."
+        ),
+    )
+    parser.add_argument(
         "--treewidth-order",
         dest="treewidth_orders",
         action="append",
@@ -1827,7 +1835,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--top must be non-negative")
     if args.timeout_top < 0:
         parser.error("--timeout-top must be non-negative")
-    if args.rankwidth_diagnostics:
+    if args.rankwidth_comparison:
+        if args.rankwidth_diagnostics or args.rankwidth_sweep:
+            parser.error("--rankwidth-comparison cannot be combined with rankwidth sweep modes")
+        if args.backends or args.rankwidth_generators or args.rankwidth_modes or args.treewidth_orders:
+            parser.error("--rankwidth-comparison sets backend, rankwidth, and treewidth configs")
+        args.backends = ["treewidth", "branch", "rankwidth"]
+        args.branch_heuristic = "split"
+        args.rankwidth_generators = ["min-fill-cut"]
+        args.rankwidth_modes = ["count-table"]
+        args.treewidth_orders = ["min-fill-max-degree"]
+        args.skip_unsupported = True
+        args.trace = True
+    elif args.rankwidth_diagnostics:
         args.backends = ["rankwidth"]
         args.rankwidth_generators = list(RANKWIDTH_GENERATORS)
         args.rankwidth_modes = ["count-table"]
