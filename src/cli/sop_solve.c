@@ -139,7 +139,8 @@ static const char *solve_mode_kernel_name(solve_backend_t backend, qsop_solve_mo
   if (mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return "count-table";
   }
-  return backend == SOLVE_BACKEND_RANKWIDTH || backend == SOLVE_BACKEND_TREEWIDTH
+  return backend == SOLVE_BACKEND_BRUTE_FORCE || backend == SOLVE_BACKEND_RANKWIDTH ||
+                 backend == SOLVE_BACKEND_TREEWIDTH
              ? "fourier"
              : "count-table-fallback";
 }
@@ -722,8 +723,8 @@ int main(int argc, char **argv) {
     ok = qsop_solve_components_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats,
                                                       trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
-    ok =
-        qsop_solve_bruteforce_trace_stats(qsop, max_vars, &result, &solve_stats, trace_ptr, &error);
+    ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
+                                                &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
     ok = qsop_solve_residual_branch_heuristic_trace_stats(
         qsop, max_vars, branch_heuristic, &result, &solve_stats, trace_ptr, &error);

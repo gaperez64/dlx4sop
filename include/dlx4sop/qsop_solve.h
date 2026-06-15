@@ -115,6 +115,10 @@ bool qsop_solve_bruteforce_trace_stats(const qsop_instance_t *qsop, uint32_t max
                                        qsop_result_t **out, qsop_solve_stats_t *stats,
                                        qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_bruteforce_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_component_vars,
                                       qsop_result_t **out, qsop_error_t *error);
 

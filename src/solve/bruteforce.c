@@ -55,6 +55,118 @@ bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
 bool qsop_solve_bruteforce_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
                                        qsop_result_t **out, qsop_solve_stats_t *stats,
                                        qsop_solve_trace_t *trace, qsop_error_t *error) {
+  return qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, QSOP_SOLVE_MODE_COUNT_TABLE,
+                                                out, stats, trace, error);
+}
+
+static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_vars,
+                                     qsop_result_t **out, qsop_solve_stats_t *stats,
+                                     qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null result pointer");
+    return false;
+  }
+  *out = NULL;
+
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (qsop->nvars > max_vars) {
+    set_error(error,
+              "brute-force solver refuses %" PRIu32
+              " variables; pass a larger --max-vars or use a future backend",
+              qsop->nvars);
+    return false;
+  }
+  if (qsop->nvars >= 63U) {
+    set_error(error, "brute-force Fourier solver supports at most 62 variables");
+    return false;
+  }
+
+  uint64_t prime = 0;
+  uint64_t root = 0;
+  uint64_t inv_root = 0;
+  uint64_t *powers = NULL;
+  uint64_t *inv_powers = NULL;
+  uint64_t *modes = NULL;
+  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
+      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
+    return false;
+  }
+  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
+  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
+    free(powers);
+    free(inv_powers);
+    return false;
+  }
+  modes = calloc(qsop->r == 0 ? 1U : qsop->r, sizeof(*modes));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (modes == NULL || result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    free(powers);
+    free(inv_powers);
+    free(modes);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating brute-force Fourier solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+
+  const uint64_t assignments = UINT64_C(1) << qsop->nvars;
+  if (stats != NULL) {
+    stats->leaf_assignments = assignments;
+  }
+  const uint64_t enumerate_start = qsop_trace_begin(trace);
+  for (uint64_t assignment = 0; assignment < assignments; assignment++) {
+    uint32_t phase = 0;
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      if (bit_is_set(assignment, v)) {
+        phase = (uint32_t)(((uint64_t)phase + qsop->unary[v]) % qsop->r);
+      }
+    }
+    for (uint32_t e = 0; e < qsop->nedges; e++) {
+      if (bit_is_set(assignment, qsop->edge_u[e]) && bit_is_set(assignment, qsop->edge_v[e])) {
+        phase = (uint32_t)(((uint64_t)phase + qsop->edge_q[e]) % qsop->r);
+      }
+    }
+    for (uint32_t mode = 0; mode < qsop->r; mode++) {
+      modes[mode] = qsop_mod_add_u64(modes[mode], powers[(size_t)mode * qsop->r + phase], prime);
+    }
+  }
+  qsop_trace_emit_elapsed(trace, "brute_force.fourier_enumerate", 0, assignments,
+                          enumerate_start);
+
+  if (!qsop_fourier_inverse_counts(qsop->r, modes, qsop->constant, powers, inv_powers, prime,
+                                   result->counts, error)) {
+    free(powers);
+    free(inv_powers);
+    free(modes);
+    qsop_result_free(result);
+    return false;
+  }
+  free(powers);
+  free(inv_powers);
+  free(modes);
+  *out = result;
+  return true;
+}
+
+bool qsop_solve_bruteforce_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (mode == QSOP_SOLVE_MODE_FOURIER) {
+    return solve_bruteforce_fourier(qsop, max_vars, out, stats, trace, error);
+  }
+  if (mode != QSOP_SOLVE_MODE_COUNT_TABLE) {
+    set_error(error, "internal error: unsupported brute-force solve mode");
+    return false;
+  }
+
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }

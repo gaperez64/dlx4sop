@@ -42,6 +42,22 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{brute_force.stdout}\n"
         )
 
+    brute_force_fourier = subprocess.run(
+        [str(exe), "--backend", "brute-force", "--solve-mode", "fourier", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if brute_force_fourier.returncode != 0:
+        raise AssertionError(f"{name}: brute-force Fourier backend failed\n{brute_force_fourier.stderr}")
+    if brute_force_fourier.stdout != expected_text:
+        raise AssertionError(
+            f"{name}: brute-force Fourier residue-vector mismatch\n"
+            f"expected:\n{expected_text}\n"
+            f"actual:\n{brute_force_fourier.stdout}\n"
+        )
+
     branch = subprocess.run(
         [str(exe), "--backend", "branch", str(qsop)],
         check=False,
@@ -56,6 +72,32 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"{name}: branch residue-vector mismatch\n"
             f"expected:\n{expected_text}\n"
             f"actual:\n{branch.stdout}\n"
+        )
+
+    brute_force_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "brute-force",
+            "--solve-mode",
+            "fourier",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        brute_force_fourier_stats.returncode != 0
+        or "solve_mode: fourier" not in brute_force_fourier_stats.stdout
+        or "solve_mode_kernel: fourier" not in brute_force_fourier_stats.stdout
+    ):
+        raise AssertionError(
+            f"{name}: brute-force Fourier stats failed\n"
+            f"{brute_force_fourier_stats.stdout}\n{brute_force_fourier_stats.stderr}"
         )
 
 
