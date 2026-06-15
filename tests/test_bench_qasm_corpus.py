@@ -182,10 +182,19 @@ def main() -> int:
 
     if not bench.amplitude_metrics(8, 10, [1, 0, 0, 0, 0, 0, 0, 0]):
         raise AssertionError("small exact counts should emit amplitude metrics")
-    if bench.amplitude_metrics(8, 64, [bench.UINT64_MAX, 0, 0, 0, 0, 0, 0, 0]):
-        raise AssertionError("large non-CRT uint64 counts should not emit amplitude metrics")
-    if not bench.amplitude_metrics(8, 64, [bench.UINT64_MAX + 1, 0, 0, 0, 0, 0, 0, 0]):
-        raise AssertionError("CRT-sized decimal counts should emit amplitude metrics")
+    large_counts = [
+        81129638414606753753383043072000,
+        81129638414606681695789005144064,
+        81129638414606681695789005144064,
+        81129638414606681695789005144064,
+        81129638414606609638194967216128,
+        81129638414606681695789005144064,
+        81129638414606681695789005144064,
+        81129638414606681695789005144064,
+    ]
+    large_amplitude = bench.amplitude_metrics(8, 114, large_counts)
+    if abs(large_amplitude["amplitude_real"] - 1.0) > 1e-12 or abs(large_amplitude["amplitude_imag"]) > 1e-12:
+        raise AssertionError(f"unexpected large-count amplitude: {large_amplitude}")
 
     return 0
 
