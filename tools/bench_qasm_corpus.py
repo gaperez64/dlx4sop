@@ -54,8 +54,13 @@ RANKWIDTH_KERNEL_TRACE_GROUPS = (
         "rankwidth_labelled_join_map",
     ),
     (("rankwidth.labelled_join", "rankwidth.labelled_crt_join"), "rankwidth_labelled_join"),
-    (("rankwidth.fourier_join_map",), "rankwidth_fourier_join_map"),
-    (("rankwidth.fourier_join",), "rankwidth_fourier_join"),
+    (
+        ("rankwidth.fourier_join_map", "rankwidth.labelled_fourier_join_map"),
+        "rankwidth_fourier_join_map",
+    ),
+    (("rankwidth.fourier_join", "rankwidth.labelled_fourier_join"), "rankwidth_fourier_join"),
+    (("rankwidth.labelled_fourier_join_map",), "rankwidth_labelled_fourier_join_map"),
+    (("rankwidth.labelled_fourier_join",), "rankwidth_labelled_fourier_join"),
 )
 RANKWIDTH_KERNEL_METRIC_FIELDS = tuple(
     field
@@ -614,15 +619,15 @@ def branch_treewidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str
 
 def treewidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
-    for phase, prefix in (
-        ("treewidth.multiply", "treewidth_multiply"),
-        ("treewidth.sum_out", "treewidth_sum_out"),
+    for phases, prefix in (
+        (("treewidth.multiply", "treewidth.fourier_multiply"), "treewidth_multiply"),
+        (("treewidth.sum_out", "treewidth.fourier_sum_out"), "treewidth_sum_out"),
     ):
-        values = trace.get(phase)
-        if values is None:
+        matching = [trace[phase] for phase in phases if phase in trace]
+        if not matching:
             continue
-        metrics[f"{prefix}_events"] = values["events"]
-        metrics[f"{prefix}_elapsed_ns"] = values["elapsed_ns"]
+        metrics[f"{prefix}_events"] = sum(values["events"] for values in matching)
+        metrics[f"{prefix}_elapsed_ns"] = sum(values["elapsed_ns"] for values in matching)
     return metrics
 
 
@@ -1357,6 +1362,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 or "rankwidth_labelled_join_elapsed_ns" in record
                 or "rankwidth_fourier_join_map_elapsed_ns" in record
                 or "rankwidth_fourier_join_elapsed_ns" in record
+                or "rankwidth_labelled_fourier_join_map_elapsed_ns" in record
+                or "rankwidth_labelled_fourier_join_elapsed_ns" in record
             ):
                 line += (
                     " rankwidth_kernels="
@@ -1371,7 +1378,13 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f"fourier_map:{record.get('rankwidth_fourier_join_map_events', 0)}/"
                     f"{record.get('rankwidth_fourier_join_map_elapsed_ns', 0)},"
                     f"fourier:{record.get('rankwidth_fourier_join_events', 0)}/"
-                    f"{record.get('rankwidth_fourier_join_elapsed_ns', 0)}"
+                    f"{record.get('rankwidth_fourier_join_elapsed_ns', 0)},"
+                    f"labelled_fourier_map:"
+                    f"{record.get('rankwidth_labelled_fourier_join_map_events', 0)}/"
+                    f"{record.get('rankwidth_labelled_fourier_join_map_elapsed_ns', 0)},"
+                    f"labelled_fourier:"
+                    f"{record.get('rankwidth_labelled_fourier_join_events', 0)}/"
+                    f"{record.get('rankwidth_labelled_fourier_join_elapsed_ns', 0)}"
                 )
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (

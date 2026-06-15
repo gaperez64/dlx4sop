@@ -54,6 +54,8 @@ RANKWIDTH_KERNEL_PREFIXES = (
     "rankwidth_labelled_join",
     "rankwidth_fourier_join_map",
     "rankwidth_fourier_join",
+    "rankwidth_labelled_fourier_join_map",
+    "rankwidth_labelled_fourier_join",
 )
 RANKWIDTH_KERNEL_SUM_FIELDS = tuple(
     field
@@ -212,6 +214,8 @@ def rankwidth_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
         ("rankwidth_labelled_join", "labelled"),
         ("rankwidth_fourier_join_map", "fourier-map"),
         ("rankwidth_fourier_join", "fourier"),
+        ("rankwidth_labelled_fourier_join_map", "labelled-fourier-map"),
+        ("rankwidth_labelled_fourier_join", "labelled-fourier"),
     ):
         events = stats.get(f"{prefix}_events", 0)
         elapsed = stats.get(f"{prefix}_elapsed_ns", 0)

@@ -106,6 +106,12 @@ def main() -> int:
         "rankwidth_fourier_join_events": 1,
         "rankwidth_fourier_join_elapsed_ns": 80,
         "rankwidth_fourier_join_max_items": 8,
+        "rankwidth_labelled_fourier_join_map_events": 1,
+        "rankwidth_labelled_fourier_join_map_elapsed_ns": 60,
+        "rankwidth_labelled_fourier_join_map_max_items": 6,
+        "rankwidth_labelled_fourier_join_events": 1,
+        "rankwidth_labelled_fourier_join_elapsed_ns": 75,
+        "rankwidth_labelled_fourier_join_max_items": 7,
     }
     timeout_solver = {
         "backend": "branch",
@@ -165,7 +171,7 @@ def main() -> int:
             "| Synthetic | https://example.invalid/synthetic | 2 | 1 | 0 | 1 | 0 |",
             "`treewidth --treewidth-order min-fill`",
             "| synthetic | `branch --branch-heuristic split` | 0 / 1 | 2.00 s | 1 timeouts |",
-            "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | 4 nodes; cache hits=1, misses=2, hit rate=0.333, avoided nodes 1, avoided node rate 0.250, canonical hits 1, canonical lookups 3, canonical stores 2, entries 2, canonical entries 2, canonical entry rate 1.000, slots 16, key bytes 96, count bytes 64, estimated bytes 256; cache trace lookup=2 events/2.0 us, store=1 events/3.0 us; canonical cache trace lookup=1 events/800 ns, store=1 events/900 ns; tw width 2; max table 16; rw table forecast 256; rw join forecast 96; 32 join pairs; rankwidth kernels map=2/250 ns max items=20, join=2/500 ns max items=22, labelled-map=2/200 ns max items=11, labelled=2/440 ns max items=17, fourier-map=1/70 ns max items=7, fourier=1/80 ns max items=8; branch dispatch splits=3/5.0 us max components=2, tw delegates=1/7.0 us max vars=33, root tw delegates=1/3.0 us max vars=32, rw delegates=1/11.0 us max vars=40; branch policy fallthroughs=0, tw skips=2, rw skips=7; branch fallthrough max vars=19; tw skip reasons width=2; rw skip reasons table-forecast=3, join-pair-forecast=4; branch table forecast rw=2, tw=128; branch join forecast rw=9, tw=64; branch root tw probe width=6, 1 events/1.3 us |",
+            "| synthetic | `treewidth --treewidth-order min-fill` | 1 / 1 | 1.2 us | 4 nodes; cache hits=1, misses=2, hit rate=0.333, avoided nodes 1, avoided node rate 0.250, canonical hits 1, canonical lookups 3, canonical stores 2, entries 2, canonical entries 2, canonical entry rate 1.000, slots 16, key bytes 96, count bytes 64, estimated bytes 256; cache trace lookup=2 events/2.0 us, store=1 events/3.0 us; canonical cache trace lookup=1 events/800 ns, store=1 events/900 ns; tw width 2; max table 16; rw table forecast 256; rw join forecast 96; 32 join pairs; rankwidth kernels map=2/250 ns max items=20, join=2/500 ns max items=22, labelled-map=2/200 ns max items=11, labelled=2/440 ns max items=17, fourier-map=1/70 ns max items=7, fourier=1/80 ns max items=8, labelled-fourier-map=1/60 ns max items=6, labelled-fourier=1/75 ns max items=7; branch dispatch splits=3/5.0 us max components=2, tw delegates=1/7.0 us max vars=33, root tw delegates=1/3.0 us max vars=32, rw delegates=1/11.0 us max vars=40; branch policy fallthroughs=0, tw skips=2, rw skips=7; branch fallthrough max vars=19; tw skip reasons width=2; rw skip reasons table-forecast=3, join-pair-forecast=4; branch table forecast rw=2, tw=128; branch join forecast rw=9, tw=64; branch root tw probe width=6, 1 events/1.3 us |",
             "`qiskit-statevector`",
             "## Native Common-Row Comparison",
             "### Synthetic",

@@ -18,6 +18,8 @@ RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
     "rankwidth_labelled_join_elapsed_ns",
     "rankwidth_fourier_join_map_elapsed_ns",
     "rankwidth_fourier_join_elapsed_ns",
+    "rankwidth_labelled_fourier_join_map_elapsed_ns",
+    "rankwidth_labelled_fourier_join_elapsed_ns",
 )
 
 

@@ -43,7 +43,9 @@ def main() -> int:
                 "branch.cache_store,0,5,70",
                 "branch.cache_canonical_store,0,7,40",
                 "treewidth.multiply,3,16,400",
+                "treewidth.fourier_multiply,3,4,40",
                 "treewidth.sum_out,2,8,500",
+                "treewidth.fourier_sum_out,2,4,50",
                 "rankwidth.join_map,2,12,120",
                 "rankwidth.crt_join_map,2,20,130",
                 "rankwidth.join,2,18,240",
@@ -54,6 +56,8 @@ def main() -> int:
                 "rankwidth.labelled_crt_join,2,17,230",
                 "rankwidth.fourier_join_map,2,7,70",
                 "rankwidth.fourier_join,2,8,80",
+                "rankwidth.labelled_fourier_join_map,2,6,60",
+                "rankwidth.labelled_fourier_join,2,7,75",
                 "",
             ]
         )
@@ -131,10 +135,10 @@ def main() -> int:
 
     kernel = bench.treewidth_kernel_metrics(trace)
     expected_kernel = {
-        "treewidth_multiply_events": 1,
-        "treewidth_multiply_elapsed_ns": 400,
-        "treewidth_sum_out_events": 1,
-        "treewidth_sum_out_elapsed_ns": 500,
+        "treewidth_multiply_events": 2,
+        "treewidth_multiply_elapsed_ns": 440,
+        "treewidth_sum_out_events": 2,
+        "treewidth_sum_out_elapsed_ns": 550,
     }
     if kernel != expected_kernel:
         raise AssertionError(f"unexpected treewidth kernel metrics: {kernel}")
@@ -153,12 +157,18 @@ def main() -> int:
         "rankwidth_labelled_join_events": 2,
         "rankwidth_labelled_join_elapsed_ns": 440,
         "rankwidth_labelled_join_max_items": 17,
-        "rankwidth_fourier_join_map_events": 1,
-        "rankwidth_fourier_join_map_elapsed_ns": 70,
+        "rankwidth_fourier_join_map_events": 2,
+        "rankwidth_fourier_join_map_elapsed_ns": 130,
         "rankwidth_fourier_join_map_max_items": 7,
-        "rankwidth_fourier_join_events": 1,
-        "rankwidth_fourier_join_elapsed_ns": 80,
+        "rankwidth_fourier_join_events": 2,
+        "rankwidth_fourier_join_elapsed_ns": 155,
         "rankwidth_fourier_join_max_items": 8,
+        "rankwidth_labelled_fourier_join_map_events": 1,
+        "rankwidth_labelled_fourier_join_map_elapsed_ns": 60,
+        "rankwidth_labelled_fourier_join_map_max_items": 6,
+        "rankwidth_labelled_fourier_join_events": 1,
+        "rankwidth_labelled_fourier_join_elapsed_ns": 75,
+        "rankwidth_labelled_fourier_join_max_items": 7,
     }
     if rankwidth_kernel != expected_rankwidth_kernel:
         raise AssertionError(f"unexpected rankwidth kernel metrics: {rankwidth_kernel}")
@@ -174,23 +184,23 @@ def main() -> int:
     if rankwidth_probe != expected_rankwidth_probe:
         raise AssertionError(f"unexpected rankwidth probe metrics: {rankwidth_probe}")
     kernel_record = {"stats": {}, **rankwidth_kernel}
-    if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1540:
+    if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1810:
         raise AssertionError(f"unexpected rankwidth kernel elapsed: {kernel_record}")
 
-    if bench.trace_elapsed_ns(trace) != 5100:
+    if bench.trace_elapsed_ns(trace) != 5325:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
-        "branch.rankwidth_delegate:1100:21.6%,"
-        "branch.treewidth_delegate:700:13.7%,"
-        "treewidth.sum_out:500:9.8%"
+        "branch.rankwidth_delegate:1100:20.7%,"
+        "branch.treewidth_delegate:700:13.1%,"
+        "treewidth.sum_out:500:9.4%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 5100,
+        "trace_elapsed_ns": 5325,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 215686,
+        "trace_top_share_ppm": 206572,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")
