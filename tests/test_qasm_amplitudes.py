@@ -378,8 +378,19 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                 apply_controlled_x(state, nqubits, a, b)
             elif gate == "cy":
                 apply_controlled_y(state, nqubits, a, b)
+            elif gate == "csx":
+                apply_one(state, nqubits, b, one_qubit["h"])
+                apply_controlled_phase(state, nqubits, a, b, math.pi / 2.0)
+                apply_one(state, nqubits, b, one_qubit["h"])
+            elif gate == "csxdg":
+                apply_one(state, nqubits, b, one_qubit["h"])
+                apply_controlled_phase(state, nqubits, a, b, -math.pi / 2.0)
+                apply_one(state, nqubits, b, one_qubit["h"])
             elif gate == "swap":
                 apply_swap(state, nqubits, a, b)
+            elif gate == "dcx":
+                apply_controlled_x(state, nqubits, a, b)
+                apply_controlled_x(state, nqubits, b, a)
             else:
                 raise AssertionError(f"unsupported test gate {gate!r}")
 
@@ -544,6 +555,9 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             h q;
             cs q[0], q[1];
             ctdg q[0], q[1];
+            csx q[0], q[1];
+            csxdg q[1], q[0];
+            dcx q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("11", "11"), ("10", "01")],
         ),

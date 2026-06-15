@@ -21,6 +21,9 @@ ccz q[0],q[1],q[2];
 rxx(pi/4) q[0],q[1];
 ryy(-pi/2) q[1],q[2];
 rzz(pi/4) q[0],q[2];
+csx q[0],q[1];
+csxdg q[1],q[2];
+dcx q[0],q[2];
 """
     patched = qasm_with_native_compat_definitions(qasm)
     for expected in (
@@ -29,6 +32,9 @@ rzz(pi/4) q[0],q[2];
         "gate rxx(theta) a,b",
         "gate ryy(theta) a,b",
         "gate rzz(theta) a,b",
+        "gate csx a,b",
+        "gate csxdg a,b",
+        "gate dcx a,b",
     ):
         if expected not in patched:
             raise AssertionError(f"missing compatibility definition {expected!r}:\n{patched}")

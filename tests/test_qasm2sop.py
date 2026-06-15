@@ -301,6 +301,7 @@ def run_decomposed_gates(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ("qasm_cx", ["--input", "10", "--output", "11"]),
         ("qasm_y", ["--input", "0", "--output", "1"]),
         ("qasm_cy", ["--input", "10", "--output", "11"]),
+        ("qasm_csx_dcx", ["--input", "10", "--output", "01"]),
     ]
     for name, options in cases:
         run_boundary_case(exe, source_root, name, options)

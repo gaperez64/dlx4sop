@@ -45,7 +45,10 @@ typedef enum qasm_two_qubit_op {
   QASM_TWO_CH,
   QASM_TWO_CX,
   QASM_TWO_CY,
+  QASM_TWO_CSX,
+  QASM_TWO_CSXDG,
   QASM_TWO_SWAP,
+  QASM_TWO_DCX,
   QASM_TWO_ISWAP,
 } qasm_two_qubit_op_t;
 
@@ -814,6 +817,13 @@ static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control, 
          apply_phase(importer, target, 4);
 }
 
+static bool apply_csx_decomposition(qasm_importer_t *importer, uint32_t control,
+                                    uint32_t target, uint32_t phase_coeff) {
+  return apply_h(importer, target) &&
+         apply_controlled_phase(importer, control, target, phase_coeff) &&
+         apply_h(importer, target);
+}
+
 static bool apply_ccz_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                     uint32_t third) {
   return apply_phase(importer, first, 2) && apply_phase(importer, second, 2) &&
@@ -1074,12 +1084,19 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
     return apply_cx_decomposition(importer, left, right);
   case QASM_TWO_CY:
     return apply_cy_decomposition(importer, left, right);
+  case QASM_TWO_CSX:
+    return apply_csx_decomposition(importer, left, right, 4);
+  case QASM_TWO_CSXDG:
+    return apply_csx_decomposition(importer, left, right, 12);
   case QASM_TWO_SWAP: {
     const uint32_t tmp = importer->current[left];
     importer->current[left] = importer->current[right];
     importer->current[right] = tmp;
     return true;
   }
+  case QASM_TWO_DCX:
+    return apply_cx_decomposition(importer, left, right) &&
+           apply_cx_decomposition(importer, right, left);
   case QASM_TWO_ISWAP:
     return apply_iswap_decomposition(importer, left, right);
   }
@@ -1396,8 +1413,20 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return apply_two_qubit_operands(importer, rest, QASM_TWO_CY, 0);
   }
 
+  if (strcmp(gate, "csx") == 0) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CSX, 0);
+  }
+
+  if (strcmp(gate, "csxdg") == 0) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_CSXDG, 0);
+  }
+
   if (strcmp(gate, "swap") == 0) {
     return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP, 0);
+  }
+
+  if (strcmp(gate, "dcx") == 0) {
+    return apply_two_qubit_operands(importer, rest, QASM_TWO_DCX, 0);
   }
 
   if (strcmp(gate, "iswap") == 0) {

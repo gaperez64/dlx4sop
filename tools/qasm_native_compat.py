@@ -10,6 +10,9 @@ NATIVE_COMPAT_GATE_DEFINITIONS = {
     "rxx": "gate rxx(theta) a,b { h a; h b; cx a,b; rz(theta) b; cx a,b; h a; h b; }",
     "ryy": "gate ryy(theta) a,b { sdg a; h a; sdg b; h b; cx a,b; rz(theta) b; cx a,b; h a; s a; h b; s b; }",
     "rzz": "gate rzz(theta) a,b { cx a,b; rz(theta) b; cx a,b; }",
+    "csx": "gate csx a,b { h b; cu1(pi/2) a,b; h b; }",
+    "csxdg": "gate csxdg a,b { h b; cu1(-pi/2) a,b; h b; }",
+    "dcx": "gate dcx a,b { cx a,b; cx b,a; }",
 }
 
 
