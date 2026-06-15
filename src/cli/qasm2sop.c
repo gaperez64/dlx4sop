@@ -744,6 +744,13 @@ static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t targ
          apply_controlled_phase(importer, control, target, mod16_i64(2 * units));
 }
 
+static bool apply_rzz(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
+  return add_constant(importer, mod16_i64(-units)) &&
+         apply_phase(importer, left, mod16_i64(2 * units)) &&
+         apply_phase(importer, right, mod16_i64(2 * units)) &&
+         apply_controlled_phase(importer, left, right, mod16_i64(-4 * units));
+}
+
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
   return apply_h(importer, qubit) && apply_phase(importer, qubit, 8) && apply_h(importer, qubit);
 }
@@ -1139,6 +1146,42 @@ static bool apply_crz_operands(qasm_importer_t *importer, char *rest, int64_t un
   return true;
 }
 
+static bool apply_rzz_operands(qasm_importer_t *importer, char *rest, int64_t units) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply_rzz(importer, left.qubit, right.qubit, units);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply_rzz(importer, left_qubit, right_qubit, units)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 typedef bool (*qasm_three_qubit_fn)(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                     uint32_t third);
 
@@ -1247,6 +1290,15 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
   if (is_crz) {
     return apply_crz_operands(importer, rest, crz_units);
+  }
+
+  int64_t rzz_units = 0;
+  bool is_rzz = false;
+  if (!rz_units_for_gate(importer, gate, "rzz(", "rzz", &rzz_units, &is_rzz)) {
+    return false;
+  }
+  if (is_rzz) {
+    return apply_rzz_operands(importer, rest, rzz_units);
   }
 
   uint32_t phase_coeff = 0;

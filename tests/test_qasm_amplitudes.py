@@ -67,7 +67,7 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
 
         gate, rest = statement.split(None, 1)
         params: list[float] = []
-        for prefix in ("u3", "u", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz"):
+        for prefix in ("u3", "u", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz", "rzz"):
             if gate.startswith(f"{prefix}(") and gate.endswith(")"):
                 params = [
                     parse_angle(part.strip()) for part in gate[len(prefix) + 1 : -1].split(",")
@@ -301,6 +301,15 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                             state[index] *= cmath.exp(-0.5j * angle)
                         else:
                             state[index] *= cmath.exp(0.5j * angle)
+            elif gate == "rzz":
+                left_bit = 1 << a
+                right_bit = 1 << b
+                same_phase = cmath.exp(-0.5j * angle)
+                different_phase = cmath.exp(0.5j * angle)
+                for index in range(1 << nqubits):
+                    left_one = (index & left_bit) != 0
+                    right_one = (index & right_bit) != 0
+                    state[index] *= same_phase if left_one == right_one else different_phase
             elif gate == "cx":
                 apply_controlled_x(state, nqubits, a, b)
             elif gate == "cy":
@@ -424,6 +433,7 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             h q;
             rz(pi/4) q[0];
             crz(pi/4) q[0], q[1];
+            rzz(pi/4) q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("10", "10"), ("11", "01")],
         ),
