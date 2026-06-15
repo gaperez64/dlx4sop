@@ -144,10 +144,12 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
                 "time_wins": collections.Counter(),
                 "table_wins": collections.Counter(),
                 "signature_wins": collections.Counter(),
+                "kernel_wins": collections.Counter(),
                 "baseline_rows": 0,
                 "baseline_best_time": 0,
                 "baseline_best_table": 0,
                 "baseline_best_signatures": 0,
+                "baseline_best_kernel": 0,
             },
         )
         entry["common_rows"] += 1
@@ -169,17 +171,24 @@ def common_row_summary(records: list[dict], baseline: str) -> list[dict]:
                 metric_or_zero(record, "join_signature_pairs"),
             ),
         )
+        kernel_configs = tied_winners(
+            by_config,
+            lambda record: (rankwidth_kernel_elapsed_ns(record),),
+        )
         for config in fastest_configs:
             entry["time_wins"][config] += 1
         for config in table_configs:
             entry["table_wins"][config] += 1
         for config in signature_configs:
             entry["signature_wins"][config] += 1
+        for config in kernel_configs:
+            entry["kernel_wins"][config] += 1
         if baseline in by_config:
             entry["baseline_rows"] += 1
             entry["baseline_best_time"] += int(baseline in fastest_configs)
             entry["baseline_best_table"] += int(baseline in table_configs)
             entry["baseline_best_signatures"] += int(baseline in signature_configs)
+            entry["baseline_best_kernel"] += int(baseline in kernel_configs)
     return [summary[key] for key in sorted(summary)]
 
 
@@ -303,17 +312,19 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     )
     print(
         "| Tier | QSOP mode | Common rows | Time winners | Table winners | Signature winners | "
-        "Baseline best time/table/signatures |",
+        "Kernel winners | Baseline best time/table/signatures/kernel |",
         file=file,
     )
-    print("| --- | --- | ---: | --- | --- | --- | ---: |", file=file)
+    print("| --- | --- | ---: | --- | --- | --- | --- | ---: |", file=file)
     for row in rows:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['mode'])} | "
             f"{row['common_rows']} | {counter_text(row['time_wins'])} | "
             f"{counter_text(row['table_wins'])} | {counter_text(row['signature_wins'])} | "
+            f"{counter_text(row['kernel_wins'])} | "
             f"{row['baseline_best_time']} / {row['baseline_best_table']} / "
-            f"{row['baseline_best_signatures']} of {row['baseline_rows']} |",
+            f"{row['baseline_best_signatures']} / {row['baseline_best_kernel']} "
+            f"of {row['baseline_rows']} |",
             file=file,
         )
 
@@ -353,7 +364,7 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
 
 def serializable_row(row: dict) -> dict:
     out = dict(row)
-    for key in ("time_wins", "table_wins", "signature_wins"):
+    for key in ("time_wins", "table_wins", "signature_wins", "kernel_wins"):
         if key in out:
             out[key] = dict(out[key])
     return out
