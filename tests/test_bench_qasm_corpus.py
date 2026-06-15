@@ -39,9 +39,13 @@ def main() -> int:
         )
     )
 
-    cache = bench.cache_record_metrics({"cache_hits": 2, "cache_misses": 1}, trace)
+    cache = bench.cache_record_metrics(
+        {"cache_hits": 2, "cache_misses": 1, "cache_avoided_nodes": 5, "search_nodes": 20},
+        trace,
+    )
     expected_cache = {
         "cache_hit_rate_ppm": 666666,
+        "cache_avoided_node_rate_ppm": 250000,
         "cache_lookup_events": 2,
         "cache_lookup_elapsed_ns": 110,
         "cache_store_events": 1,

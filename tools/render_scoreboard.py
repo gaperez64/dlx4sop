@@ -184,6 +184,13 @@ def cache_hit_rate(stats: dict[str, int]) -> str:
     return f"{hits / total:.3f}"
 
 
+def cache_avoided_node_rate(stats: dict[str, int]) -> str:
+    nodes = stats.get("search_nodes", 0)
+    if nodes == 0:
+        return "n/a"
+    return f"{stats.get('cache_avoided_nodes', 0) / nodes:.3f}"
+
+
 def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
     grouped: dict[tuple[str, str], dict] = {}
     for tier, records in named_records:
@@ -287,7 +294,10 @@ def key_stats(stats: dict[str, int]) -> str:
             f"misses={stats.get('cache_misses', 0)}, hit rate={cache_hit_rate(stats)}"
         )
         if stats.get("cache_avoided_nodes", 0):
-            cache += f", avoided nodes {stats['cache_avoided_nodes']}"
+            cache += (
+                f", avoided nodes {stats['cache_avoided_nodes']}, "
+                f"avoided node rate {cache_avoided_node_rate(stats)}"
+            )
         if "cache_entries" in stats:
             cache += (
                 f", entries {stats['cache_entries']}, "

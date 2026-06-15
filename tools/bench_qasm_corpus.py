@@ -70,6 +70,7 @@ TOP_METRICS = (
     "cache_entries",
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
+    "cache_avoided_node_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
     "cache_store_events",
@@ -153,6 +154,7 @@ CSV_FIELDS = [
     "cache_entries",
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
+    "cache_avoided_node_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
     "cache_store_events",
@@ -422,6 +424,10 @@ def cache_record_metrics(
         total = hits + misses
         if total:
             metrics["cache_hit_rate_ppm"] = (hits * 1_000_000) // total
+    avoided = stats.get("cache_avoided_nodes")
+    search_nodes = stats.get("search_nodes")
+    if isinstance(avoided, int) and isinstance(search_nodes, int) and search_nodes:
+        metrics["cache_avoided_node_rate_ppm"] = (avoided * 1_000_000) // search_nodes
     for phase, events_key, elapsed_key in (
         ("cache_lookup", "cache_lookup_events", "cache_lookup_elapsed_ns"),
         ("cache_store", "cache_store_events", "cache_store_elapsed_ns"),
@@ -862,6 +868,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_entries",
             "cache_stored_residue_slots",
             "cache_hit_rate_ppm",
+            "cache_avoided_node_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
             "cache_store_events",
@@ -967,6 +974,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
             if "cache_avoided_nodes" in stats:
                 line += f" cache_avoided_nodes={stats['cache_avoided_nodes']}"
+            if "cache_avoided_node_rate_ppm" in record:
+                line += f" cache_avoided_node_rate_ppm={record['cache_avoided_node_rate_ppm']}"
             if "cache_entries" in stats:
                 line += (
                     f" cache_entries={stats['cache_entries']}"

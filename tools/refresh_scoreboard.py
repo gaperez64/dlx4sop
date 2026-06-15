@@ -13,6 +13,7 @@ from render_scoreboard import (
     BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
     branch_dispatch_text,
     branch_skip_reason_text,
+    cache_avoided_node_rate,
     cache_hit_rate,
     comparison_speedup,
     format_ns,
@@ -162,7 +163,10 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"hit rate={cache_hit_rate(stats)}"
         )
     if stats.get("cache_avoided_nodes", 0):
-        parts.append(f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}")
+        parts.append(
+            f"cache avoided nodes={format_count(stats['cache_avoided_nodes'])}, "
+            f"rate={cache_avoided_node_rate(stats)}"
+        )
     if "cache_entries" in stats:
         parts.append(
             f"cache entries={format_count(stats['cache_entries'])}, "
