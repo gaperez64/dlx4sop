@@ -749,6 +749,8 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "max_signature_entries:",
         "join_pairs:",
         "join_signature_pairs:",
+        "rankwidth_table_forecast:",
+        "rankwidth_join_pair_forecast:",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
@@ -1039,6 +1041,8 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "max_signature_entries",
         "join_pairs",
         "join_signature_pairs",
+        "rankwidth_table_forecast",
+        "rankwidth_join_pair_forecast",
     ):
         if left_stats[key] != cut_stats[key]:
             raise AssertionError(
