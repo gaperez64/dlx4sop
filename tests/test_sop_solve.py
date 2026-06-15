@@ -307,6 +307,33 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{labelled_branch.stderr}"
         )
 
+    rankwidth_fourier = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        rankwidth_fourier.returncode == 0
+        or "rankwidth Fourier mode currently requires fewer than 64 variables"
+        not in rankwidth_fourier.stderr
+    ):
+        raise AssertionError(
+            f"large rankwidth Fourier guard did not trigger\n"
+            f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
+        )
+
 
 def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     left_edges = [f"q {i} {i + 1} 8" for i in range(31)]
