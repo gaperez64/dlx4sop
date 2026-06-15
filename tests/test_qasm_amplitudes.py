@@ -67,7 +67,22 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
 
         gate, rest = statement.split(None, 1)
         params: list[float] = []
-        for prefix in ("u3", "u", "u2", "u1", "p", "rz", "rx", "ry", "cu1", "cp", "crz", "rzz"):
+        for prefix in (
+            "u3",
+            "u",
+            "u2",
+            "u1",
+            "p",
+            "rz",
+            "rx",
+            "ry",
+            "cu1",
+            "cp",
+            "crz",
+            "rxx",
+            "ryy",
+            "rzz",
+        ):
             if gate.startswith(f"{prefix}(") and gate.endswith(")"):
                 params = [
                     parse_angle(part.strip()) for part in gate[len(prefix) + 1 : -1].split(",")
@@ -181,6 +196,51 @@ def apply_cswap(state: list[complex], nqubits: int, control: int, left: int, rig
             continue
         other = (index | left_bit) & ~right_bit
         state[index], state[other] = state[other], state[index]
+
+
+def apply_xx_rotation(state: list[complex], nqubits: int, left: int, right: int, angle: float) -> None:
+    left_bit = 1 << left
+    right_bit = 1 << right
+    cos = math.cos(angle / 2.0)
+    offdiag = -1j * math.sin(angle / 2.0)
+    for index in range(1 << nqubits):
+        if (index & left_bit) != 0 or (index & right_bit) != 0:
+            continue
+        both = index | left_bit | right_bit
+        left_only = index | left_bit
+        right_only = index | right_bit
+
+        old_zero = state[index]
+        old_both = state[both]
+        old_left = state[left_only]
+        old_right = state[right_only]
+        state[index] = cos * old_zero + offdiag * old_both
+        state[both] = offdiag * old_zero + cos * old_both
+        state[left_only] = cos * old_left + offdiag * old_right
+        state[right_only] = offdiag * old_left + cos * old_right
+
+
+def apply_yy_rotation(state: list[complex], nqubits: int, left: int, right: int, angle: float) -> None:
+    left_bit = 1 << left
+    right_bit = 1 << right
+    cos = math.cos(angle / 2.0)
+    plus = 1j * math.sin(angle / 2.0)
+    minus = -1j * math.sin(angle / 2.0)
+    for index in range(1 << nqubits):
+        if (index & left_bit) != 0 or (index & right_bit) != 0:
+            continue
+        both = index | left_bit | right_bit
+        left_only = index | left_bit
+        right_only = index | right_bit
+
+        old_zero = state[index]
+        old_both = state[both]
+        old_left = state[left_only]
+        old_right = state[right_only]
+        state[index] = cos * old_zero + plus * old_both
+        state[both] = plus * old_zero + cos * old_both
+        state[left_only] = cos * old_left + minus * old_right
+        state[right_only] = minus * old_left + cos * old_right
 
 
 def u3_matrix(theta: float, phi: float, lam: float) -> tuple[complex, complex, complex, complex]:
@@ -301,6 +361,10 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                             state[index] *= cmath.exp(-0.5j * angle)
                         else:
                             state[index] *= cmath.exp(0.5j * angle)
+            elif gate == "rxx":
+                apply_xx_rotation(state, nqubits, a, b, angle)
+            elif gate == "ryy":
+                apply_yy_rotation(state, nqubits, a, b, angle)
             elif gate == "rzz":
                 left_bit = 1 << a
                 right_bit = 1 << b
@@ -446,6 +510,18 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             rx(pi/4) q[0];
             ry(-pi/2) q[1];
             cx q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("10", "01"), ("11", "10")],
+        ),
+        (
+            "pauli_pair_rotations",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q;
+            rxx(pi/4) q[0], q[1];
+            ryy(-pi/2) q[0], q[1];
+            rzz(pi/4) q[0], q[1];
             """,
             [("00", "00"), ("00", "11"), ("10", "01"), ("11", "10")],
         ),
