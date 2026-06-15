@@ -50,9 +50,10 @@ External frameworks stay at the benchmark/import boundary.
 - `treewidth --treewidth-order min-fill-max-degree`: direct DP baseline for
   widened corpus tiers.
 - `branch --branch-heuristic split`: current hybrid backend; it splits
-  components and dispatches low-width residuals to treewidth.
-- `rankwidth`: decomposition-DP experiments; generated decompositions still need
-  improvement.
+  components and dispatches eligible residuals to treewidth or rankwidth.
+- `rankwidth`: exact decomposition-DP backend with labelled cut-signature
+  diagnostics and count-table/Fourier modes; useful for comparison and targeted
+  low-rank cases, but not the default corpus winner.
 - `brute-force`: small-instance oracle.
 
 ## QSOP Format
@@ -88,7 +89,9 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
 tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
-tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl
+tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md \
+  --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl \
+  --rankwidth-comparison-jsonl 65-128=rankwidth-comparison-65-128.jsonl
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
 tools/compare_rankwidth_backends.py --comparison-jsonl 33-64=rankwidth-comparison.jsonl --qsop-mode labelled
@@ -125,25 +128,16 @@ kernels, disconnected residual components multiply in Fourier space when a
 single exact-count modulus is enough, and CRT-prime branch passes still keep the
 count-table cache path.
 
-## Current Status And Remaining Gaps
+## Benchmark Status
 
 Treewidth DP is the production decomposition baseline, and
 `branch --branch-heuristic split` is the hybrid orchestrator for component
-splitting, structural probes, treewidth handoff, canonical small-residual
-caching, and residual branching. Rankwidth DP is exact and instrumented, but it
-remains an experimental handoff until labelled-tier forecast and table-pressure
-data show corpus-level wins over treewidth.
+splitting, structural probes, DP handoff, canonical small-residual caching, and
+residual branching. Rankwidth DP is exact and instrumented, with current
+scoreboard rows showing where its labelled cut signatures reduce table pressure
+and where runtime still loses to treewidth or branch.
 
-Known gaps before the long-term plan is complete:
-
-- Refresh native baselines after importer, cache, and rankwidth scoring changes.
-- Keep native amplitude agreement checks passing when importer or native-harness
-  changes alter the shared QASM comparison set.
-- Promote rankwidth only from full labelled-tier benchmark evidence, not
-  isolated microbenchmarks; the remaining work is to refresh 65-128 and
-  129-256 rankwidth rows against treewidth and branch under the same caps.
-- Split 257+ rows into low-width promotable cases and high-width timeout cases.
-- Keep importer expansion limited to static gates or quadratizations that stay
-  in labelled quadratic QSOP with controlled ancilla growth.
-- Add `sop2X` exporters only when a competitor-native non-QASM benchmark needs
-  them.
+The public performance artifact is [scoreboard.md](scoreboard.md). It includes
+solver coverage by tier, native amplitude checks, rankwidth-vs-backend
+comparisons for count-table and Fourier modes, 257-512 sample stratification,
+and the current best internal configuration per tier.
