@@ -169,7 +169,7 @@ def main() -> int:
             "`qiskit-statevector`",
             "## Native Common-Row Comparison",
             "### Synthetic",
-            "| synthetic | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.2 us | 5.7 us | 4.60x | 1 | 0 | 0 | 0 | 3 | 4 | 2.0 | 512 |  |",
+            "| synthetic | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.2 us | 5.7 us | 4.60x | 1 | 0 | 0 | 3 | 4 | 2.0 | 512 |  |",
         ):
             if expected not in completed.stdout:
                 raise AssertionError(f"missing {expected!r} in:\n{completed.stdout}")

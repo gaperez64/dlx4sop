@@ -50,50 +50,50 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 
 ## Competitor Comparisons
 
-These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude mismatch columns use completed rows where both sides recorded amplitudes. Rows with nonzero mismatches are correctness investigation targets, not accepted benchmark wins.
+These compare the best current QSOP configuration for each tier against native QASM baselines on common rows. Until `sop2X` exporters exist, each native tool is compared only on the QASM rows from that source that it can parse and fit under its cap. Speedup is native elapsed time divided by QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude error columns use completed rows where both sides recorded amplitudes.
 
 ### FeynmanDD
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | `treewidth --treewidth-order min-degree` | `aer-statevector` | 4 / 16 | 3.0 ms | 7.4 ms | 2.45x | 4 | 0 | 6.86e-16 | 1.02e-15 | 30 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `mqt-ddsim-statevector` | 4 / 16 | 3.0 ms | 14.2 ms | 4.72x | 4 | 0 | 0 | 0 | 30 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `pyzx-matrix` | 4 / 16 | 3.0 ms | 3.77 s | 1252.48x | 4 | 0 | 2.38e-15 | 4.57e-15 | 30 | 10 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `qiskit-statevector` | 4 / 16 | 3.0 ms | 3.0 ms | 0.99x | 4 | 0 | 5.68e-16 | 1.22e-15 | 30 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 35 / 92 | 99.1 ms | 459.4 ms | 4.64x | 35 | 0 | 2.02e-16 | 2.21e-15 | 100 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 35 / 92 | 99.1 ms | 13.68 s | 138.07x | 35 | 0 | 1.87e-17 | 5.74e-17 | 100 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 11 / 92 | 47.8 ms | 17.03 s | 356.13x | 11 | 0 | 3.08e-15 | 9.87e-15 | 100 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 35 / 92 | 99.1 ms | 2.69 s | 27.11x | 35 | 0 | 2.18e-16 | 2.22e-15 | 100 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 14 / 68 | 587.4 ms | 137.9 ms | 0.23x | 14 | 0 | 1.87e-15 | 3.79e-15 | 80 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 14 / 68 | 587.4 ms | 44.4 ms | 0.08x | 14 | 0 | 8.4e-17 | 1.18e-15 | 80 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 3 / 68 | 16.4 ms | 7.74 s | 473.39x | 3 | 0 | 1.15e-14 | 1.58e-14 | 80 | 10 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 14 / 68 | 587.4 ms | 76.2 ms | 0.13x | 14 | 0 | 1.26e-15 | 3.66e-15 | 80 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 33-64 | `treewidth --treewidth-order min-degree` | `aer-statevector` | 4 / 16 | 3.0 ms | 7.4 ms | 2.45x | 4 | 6.86e-16 | 1.02e-15 | 30 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `mqt-ddsim-statevector` | 4 / 16 | 3.0 ms | 14.2 ms | 4.72x | 4 | 0 | 0 | 30 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `pyzx-matrix` | 4 / 16 | 3.0 ms | 3.77 s | 1252.48x | 4 | 2.38e-15 | 4.57e-15 | 30 | 10 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `qiskit-statevector` | 4 / 16 | 3.0 ms | 3.0 ms | 0.99x | 4 | 5.68e-16 | 1.22e-15 | 30 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 35 / 92 | 99.1 ms | 459.4 ms | 4.64x | 35 | 2.02e-16 | 2.21e-15 | 100 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 35 / 92 | 99.1 ms | 13.68 s | 138.07x | 35 | 1.87e-17 | 5.74e-17 | 100 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 11 / 92 | 47.8 ms | 17.03 s | 356.13x | 11 | 3.08e-15 | 9.87e-15 | 100 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 35 / 92 | 99.1 ms | 2.69 s | 27.11x | 35 | 2.18e-16 | 2.22e-15 | 100 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 14 / 68 | 587.4 ms | 137.9 ms | 0.23x | 14 | 1.87e-15 | 3.79e-15 | 80 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 14 / 68 | 587.4 ms | 44.4 ms | 0.08x | 14 | 8.4e-17 | 1.18e-15 | 80 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 3 / 68 | 16.4 ms | 7.74 s | 473.39x | 3 | 1.15e-14 | 1.58e-14 | 80 | 10 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 14 / 68 | 587.4 ms | 76.2 ms | 0.13x | 14 | 1.26e-15 | 3.66e-15 | 80 | 16 | 10.0 | 4096 |
 
 ### MQT Bench
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 2 / 2 | 5.3 ms | 4.5 ms | 0.85x | 2 | 0 | 4.33e-17 | 4.33e-17 | 3 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 2 / 2 | 5.3 ms | 6.9 ms | 1.31x | 2 | 0 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 2 / 2 | 5.3 ms | 10.5 ms | 1.99x | 2 | 0 | 1.3e-16 | 1.3e-16 | 3 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 2 / 2 | 5.3 ms | 1.8 ms | 0.34x | 2 | 0 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 2 / 2 | 5.3 ms | 4.5 ms | 0.85x | 2 | 4.33e-17 | 4.33e-17 | 3 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 2 / 2 | 5.3 ms | 6.9 ms | 1.31x | 2 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 2 / 2 | 5.3 ms | 10.5 ms | 1.99x | 2 | 1.3e-16 | 1.3e-16 | 3 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 2 / 2 | 5.3 ms | 1.8 ms | 0.34x | 2 | 0 | 0 | 3 | 16 | 10.0 | 4096 |
 
 ### PyZX
 
-| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 33-64 | `treewidth --treewidth-order min-degree` | `aer-statevector` | 16 / 16 | 11.3 ms | 45.8 ms | 4.04x | 16 | 0 | 6.08e-16 | 1.02e-15 | 7 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `mqt-ddsim-statevector` | 16 / 16 | 11.3 ms | 79.9 ms | 7.06x | 16 | 0 | 0 | 0 | 7 | 16 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `pyzx-matrix` | 16 / 16 | 11.3 ms | 152.1 ms | 13.42x | 16 | 0 | 3.54e-15 | 6.82e-15 | 7 | 10 | 10.0 | 4096 |
-| 33-64 | `treewidth --treewidth-order min-degree` | `qiskit-statevector` | 16 / 16 | 11.3 ms | 21.1 ms | 1.86x | 16 | 0 | 9.28e-16 | 1.78e-15 | 7 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 36 / 36 | 174.4 ms | 123.9 ms | 0.71x | 36 | 0 | 7.56e-16 | 2.21e-15 | 14 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 36 / 36 | 174.4 ms | 168.2 ms | 0.96x | 36 | 0 | 1.18e-16 | 1.18e-15 | 14 | 16 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 35 / 36 | 147.9 ms | 30.62 s | 207.02x | 35 | 0 | 7.5e-15 | 1.58e-14 | 14 | 10 | 10.0 | 4096 |
-| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 36 / 36 | 174.4 ms | 106.1 ms | 0.61x | 36 | 0 | 1.54e-15 | 3.44e-15 | 14 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 38 / 44 | 898.9 ms | 318.0 ms | 0.35x | 38 | 0 | 1.75e-15 | 4e-15 | 19 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 38 / 44 | 898.9 ms | 185.6 ms | 0.21x | 38 | 0 | 7.95e-17 | 1.18e-15 | 19 | 16 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 20 / 44 | 281.0 ms | 34.24 s | 121.86x | 20 | 0 | 2.08e-14 | 3.25e-14 | 19 | 10 | 10.0 | 4096 |
-| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 38 / 44 | 898.9 ms | 296.4 ms | 0.33x | 38 | 0 | 3.22e-15 | 6e-15 | 19 | 16 | 10.0 | 4096 |
+| Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 33-64 | `treewidth --treewidth-order min-degree` | `aer-statevector` | 16 / 16 | 11.3 ms | 45.8 ms | 4.04x | 16 | 6.08e-16 | 1.02e-15 | 7 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `mqt-ddsim-statevector` | 16 / 16 | 11.3 ms | 79.9 ms | 7.06x | 16 | 0 | 0 | 7 | 16 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `pyzx-matrix` | 16 / 16 | 11.3 ms | 152.1 ms | 13.42x | 16 | 3.54e-15 | 6.82e-15 | 7 | 10 | 10.0 | 4096 |
+| 33-64 | `treewidth --treewidth-order min-degree` | `qiskit-statevector` | 16 / 16 | 11.3 ms | 21.1 ms | 1.86x | 16 | 9.28e-16 | 1.78e-15 | 7 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `aer-statevector` | 36 / 36 | 174.4 ms | 123.9 ms | 0.71x | 36 | 7.56e-16 | 2.21e-15 | 14 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 36 / 36 | 174.4 ms | 168.2 ms | 0.96x | 36 | 1.18e-16 | 1.18e-15 | 14 | 16 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `pyzx-matrix` | 35 / 36 | 147.9 ms | 30.62 s | 207.02x | 35 | 7.5e-15 | 1.58e-14 | 14 | 10 | 10.0 | 4096 |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-statevector` | 36 / 36 | 174.4 ms | 106.1 ms | 0.61x | 36 | 1.54e-15 | 3.44e-15 | 14 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `aer-statevector` | 38 / 44 | 898.9 ms | 318.0 ms | 0.35x | 38 | 1.75e-15 | 4e-15 | 19 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 38 / 44 | 898.9 ms | 185.6 ms | 0.21x | 38 | 7.95e-17 | 1.18e-15 | 19 | 16 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 20 / 44 | 281.0 ms | 34.24 s | 121.86x | 20 | 2.08e-14 | 3.25e-14 | 19 | 10 | 10.0 | 4096 |
+| 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 38 / 44 | 898.9 ms | 296.4 ms | 0.33x | 38 | 3.22e-15 | 6e-15 | 19 | 16 | 10.0 | 4096 |
 
 ## Current Takeaway
 

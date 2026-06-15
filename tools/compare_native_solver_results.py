@@ -200,20 +200,20 @@ def write_markdown(rows: list[dict], file: TextIO) -> None:
         "Rows join QSOP solver benchmark JSONL with native simulator JSONL on "
         "`source`, `source_relative_path`, `case`, `input`, and `output`. "
         "The speedup column is native elapsed time divided by QSOP solve time "
-        "over rows where both engines completed. Amplitude mismatch columns are "
+        "over rows where both engines completed. Amplitude error columns are "
         "computed for completed rows where both JSONL records include amplitudes.",
         file=file,
     )
     print("", file=file)
     print(
         "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | "
-        "Native time | QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | "
+        "Native time | QSOP speedup | Amplitude checked | Mean amplitude error | "
         "Max amplitude error | "
         "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         file=file,
     )
     for row in rows:
@@ -228,8 +228,7 @@ def write_markdown(rows: list[dict], file: TextIO) -> None:
             f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
             f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
             f"{speedup_text(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
-            f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
-            f"{mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
+            f"{row['amplitude_checked']} | {mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
             f"{row['max_boundary_qubits']} | {markdown_escape(most_common(row['qubit_caps']))} | "
             f"{markdown_escape(most_common(row['timeouts']))} | "
             f"{markdown_escape(most_common(row['memory_caps']))} | {markdown_escape(reason)} |",

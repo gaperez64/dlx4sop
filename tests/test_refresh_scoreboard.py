@@ -225,7 +225,7 @@ def main() -> int:
             "branch root tw probe width=6, 1 events/1.3 us",
             "max residual tw=5, cut-rank=12",
             "## Competitor Comparisons",
-            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
+            "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",
         ):
             if expected not in output:

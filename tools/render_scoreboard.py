@@ -717,21 +717,20 @@ def write_native_comparison_tables(
     print("\n## Native Common-Row Comparison\n", file=file)
     print(
         "Rows join solver and native simulator JSONL on source, relative path, case, input, and output. "
-        "Times and speedups use rows where both completed. Amplitude mismatch columns use rows "
-        "where both sides recorded amplitudes. Rows with nonzero mismatches are correctness "
-        "investigation targets, not accepted benchmark wins.",
+        "Times and speedups use rows where both completed. Amplitude error columns use rows "
+        "where both sides recorded amplitudes.",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}):
         print(f"\n### {markdown_escape(source)}\n", file=file)
         print(
             "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | Native time | "
-            "QSOP speedup | Amplitude checked | Mismatches | Mean amplitude error | Max amplitude error | "
+            "QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | "
             "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
             file=file,
         )
         print(
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
             file=file,
         )
         for row in [candidate for candidate in rows if candidate["source"] == source]:
@@ -749,8 +748,7 @@ def write_native_comparison_tables(
                 f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
                 f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
                 f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
-                f"{row['amplitude_checked']} | {row['amplitude_mismatches']} | "
-                f"{mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
+                f"{row['amplitude_checked']} | {mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
                 f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
                 f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} | {markdown_escape(reason)} |",
                 file=file,

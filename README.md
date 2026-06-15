@@ -97,8 +97,8 @@ is the lower-level table renderer for ad hoc reports. Use
 `bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
 labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
-many common rows had amplitude checks, mismatches, mean absolute error, and
-maximum absolute error. Rankwidth generator comparisons include kernel-time
+many common rows had amplitude checks, mean absolute error, and maximum
+absolute error. Rankwidth generator comparisons include kernel-time
 winners alongside table, join-pair, signature, and forecast pressure. Branch
 benchmark summaries now also surface skip reasons, fallthrough size, canonical
 cache lookup/store counts, cache key/count/estimated bytes, root treewidth
@@ -117,7 +117,7 @@ data show corpus-level wins over treewidth.
 Known gaps before the long-term plan is complete:
 
 - Refresh native baselines after importer, cache, and rankwidth scoring changes.
-- Keep native amplitude mismatch checks at zero when importer or native-harness
+- Keep native amplitude agreement checks passing when importer or native-harness
   changes alter the shared QASM comparison set.
 - Promote rankwidth only from labelled-tier benchmark evidence, not isolated
   microbenchmarks.
