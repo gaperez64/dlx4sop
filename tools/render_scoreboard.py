@@ -68,6 +68,7 @@ RANKWIDTH_KERNEL_MAX_FIELDS = tuple(
 COMPONENT_KERNEL_PREFIXES = (
     "components_convolution",
     "components_fourier_multiply",
+    "branch_fourier_multiply",
 )
 COMPONENT_KERNEL_SUM_FIELDS = tuple(
     field
@@ -242,6 +243,7 @@ def component_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
     for prefix, label in (
         ("components_convolution", "convolution"),
         ("components_fourier_multiply", "fourier"),
+        ("branch_fourier_multiply", "branch-fourier"),
     ):
         events = stats.get(f"{prefix}_events", 0)
         elapsed = stats.get(f"{prefix}_elapsed_ns", 0)

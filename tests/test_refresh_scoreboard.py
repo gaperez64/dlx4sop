@@ -76,6 +76,8 @@ def main() -> int:
         "components_convolution_elapsed_ns": 85,
         "components_fourier_multiply_events": 1,
         "components_fourier_multiply_elapsed_ns": 95,
+        "branch_fourier_multiply_events": 1,
+        "branch_fourier_multiply_elapsed_ns": 105,
         "rankwidth_join_map_events": 2,
         "rankwidth_join_map_elapsed_ns": 250,
         "rankwidth_join_map_max_items": 20,
@@ -197,7 +199,6 @@ def main() -> int:
         native_path = tmp_path / "native.jsonl"
         rankwidth_comparison_path = tmp_path / "rankwidth-comparison.jsonl"
         output_path = tmp_path / "scoreboard.md"
-        rankwidth_comparison_output = tmp_path / "rankwidth-backends.md"
         solver_path.write_text(
             json.dumps(fast_solver) + "\n" + json.dumps(slow_solver) + "\n",
             encoding="utf-8",
@@ -225,8 +226,6 @@ def main() -> int:
                 f"33-64={native_path}",
                 "--rankwidth-comparison-jsonl",
                 f"33-64={rankwidth_comparison_path}",
-                "--rankwidth-comparison-output",
-                str(rankwidth_comparison_output),
                 "--rankwidth-comparison-qsop-mode",
                 "labelled",
                 "--output",
@@ -257,7 +256,7 @@ def main() -> int:
             "cache bytes key=96, counts=64, estimated=256",
             "cache trace lookup=2 events/2.0 us, store=1 events/3.0 us",
             "canonical cache trace lookup=1 events/800 ns, store=1 events/900 ns",
-            "component kernels convolution=1/85 ns, fourier=1/95 ns",
+            "component kernels convolution=1/85 ns, fourier=1/95 ns, branch-fourier=1/105 ns",
             "rw table forecast 256",
             "rw join forecast 96",
             "rw labelled-cut-signature=4, support=6",
@@ -274,21 +273,16 @@ def main() -> int:
             "branch tw order width=3",
             "branch root tw probe width=6, 1 events/1.3 us",
             "max residual tw=5, cut-rank=12",
+            "## Rankwidth Backend Comparison",
+            "`rankwidth:min-fill-cut:count-table` | 1 / 1 | 900 ns | 1 | 4 | 0 ns | 4 | 2",
+            "| 33-64 | labelled | 1 | 1 | 0 | 900 ns | 1.0 us | -100 ns | 1 / 1 | 1 / 0 / 0 | 1 / 0 / 0 | 1 / 1 | -100 ns / -9.1 us | 0 |",
+            "Synthetic:bell 0->0",
             "## Competitor Comparisons",
             "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",
         ):
             if expected not in output:
                 raise AssertionError(f"missing {expected!r} in:\n{output}")
-        rankwidth_output = rankwidth_comparison_output.read_text(encoding="utf-8")
-        for expected in (
-            "# Rankwidth Backend Comparison",
-            "`rankwidth:min-fill-cut:count-table` | 1 / 1 | 900 ns | 1 | 4 | 0 ns | 4 | 2",
-            "| 33-64 | labelled | 1 | 1 | 0 | 900 ns | 1.0 us | -100 ns | 1 / 1 | 1 / 0 / 0 | 1 / 0 / 0 | 1 / 1 | -100 ns / -9.1 us | 0 |",
-            "Synthetic:bell 0->0",
-        ):
-            if expected not in rankwidth_output:
-                raise AssertionError(f"missing {expected!r} in:\n{rankwidth_output}")
     return 0
 
 

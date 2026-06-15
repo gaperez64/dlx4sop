@@ -311,8 +311,18 @@ def format_signed_ns(ns: int) -> str:
     return format_ns(ns)
 
 
-def write_markdown(records: list[dict], rankwidth_config: str, top: int, file: TextIO) -> None:
-    print("# Rankwidth Backend Comparison\n", file=file)
+def markdown_heading(level: int, title: str) -> str:
+    return f"{'#' * max(1, level)} {title}"
+
+
+def write_markdown(
+    records: list[dict],
+    rankwidth_config: str,
+    top: int,
+    file: TextIO,
+    heading_level: int = 1,
+) -> None:
+    print(f"{markdown_heading(heading_level, 'Rankwidth Backend Comparison')}\n", file=file)
     print(
         "Rows compare rankwidth against non-rankwidth backends on common "
         "source/case/boundary/QSOP-mode keys. Best competitor is the fastest "
@@ -320,7 +330,7 @@ def write_markdown(records: list[dict], rankwidth_config: str, top: int, file: T
         file=file,
     )
 
-    print("\n## Backend Summary\n", file=file)
+    print(f"\n{markdown_heading(heading_level + 1, 'Backend Summary')}\n", file=file)
     print(
         "| Tier | QSOP mode | Config | OK / records | Total solve time | Max width | "
         "Max table | Rankwidth kernel time | Forecast table pressure | Forecast join pressure |",
@@ -337,7 +347,7 @@ def write_markdown(records: list[dict], rankwidth_config: str, top: int, file: T
             file=file,
         )
 
-    print("\n## Rankwidth Vs Competitors\n", file=file)
+    print(f"\n{markdown_heading(heading_level + 1, 'Rankwidth Vs Competitors')}\n", file=file)
     print(
         f"Rankwidth config: `{markdown_escape(rankwidth_config)}`. "
         "Table and forecast comparisons are lower/equal/higher versus the fastest "
@@ -375,7 +385,7 @@ def write_markdown(records: list[dict], rankwidth_config: str, top: int, file: T
     wins = top_rankwidth_wins(records, rankwidth_config, top)
     if not wins:
         return
-    print("\n## Largest Rankwidth Time Wins\n", file=file)
+    print(f"\n{markdown_heading(heading_level + 1, 'Largest Rankwidth Time Wins')}\n", file=file)
     print(
         "| Tier | QSOP mode | Row | Rankwidth | Best competitor | Win | "
         "Table / forecast / join forecast |",

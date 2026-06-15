@@ -48,6 +48,7 @@ def main() -> int:
                 "treewidth.fourier_sum_out,2,4,50",
                 "components.convolution,0,8,85",
                 "components.fourier_multiply,0,8,95",
+                "branch.fourier_multiply,0,8,105",
                 "rankwidth.join_map,2,12,120",
                 "rankwidth.crt_join_map,2,20,130",
                 "rankwidth.join,2,18,240",
@@ -151,6 +152,8 @@ def main() -> int:
         "components_convolution_elapsed_ns": 85,
         "components_fourier_multiply_events": 1,
         "components_fourier_multiply_elapsed_ns": 95,
+        "branch_fourier_multiply_events": 1,
+        "branch_fourier_multiply_elapsed_ns": 105,
     }
     if component_kernel != expected_component_kernel:
         raise AssertionError(f"unexpected component kernel metrics: {component_kernel}")
@@ -199,20 +202,20 @@ def main() -> int:
     if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1810:
         raise AssertionError(f"unexpected rankwidth kernel elapsed: {kernel_record}")
 
-    if bench.trace_elapsed_ns(trace) != 5505:
+    if bench.trace_elapsed_ns(trace) != 5610:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
-        "branch.rankwidth_delegate:1100:20.0%,"
-        "branch.treewidth_delegate:700:12.7%,"
-        "treewidth.sum_out:500:9.1%"
+        "branch.rankwidth_delegate:1100:19.6%,"
+        "branch.treewidth_delegate:700:12.5%,"
+        "treewidth.sum_out:500:8.9%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 5505,
+        "trace_elapsed_ns": 5610,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 199818,
+        "trace_top_share_ppm": 196078,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")

@@ -70,6 +70,7 @@ RANKWIDTH_KERNEL_METRIC_FIELDS = tuple(
 COMPONENT_KERNEL_TRACE_GROUPS = (
     (("components.convolution",), "components_convolution"),
     (("components.fourier_multiply",), "components_fourier_multiply"),
+    (("branch.fourier_multiply",), "branch_fourier_multiply"),
 )
 COMPONENT_KERNEL_METRIC_FIELDS = tuple(
     field

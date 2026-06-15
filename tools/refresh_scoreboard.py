@@ -572,6 +572,8 @@ def write_scoreboard(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
     file: TextIO,
+    rankwidth_comparison_records: list[dict] | None = None,
+    rankwidth_comparison_top: int = 10,
 ) -> None:
     today = _datetime.date.today().isoformat()
     print("# Scoreboard\n", file=file)
@@ -585,6 +587,15 @@ def write_scoreboard(
     )
     write_benchmark_table(solver_records, file)
     write_solver_table(solver_records, file)
+    if rankwidth_comparison_records:
+        print("", file=file)
+        compare_rankwidth_backends.write_markdown(
+            rankwidth_comparison_records,
+            "rankwidth:min-fill-cut:count-table",
+            rankwidth_comparison_top,
+            file,
+            heading_level=2,
+        )
     write_competitor_tables(solver_records, native_records, file)
     write_takeaway(solver_records, file)
 
@@ -729,19 +740,25 @@ def main(argv: list[str]) -> int:
         native_paths.extend(args.native_jsonl)
         solver_records = read_named_jsonl(solver_paths, args.allow_missing)
         native_records = read_named_jsonl(native_paths, args.allow_missing)
+        rankwidth_records = read_rankwidth_comparison_records(
+            args.rankwidth_comparison_jsonl,
+            args.allow_missing,
+        )
+        if args.rankwidth_comparison_qsop_mode != "all":
+            rankwidth_records = [
+                record
+                for record in rankwidth_records
+                if record.get("qsop_mode") == args.rankwidth_comparison_qsop_mode
+            ]
         with args.output.open("w", encoding="utf-8") as output:
-            write_scoreboard(solver_records, native_records, output)
-        if args.rankwidth_comparison_output is not None:
-            rankwidth_records = read_rankwidth_comparison_records(
-                args.rankwidth_comparison_jsonl,
-                args.allow_missing,
+            write_scoreboard(
+                solver_records,
+                native_records,
+                output,
+                rankwidth_comparison_records=rankwidth_records,
+                rankwidth_comparison_top=args.rankwidth_comparison_top,
             )
-            if args.rankwidth_comparison_qsop_mode != "all":
-                rankwidth_records = [
-                    record
-                    for record in rankwidth_records
-                    if record.get("qsop_mode") == args.rankwidth_comparison_qsop_mode
-                ]
+        if args.rankwidth_comparison_output is not None:
             with args.rankwidth_comparison_output.open("w", encoding="utf-8") as output:
                 compare_rankwidth_backends.write_markdown(
                     rankwidth_records,

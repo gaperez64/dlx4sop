@@ -88,7 +88,7 @@ Benchmark tables can be refreshed from generated JSONL and import reports:
 
 ```sh
 tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
-tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl --rankwidth-comparison-output rankwidth-backends.md
+tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl
 tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
 tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
 tools/compare_rankwidth_backends.py --comparison-jsonl 33-64=rankwidth-comparison.jsonl --qsop-mode labelled
@@ -116,10 +116,12 @@ root treewidth probes, component splits, and DP-delegate trace counts so hybrid
 handoff decisions are visible without opening the raw trace.
 
 `sop-solve --solve-mode fourier` is the backend-neutral spelling for Fourier
-work. Rankwidth, treewidth, components, and brute-force have labelled Fourier
-kernels below the current 64-variable exact-count limit. Branch reports
-`solve_mode_kernel: hybrid-fourier`: eligible treewidth/rankwidth handoffs use
-their Fourier kernels, while residual search and CRT-prime passes still keep the
+work. Treewidth and rankwidth Fourier modes are CRT-backed for larger exact
+counts; components and brute-force keep the single-NTT-prime path below the
+64-variable exact-count limit. Branch reports `solve_mode_kernel:
+hybrid-fourier`: eligible treewidth/rankwidth handoffs use their Fourier
+kernels, disconnected residual components multiply in Fourier space when a
+single exact-count modulus is enough, and CRT-prime branch passes still keep the
 count-table cache path.
 
 ## Current Status And Remaining Gaps
