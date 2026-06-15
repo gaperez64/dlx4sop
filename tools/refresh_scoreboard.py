@@ -14,6 +14,7 @@ from render_scoreboard import (
     branch_dispatch_text,
     branch_skip_reason_text,
     cache_avoided_node_rate,
+    cache_canonical_entry_rate,
     cache_hit_rate,
     comparison_speedup,
     format_ns,
@@ -174,6 +175,7 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(
             f"cache entries={format_count(stats['cache_entries'])}, "
             f"canonical={format_count(stats.get('cache_canonical_entries', 0))}, "
+            f"canonical rate={cache_canonical_entry_rate(stats)}, "
             f"slots={format_count(stats.get('cache_stored_residue_slots', 0))}"
         )
     if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:

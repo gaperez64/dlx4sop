@@ -228,6 +228,13 @@ def cache_avoided_node_rate(stats: dict[str, int]) -> str:
     return f"{stats.get('cache_avoided_nodes', 0) / nodes:.3f}"
 
 
+def cache_canonical_entry_rate(stats: dict[str, int]) -> str:
+    entries = stats.get("cache_entries", 0)
+    if entries == 0:
+        return "n/a"
+    return f"{stats.get('cache_canonical_entries', 0) / entries:.3f}"
+
+
 def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
     grouped: dict[tuple[str, str], dict] = {}
     for tier, records in named_records:
@@ -350,6 +357,7 @@ def key_stats(stats: dict[str, int]) -> str:
             cache += (
                 f", entries {stats['cache_entries']}, "
                 f"canonical entries {stats.get('cache_canonical_entries', 0)}, "
+                f"canonical entry rate {cache_canonical_entry_rate(stats)}, "
                 f"slots {stats.get('cache_stored_residue_slots', 0)}"
             )
         parts.append(cache)

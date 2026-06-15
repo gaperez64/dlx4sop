@@ -89,6 +89,7 @@ TOP_METRICS = (
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
+    "cache_canonical_entry_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
     "cache_store_events",
@@ -185,6 +186,7 @@ CSV_FIELDS = [
     "cache_stored_residue_slots",
     "cache_hit_rate_ppm",
     "cache_avoided_node_rate_ppm",
+    "cache_canonical_entry_rate_ppm",
     "cache_lookup_events",
     "cache_lookup_elapsed_ns",
     "cache_store_events",
@@ -468,6 +470,10 @@ def cache_record_metrics(
     search_nodes = stats.get("search_nodes")
     if isinstance(avoided, int) and isinstance(search_nodes, int) and search_nodes:
         metrics["cache_avoided_node_rate_ppm"] = (avoided * 1_000_000) // search_nodes
+    canonical_entries = stats.get("cache_canonical_entries")
+    entries = stats.get("cache_entries")
+    if isinstance(canonical_entries, int) and isinstance(entries, int) and entries:
+        metrics["cache_canonical_entry_rate_ppm"] = (canonical_entries * 1_000_000) // entries
     for phase, events_key, elapsed_key in (
         ("cache_lookup", "cache_lookup_events", "cache_lookup_elapsed_ns"),
         ("cache_store", "cache_store_events", "cache_store_elapsed_ns"),
@@ -980,6 +986,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_stored_residue_slots",
             "cache_hit_rate_ppm",
             "cache_avoided_node_rate_ppm",
+            "cache_canonical_entry_rate_ppm",
             "cache_lookup_events",
             "cache_lookup_elapsed_ns",
             "cache_store_events",
@@ -1105,6 +1112,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f" cache_canonical_entries={stats.get('cache_canonical_entries', 0)}"
                     f" cache_slots={stats.get('cache_stored_residue_slots', 0)}"
                 )
+            if "cache_canonical_entry_rate_ppm" in record:
+                line += f" cache_canonical_entry_rate_ppm={record['cache_canonical_entry_rate_ppm']}"
             if "cache_lookup_elapsed_ns" in record:
                 line += f" cache_lookup_elapsed_ns={record['cache_lookup_elapsed_ns']}"
             if "cache_store_elapsed_ns" in record:
