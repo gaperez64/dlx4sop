@@ -89,7 +89,9 @@ is the lower-level table renderer for ad hoc reports. Use
 `bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
 labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
-many common rows had amplitude checks, mismatches, and maximum absolute error.
-Branch benchmark summaries now also surface skip reasons plus component-split
-and DP-delegate trace counts so hybrid handoff decisions are visible without
-opening the raw trace.
+many common rows had amplitude checks, mismatches, mean absolute error, and
+maximum absolute error. Rankwidth generator comparisons include kernel-time
+winners alongside table and signature pressure. Branch benchmark summaries now
+also surface skip reasons, fallthrough size, cache canonical-entry rate, root
+treewidth probes, component splits, and DP-delegate trace counts so hybrid
+handoff decisions are visible without opening the raw trace.
