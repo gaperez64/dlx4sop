@@ -707,6 +707,14 @@ def record_has_metric(record: dict, metric: str) -> bool:
     return isinstance(record.get(metric), int) or isinstance(record["stats"].get(metric), int)
 
 
+def record_rankwidth_kernel_elapsed_ns(record: dict) -> int:
+    return sum(
+        record_metric(record, field)
+        for field in RANKWIDTH_KERNEL_METRIC_FIELDS
+        if field.endswith("_elapsed_ns")
+    )
+
+
 def branch_skip_reason_parts(record: dict, fields: tuple[str, ...], prefix: str) -> list[str]:
     parts = []
     for field in fields:
@@ -1279,6 +1287,9 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
                 continue
             value = sum(values) if label in {"join_pairs", "join_signature_pairs"} else max(values)
             print(f"    {label}: {value}", file=file)
+        kernel_elapsed = sum(record_rankwidth_kernel_elapsed_ns(record) for record in ok)
+        if kernel_elapsed:
+            print(f"    rankwidth_kernel_elapsed_ns: {kernel_elapsed}", file=file)
         if ok:
             slowest = max(ok, key=lambda record: int(record["solve_elapsed_ns"]))
             print(

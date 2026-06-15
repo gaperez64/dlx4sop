@@ -125,6 +125,9 @@ def main() -> int:
     }
     if rankwidth_kernel != expected_rankwidth_kernel:
         raise AssertionError(f"unexpected rankwidth kernel metrics: {rankwidth_kernel}")
+    kernel_record = {"stats": {}, **rankwidth_kernel}
+    if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1540:
+        raise AssertionError(f"unexpected rankwidth kernel elapsed: {kernel_record}")
 
     if bench.trace_elapsed_ns(trace) != 5020:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
