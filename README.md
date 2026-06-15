@@ -85,59 +85,31 @@ build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
 ```
 
-Benchmark tables can be refreshed from generated JSONL and import reports:
+## Benchmarks
+
+The public performance summary is [scoreboard.md](scoreboard.md). Refresh it
+from generated JSONL artifacts with:
 
 ```sh
 tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
-tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md \
-  --rankwidth-comparison-jsonl 33-64=rankwidth-comparison.jsonl \
-  --rankwidth-comparison-jsonl 65-128=rankwidth-comparison-65-128.jsonl
-tools/render_scoreboard.py --import-report corpus-report.json --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
-tools/bench_qasm_corpus.py build/qasm2sop build/sop-solve --qsop-mode labelled --rankwidth-comparison --format jsonl --solver-timeout 10 > rankwidth-comparison.jsonl
-tools/compare_rankwidth_backends.py --comparison-jsonl 33-64=rankwidth-comparison.jsonl --qsop-mode labelled
-tools/compare_rankwidth_generators.py --rankwidth-jsonl 33-64=rankwidth-sweep.jsonl --qsop-mode labelled
-tools/compare_native_solver_results.py --solver-jsonl tier=solver.jsonl --native-jsonl tier=native.jsonl
-tools/bench_qasm_native_simulator.py corpus.json --engine all --max-qubits 16 --engine-qubit-cap pyzx-matrix=10 --timeout 10
 ```
 
-`refresh_scoreboard.py` is the public scoreboard path; `render_scoreboard.py`
-is the lower-level table renderer for ad hoc reports. Use
-`bench_qasm_corpus.py --qsop-mode labelled --rankwidth-diagnostics` for bounded
-labelled-rankwidth generator sweeps, or `--rankwidth-comparison` for the
-treewidth/branch/rankwidth comparison set used to decide whether rankwidth is a
-serious backend candidate. Rankwidth comparison runs include count-table and
-Fourier rows unless `--solve-mode` pins one mode. Solver benchmark JSONL includes QSOP
-amplitudes when stats are collected, and native comparison reports mark how
-many common rows had amplitude checks, mean absolute error, and maximum
-absolute error. Rankwidth records include support width, labelled cut-signature
-width, exact/proxy cut-estimator counts, forecast pressure, probe time, and
-kernel time. Rankwidth backend comparisons summarize common-row wins/losses
-against treewidth and branch, while rankwidth generator comparisons include
-kernel-time winners alongside table, join-pair, signature, and forecast
-pressure. Branch benchmark summaries now also surface skip reasons, fallthrough
-size, canonical cache lookup/store counts, cache key/count/estimated bytes,
-root treewidth probes, component splits, and DP-delegate trace counts so hybrid
-handoff decisions are visible without opening the raw trace.
+For a fuller local run, include native simulator checks and the larger sample:
 
-`sop-solve --solve-mode fourier` is the backend-neutral spelling for Fourier
-work. Treewidth and rankwidth Fourier modes are CRT-backed for larger exact
-counts; components and brute-force keep the single-NTT-prime path below the
-64-variable exact-count limit. Branch reports `solve_mode_kernel:
-hybrid-fourier`: eligible treewidth/rankwidth handoffs use their Fourier
-kernels, disconnected residual components multiply in Fourier space when a
-single exact-count modulus is enough, and CRT-prime branch passes still keep the
-count-table cache path.
+```sh
+tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
+```
 
-## Benchmark Status
+Useful benchmark helpers:
 
-Treewidth DP is the production decomposition baseline, and
-`branch --branch-heuristic split` is the hybrid orchestrator for component
-splitting, structural probes, DP handoff, canonical small-residual caching, and
-residual branching. Rankwidth DP is exact and instrumented, with current
-scoreboard rows showing where its labelled cut signatures reduce table pressure
-and where runtime still loses to treewidth or branch.
+- `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a corpus.
+- `tools/bench_qasm_native_simulator.py`: compare against supported native
+  simulators.
+- `tools/render_scoreboard.py`: render ad hoc reports when you already have
+  JSONL inputs.
 
-The public performance artifact is [scoreboard.md](scoreboard.md). It includes
-solver coverage by tier, native amplitude checks, rankwidth-vs-backend
-comparisons for count-table and Fourier modes, 257-512 sample stratification,
-and the current best internal configuration per tier.
+## Current Status
+
+[scoreboard.md](scoreboard.md) tracks corpus coverage, solver timings, native
+simulator comparisons, and the current recommended solver configuration for
+each benchmark tier.
