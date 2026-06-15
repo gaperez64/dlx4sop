@@ -94,6 +94,52 @@ def main() -> int:
         if "engine: qiskit-statevector" not in completed.stdout or "ok: 1" not in completed.stdout:
             raise AssertionError(f"unexpected native compatibility summary:\n{completed.stdout}")
 
+        try:
+            import mqt.ddsim  # noqa: F401
+        except ImportError:
+            return 0
+
+        manifest = [
+            {
+                "name": "ddsim_preserves_global_phase",
+                "qasm_lines": [
+                    "OPENQASM 2.0;",
+                    'include "qelib1.inc";',
+                    "qreg q[2];",
+                    "h q[0];",
+                    "h q[1];",
+                    "cz q[0],q[1];",
+                    "rz(-pi/2) q[0];",
+                ],
+                "boundaries": [["00", "00"]],
+            }
+        ]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                str(tool),
+                str(manifest_path),
+                "--engine",
+                "mqt-ddsim-statevector",
+                "--format",
+                "jsonl",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(f"DDSIM phase regression failed:\n{completed.stdout}\n{completed.stderr}")
+        records = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        if len(records) != 1 or records[0]["status"] != "ok":
+            raise AssertionError(f"unexpected DDSIM regression record:\n{completed.stdout}")
+        real = records[0]["amplitude_real"]
+        imag = records[0]["amplitude_imag"]
+        expected = 0.3535533905932738
+        if abs(real - expected) > 1e-12 or abs(imag - expected) > 1e-12:
+            raise AssertionError(f"DDSIM decomposition changed phase: {records[0]}")
+
     return 0
 
 

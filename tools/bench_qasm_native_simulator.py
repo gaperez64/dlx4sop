@@ -148,7 +148,7 @@ def mqt_ddsim_statevector_amplitude(qasm: str, input_bits: str, output_bits: str
     except ImportError as exc:
         raise RuntimeError("mqt.ddsim is not installed") from exc
 
-    circuit = qiskit_circuit_from_qasm(qasm, decompose=True)
+    circuit = qiskit_circuit_from_qasm(qasm)
     prepared = QuantumCircuit(circuit.num_qubits)
     if len(input_bits) > circuit.num_qubits:
         raise RuntimeError(f"input boundary uses {len(input_bits)} bits for {circuit.num_qubits} qubits")
@@ -156,7 +156,18 @@ def mqt_ddsim_statevector_amplitude(qasm: str, input_bits: str, output_bits: str
         if bit == "1":
             prepared.x(qubit)
     prepared.compose(circuit, inplace=True)
-    result = DDSIMProvider().get_backend("statevector_simulator").run(prepared, shots=0).result()
+    backend = DDSIMProvider().get_backend("statevector_simulator")
+    try:
+        result = backend.run(prepared, shots=0).result()
+    except Exception as exc:
+        if isinstance(exc, NativeTimeout):
+            raise
+        decomposed = QuantumCircuit(circuit.num_qubits)
+        for qubit, bit in enumerate(input_bits):
+            if bit == "1":
+                decomposed.x(qubit)
+        decomposed.compose(circuit.decompose(reps=1), inplace=True)
+        result = backend.run(decomposed, shots=0).result()
     state = result.data(0)["statevector"]
     return complex(state[state_index(output_bits)]), circuit.num_qubits
 

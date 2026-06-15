@@ -112,8 +112,8 @@ data show corpus-level wins over treewidth.
 Known gaps before the long-term plan is complete:
 
 - Refresh native baselines after importer, cache, and rankwidth scoring changes.
-- Resolve widened-tier native amplitude mismatches before treating those rows as
-  accepted benchmark wins.
+- Keep native amplitude mismatch checks at zero when importer or native-harness
+  changes alter the shared QASM comparison set.
 - Promote rankwidth only from labelled-tier benchmark evidence, not isolated
   microbenchmarks.
 - Split 257+ rows into low-width promotable cases and high-width timeout cases.
