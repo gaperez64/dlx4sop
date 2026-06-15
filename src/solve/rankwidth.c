@@ -112,17 +112,17 @@ typedef struct rw_labelled_cut_stats {
 
 static int compare_decomposition_scores(rw_decomposition_score_t left,
                                         rw_decomposition_score_t right) {
-  if (left.labelled_width != right.labelled_width) {
-    return left.labelled_width < right.labelled_width ? -1 : 1;
-  }
-  if (left.support_width != right.support_width) {
-    return left.support_width < right.support_width ? -1 : 1;
-  }
   if (left.table_forecast != right.table_forecast) {
     return left.table_forecast < right.table_forecast ? -1 : 1;
   }
   if (left.join_pair_forecast != right.join_pair_forecast) {
     return left.join_pair_forecast < right.join_pair_forecast ? -1 : 1;
+  }
+  if (left.labelled_width != right.labelled_width) {
+    return left.labelled_width < right.labelled_width ? -1 : 1;
+  }
+  if (left.support_width != right.support_width) {
+    return left.support_width < right.support_width ? -1 : 1;
   }
   return 0;
 }
