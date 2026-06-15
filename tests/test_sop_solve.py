@@ -74,6 +74,22 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{branch.stdout}\n"
         )
 
+    branch_fourier = subprocess.run(
+        [str(exe), "--backend", "branch", "--solve-mode", "fourier", str(qsop)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch_fourier.returncode != 0:
+        raise AssertionError(f"{name}: branch Fourier backend failed\n{branch_fourier.stderr}")
+    if branch_fourier.stdout != expected_text:
+        raise AssertionError(
+            f"{name}: branch Fourier residue-vector mismatch\n"
+            f"expected:\n{expected_text}\n"
+            f"actual:\n{branch_fourier.stdout}\n"
+        )
+
     components_fourier = subprocess.run(
         [str(exe), "--backend", "components", "--solve-mode", "fourier", str(qsop)],
         check=False,
@@ -140,6 +156,32 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
         raise AssertionError(
             f"{name}: components Fourier stats failed\n"
             f"{components_fourier_stats.stdout}\n{components_fourier_stats.stderr}"
+        )
+
+    branch_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "fourier",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        branch_fourier_stats.returncode != 0
+        or "solve_mode: fourier" not in branch_fourier_stats.stdout
+        or "solve_mode_kernel: hybrid-fourier" not in branch_fourier_stats.stdout
+    ):
+        raise AssertionError(
+            f"{name}: branch Fourier stats failed\n"
+            f"{branch_fourier_stats.stdout}\n{branch_fourier_stats.stderr}"
         )
 
 
@@ -376,6 +418,55 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
             f"branch root treewidth trace missing {expected_trace - trace_phases}\n{stats.stderr}"
         )
 
+    fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "32",
+            "--solve-mode",
+            "fourier",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_fourier_stats = {
+        "backend: branch",
+        "solve_mode: fourier",
+        "solve_mode_kernel: hybrid-fourier",
+        "treewidth_delegations: 1",
+    }
+    if fourier_stats.returncode != 0 or not all(
+        part in fourier_stats.stdout for part in expected_fourier_stats
+    ):
+        raise AssertionError(
+            f"branch root treewidth Fourier stats failed\n"
+            f"{fourier_stats.stdout}\n{fourier_stats.stderr}"
+        )
+    fourier_trace_phases = {
+        line.split(",", 1)[0] for line in fourier_stats.stderr.splitlines()[1:] if line
+    }
+    expected_fourier_trace = {
+        "branch.root_treewidth_delegate",
+        "treewidth.fourier_initial_factors",
+        "treewidth.fourier_multiply",
+        "treewidth.fourier_sum_out",
+    }
+    if not expected_fourier_trace.issubset(fourier_trace_phases):
+        raise AssertionError(
+            f"branch root treewidth Fourier trace missing "
+            f"{expected_fourier_trace - fourier_trace_phases}\n{fourier_stats.stderr}"
+        )
+
 
 def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
@@ -445,6 +536,55 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         raise AssertionError(
             f"branch rankwidth handoff trace missing {expected_trace - trace_phases}\n"
             f"{stats.stderr}"
+        )
+
+    fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--max-vars",
+            "40",
+            "--solve-mode",
+            "fourier",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_fourier_stats = {
+        "backend: branch",
+        "solve_mode: fourier",
+        "solve_mode_kernel: hybrid-fourier",
+        "rankwidth_delegations: 1",
+    }
+    if fourier_stats.returncode != 0 or not all(
+        part in fourier_stats.stdout for part in expected_fourier_stats
+    ):
+        raise AssertionError(
+            f"branch rankwidth Fourier handoff stats failed\n"
+            f"{fourier_stats.stdout}\n{fourier_stats.stderr}"
+        )
+    fourier_trace_phases = {
+        line.split(",", 1)[0] for line in fourier_stats.stderr.splitlines()[1:] if line
+    }
+    expected_fourier_trace = {
+        "branch.rankwidth_delegate",
+        "rankwidth.fourier_leaf",
+        "rankwidth.fourier_join_map",
+        "rankwidth.fourier_join",
+    }
+    if not expected_fourier_trace.issubset(fourier_trace_phases):
+        raise AssertionError(
+            f"branch rankwidth Fourier handoff trace missing "
+            f"{expected_fourier_trace - fourier_trace_phases}\n{fourier_stats.stderr}"
         )
 
 

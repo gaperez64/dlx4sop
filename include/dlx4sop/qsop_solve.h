@@ -202,6 +202,11 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
     qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error);
 
+bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint32_t nvars,
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);

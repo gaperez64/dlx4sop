@@ -94,6 +94,7 @@ typedef struct branch_search_stats {
   residual_cache_t cache;
   qsop_solve_trace_t *trace;
   qsop_branch_heuristic_t heuristic;
+  qsop_solve_mode_t mode;
   uint64_t count_modulus;
   uint32_t depth;
   uint32_t decomposition_width;
@@ -980,27 +981,38 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   }
 
   uint64_t *part_counts = NULL;
+  qsop_result_t *part_result = NULL;
   qsop_solve_stats_t delegated = {0};
   const uint64_t solve_start = qsop_trace_begin(stats->trace);
+  const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
   const bool ok =
-      qsop_counts_alloc(sub->r, &part_counts, error) &&
-      qsop_solve_rankwidth_count_table_mod_stats(sub, decomposition, stats->count_modulus,
-                                                 part_counts, &delegated, stats->trace, error);
+      use_fourier
+          ? qsop_solve_rankwidth_mode_trace_stats(sub, decomposition, sub->nvars,
+                                                  QSOP_RANKWIDTH_SOLVE_FOURIER, &part_result,
+                                                  &delegated, stats->trace, error)
+          : (qsop_counts_alloc(sub->r, &part_counts, error) &&
+             qsop_solve_rankwidth_count_table_mod_stats(sub, decomposition, stats->count_modulus,
+                                                        part_counts, &delegated, stats->trace,
+                                                        error));
   qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_delegate", stats->depth, sub->nvars,
                           solve_start);
   qsop_rankwidth_decomposition_free(decomposition);
   if (!ok) {
     free(part_counts);
+    qsop_result_free(part_result);
     return false;
   }
 
-  if (!branch_counts_shift_add(sub->r, counts, part_counts, constant_shift, stats, error)) {
+  const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
+  if (!branch_counts_shift_add(sub->r, counts, delegate_counts, constant_shift, stats, error)) {
     free(part_counts);
+    qsop_result_free(part_result);
     return false;
   }
   delegated.rankwidth_delegations = 1;
   merge_delegated_stats(stats, &delegated, sub->nvars);
   free(part_counts);
+  qsop_result_free(part_result);
   *out_delegated = true;
   return true;
 }
@@ -1071,32 +1083,42 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   }
 
   uint64_t *part_counts = NULL;
+  qsop_result_t *part_result = NULL;
   qsop_solve_stats_t delegated_stats = {0};
   const uint64_t solve_start = qsop_trace_begin(stats->trace);
+  const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
   const bool ok =
-      qsop_counts_alloc(sub.r, &part_counts, error) &&
-      qsop_solve_treewidth_precomputed_order_count_mod_stats(
-          &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
-          stats->count_modulus, part_counts, &delegated_stats, stats->trace, error);
+      use_fourier
+          ? qsop_solve_treewidth_precomputed_order_mode_trace_stats(
+                &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
+                QSOP_SOLVE_MODE_FOURIER, &part_result, &delegated_stats, stats->trace, error)
+          : (qsop_counts_alloc(sub.r, &part_counts, error) &&
+             qsop_solve_treewidth_precomputed_order_count_mod_stats(
+                 &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
+                 stats->count_modulus, part_counts, &delegated_stats, stats->trace, error));
   qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_delegate", stats->depth, sub.nvars,
                           solve_start);
   free(order);
   if (!ok) {
     free_subinstance(&sub);
     free(part_counts);
+    qsop_result_free(part_result);
     return false;
   }
 
-  if (!branch_counts_shift_add(sub.r, counts, part_counts, qsop_residual_constant(residual),
+  const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
+  if (!branch_counts_shift_add(sub.r, counts, delegate_counts, qsop_residual_constant(residual),
                                stats, error)) {
     free_subinstance(&sub);
     free(part_counts);
+    qsop_result_free(part_result);
     return false;
   }
   delegated_stats.treewidth_delegations = 1;
   merge_delegated_stats(stats, &delegated_stats, sub.nvars);
   free_subinstance(&sub);
   free(part_counts);
+  qsop_result_free(part_result);
   *out_delegated = true;
   return true;
 }
@@ -1116,13 +1138,15 @@ static void branch_search_free(branch_search_stats_t *search) {
 }
 
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
-                                     qsop_branch_heuristic_t heuristic, uint64_t *counts,
+                                     qsop_branch_heuristic_t heuristic,
+                                     qsop_solve_mode_t mode, uint64_t *counts,
                                      qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                      qsop_error_t *error) {
   qsop_residual_t *residual = NULL;
   branch_search_stats_t search = {
       .trace = trace,
       .heuristic = heuristic,
+      .mode = mode,
       .count_modulus = count_modulus,
   };
 
@@ -1581,7 +1605,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_
   for (size_t p = 0; p < nprimes; p++) {
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
-    if (!branch_solve_counts_once(qsop, primes[p], heuristic,
+    if (!branch_solve_counts_once(qsop, primes[p], heuristic, QSOP_SOLVE_MODE_COUNT_TABLE,
                                   &all_counts[p * (size_t)qsop->r], stats_for_prime,
                                   trace_for_prime, error)) {
       free(primes);
@@ -1662,6 +1686,7 @@ static bool support_component_count(const qsop_instance_t *qsop, uint32_t *out,
 static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qsop_result_t **out,
                                                 qsop_solve_stats_t *stats,
                                                 qsop_solve_trace_t *trace,
+                                                qsop_solve_mode_t mode,
                                                 bool *out_handled, qsop_error_t *error) {
   *out_handled = false;
   if (qsop->nvars < BRANCH_TREEWIDTH_DELEGATE_MIN_VARS || qsop->nedges == 0) {
@@ -1697,9 +1722,11 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   qsop_result_t *result = NULL;
   qsop_solve_stats_t delegated = {0};
   const uint64_t solve_start = qsop_trace_begin(trace);
-  if (!qsop_solve_treewidth_precomputed_order_trace_stats(
-          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, &result, &delegated, trace,
-          error)) {
+  const qsop_solve_mode_t delegate_mode =
+      qsop->nvars < 64U ? mode : QSOP_SOLVE_MODE_COUNT_TABLE;
+  if (!qsop_solve_treewidth_precomputed_order_mode_trace_stats(
+          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, delegate_mode, &result,
+          &delegated, trace, error)) {
     free(order);
     return false;
   }
@@ -1748,6 +1775,14 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
     qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
+  return qsop_solve_residual_branch_heuristic_mode_trace_stats(
+      qsop, max_vars, heuristic, QSOP_SOLVE_MODE_COUNT_TABLE, out, stats, trace, error);
+}
+
+bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -1761,6 +1796,10 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
     set_error(error, "internal error: null QSOP instance");
     return false;
   }
+  if (mode != QSOP_SOLVE_MODE_COUNT_TABLE && mode != QSOP_SOLVE_MODE_FOURIER) {
+    set_error(error, "internal error: unsupported residual branch solve mode");
+    return false;
+  }
   if (qsop->nvars > max_vars) {
     set_error(error,
               "residual branch solver refuses %" PRIu32
@@ -1769,7 +1808,7 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
     return false;
   }
   bool root_handled = false;
-  if (!branch_try_root_treewidth_fast_path(qsop, out, stats, trace, &root_handled, error)) {
+  if (!branch_try_root_treewidth_fast_path(qsop, out, stats, trace, mode, &root_handled, error)) {
     return false;
   }
   if (root_handled) {
@@ -1791,7 +1830,7 @@ bool qsop_solve_residual_branch_heuristic_trace_stats(
     return false;
   }
 
-  if (!branch_solve_counts_once(qsop, 0, heuristic, result->counts, stats, trace, error)) {
+  if (!branch_solve_counts_once(qsop, 0, heuristic, mode, result->counts, stats, trace, error)) {
     qsop_result_free(result);
     return false;
   }
