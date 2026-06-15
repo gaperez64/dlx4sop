@@ -435,6 +435,59 @@ bool qsop_fourier_find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime,
   return false;
 }
 
+bool qsop_fourier_find_ntt_primes_for_nvars(uint32_t r, uint32_t nvars, uint64_t **out_primes,
+                                            size_t *out_len, qsop_error_t *error) {
+  if (out_primes == NULL || out_len == NULL) {
+    set_error(error, "internal error: null Fourier CRT prime output");
+    return false;
+  }
+  *out_primes = NULL;
+  *out_len = 0;
+  if (r == 0) {
+    set_error(error, "Fourier CRT prime search requires nonzero modulus");
+    return false;
+  }
+  if (nvars < 64U) {
+    uint64_t *primes = calloc(1, sizeof(*primes));
+    if (primes == NULL) {
+      set_error(error, "out of memory while allocating Fourier CRT primes");
+      return false;
+    }
+    if (!qsop_fourier_find_ntt_prime(r, nvars, &primes[0], error)) {
+      free(primes);
+      return false;
+    }
+    *out_primes = primes;
+    *out_len = 1;
+    return true;
+  }
+
+  const size_t needed = (size_t)nvars / 63U + 1U;
+  uint64_t *primes = calloc(needed, sizeof(*primes));
+  if (primes == NULL) {
+    set_error(error, "out of memory while allocating Fourier CRT primes");
+    return false;
+  }
+
+  uint64_t k = (UINT64_MAX - 1U) / r;
+  size_t found = 0;
+  for (uint64_t attempts = 0; found < needed && attempts < UINT64_C(10000000) && k > 0;
+       attempts++, k--) {
+    const uint64_t candidate = k * (uint64_t)r + 1U;
+    if (qsop_mod_is_prime_u64(candidate)) {
+      primes[found++] = candidate;
+    }
+  }
+  if (found != needed) {
+    free(primes);
+    set_error(error, "Fourier CRT mode could not find enough 64-bit NTT primes");
+    return false;
+  }
+  *out_primes = primes;
+  *out_len = needed;
+  return true;
+}
+
 bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
                                   qsop_error_t *error) {
   if (root == NULL) {

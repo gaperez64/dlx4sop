@@ -262,6 +262,29 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if treewidth.returncode != 0 or treewidth.stdout != expected:
         raise AssertionError(f"large treewidth CRT solve failed\n{treewidth.stdout}\n{treewidth.stderr}")
 
+    treewidth_fourier = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if treewidth_fourier.returncode != 0 or treewidth_fourier.stdout != expected:
+        raise AssertionError(
+            f"large treewidth Fourier CRT solve failed\n"
+            f"{treewidth_fourier.stdout}\n{treewidth_fourier.stderr}"
+        )
+
     brute_force = subprocess.run(
         [str(exe), "--backend", "brute-force", "--max-vars", "64", "-"],
         input=qsop,
@@ -307,6 +330,32 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{labelled_branch.stderr}"
         )
 
+    labelled_treewidth_fourier = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "-",
+        ],
+        input=labelled_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        labelled_treewidth_fourier.returncode != 0
+        or labelled_treewidth_fourier.stdout != labelled_expected
+    ):
+        raise AssertionError(
+            f"large labelled treewidth Fourier CRT solve failed\n"
+            f"{labelled_treewidth_fourier.stdout}\n{labelled_treewidth_fourier.stderr}"
+        )
+
     rankwidth_fourier = subprocess.run(
         [
             str(exe),
@@ -324,14 +373,36 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
+    if rankwidth_fourier.returncode != 0 or rankwidth_fourier.stdout != expected:
+        raise AssertionError(
+            f"large rankwidth Fourier CRT solve failed\n"
+            f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
+        )
+
+    labelled_rankwidth_fourier = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "-",
+        ],
+        input=labelled_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     if (
-        rankwidth_fourier.returncode == 0
-        or "rankwidth Fourier mode currently requires fewer than 64 variables"
-        not in rankwidth_fourier.stderr
+        labelled_rankwidth_fourier.returncode != 0
+        or labelled_rankwidth_fourier.stdout != labelled_expected
     ):
         raise AssertionError(
-            f"large rankwidth Fourier guard did not trigger\n"
-            f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
+            f"large labelled rankwidth Fourier CRT solve failed\n"
+            f"{labelled_rankwidth_fourier.stdout}\n{labelled_rankwidth_fourier.stderr}"
         )
 
 
@@ -1819,6 +1890,34 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         int(row[1])
         int(row[2])
         int(row[3])
+
+    disconnected = source_root / "tests" / "golden" / "solve_disconnected.qsop"
+    fourier = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "fourier",
+            "--trace",
+            "csv",
+            str(disconnected),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        fourier.returncode != 0
+        or "solve_mode_kernel: hybrid-fourier" not in fourier.stdout
+        or "branch.fourier_multiply" not in fourier.stderr
+    ):
+        raise AssertionError(
+            f"branch Fourier component trace missing\n{fourier.stdout}\n{fourier.stderr}"
+        )
 
 
 def main() -> int:

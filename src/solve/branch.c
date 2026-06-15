@@ -308,6 +308,39 @@ static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *le
   return true;
 }
 
+static bool branch_counts_to_fourier(uint32_t r, const uint64_t *counts, const uint64_t *powers,
+                                     uint64_t prime, uint64_t *modes, qsop_error_t *error) {
+  if (r == 0 || counts == NULL || powers == NULL || modes == NULL) {
+    set_error(error, "internal error: invalid branch Fourier transform argument");
+    return false;
+  }
+  for (uint32_t mode = 0; mode < r; mode++) {
+    uint64_t value = 0;
+    for (uint32_t residue = 0; residue < r; residue++) {
+      const uint64_t count = counts[residue] % prime;
+      if (count == 0) {
+        continue;
+      }
+      const uint64_t weight = powers[(size_t)mode * r + residue];
+      value = qsop_mod_add_u64(value, qsop_mod_mul_u64(count, weight, prime), prime);
+    }
+    modes[mode] = value;
+  }
+  return true;
+}
+
+static bool branch_fourier_multiply(uint32_t r, uint64_t *acc, const uint64_t *part,
+                                    uint64_t prime, qsop_error_t *error) {
+  if (r == 0 || acc == NULL || part == NULL) {
+    set_error(error, "internal error: invalid branch Fourier multiply argument");
+    return false;
+  }
+  for (uint32_t mode = 0; mode < r; mode++) {
+    acc[mode] = qsop_mod_mul_u64(acc[mode], part[mode], prime);
+  }
+  return true;
+}
+
 static void residual_cache_key_free(residual_cache_key_t *key) {
   if (key == NULL) {
     return;
@@ -1233,9 +1266,15 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   *out_split = false;
   const uint32_t nvars = qsop_residual_nvars(residual);
   const uint32_t r = qsop_residual_modulus(residual);
+  const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
   uint64_t *acc = NULL;
   uint64_t *tmp = NULL;
+  uint64_t prime = 0;
+  uint64_t root = 0;
+  uint64_t inv_root = 0;
+  uint64_t *powers = NULL;
+  uint64_t *inv_powers = NULL;
   if (component == NULL || !qsop_counts_alloc(r, &acc, error) ||
       !qsop_counts_alloc(r, &tmp, error)) {
     free(component);
@@ -1268,7 +1307,30 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
-  acc[0] = 1;
+  if (use_fourier) {
+    if (!qsop_fourier_find_ntt_prime(r, qsop_residual_active_vars(residual), &prime, error) ||
+        !qsop_fourier_find_order_root(prime, r, &root, error)) {
+      free(component);
+      free(acc);
+      free(tmp);
+      return false;
+    }
+    inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
+    if (!qsop_fourier_make_root_powers(r, root, prime, &powers, error) ||
+        !qsop_fourier_make_root_powers(r, inv_root, prime, &inv_powers, error)) {
+      free(component);
+      free(acc);
+      free(tmp);
+      free(powers);
+      free(inv_powers);
+      return false;
+    }
+    for (uint32_t mode = 0; mode < r; mode++) {
+      acc[mode] = 1;
+    }
+  } else {
+    acc[0] = 1;
+  }
   for (uint32_t c = 0; c < ncomponents; c++) {
     qsop_instance_t sub = {0};
     uint64_t *part_counts = NULL;
@@ -1280,34 +1342,57 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
       free(component);
       free(acc);
       free(tmp);
+      free(powers);
+      free(inv_powers);
       return false;
     }
 
-    const uint64_t convolve_start = qsop_trace_begin(stats->trace);
-    if (!branch_counts_convolve(r, tmp, acc, part_counts, stats, error)) {
+    const uint64_t combine_start = qsop_trace_begin(stats->trace);
+    const bool combined =
+        use_fourier
+            ? (branch_counts_to_fourier(r, part_counts, powers, prime, tmp, error) &&
+               branch_fourier_multiply(r, acc, tmp, prime, error))
+            : branch_counts_convolve(r, tmp, acc, part_counts, stats, error);
+    if (!combined) {
       free_subinstance(&sub);
       free(part_counts);
       free(component);
       free(acc);
       free(tmp);
+      free(powers);
+      free(inv_powers);
       return false;
     }
-    qsop_trace_emit_elapsed(stats->trace, "branch.convolution", stats->depth, r, convolve_start);
+    qsop_trace_emit_elapsed(stats->trace,
+                            use_fourier ? "branch.fourier_multiply" : "branch.convolution",
+                            stats->depth, r, combine_start);
 
-    memcpy(acc, tmp, (size_t)r * sizeof(*acc));
+    if (!use_fourier) {
+      memcpy(acc, tmp, (size_t)r * sizeof(*acc));
+    }
     free_subinstance(&sub);
     free(part_counts);
   }
 
-  if (!branch_counts_shift_add(r, counts, acc, qsop_residual_constant(residual), stats, error)) {
+  const bool finalized =
+      use_fourier
+          ? qsop_fourier_inverse_counts(r, acc, qsop_residual_constant(residual), powers,
+                                        inv_powers, prime, counts, error)
+          : branch_counts_shift_add(r, counts, acc, qsop_residual_constant(residual), stats,
+                                    error);
+  if (!finalized) {
     free(component);
     free(acc);
     free(tmp);
+    free(powers);
+    free(inv_powers);
     return false;
   }
   free(component);
   free(acc);
   free(tmp);
+  free(powers);
+  free(inv_powers);
   *out_split = true;
   return true;
 }
@@ -1722,11 +1807,9 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   qsop_result_t *result = NULL;
   qsop_solve_stats_t delegated = {0};
   const uint64_t solve_start = qsop_trace_begin(trace);
-  const qsop_solve_mode_t delegate_mode =
-      qsop->nvars < 64U ? mode : QSOP_SOLVE_MODE_COUNT_TABLE;
   if (!qsop_solve_treewidth_precomputed_order_mode_trace_stats(
-          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, delegate_mode, &result,
-          &delegated, trace, error)) {
+          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, mode, &result, &delegated,
+          trace, error)) {
     free(order);
     return false;
   }

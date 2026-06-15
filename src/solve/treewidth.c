@@ -1161,10 +1161,32 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
   return true;
 }
 
-static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
-                                         const uint32_t *order, uint32_t order_width,
-                                         uint64_t *counts, qsop_solve_stats_t *stats,
-                                         qsop_solve_trace_t *trace, qsop_error_t *error) {
+static bool treewidth_fourier_prime_state(uint32_t r, uint64_t prime, uint64_t **powers_out,
+                                          uint64_t **inv_powers_out, qsop_error_t *error) {
+  uint64_t root = 0;
+  uint64_t inv_root = 0;
+  uint64_t *powers = NULL;
+  uint64_t *inv_powers = NULL;
+  if (!qsop_fourier_find_order_root(prime, r, &root, error)) {
+    return false;
+  }
+  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
+  if (!qsop_fourier_make_root_powers(r, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(r, inv_root, prime, &inv_powers, error)) {
+    free(powers);
+    free(inv_powers);
+    return false;
+  }
+  *powers_out = powers;
+  *inv_powers_out = inv_powers;
+  return true;
+}
+
+static bool solve_treewidth_fourier_mod_once(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint64_t prime, const uint64_t *powers,
+    const uint64_t *inv_powers, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (stats != NULL) {
     *stats = (qsop_solve_stats_t){0};
   }
@@ -1172,33 +1194,10 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
     set_error(error, "internal error: null treewidth Fourier solve argument");
     return false;
   }
-  if (qsop->nvars >= 64U) {
-    set_error(error,
-              "treewidth Fourier mode currently requires fewer than 64 variables; use "
-              "count-table mode for CRT-backed larger solves");
-    return false;
-  }
   if (max_bag_vars == 0 && qsop->nvars != 0) {
     set_error(error,
               "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
               "--max-vars");
-    return false;
-  }
-
-  uint64_t prime = 0;
-  uint64_t root = 0;
-  uint64_t inv_root = 0;
-  uint64_t *powers = NULL;
-  uint64_t *inv_powers = NULL;
-  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
-      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
-    return false;
-  }
-  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
-  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
-      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
-    free(powers);
-    free(inv_powers);
     return false;
   }
 
@@ -1217,8 +1216,6 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
   tw_factor_list_t factors = {0};
   const uint64_t factors_start = qsop_trace_begin(trace);
   if (!build_initial_factors_fourier(qsop, powers, &factors, error)) {
-    free(powers);
-    free(inv_powers);
     factor_list_free(&factors);
     return false;
   }
@@ -1227,8 +1224,6 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
 
   for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
     if (!eliminate_variable_fourier(&factors, order[pos], &ctx, error)) {
-      free(powers);
-      free(inv_powers);
       factor_list_free(&factors);
       return false;
     }
@@ -1236,14 +1231,10 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
 
   tw_factor_t final = {0};
   if (!multiply_remaining_factors_fourier(&factors, &ctx, &final, error)) {
-    free(powers);
-    free(inv_powers);
     factor_list_free(&factors);
     return false;
   }
   if (final.arity != 0) {
-    free(powers);
-    free(inv_powers);
     factor_list_free(&factors);
     factor_free(&final);
     set_error(error, "internal error: treewidth Fourier solve left an uneliminated factor");
@@ -1252,11 +1243,103 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
   const bool ok = qsop_fourier_inverse_counts(qsop->r, final.counts, qsop->constant, powers,
                                               inv_powers, prime, counts, error);
 
-  free(powers);
-  free(inv_powers);
   factor_list_free(&factors);
   factor_free(&final);
   return ok;
+}
+
+static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                         const uint32_t *order, uint32_t order_width,
+                                         qsop_result_t **out, qsop_solve_stats_t *stats,
+                                         qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "treewidth Fourier CRT count table is too large");
+    return false;
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  if (result == NULL || all_counts == NULL || residues == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating treewidth Fourier CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (nprimes == 1U) {
+    if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  } else {
+    result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+    if (result->count_strings == NULL) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      set_error(error, "out of memory while allocating treewidth Fourier CRT result strings");
+      return false;
+    }
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    uint64_t *powers = NULL;
+    uint64_t *inv_powers = NULL;
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    const bool ok =
+        treewidth_fourier_prime_state(qsop->r, primes[p], &powers, &inv_powers, error) &&
+        solve_treewidth_fourier_mod_once(
+            qsop, max_bag_vars, order, order_width, primes[p], powers, inv_powers,
+            &all_counts[p * (size_t)qsop->r], stats_for_prime, trace_for_prime, error);
+    free(powers);
+    free(inv_powers);
+    if (!ok) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  if (nprimes == 1U) {
+    memcpy(result->counts, all_counts, (size_t)qsop->r * sizeof(*result->counts));
+  } else {
+    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+      for (size_t p = 0; p < nprimes; p++) {
+        residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      }
+      if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                        &result->count_strings[residue], error)) {
+        free(primes);
+        free(all_counts);
+        free(residues);
+        qsop_result_free(result);
+        return false;
+      }
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
+  return true;
 }
 
 static bool solve_treewidth_order_policy_once(
@@ -1279,7 +1362,7 @@ static bool solve_treewidth_order_policy_once(
 
 static bool solve_treewidth_fourier_order_policy_once(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
-    uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
   uint32_t *order = NULL;
   uint32_t width = 0;
@@ -1290,7 +1373,7 @@ static bool solve_treewidth_fourier_order_policy_once(
   qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
                           order_start);
   const bool ok =
-      solve_treewidth_fourier_once(qsop, max_bag_vars, order, width, counts, stats, trace, error);
+      solve_treewidth_fourier_once(qsop, max_bag_vars, order, width, out, stats, trace, error);
   free(order);
   return ok;
 }
@@ -1520,15 +1603,13 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
-  if (qsop->nvars >= 64U) {
-    if (mode == QSOP_SOLVE_MODE_FOURIER) {
-      set_error(error,
-                "treewidth Fourier mode currently requires fewer than 64 variables; use "
-                "count-table mode for CRT-backed larger solves");
-      return false;
-    }
+  if (qsop->nvars >= 64U && mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return solve_treewidth_precomputed_crt(qsop, max_bag_vars, order, order_width, out, stats,
                                            trace, error);
+  }
+  if (mode == QSOP_SOLVE_MODE_FOURIER) {
+    return solve_treewidth_fourier_once(qsop, max_bag_vars, order, order_width, out, stats, trace,
+                                        error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -1542,12 +1623,8 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     qsop_result_free(result);
     return false;
   }
-  const bool ok =
-      mode == QSOP_SOLVE_MODE_FOURIER
-          ? solve_treewidth_fourier_once(qsop, max_bag_vars, order, order_width, result->counts,
-                                         stats, trace, error)
-          : solve_treewidth_once(qsop, max_bag_vars, order, order_width, 0, result->counts, stats,
-                                 trace, error);
+  const bool ok = solve_treewidth_once(qsop, max_bag_vars, order, order_width, 0, result->counts,
+                                       stats, trace, error);
   if (!ok) {
     qsop_result_free(result);
     return false;
@@ -1581,14 +1658,12 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
     set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
-  if (qsop->nvars >= 64U) {
-    if (mode == QSOP_SOLVE_MODE_FOURIER) {
-      set_error(error,
-                "treewidth Fourier mode currently requires fewer than 64 variables; use "
-                "count-table mode for CRT-backed larger solves");
-      return false;
-    }
+  if (qsop->nvars >= 64U && mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return solve_treewidth_crt(qsop, max_bag_vars, order_policy, out, stats, trace, error);
+  }
+  if (mode == QSOP_SOLVE_MODE_FOURIER) {
+    return solve_treewidth_fourier_order_policy_once(qsop, max_bag_vars, order_policy, out, stats,
+                                                     trace, error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -1602,12 +1677,8 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
     qsop_result_free(result);
     return false;
   }
-  const bool ok =
-      mode == QSOP_SOLVE_MODE_FOURIER
-          ? solve_treewidth_fourier_order_policy_once(qsop, max_bag_vars, order_policy,
-                                                      result->counts, stats, trace, error)
-          : solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, 0,
-                                              result->counts, stats, trace, error);
+  const bool ok = solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, 0,
+                                                    result->counts, stats, trace, error);
   if (!ok) {
     qsop_result_free(result);
     return false;

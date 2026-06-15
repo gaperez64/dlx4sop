@@ -3422,54 +3422,45 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
   return ok;
 }
 
-static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
-                                    const qsop_rankwidth_decomposition_t *decomposition,
-                                    const uint64_t *adj, qsop_result_t **out,
-                                    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                                    qsop_error_t *error) {
-  if (qsop->nvars >= 64U) {
-    set_error(error,
-              "rankwidth Fourier mode currently requires fewer than 64 variables; use "
-              "count-table mode for CRT-backed larger solves");
-    return false;
-  }
-  uint64_t prime = 0;
+static bool rankwidth_fourier_prime_state(uint32_t r, uint64_t prime, uint64_t *root_out,
+                                          uint64_t **powers_out, uint64_t **inv_powers_out,
+                                          qsop_error_t *error) {
   uint64_t root = 0;
   uint64_t inv_root = 0;
   uint64_t *powers = NULL;
   uint64_t *inv_powers = NULL;
-  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
-      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
+  if (!qsop_fourier_find_order_root(prime, r, &root, error)) {
     return false;
   }
   inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
-  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
-      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
+  if (!qsop_fourier_make_root_powers(r, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(r, inv_root, prime, &inv_powers, error)) {
     free(powers);
     free(inv_powers);
     return false;
   }
+  *root_out = root;
+  *powers_out = powers;
+  *inv_powers_out = inv_powers;
+  return true;
+}
 
-  qsop_result_t *result = calloc(1, sizeof(*result));
+static bool solve_rankwidth_fourier_mod_once(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, uint64_t prime, const uint64_t *powers, const uint64_t *inv_powers,
+    uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
   rw_fourier_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
-  if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
-    free(powers);
-    free(inv_powers);
+  if (tables == NULL) {
     free(tables);
-    qsop_result_free(result);
     set_error(error, "out of memory while allocating rankwidth Fourier solve state");
     return false;
   }
-  result->r = qsop->r;
-  result->norm_h = qsop->norm_h;
 
   rw_signature_pool_t pool = {0};
   if (!signature_pool_init(&pool, decomposition->words, error)) {
-    free(powers);
-    free(inv_powers);
     free(tables);
-    qsop_result_free(result);
     return false;
   }
 
@@ -3507,10 +3498,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
         fourier_table_free(&tables[t]);
       }
       free(tables);
-      free(powers);
-      free(inv_powers);
       signature_pool_free(&pool);
-      qsop_result_free(result);
       return false;
     }
     const uint64_t node_entries = (uint64_t)tables[node_id].len * qsop->r;
@@ -3525,16 +3513,12 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   }
 
   const rw_fourier_table_t *root_table = &tables[decomposition->root];
-  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts,
-                                     error)) {
+  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, counts, error)) {
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
     }
     free(tables);
-    free(powers);
-    free(inv_powers);
     signature_pool_free(&pool);
-    qsop_result_free(result);
     return false;
   }
 
@@ -3551,10 +3535,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
         fourier_table_free(&tables[t]);
       }
       free(tables);
-      free(powers);
-      free(inv_powers);
       signature_pool_free(&pool);
-      qsop_result_free(result);
       return false;
     }
   }
@@ -3563,60 +3544,123 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
     fourier_table_free(&tables[t]);
   }
   free(tables);
-  free(powers);
-  free(inv_powers);
   signature_pool_free(&pool);
-  *out = result;
   return true;
 }
 
-static bool solve_rankwidth_labelled_fourier(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error) {
-  if (qsop->nvars >= 64U) {
-    set_error(error,
-              "rankwidth Fourier mode currently requires fewer than 64 variables; use "
-              "count-table mode for CRT-backed larger solves");
+static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
+                                    const qsop_rankwidth_decomposition_t *decomposition,
+                                    const uint64_t *adj, qsop_result_t **out,
+                                    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                    qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  uint64_t prime = 0;
-  uint64_t root = 0;
-  uint64_t inv_root = 0;
-  uint64_t *powers = NULL;
-  uint64_t *inv_powers = NULL;
-  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
-      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
-    return false;
-  }
-  inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
-  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
-      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
-    free(powers);
-    free(inv_powers);
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "rankwidth Fourier CRT count table is too large");
     return false;
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  rw_fourier_table_t *tables =
-      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
-  if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
-    free(powers);
-    free(inv_powers);
-    free(tables);
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  if (result == NULL || all_counts == NULL || residues == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating labelled rankwidth Fourier solve state");
+    set_error(error, "out of memory while allocating rankwidth Fourier CRT solve state");
     return false;
   }
   result->r = qsop->r;
   result->norm_h = qsop->norm_h;
+  if (nprimes == 1U) {
+    if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  } else {
+    result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+    if (result->count_strings == NULL) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      set_error(error, "out of memory while allocating rankwidth Fourier CRT result strings");
+      return false;
+    }
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    uint64_t root = 0;
+    uint64_t *powers = NULL;
+    uint64_t *inv_powers = NULL;
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    const bool ok =
+        rankwidth_fourier_prime_state(qsop->r, primes[p], &root, &powers, &inv_powers, error) &&
+        solve_rankwidth_fourier_mod_once(qsop, decomposition, adj, primes[p], powers, inv_powers,
+                                         &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                                         trace_for_prime, error);
+    (void)root;
+    free(powers);
+    free(inv_powers);
+    if (!ok) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  if (nprimes == 1U) {
+    memcpy(result->counts, all_counts, (size_t)qsop->r * sizeof(*result->counts));
+  } else {
+    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+      for (size_t p = 0; p < nprimes; p++) {
+        residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      }
+      if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                        &result->count_strings[residue], error)) {
+        free(primes);
+        free(all_counts);
+        free(residues);
+        qsop_result_free(result);
+        return false;
+      }
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
+  return true;
+}
+
+static bool solve_rankwidth_labelled_fourier_mod_once(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, uint64_t prime, const uint64_t *powers,
+    const uint64_t *inv_powers, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  rw_fourier_table_t *tables =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
+  if (tables == NULL) {
+    free(tables);
+    set_error(error, "out of memory while allocating labelled rankwidth Fourier solve state");
+    return false;
+  }
 
   rw_label_signature_pool_t pool = {0};
   if (!label_signature_pool_init(&pool, qsop->nvars, error)) {
-    free(powers);
-    free(inv_powers);
     free(tables);
-    qsop_result_free(result);
     return false;
   }
 
@@ -3656,10 +3700,7 @@ static bool solve_rankwidth_labelled_fourier(
         fourier_table_free(&tables[t]);
       }
       free(tables);
-      free(powers);
-      free(inv_powers);
       label_signature_pool_free(&pool);
-      qsop_result_free(result);
       return false;
     }
     const uint64_t node_entries = (uint64_t)tables[node_id].len * qsop->r;
@@ -3674,16 +3715,12 @@ static bool solve_rankwidth_labelled_fourier(
   }
 
   const rw_fourier_table_t *root_table = &tables[decomposition->root];
-  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, result->counts,
-                                     error)) {
+  if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, counts, error)) {
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
     }
     free(tables);
-    free(powers);
-    free(inv_powers);
     label_signature_pool_free(&pool);
-    qsop_result_free(result);
     return false;
   }
 
@@ -3701,9 +3738,102 @@ static bool solve_rankwidth_labelled_fourier(
     fourier_table_free(&tables[t]);
   }
   free(tables);
-  free(powers);
-  free(inv_powers);
   label_signature_pool_free(&pool);
+  return true;
+}
+
+static bool solve_rankwidth_labelled_fourier(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "labelled rankwidth Fourier CRT count table is too large");
+    return false;
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  if (result == NULL || all_counts == NULL || residues == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating labelled rankwidth Fourier CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (nprimes == 1U) {
+    if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  } else {
+    result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+    if (result->count_strings == NULL) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      set_error(error, "out of memory while allocating labelled rankwidth Fourier CRT result strings");
+      return false;
+    }
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    uint64_t root = 0;
+    uint64_t *powers = NULL;
+    uint64_t *inv_powers = NULL;
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    const bool ok =
+        rankwidth_fourier_prime_state(qsop->r, primes[p], &root, &powers, &inv_powers, error) &&
+        solve_rankwidth_labelled_fourier_mod_once(
+            qsop, decomposition, coeffs, primes[p], powers, inv_powers,
+            &all_counts[p * (size_t)qsop->r], stats_for_prime, trace_for_prime, error);
+    (void)root;
+    free(powers);
+    free(inv_powers);
+    if (!ok) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  if (nprimes == 1U) {
+    memcpy(result->counts, all_counts, (size_t)qsop->r * sizeof(*result->counts));
+  } else {
+    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+      for (size_t p = 0; p < nprimes; p++) {
+        residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      }
+      if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                        &result->count_strings[residue], error)) {
+        free(primes);
+        free(all_counts);
+        free(residues);
+        qsop_result_free(result);
+        return false;
+      }
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
   *out = result;
   return true;
 }
