@@ -94,8 +94,29 @@ labelled-rankwidth generator sweeps. Solver benchmark JSONL includes QSOP
 amplitudes when stats are collected, and native comparison reports mark how
 many common rows had amplitude checks, mismatches, mean absolute error, and
 maximum absolute error. Rankwidth generator comparisons include kernel-time
-winners alongside table and signature pressure. Branch benchmark summaries now
-also surface skip reasons, fallthrough size, cache canonical-entry rate, cache
-key/count/estimated bytes, root treewidth probes, component splits, and
-DP-delegate trace counts so hybrid handoff decisions are visible without
-opening the raw trace.
+winners alongside table, join-pair, signature, and forecast pressure. Branch
+benchmark summaries now also surface skip reasons, fallthrough size, canonical
+cache lookup/store counts, cache key/count/estimated bytes, root treewidth
+probes, component splits, and DP-delegate trace counts so hybrid handoff
+decisions are visible without opening the raw trace.
+
+## Current Status And Remaining Gaps
+
+Treewidth DP is the production decomposition baseline, and
+`branch --branch-heuristic split` is the hybrid orchestrator for component
+splitting, structural probes, treewidth handoff, canonical small-residual
+caching, and residual branching. Rankwidth DP is exact and instrumented, but it
+remains an experimental handoff until labelled-tier forecast and table-pressure
+data show corpus-level wins over treewidth.
+
+Known gaps before the long-term plan is complete:
+
+- Refresh promoted corpus and native baselines after importer, cache, and
+  rankwidth scoring changes.
+- Promote rankwidth only from labelled-tier benchmark evidence, not isolated
+  microbenchmarks.
+- Split 257+ rows into low-width promotable cases and high-width timeout cases.
+- Keep importer expansion limited to static gates or quadratizations that stay
+  in labelled quadratic QSOP with controlled ancilla growth.
+- Add `sop2X` exporters only when a competitor-native non-QASM benchmark needs
+  them.

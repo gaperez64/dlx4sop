@@ -107,6 +107,8 @@ def main() -> int:
             "cache_key_bytes": 96,
             "cache_count_bytes": 64,
             "cache_estimated_bytes": 256,
+            "max_residual_min_fill_width": 5,
+            "max_residual_linear_cut_rank": 12,
         },
     }
     large_solver = {
@@ -221,6 +223,7 @@ def main() -> int:
             "branch join forecast rw=9, tw=64",
             "branch tw order width=3",
             "branch root tw probe width=6, 1 events/1.3 us",
+            "max residual tw=5, cut-rank=12",
             "## Competitor Comparisons",
             "| 33-64 | `treewidth --treewidth-order min-fill` | `qiskit-statevector` | 1 / 1 | 1.0 us | 2.0 us | 2.00x | 1 | 0 | 0 | 0 | 1 | 16 | 10.0 | 4096 |",
             "## Current Takeaway",

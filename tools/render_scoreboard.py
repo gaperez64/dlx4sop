@@ -63,6 +63,9 @@ RANKWIDTH_KERNEL_SUM_FIELDS = tuple(
 RANKWIDTH_KERNEL_MAX_FIELDS = tuple(
     f"{prefix}_max_items" for prefix in RANKWIDTH_KERNEL_PREFIXES
 )
+LEGACY_STAT_ALIASES = {
+    "max_residual_prefix_cut_rank": "max_residual_linear_cut_rank",
+}
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -126,6 +129,9 @@ def stat_value(record: dict, key: str) -> int | None:
         return value
     stats = record.get("stats", {})
     value = stats.get(key) if isinstance(stats, dict) else None
+    if not isinstance(value, int) and isinstance(stats, dict):
+        legacy_key = LEGACY_STAT_ALIASES.get(key)
+        value = stats.get(legacy_key) if legacy_key else value
     if key == "leaf_assignments" and value == (1 << 64) - 1:
         return None
     return value if isinstance(value, int) else None
