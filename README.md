@@ -23,9 +23,9 @@ tools/check-coverage.sh build-coverage
 ```
 
 Release binaries are built by `.github/workflows/release-binaries.yml` when a
-`v*` tag is pushed, or manually through GitHub Actions. The workflow packages
-all CLI utilities as `linux-x86_64` and `macos-arm64` tarballs with SHA-256
-sidecar files.
+`v*` tag is pushed, or manually through GitHub Actions. The workflow compiles
+and packages `qasm2sop`, `sop-check`, `sop-solve`, `sop-stats`, and `sop2wmc`
+as `linux-x86_64` and `macos-arm64` tarballs with SHA-256 sidecar files.
 
 ## Tools
 
@@ -39,7 +39,19 @@ sidecar files.
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
   and `iswap`.
+- `sop2wmc`: export a QSOP to DIMACS CNF / WPCNF for external model counting.
+  Two encodings are available:
+  - `--encoding residue` (default): for each target residue `k`, models = `counts[k]`.
+    Use with any integer `#SAT` counter (Ganak `--mode 0`, d4, sharpSAT). Requires
+    `r` separate counter calls per instance.
+  - `--encoding amplitude`: single WPCNF with complex literal weights ω^coeff.
+    The weighted model count equals `sum_x omega^phase(x)` (without the constant
+    factor); multiply by `omega^constant` (printed in the `c amplitude_factor`
+    metadata line) to recover the full amplitude. Use `ganak --mode 6 --verb 0`.
+    Typically 10–100× faster than the residue encoding for r ≥ 8.
 - `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
+  `tools/bench_wmc_ganak.py` drives `sop2wmc` + Ganak and cross-checks results
+  against `sop-solve`; supports `--encoding (residue, amplitude, or both)`.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at the benchmark/import boundary.
@@ -65,7 +77,7 @@ cst <constant_mod_r>
 u <vertex> <unary_coefficient_mod_r>
 q <u> <v> <quadratic_coefficient_mod_r>
 e <u> <v>
-f <vertex> <0|1>
+f <vertex> <0 | 1>
 ```
 
 `e u v` is shorthand for a sign edge with coefficient `r/2`. Pins (`f`) are
@@ -83,7 +95,15 @@ build/sop-solve --format stats --include-result tests/golden/solve_labelled.qsop
 build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_labelled.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
+build/sop2wmc --residue all tests/golden/solve_labelled.qsop
+build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_labelled.qsop && ganak residue2.cnf
+build/sop2wmc --encoding amplitude tests/golden/solve_labelled.qsop | ganak --mode 6 --verb 0 -
 ```
+
+The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
+`probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
+`sop-solve --include-probability`) outside the counter; the metadata header in
+each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 

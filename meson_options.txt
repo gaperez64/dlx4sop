@@ -24,6 +24,11 @@ option('qiskit_tests',
        value: false,
        description: 'Enable optional qasm2sop amplitude comparisons against Qiskit')
 
+option('ganak_tests',
+       type: 'boolean',
+       value: false,
+       description: 'Enable optional sop2wmc residue-count comparisons against an installed Ganak')
+
 option('developer_warnings',
        type: 'boolean',
        value: true,

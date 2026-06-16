@@ -38,7 +38,7 @@ jobs:
         run: meson setup build --buildtype=release
 
       - name: Build release binaries
-        run: meson compile -C build qasm2sop sop-check sop-solve sop-stats
+        run: meson compile -C build qasm2sop sop-check sop-solve sop-stats sop2wmc
 
       - name: Package binaries
         id: package
@@ -52,7 +52,7 @@ jobs:
           fi
           package="dlx4sop-${version}-${{ matrix.target }}"
           mkdir -p "dist/${package}"
-          cp build/qasm2sop build/sop-check build/sop-solve build/sop-stats README.md LICENSE "dist/${package}/"
+          cp build/qasm2sop build/sop-check build/sop-solve build/sop-stats build/sop2wmc README.md LICENSE "dist/${package}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
           shasum -a 256 "dist/${package}.tar.gz" > "dist/${package}.tar.gz.sha256"
           echo "package=${package}" >> "${GITHUB_OUTPUT}"
