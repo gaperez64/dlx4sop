@@ -9,11 +9,14 @@ For each QSOP instance the script cross-checks Ganak's output against the
 reference from `sop-solve --format residue-vector`. A non-zero mismatch count
 means the export or the counter disagrees with sop-solve.
 
-Emits a markdown table (default) or JSONL.
+Emits a markdown table (default) or JSONL.  JSONL output includes
+scoreboard-compatible fields (backend, status, solve_elapsed_ns, source, …)
+when invoked via --manifest.
 """
 
 import argparse
 import cmath
+import hashlib
 import json
 import math
 import pathlib
@@ -25,7 +28,10 @@ import time
 
 
 def materialize_manifest(qasm2sop: pathlib.Path, manifest: pathlib.Path, dest: pathlib.Path):
-    """Expand a QASM corpus manifest into per-boundary QSOP files."""
+    """Expand a QASM corpus manifest into per-boundary QSOP files.
+
+    Returns a list of (path, provenance_dict) pairs.
+    """
     cases = json.loads(manifest.read_text())
     produced = []
     for case in cases:
@@ -36,9 +42,18 @@ def materialize_manifest(qasm2sop: pathlib.Path, manifest: pathlib.Path, dest: p
             )
             if result.returncode != 0:
                 raise RuntimeError(f"qasm2sop failed on {case['name']} {inb}>{outb}:\n{result.stderr}")
-            path = dest / f"{case['name']}_{inb}_{outb}.qsop"
+            slug = hashlib.sha1(f"{case['name']}_{inb}_{outb}".encode()).hexdigest()[:16]
+            path = dest / f"{slug}.qsop"
             path.write_text(result.stdout)
-            produced.append(path)
+            provenance = {
+                "source": case.get("source", ""),
+                "source_url": case.get("source_url", ""),
+                "source_relative_path": case.get("source_relative_path", ""),
+                "case": case.get("name", ""),
+                "input": inb,
+                "output": outb,
+            }
+            produced.append((path, provenance))
     return produced
 
 
@@ -65,6 +80,14 @@ def read_header(qsop: pathlib.Path):
             _, _, r, nvars, nedges = line.split()
             return int(r), int(nvars), int(nedges)
     raise ValueError(f"{qsop}: no 'p qsop' header")
+
+
+def read_qsop_mode(qsop: pathlib.Path) -> str:
+    for line in qsop.read_text().splitlines():
+        parts = line.split()
+        if parts and parts[0] == "q":
+            return "labelled"
+    return "sign"
 
 
 def parse_ganak_int(text: str) -> int:
@@ -97,9 +120,13 @@ def parse_amplitude_factor(cnf_text: str) -> complex:
     raise ValueError("no c amplitude_factor line in CNF metadata")
 
 
-def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path):
+def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path, extra_args: list | None = None):
+    cmd = [str(sop_solve), "--format", "residue-vector"]
+    if extra_args:
+        cmd.extend(extra_args)
+    cmd.append(str(qsop))
     start = time.perf_counter()
-    result = run([str(sop_solve), "--format", "residue-vector", str(qsop)])
+    result = run(cmd)
     elapsed = time.perf_counter() - start
     if result.returncode != 0:
         raise RuntimeError(f"sop-solve failed on {qsop}:\n{result.stderr}")
@@ -109,7 +136,7 @@ def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path):
     raise RuntimeError(f"no counts line from sop-solve on {qsop}")
 
 
-def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, r: int):
+def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, r: int, timeout: float | None):
     """Run residue encoding: r separate CNF files, plain #SAT each."""
     counts, export_s, count_s = [], 0.0, 0.0
     with tempfile.TemporaryDirectory() as tmp:
@@ -122,13 +149,24 @@ def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path
             if exported.returncode != 0:
                 raise RuntimeError(f"sop2wmc --residue {k} failed:\n{exported.stderr}")
             start = time.perf_counter()
-            counted = run([str(ganak), "--verb", "0", str(cnf)])
+            try:
+                counted = subprocess.run(
+                    [str(ganak), "--verb", "0", str(cnf)],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                count_s += (timeout or 0.0)
+                return None, export_s, count_s, "timeout"
             count_s += time.perf_counter() - start
             counts.append(parse_ganak_int(counted.stdout))
-    return counts, export_s, count_s
+    return counts, export_s, count_s, "ok"
 
 
-def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, r: int):
+def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, timeout: float | None):
     """Run amplitude encoding: single WPCNF, complex WMC (Ganak --mode 6)."""
     with tempfile.TemporaryDirectory() as tmp:
         cnf_path = pathlib.Path(tmp) / "amp.cnf"
@@ -143,12 +181,23 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
         factor = parse_amplitude_factor(cnf_text)
 
         start = time.perf_counter()
-        counted = run([str(ganak), "--mode", "6", "--verb", "0", str(cnf_path)])
+        try:
+            counted = subprocess.run(
+                [str(ganak), "--mode", "6", "--verb", "0", str(cnf_path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            count_s = timeout or 0.0
+            return None, export_s, count_s, "timeout"
         count_s = time.perf_counter() - start
 
         raw = parse_ganak_complex(counted.stdout)
         amplitude = raw * factor
-        return amplitude, export_s, count_s
+        return amplitude, export_s, count_s, "ok"
 
 
 def counts_to_amplitude(counts: list, r: int) -> complex:
@@ -160,41 +209,100 @@ def check_amplitude(got: complex, ref: complex, tol: float = 1e-5) -> bool:
     return abs(got - ref) <= tol * max(1.0, abs(ref))
 
 
-def bench(sop2wmc, sop_solve, ganak, qsop, encoding):
+def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_solve_extra=None):
     r, nvars, nedges = read_header(qsop)
-    reference, solve_s = solver_counts(sop_solve, qsop)
-    ref_amplitude = counts_to_amplitude(reference, r)
+    qsop_mode = read_qsop_mode(qsop)
+    try:
+        reference, solve_s = solver_counts(sop_solve, qsop, sop_solve_extra)
+        ref_amplitude = counts_to_amplitude(reference, r)
+    except RuntimeError:
+        reference = None
+        ref_amplitude = None
+        solve_s = 0.0
+
+    base = {
+        "backend": "wmc",
+        "wmc_encoding": encoding,
+        "nvars": nvars,
+        "nedges": nedges,
+        "r": r,
+        "qsop_mode": qsop_mode,
+        "sop_solve_ms": round(solve_s * 1e3, 3),
+        **provenance,
+    }
 
     if encoding == "residue":
-        counts, export_s, count_s = ganak_residue(sop2wmc, ganak, qsop, r)
-        mismatches = sum(1 for a, b in zip(counts, reference) if a != b)
-        return {
-            "instance": qsop.name,
-            "encoding": "residue",
-            "nvars": nvars,
-            "nedges": nedges,
-            "r": r,
-            "sop_solve_ms": round(solve_s * 1e3, 3),
+        result, export_s, count_s, status = ganak_residue(sop2wmc, ganak, qsop, r, timeout)
+        export_ns = int(export_s * 1e9)
+        ganak_ns = int(count_s * 1e9)
+        solve_ns = export_ns + ganak_ns
+        if status == "timeout" or result is None:
+            return {
+                **base,
+                "status": "timeout",
+                "solve_elapsed_ns": solve_ns,
+                "wmc_export_elapsed_ns": export_ns,
+                "wmc_ganak_elapsed_ns": ganak_ns,
+                "export_ms": round(export_s * 1e3, 3),
+                "ganak_ms": round(count_s * 1e3, 3),
+                "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
+                "mismatches": 0,
+            }
+        if reference is not None:
+            mismatches = sum(1 for a, b in zip(result, reference) if a != b)
+        else:
+            mismatches = -1
+        amp = counts_to_amplitude(result, r)
+        row = {
+            **base,
+            "status": "ok",
+            "solve_elapsed_ns": solve_ns,
+            "wmc_export_elapsed_ns": export_ns,
+            "wmc_ganak_elapsed_ns": ganak_ns,
             "export_ms": round(export_s * 1e3, 3),
             "ganak_ms": round(count_s * 1e3, 3),
             "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
             "mismatches": mismatches,
+            "amplitude_real": amp.real,
+            "amplitude_imag": amp.imag,
         }
+        return row
     else:
-        amplitude, export_s, count_s = ganak_amplitude(sop2wmc, ganak, qsop, r)
-        ok = check_amplitude(amplitude, ref_amplitude)
-        return {
-            "instance": qsop.name,
-            "encoding": "amplitude",
-            "nvars": nvars,
-            "nedges": nedges,
-            "r": r,
-            "sop_solve_ms": round(solve_s * 1e3, 3),
+        amplitude, export_s, count_s, status = ganak_amplitude(sop2wmc, ganak, qsop, timeout)
+        export_ns = int(export_s * 1e9)
+        ganak_ns = int(count_s * 1e9)
+        solve_ns = export_ns + ganak_ns
+        if status == "timeout" or amplitude is None:
+            return {
+                **base,
+                "status": "timeout",
+                "solve_elapsed_ns": solve_ns,
+                "wmc_export_elapsed_ns": export_ns,
+                "wmc_ganak_elapsed_ns": ganak_ns,
+                "export_ms": round(export_s * 1e3, 3),
+                "ganak_ms": round(count_s * 1e3, 3),
+                "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
+                "mismatches": 0,
+            }
+        if ref_amplitude is not None:
+            ok = check_amplitude(amplitude, ref_amplitude)
+            mismatches = 0 if ok else 1
+        else:
+            mismatches = -1
+        row = {
+            **base,
+            "status": "ok",
+            "solve_elapsed_ns": solve_ns,
+            "wmc_export_elapsed_ns": export_ns,
+            "wmc_ganak_elapsed_ns": ganak_ns,
             "export_ms": round(export_s * 1e3, 3),
             "ganak_ms": round(count_s * 1e3, 3),
             "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
-            "mismatches": 0 if ok else 1,
+            "mismatches": mismatches,
+            "amplitude_real": amplitude.real,
+            "amplitude_imag": amplitude.imag,
         }
+        return row
 
 
 def render_markdown(rows):
@@ -206,7 +314,7 @@ def render_markdown(rows):
     lines = [header, sep]
     for row in rows:
         lines.append(
-            f"| {row['instance']} | {row['encoding']} | {row['nvars']} | {row['nedges']} | "
+            f"| {row['instance']} | {row['wmc_encoding']} | {row['nvars']} | {row['nedges']} | "
             f"{row['r']} | {row['sop_solve_ms']} | {row['export_ms']} | {row['ganak_ms']} | "
             f"{row['mismatches']} |"
         )
@@ -221,36 +329,58 @@ def main() -> int:
     parser.add_argument("--ganak", default="ganak")
     parser.add_argument("--encoding", choices=["residue", "amplitude", "both"],
                         default="residue", help="WMC encoding to benchmark")
-    parser.add_argument("--manifest", help="QASM corpus manifest to expand into QSOP instances")
+    parser.add_argument("--manifest", type=pathlib.Path, help="QASM corpus manifest to expand into QSOP instances")
     parser.add_argument("--format", choices=["markdown", "jsonl"], default="markdown")
+    parser.add_argument("--ganak-timeout", type=float, default=30.0,
+                        help="per-Ganak-call timeout in seconds (default: 30)")
+    parser.add_argument("--sop-solve-backend", default=None,
+                        help="backend passed to sop-solve for reference cross-check (e.g. treewidth)")
+    parser.add_argument("--sop-solve-max-vars", type=int, default=None,
+                        help="--max-vars passed to sop-solve for reference cross-check")
     parser.add_argument("instances", nargs="*", help="QSOP instance files")
     args = parser.parse_args()
 
     sop2wmc = pathlib.Path(args.sop2wmc)
     sop_solve = pathlib.Path(args.sop_solve)
     ganak = pathlib.Path(args.ganak)
+    timeout = args.ganak_timeout if args.ganak_timeout > 0 else None
 
     encodings = ["residue", "amplitude"] if args.encoding == "both" else [args.encoding]
 
+    sop_solve_extra = []
+    if args.sop_solve_backend:
+        sop_solve_extra += ["--backend", args.sop_solve_backend]
+    if args.sop_solve_max_vars is not None:
+        sop_solve_extra += ["--max-vars", str(args.sop_solve_max_vars)]
+
     with tempfile.TemporaryDirectory() as tmp:
-        instances = [pathlib.Path(p) for p in args.instances]
+        # instances from command line (no provenance)
+        plain_instances = [(pathlib.Path(p), {}) for p in args.instances]
+        manifest_instances = []
         if args.manifest:
-            instances += materialize_manifest(
-                pathlib.Path(args.qasm2sop), pathlib.Path(args.manifest), pathlib.Path(tmp)
+            manifest_instances = materialize_manifest(
+                pathlib.Path(args.qasm2sop), args.manifest, pathlib.Path(tmp)
             )
-        if not instances:
+        all_instances = plain_instances + manifest_instances
+
+        if not all_instances:
             parser.error("provide QSOP instances or --manifest")
+
         rows = []
         for enc in encodings:
-            for instance in instances:
-                rows.append(bench(sop2wmc, sop_solve, ganak, instance, enc))
+            for instance, provenance in all_instances:
+                row = bench(sop2wmc, sop_solve, ganak, instance, enc, timeout, provenance,
+                            sop_solve_extra or None)
+                # Add "instance" key for backward-compat markdown mode
+                row["instance"] = instance.name
+                rows.append(row)
 
     if args.format == "jsonl":
         for row in rows:
             print(json.dumps(row))
     else:
         print(render_markdown(rows))
-    return 1 if any(row["mismatches"] for row in rows) else 0
+    return 1 if any(row.get("mismatches") for row in rows) else 0
 
 
 if __name__ == "__main__":

@@ -23,9 +23,9 @@ tools/check-coverage.sh build-coverage
 ```
 
 Release binaries are built by `.github/workflows/release-binaries.yml` when a
-`v*` tag is pushed, or manually through GitHub Actions. The workflow packages
-all CLI utilities as `linux-x86_64` and `macos-arm64` tarballs with SHA-256
-sidecar files.
+`v*` tag is pushed, or manually through GitHub Actions. The workflow compiles
+and packages `qasm2sop`, `sop-check`, `sop-solve`, `sop-stats`, and `sop2wmc`
+as `linux-x86_64` and `macos-arm64` tarballs with SHA-256 sidecar files.
 
 ## Tools
 

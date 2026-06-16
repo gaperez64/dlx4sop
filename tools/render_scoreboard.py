@@ -127,6 +127,11 @@ def solver_config(record: dict) -> str:
         if isinstance(solve_mode, str) and solve_mode and solve_mode != "count-table"
         else ""
     )
+    if backend == "wmc":
+        enc = record.get("wmc_encoding", "amplitude")
+        if enc == "amplitude":
+            return "sop2wmc --encoding amplitude + ganak --mode 6"
+        return f"sop2wmc --encoding {enc} + ganak --mode 0"
     if backend == "branch":
         return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
     if backend == "rankwidth":
@@ -320,6 +325,13 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             ):
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
+                "wmc_export_elapsed_ns",
+                "wmc_ganak_elapsed_ns",
+            ):
+                add_sum(stats, stat, stat_value(record, stat))
+            # WMC mismatches live at top level under "mismatches"
+            add_sum(stats, "wmc_mismatches", stat_value(record, "mismatches"))
+            for stat in (
                 "treewidth_delegations",
                 "rankwidth_delegations",
                 "branch_fallthroughs",
@@ -403,6 +415,13 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
 
 def key_stats(stats: dict[str, int]) -> str:
     parts = []
+    if "wmc_export_elapsed_ns" in stats or "wmc_ganak_elapsed_ns" in stats:
+        parts.append(
+            f"export {format_ns(stats.get('wmc_export_elapsed_ns', 0))}, "
+            f"ganak {format_ns(stats.get('wmc_ganak_elapsed_ns', 0))}, "
+            f"mismatches {stats.get('wmc_mismatches', 0)}"
+        )
+        return "; ".join(parts)
     if "search_nodes" in stats:
         parts.append(f"{stats['search_nodes']} nodes")
     if "leaf_assignments" in stats:

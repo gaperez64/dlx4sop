@@ -1,0 +1,4191 @@
+[
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0000",
+        "1111"
+      ],
+      [
+        "0000",
+        "0011"
+      ]
+    ],
+    "max_imported_nvars": 3,
+    "name": "qymera_ghz",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[0];",
+      "cx q[0], q[1];",
+      "cx q[1], q[2];",
+      "cx q[2], q[3];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "qymera_ghz",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0000",
+        "1111"
+      ],
+      [
+        "1010",
+        "0101"
+      ]
+    ],
+    "max_imported_nvars": 0,
+    "name": "qymera_uniform_superposition",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q;"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "qymera_uniform_superposition",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "expect_component_cache_hit": true,
+    "max_imported_nvars": 2,
+    "name": "repeated_components",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "h q;",
+      "t q;",
+      "h q;"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "repeated_components",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ],
+      [
+        "0101",
+        "1010"
+      ]
+    ],
+    "expect_component_cache_hit": true,
+    "max_imported_nvars": 4,
+    "name": "repeated_four_components",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q;",
+      "t q;",
+      "h q;"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "repeated_four_components",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0101",
+        "1111"
+      ]
+    ],
+    "expect_component_cache_hit": true,
+    "max_imported_nvars": 4,
+    "name": "paired_phase_components",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q;",
+      "t q;",
+      "crz(pi/4) q[0], q[1];",
+      "crz(pi/4) q[2], q[3];",
+      "cx q[0], q[1];",
+      "cx q[2], q[3];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "paired_phase_components",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0011",
+        "1100"
+      ]
+    ],
+    "max_imported_nvars": 0,
+    "name": "branch_split_star",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q;",
+      "t q[0];",
+      "s q[1];",
+      "tdg q[2];",
+      "crz(pi/4) q[0], q[1];",
+      "crz(pi/4) q[0], q[2];",
+      "crz(pi/4) q[0], q[3];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "branch_split_star",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "001",
+        "111"
+      ],
+      [
+        "101",
+        "010"
+      ]
+    ],
+    "max_imported_nvars": 8,
+    "name": "entangled_axis_chain",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q;",
+      "rx(pi/4) q[0];",
+      "ry(-pi/2) q[1];",
+      "crz(pi/4) q[0], q[2];",
+      "cx q[0], q[1];",
+      "cy q[1], q[2];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "entangled_axis_chain",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1010",
+        "1111"
+      ]
+    ],
+    "max_imported_nvars": 10,
+    "name": "register_pair_mix",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg a[2];",
+      "qreg b[2];",
+      "h a;",
+      "sx b;",
+      "cp(pi/4) a, b;",
+      "cx a, b;",
+      "sxdg b;"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "register_pair_mix",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "000",
+        "101"
+      ],
+      [
+        "111",
+        "001"
+      ]
+    ],
+    "max_imported_nvars": 3,
+    "name": "mqt_bv_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2], q[0];",
+      "h q[2];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "mqt_bv_indep_3",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "000",
+        "111"
+      ],
+      [
+        "101",
+        "010"
+      ]
+    ],
+    "max_imported_nvars": 5,
+    "name": "mqt_qftentangled_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q[2];",
+      "cx q[2], q[1];",
+      "cx q[1], q[0];",
+      "h q[2];",
+      "cp(pi/2) q[2], q[1];",
+      "h q[1];",
+      "cp(pi/4) q[2], q[0];",
+      "cp(pi/2) q[1], q[0];",
+      "h q[0];",
+      "swap q[0], q[2];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "mqt_qftentangled_indep_3",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0000",
+        "1111"
+      ],
+      [
+        "1010",
+        "0101"
+      ]
+    ],
+    "max_imported_nvars": 7,
+    "name": "mqt_qftentangled_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[3];",
+      "cx q[3], q[2];",
+      "cx q[2], q[1];",
+      "cx q[1], q[0];",
+      "h q[3];",
+      "cp(pi/2) q[3], q[2];",
+      "h q[2];",
+      "cp(pi/4) q[3], q[1];",
+      "cp(pi/2) q[2], q[1];",
+      "h q[1];",
+      "cp(pi/8) q[3], q[0];",
+      "cp(pi/4) q[2], q[0];",
+      "cp(pi/2) q[1], q[0];",
+      "h q[0];",
+      "swap q[0], q[3];",
+      "swap q[1], q[2];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "mqt_qftentangled_indep_4",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "0000",
+        "1010"
+      ],
+      [
+        "1111",
+        "0101"
+      ]
+    ],
+    "max_imported_nvars": 4,
+    "name": "mqt_qpeinexact_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "x psi[0];",
+      "cp(-7*pi/8) psi[0], q[0];",
+      "cp(pi/4) psi[0], q[1];",
+      "cp(pi/2) psi[0], q[2];",
+      "swap q[0], q[2];",
+      "h q[0];",
+      "cp(-pi/2) q[1], q[0];",
+      "h q[1];",
+      "cp(-pi/4) q[2], q[0];",
+      "cp(-pi/2) q[2], q[1];",
+      "h q[2];"
+    ],
+    "source": "Internal corpus",
+    "source_relative_path": "mqt_qpeinexact_indep_4",
+    "source_url": "tests/qasm_solver_corpus.json"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 12,
+    "max_imported_nvars": 13,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_4gt11-v1_85_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[0];",
+      "ccx qubits[2],qubits[1],qubits[0];",
+      "cx qubits[0],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/4gt11-v1_85_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/4gt11-v1_85_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 24,
+    "max_imported_nvars": 26,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_alu-v0_27_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "x qubits[2];",
+      "ccx qubits[4],qubits[0],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/alu-v0_27_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/alu-v0_27_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 26,
+    "max_imported_nvars": 29,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_alu-v1_29_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[2];",
+      "cx qubits[1],qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "x qubits[3];",
+      "ccx qubits[3],qubits[2],qubits[1];",
+      "cx qubits[1],qubits[0];",
+      "x qubits[1];",
+      "ccx qubits[4],qubits[0],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/alu-v1_29_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/alu-v1_29_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 26,
+    "max_imported_nvars": 28,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_alu-v2_33_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "x qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[0],qubits[2];",
+      "x qubits[0];",
+      "ccx qubits[4],qubits[2],qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/alu-v2_33_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/alu-v2_33_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 30,
+    "max_imported_nvars": 29,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_alu-v3_35_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[4],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[3],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/alu-v3_35_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/alu-v3_35_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 29,
+    "max_imported_nvars": 28,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_missing_alu-v4_37_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[4],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/missing/alu-v4_37_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/missing/alu-v4_37_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 14,
+    "max_imported_nvars": 15,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_4gt11-v1_85opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[0];",
+      "ccx qubits[2],qubits[1],qubits[0];",
+      "x qubits[4];",
+      "cx qubits[0],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/4gt11-v1_85opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/4gt11-v1_85opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 26,
+    "max_imported_nvars": 28,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_alu-v0_27opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "x qubits[2];",
+      "ccx qubits[4],qubits[0],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/alu-v0_27opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/alu-v0_27opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_alu-v1_29opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[1],qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "x qubits[3];",
+      "ccx qubits[3],qubits[2],qubits[1];",
+      "cx qubits[1],qubits[0];",
+      "x qubits[1];",
+      "ccx qubits[4],qubits[0],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/alu-v1_29opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/alu-v1_29opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_alu-v2_33opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "x qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[0],qubits[2];",
+      "x qubits[0];",
+      "ccx qubits[4],qubits[2],qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/alu-v2_33opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/alu-v2_33opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_alu-v3_35opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[4],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[3],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/alu-v3_35opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/alu-v3_35opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_opt3_alu-v4_37opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[4],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/opt3/alu-v4_37opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/opt3/alu-v4_37opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 14,
+    "max_imported_nvars": 15,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_4gt11-v1_85",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[0];",
+      "x qubits[4];",
+      "ccx qubits[2],qubits[1],qubits[0];",
+      "cx qubits[0],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/4gt11-v1_85.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/4gt11-v1_85.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 26,
+    "max_imported_nvars": 28,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_alu-v0_27",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "cx qubits[2],qubits[1];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "x qubits[2];",
+      "ccx qubits[4],qubits[0],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/alu-v0_27.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/alu-v0_27.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_alu-v1_29",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "x qubits[3];",
+      "cx qubits[1],qubits[2];",
+      "ccx qubits[3],qubits[2],qubits[1];",
+      "cx qubits[1],qubits[0];",
+      "x qubits[1];",
+      "ccx qubits[4],qubits[0],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/alu-v1_29.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/alu-v1_29.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_alu-v2_33",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "x qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "cx qubits[2],qubits[1];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[0],qubits[2];",
+      "x qubits[0];",
+      "ccx qubits[4],qubits[2],qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/alu-v2_33.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/alu-v2_33.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_alu-v3_35",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[3];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "ccx qubits[4],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[3],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/alu-v3_35.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/alu-v3_35.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_origin_alu-v4_37",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[4],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/origin/alu-v4_37.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/origin/alu-v4_37.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 14,
+    "max_imported_nvars": 15,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_4gt11-v1_85_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[0];",
+      "ccx qubits[2],qubits[1],qubits[0];",
+      "x qubits[4];",
+      "cx qubits[4], qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/4gt11-v1_85_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/4gt11-v1_85_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 26,
+    "max_imported_nvars": 28,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_alu-v0_27_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[0], qubits[2];",
+      "x qubits[2];",
+      "ccx qubits[4],qubits[0],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/alu-v0_27_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/alu-v0_27_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_alu-v1_29_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[1],qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4], qubits[3];",
+      "x qubits[3];",
+      "ccx qubits[3],qubits[2],qubits[1];",
+      "cx qubits[1],qubits[0];",
+      "x qubits[1];",
+      "ccx qubits[4],qubits[0],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/alu-v1_29_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/alu-v1_29_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 27,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_alu-v2_33_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "x qubits[4];",
+      "cx qubits[3],qubits[4];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2], qubits[0];",
+      "x qubits[0];",
+      "ccx qubits[4],qubits[2],qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/alu-v2_33_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/alu-v2_33_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_alu-v3_35_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[4],qubits[1],qubits[2];",
+      "cx qubits[0], qubits[2];",
+      "ccx qubits[3],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/alu-v3_35_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/alu-v3_35_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 31,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_RevLib_default_reverse_alu-v4_37_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[2],qubits[1];",
+      "x qubits[2];",
+      "h qubits[3];",
+      "h qubits[4];",
+      "cx qubits[4], qubits[3];",
+      "ccx qubits[3],qubits[1],qubits[2];",
+      "cx qubits[2],qubits[0];",
+      "ccx qubits[4],qubits[0],qubits[2];",
+      "cx qubits[2],qubits[4];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/RevLib/default/reverse/alu-v4_37_rev.qasm",
+    "source_relative_path": "benchmark/equivalence/RevLib/default/reverse/alu-v4_37_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 27,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_simulate_circuits_google_missing_cz_v2_d5_inst_4x4_5_0_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "cz q[0],q[1];",
+      "rz(-pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/4) q[0];",
+      "rz(-pi/2) q[1];",
+      "h q[1];",
+      "rz(pi/2) q[1];",
+      "h q[1];",
+      "h q[2];",
+      "rz(pi/4) q[2];",
+      "cz q[1],q[2];",
+      "h q[1];",
+      "rz(pi/2) q[1];",
+      "h q[1];",
+      "rz(3*pi/4) q[1];",
+      "h q[3];",
+      "rz(pi/4) q[3];",
+      "h q[4];",
+      "rz(-pi/4) q[4];",
+      "h q[5];",
+      "rz(pi/4) q[5];",
+      "h q[6];",
+      "h q[7];",
+      "cz q[6],q[7];",
+      "h q[7];",
+      "rz(pi/2) q[7];",
+      "h q[7];",
+      "rz(pi/4) q[7];",
+      "h q[8];",
+      "h q[9];",
+      "cz q[8],q[9];",
+      "cz q[4],q[8];",
+      "h q[4];",
+      "rz(pi/2) q[4];",
+      "h q[4];",
+      "rz(pi/2) q[4];",
+      "cz q[0],q[4];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "cz q[4],q[5];",
+      "h q[8];",
+      "rz(pi/2) q[8];",
+      "h q[8];",
+      "rz(pi/4) q[8];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "h q[9];",
+      "h q[10];",
+      "rz(-pi/4) q[10];",
+      "cz q[6],q[10];",
+      "h q[6];",
+      "rz(pi/2) q[6];",
+      "h q[6];",
+      "cz q[2],q[6];",
+      "cz q[2],q[3];",
+      "h q[6];",
+      "rz(pi/2) q[6];",
+      "h q[6];",
+      "cz q[9],q[10];",
+      "h q[10];",
+      "rz(pi/2) q[10];",
+      "h q[10];",
+      "rz(pi/2) q[10];",
+      "rz(pi/4) q[11];",
+      "h q[12];",
+      "rz(pi/4) q[12];",
+      "h q[13];",
+      "rz(pi/4) q[13];",
+      "cz q[9],q[13];",
+      "rz(-pi/2) q[9];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "cz q[12],q[13];",
+      "h q[14];",
+      "h q[15];",
+      "cz q[14],q[15];",
+      "rz(-pi/2) q[14];",
+      "h q[14];",
+      "rz(pi/2) q[14];",
+      "h q[14];",
+      "rz(3*pi/4) q[14];",
+      "h q[15];",
+      "rz(pi/2) q[15];",
+      "h q[15];",
+      "rz(-pi/4) q[15];",
+      "cz q[11],q[15];",
+      "cz q[10],q[11];",
+      "h q[15];",
+      "rz(pi/2) q[15];",
+      "h q[15];",
+      "rz(pi/2) q[15];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/simulate_circuits/google/missing/cz_v2_d5_inst_4x4_5_0_miss.qasm",
+    "source_relative_path": "benchmark/equivalence/simulate_circuits/google/missing/cz_v2_d5_inst_4x4_5_0_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 27,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_simulate_circuits_google_opt3_cz_v2_d5_inst_4x4_5_0opt3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "cz q[0],q[1];",
+      "rz(-pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/4) q[0];",
+      "rz(-pi/2) q[1];",
+      "h q[1];",
+      "rz(pi/2) q[1];",
+      "h q[1];",
+      "h q[2];",
+      "rz(pi/4) q[2];",
+      "cz q[1],q[2];",
+      "h q[1];",
+      "rz(pi/2) q[1];",
+      "h q[1];",
+      "rz(3*pi/4) q[1];",
+      "h q[3];",
+      "rz(pi/4) q[3];",
+      "h q[4];",
+      "rz(-pi/4) q[4];",
+      "h q[5];",
+      "rz(pi/4) q[5];",
+      "h q[6];",
+      "h q[7];",
+      "cz q[6],q[7];",
+      "h q[7];",
+      "rz(pi/2) q[7];",
+      "h q[7];",
+      "rz(pi/4) q[7];",
+      "h q[8];",
+      "h q[9];",
+      "cz q[8],q[9];",
+      "cz q[4],q[8];",
+      "h q[4];",
+      "rz(pi/2) q[4];",
+      "h q[4];",
+      "rz(pi/2) q[4];",
+      "cz q[0],q[4];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "h q[0];",
+      "rz(pi/2) q[0];",
+      "cz q[4],q[5];",
+      "h q[8];",
+      "rz(pi/2) q[8];",
+      "h q[8];",
+      "rz(pi/4) q[8];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "h q[9];",
+      "h q[10];",
+      "rz(-pi/4) q[10];",
+      "cz q[6],q[10];",
+      "h q[6];",
+      "rz(pi/2) q[6];",
+      "h q[6];",
+      "cz q[2],q[6];",
+      "cz q[2],q[3];",
+      "h q[6];",
+      "rz(pi/2) q[6];",
+      "h q[6];",
+      "cz q[9],q[10];",
+      "h q[10];",
+      "rz(pi/2) q[10];",
+      "h q[10];",
+      "rz(pi/2) q[10];",
+      "h q[11];",
+      "rz(pi/4) q[11];",
+      "h q[12];",
+      "rz(pi/4) q[12];",
+      "h q[13];",
+      "rz(pi/4) q[13];",
+      "cz q[9],q[13];",
+      "rz(-pi/2) q[9];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "h q[9];",
+      "rz(pi/2) q[9];",
+      "cz q[12],q[13];",
+      "h q[14];",
+      "h q[15];",
+      "cz q[14],q[15];",
+      "rz(-pi/2) q[14];",
+      "h q[14];",
+      "rz(pi/2) q[14];",
+      "h q[14];",
+      "rz(3*pi/4) q[14];",
+      "h q[15];",
+      "rz(pi/2) q[15];",
+      "h q[15];",
+      "rz(-pi/4) q[15];",
+      "cz q[11],q[15];",
+      "cz q[10],q[11];",
+      "h q[15];",
+      "rz(pi/2) q[15];",
+      "h q[15];",
+      "rz(pi/2) q[15];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/simulate_circuits/google/opt3/cz_v2_d5_inst_4x4_5_0opt3.qasm",
+    "source_relative_path": "benchmark/equivalence/simulate_circuits/google/opt3/cz_v2_d5_inst_4x4_5_0opt3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 27,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_simulate_circuits_google_origin_cz_v2_d5_inst_4x4_5_0",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "h q[3];",
+      "h q[4];",
+      "h q[5];",
+      "h q[6];",
+      "h q[7];",
+      "h q[8];",
+      "h q[9];",
+      "h q[10];",
+      "h q[11];",
+      "h q[12];",
+      "h q[13];",
+      "h q[14];",
+      "h q[15];",
+      "cz q[0],q[1];",
+      "cz q[6],q[7];",
+      "cz q[8],q[9];",
+      "cz q[14],q[15];",
+      "t q[2];",
+      "t q[3];",
+      "t q[4];",
+      "t q[5];",
+      "t q[10];",
+      "t q[11];",
+      "t q[12];",
+      "t q[13];",
+      "cz q[4],q[8];",
+      "cz q[6],q[10];",
+      "ry(pi/2) q[0];",
+      "ry(pi/2) q[1];",
+      "rx(pi/2) q[7];",
+      "rx(pi/2) q[9];",
+      "ry(pi/2) q[14];",
+      "rx(pi/2) q[15];",
+      "cz q[1],q[2];",
+      "cz q[9],q[10];",
+      "t q[0];",
+      "ry(pi/2) q[4];",
+      "rx(pi/2) q[6];",
+      "t q[7];",
+      "rx(pi/2) q[8];",
+      "t q[14];",
+      "t q[15];",
+      "cz q[0],q[4];",
+      "cz q[9],q[13];",
+      "cz q[2],q[6];",
+      "cz q[11],q[15];",
+      "ry(pi/2) q[1];",
+      "t q[8];",
+      "ry(pi/2) q[10];",
+      "cz q[2],q[3];",
+      "cz q[4],q[5];",
+      "cz q[10],q[11];",
+      "cz q[12],q[13];",
+      "ry(pi/2) q[0];",
+      "t q[1];",
+      "rx(pi/2) q[6];",
+      "ry(pi/2) q[9];",
+      "ry(pi/2) q[15];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/simulate_circuits/google/origin/cz_v2_d5_inst_4x4_5_0.qasm",
+    "source_relative_path": "benchmark/equivalence/simulate_circuits/google/origin/cz_v2_d5_inst_4x4_5_0.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 23,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_benchmark_equivalence_simulate_circuits_google_origin_is_v1_d5_inst_4x4_5_0",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "h q[3];",
+      "h q[4];",
+      "h q[5];",
+      "h q[6];",
+      "h q[7];",
+      "h q[8];",
+      "h q[9];",
+      "h q[10];",
+      "h q[11];",
+      "h q[12];",
+      "h q[13];",
+      "h q[14];",
+      "h q[15];",
+      "iswap q[0],q[1];",
+      "iswap q[6],q[7];",
+      "iswap q[8],q[9];",
+      "iswap q[14],q[15];",
+      "t q[2];",
+      "t q[3];",
+      "t q[4];",
+      "t q[5];",
+      "t q[10];",
+      "t q[11];",
+      "t q[12];",
+      "t q[13];",
+      "iswap q[4],q[8];",
+      "iswap q[6],q[10];",
+      "ry(pi/2) q[0];",
+      "ry(pi/2) q[1];",
+      "rx(pi/2) q[7];",
+      "rx(pi/2) q[9];",
+      "ry(pi/2) q[14];",
+      "rx(pi/2) q[15];",
+      "iswap q[1],q[2];",
+      "iswap q[9],q[10];",
+      "t q[0];",
+      "ry(pi/2) q[4];",
+      "rx(pi/2) q[6];",
+      "t q[7];",
+      "rx(pi/2) q[8];",
+      "t q[14];",
+      "t q[15];",
+      "iswap q[0],q[4];",
+      "iswap q[9],q[13];",
+      "iswap q[2],q[6];",
+      "iswap q[11],q[15];",
+      "ry(pi/2) q[1];",
+      "t q[8];",
+      "ry(pi/2) q[10];",
+      "iswap q[2],q[3];",
+      "iswap q[4],q[5];",
+      "iswap q[10],q[11];",
+      "iswap q[12],q[13];",
+      "ry(pi/2) q[0];",
+      "t q[1];",
+      "rx(pi/2) q[6];",
+      "ry(pi/2) q[9];",
+      "ry(pi/2) q[15];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/benchmark/equivalence/simulate_circuits/google/origin/is_v1_d5_inst_4x4_5_0.qasm",
+    "source_relative_path": "benchmark/equivalence/simulate_circuits/google/origin/is_v1_d5_inst_4x4_5_0.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 8,
+    "max_imported_nvars": 9,
+    "name": "feynmandd_circuits_ccx",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[3];",
+      "ccx qubits[0],qubits[1],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/ccx.qasm",
+    "source_relative_path": "circuits/ccx.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 30,
+    "max_imported_nvars": 27,
+    "name": "feynmandd_circuits_compare_mod5d2_70",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "x qubits[4];",
+      "x qubits[3];",
+      "cx qubits[3],qubits[2];",
+      "cx qubits[3],qubits[1];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[1],qubits[3],qubits[0];",
+      "ccx qubits[1],qubits[2],qubits[0];",
+      "cx qubits[2],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/compare/mod5d2_70.qasm",
+    "source_relative_path": "circuits/compare/mod5d2_70.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 30,
+    "max_imported_nvars": 26,
+    "name": "feynmandd_circuits_compare_mod5d2_70_miss",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "x qubits[3];",
+      "cx qubits[3],qubits[2];",
+      "cx qubits[3],qubits[1];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[1],qubits[3],qubits[0];",
+      "ccx qubits[1],qubits[2],qubits[0];",
+      "cx qubits[2],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/compare/mod5d2_70_miss.qasm",
+    "source_relative_path": "circuits/compare/mod5d2_70_miss.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 28,
+    "max_imported_nvars": 27,
+    "name": "feynmandd_circuits_compare_mod5d2_70_rev",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "x qubits[4];",
+      "x qubits[3];",
+      "cx qubits[3],qubits[2];",
+      "cx qubits[3],qubits[1];",
+      "cx qubits[3], qubits[4];",
+      "ccx qubits[1],qubits[3],qubits[0];",
+      "ccx qubits[1],qubits[2],qubits[0];",
+      "cx qubits[2],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/compare/mod5d2_70_rev.qasm",
+    "source_relative_path": "circuits/compare/mod5d2_70_rev.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 30,
+    "max_imported_nvars": 27,
+    "name": "feynmandd_circuits_compare_mod5d2_70opt1",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[5];",
+      "x qubits[3];",
+      "cx qubits[3],qubits[2];",
+      "cx qubits[3],qubits[1];",
+      "x qubits[4];",
+      "cx qubits[4],qubits[3];",
+      "ccx qubits[1],qubits[3],qubits[0];",
+      "ccx qubits[1],qubits[2],qubits[0];",
+      "cx qubits[2],qubits[1];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/compare/mod5d2_70opt1.qasm",
+    "source_relative_path": "circuits/compare/mod5d2_70opt1.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 10,
+    "max_imported_nvars": 11,
+    "name": "feynmandd_circuits_create_bv_simple",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "x q[3];",
+      "h q[3];",
+      "cx q[0], q[3];",
+      "cx q[1], q[3];",
+      "cx q[2], q[3];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/bv_simple.qasm",
+    "source_relative_path": "circuits/create/bv_simple.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "1"
+      ]
+    ],
+    "max_imported_edges": 8,
+    "max_imported_nvars": 9,
+    "name": "feynmandd_circuits_create_chain",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "h q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "t q[0];",
+      "h q[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/chain.qasm",
+    "source_relative_path": "circuits/create/chain.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "feynmandd_circuits_create_example",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[3];",
+      "cz qubits[0],qubits[1];",
+      "h qubits[2];",
+      "h qubits[0];",
+      "cz qubits[1],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/example.qasm",
+    "source_relative_path": "circuits/create/example.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "1"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "feynmandd_circuits_create_example2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[1];",
+      "h qubits[0];",
+      "h qubits[0];",
+      "h qubits[0];",
+      "h qubits[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/example2.qasm",
+    "source_relative_path": "circuits/create/example2.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 14,
+    "max_imported_nvars": 20,
+    "name": "feynmandd_circuits_create_inst_4x4_10_0",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "h q[3];",
+      "h q[4];",
+      "h q[5];",
+      "h q[6];",
+      "h q[7];",
+      "h q[8];",
+      "h q[9];",
+      "h q[10];",
+      "h q[11];",
+      "h q[12];",
+      "h q[13];",
+      "h q[14];",
+      "h q[15];",
+      "iswap q[0],q[1];",
+      "iswap q[6],q[7];",
+      "iswap q[8],q[9];",
+      "iswap q[14],q[15];",
+      "t q[2];",
+      "t q[3];",
+      "t q[4];",
+      "t q[5];",
+      "t q[10];",
+      "t q[11];",
+      "t q[12];",
+      "t q[13];",
+      "iswap q[4],q[8];",
+      "iswap q[6],q[10];",
+      "ry(pi/2) q[0];",
+      "ry(pi/2) q[1];",
+      "rx(pi/2) q[7];",
+      "rx(pi/2) q[9];",
+      "ry(pi/2) q[14];",
+      "rx(pi/2) q[15];",
+      "iswap q[1],q[2];",
+      "iswap q[9],q[10];",
+      "t q[0];",
+      "ry(pi/2) q[4];",
+      "rx(pi/2) q[6];",
+      "t q[7];",
+      "rx(pi/2) q[8];",
+      "t q[14];",
+      "t q[15];",
+      "iswap q[0],q[4];",
+      "iswap q[9],q[13];",
+      "iswap q[2],q[6];",
+      "iswap q[11],q[15];",
+      "ry(pi/2) q[1];",
+      "t q[8];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/inst_4x4_10_0.qasm",
+    "source_relative_path": "circuits/create/inst_4x4_10_0.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000000000000",
+        "0000000000000000"
+      ],
+      [
+        "1111111111111111",
+        "1111111111111111"
+      ]
+    ],
+    "max_imported_edges": 23,
+    "max_imported_nvars": 30,
+    "name": "feynmandd_circuits_create_is_v1_d5_inst_4x4_5_0",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[16];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "h q[3];",
+      "h q[4];",
+      "h q[5];",
+      "h q[6];",
+      "h q[7];",
+      "h q[8];",
+      "h q[9];",
+      "h q[10];",
+      "h q[11];",
+      "h q[12];",
+      "h q[13];",
+      "h q[14];",
+      "h q[15];",
+      "iswap q[0],q[1];",
+      "iswap q[6],q[7];",
+      "iswap q[8],q[9];",
+      "iswap q[14],q[15];",
+      "t q[2];",
+      "t q[3];",
+      "t q[4];",
+      "t q[5];",
+      "t q[10];",
+      "t q[11];",
+      "t q[12];",
+      "t q[13];",
+      "iswap q[4],q[8];",
+      "iswap q[6],q[10];",
+      "ry(pi/2) q[0];",
+      "ry(pi/2) q[1];",
+      "rx(pi/2) q[7];",
+      "rx(pi/2) q[9];",
+      "ry(pi/2) q[14];",
+      "rx(pi/2) q[15];",
+      "iswap q[1],q[2];",
+      "iswap q[9],q[10];",
+      "t q[0];",
+      "ry(pi/2) q[4];",
+      "rx(pi/2) q[6];",
+      "t q[7];",
+      "rx(pi/2) q[8];",
+      "t q[14];",
+      "t q[15];",
+      "iswap q[0],q[4];",
+      "iswap q[9],q[13];",
+      "iswap q[2],q[6];",
+      "iswap q[11],q[15];",
+      "ry(pi/2) q[1];",
+      "t q[8];",
+      "ry(pi/2) q[10];",
+      "iswap q[2],q[3];",
+      "iswap q[4],q[5];",
+      "iswap q[10],q[11];",
+      "iswap q[12],q[13];",
+      "ry(pi/2) q[0];",
+      "t q[1];",
+      "rx(pi/2) q[6];",
+      "ry(pi/2) q[9];",
+      "ry(pi/2) q[15];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/is_v1_d5_inst_4x4_5_0.qasm",
+    "source_relative_path": "circuits/create/is_v1_d5_inst_4x4_5_0.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "feynmandd_circuits_create_iswap",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[3];",
+      "iswap qubits[0],qubits[1];",
+      "iswap qubits[1],qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/iswap.qasm",
+    "source_relative_path": "circuits/create/iswap.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "feynmandd_circuits_create_simple",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "iswap q[0],q[1];",
+      "iswap q[1],q[2];",
+      "t q[0];",
+      "t q[1];",
+      "t q[2];",
+      "iswap q[0],q[1];",
+      "iswap q[1],q[2];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/create/simple.qasm",
+    "source_relative_path": "circuits/create/simple.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 4,
+    "name": "feynmandd_circuits_generic_qft",
+    "qasm_lines": [
+      "// quantum Fourier transform",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "x q[0];",
+      "x q[2];",
+      "barrier q;",
+      "h q[0];",
+      "cu1(pi/2) q[1],q[0];",
+      "h q[1];",
+      "cu1(pi/4) q[2],q[0];",
+      "cu1(pi/2) q[2],q[1];",
+      "h q[2];",
+      "cu1(pi/8) q[3],q[0];",
+      "cu1(pi/4) q[3],q[1];",
+      "cu1(pi/2) q[3],q[2];",
+      "h q[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/generic/qft.qasm",
+    "source_relative_path": "circuits/generic/qft.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "1"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "feynmandd_circuits_generic_qpt",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "barrier q;",
+      "h q[0];",
+      "barrier q;"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/generic/qpt.qasm",
+    "source_relative_path": "circuits/generic/qpt.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 1,
+    "name": "feynmandd_circuits_generic_rb",
+    "qasm_lines": [
+      "// One randomized benchmarking sequence",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "h q[0];",
+      "barrier q;",
+      "cz q[0],q[1];",
+      "barrier q;",
+      "s q[0];",
+      "cz q[0],q[1];",
+      "barrier q;",
+      "s q[0];",
+      "z q[0];",
+      "h q[0];",
+      "barrier q;"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/generic/rb.qasm",
+    "source_relative_path": "circuits/generic/rb.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 3,
+    "name": "feynmandd_circuits_ghz",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[4];",
+      "h qubits[0];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];",
+      "cz qubits[0],qubits[1];",
+      "cz qubits[0],qubits[2];",
+      "cz qubits[0],qubits[3];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "h qubits[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/ghz.qasm",
+    "source_relative_path": "circuits/ghz.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "1"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "feynmandd_circuits_h1",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "h q[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/h1.qasm",
+    "source_relative_path": "circuits/h1.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "1"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 1,
+    "name": "feynmandd_circuits_h2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "h q[0];",
+      "h q[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/h2.qasm",
+    "source_relative_path": "circuits/h2.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 4,
+    "max_imported_nvars": 6,
+    "name": "feynmandd_circuits_hhi",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg qubits[3];",
+      "h qubits[1];",
+      "h qubits[2];",
+      "cx qubits[0],qubits[1];",
+      "cx qubits[0],qubits[2];",
+      "h qubits[1];",
+      "h qubits[2];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/hhi.qasm",
+    "source_relative_path": "circuits/hhi.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 4,
+    "max_imported_nvars": 5,
+    "name": "feynmandd_circuits_ibmqx2_Deutsch_Algorithm",
+    "qasm_lines": [
+      "// Implementation of Deutsch algorithm with two qubits for f(x)=x",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "",
+      "qreg q[5];",
+      "",
+      "x q[4];",
+      "h q[3];",
+      "h q[4];",
+      "cx q[3],q[4];",
+      "h q[3];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/ibmqx2/Deutsch_Algorithm.qasm",
+    "source_relative_path": "circuits/ibmqx2/Deutsch_Algorithm.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 8,
+    "max_imported_nvars": 8,
+    "name": "feynmandd_circuits_ibmqx2_iswap",
+    "qasm_lines": [
+      "// Name of Experiment: iswap v4",
+      "",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "",
+      "qreg q[5];",
+      "",
+      "x q[0];",
+      "s q[0];",
+      "s q[1];",
+      "h q[0];",
+      "cx q[0],q[1];",
+      "h q[0];",
+      "h q[1];",
+      "cx q[0],q[1];",
+      "h q[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/ibmqx2/iswap.qasm",
+    "source_relative_path": "circuits/ibmqx2/iswap.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 10,
+    "max_imported_nvars": 12,
+    "name": "feynmandd_circuits_ibmqx2_qe_qft_3",
+    "qasm_lines": [
+      "// quantum Fourier transform for the Quantum Experience",
+      "// on the first 3 qubits",
+      "",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "",
+      "// Register declarations",
+      "qreg q[5];",
+      "",
+      "// Choose starting state",
+      "// ** Put your code here **",
+      "",
+      "// Quantum Fourier transform",
+      "// For this small example, we have full connectivity.",
+      "",
+      "h q[0];",
+      "// cu1(pi/2) q[0],q[1];",
+      "u1(pi/4) q[0];",
+      "cx q[0],q[1];",
+      "u1(-pi/4) q[1];",
+      "cx q[0],q[1];",
+      "u1(pi/4) q[1];",
+      "// end cu1",
+      "h q[1];",
+      "// cu1(pi/4) q[0],q[2];",
+      "u1(pi/8) q[0];",
+      "cx q[0],q[2];",
+      "u1(-pi/8) q[2];",
+      "cx q[0],q[2];",
+      "u1(pi/8) q[2];",
+      "// end cu1",
+      "// cu1(pi/2) q[1],q[2];",
+      "u1(pi/4) q[1];",
+      "cx q[1],q[2];",
+      "u1(-pi/4) q[2];",
+      "cx q[1],q[2];",
+      "u1(pi/4) q[2];",
+      "// end cu1",
+      "h q[2];",
+      "",
+      "// Outputs are q[2], q[1], q[0]",
+      "",
+      "// Choose measurement",
+      "// ** Put your code here **"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/ibmqx2/qe_qft_3.qasm",
+    "source_relative_path": "circuits/ibmqx2/qe_qft_3.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 7,
+    "max_imported_nvars": 8,
+    "name": "feynmandd_circuits_sample",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "cz q[2], q[3];",
+      "h q[1];",
+      "ccz q[1], q[0], q[3];",
+      "h q[3];",
+      "cz q[3], q[2];",
+      "h q[0];"
+    ],
+    "source": "FeynmanDD",
+    "source_path": "/tmp/dlx4sop-corpus/feynmandd/circuits/sample.qasm",
+    "source_relative_path": "circuits/sample.qasm",
+    "source_url": "https://github.com/cqs-thu/feynman-decision-diagram"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 32,
+    "max_imported_nvars": 32,
+    "name": "pyzx_feyn_bench_out_tof_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "h q[4];",
+      "t q[4];",
+      "cx q[0], q[4];",
+      "tdg q[4];",
+      "cx q[1], q[4];",
+      "t q[4];",
+      "cx q[0], q[4];",
+      "tdg q[4];",
+      "cx q[1], q[4];",
+      "h q[4];",
+      "h q[3];",
+      "t q[3];",
+      "cx q[2], q[3];",
+      "tdg q[3];",
+      "cx q[4], q[3];",
+      "t q[3];",
+      "cx q[2], q[3];",
+      "tdg q[3];",
+      "cx q[4], q[3];",
+      "h q[3];",
+      "t q[4];",
+      "cx q[2], q[4];",
+      "tdg q[4];",
+      "cx q[2], q[4];",
+      "h q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "cx q[1], q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "cx q[1], q[4];",
+      "h q[4];",
+      "t q[2];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/feyn_bench/out/tof_3.qc",
+    "source_relative_path": "feyn_bench/out/tof_3.qc",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 29,
+    "max_imported_nvars": 28,
+    "name": "pyzx_feyn_bench_tof_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "h q[4];",
+      "ccz q[0], q[1], q[4];",
+      "h q[4];",
+      "h q[3];",
+      "ccz q[2], q[4], q[3];",
+      "h q[3];",
+      "h q[4];",
+      "ccz q[0], q[1], q[4];",
+      "h q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/feyn_bench/tof_3.qc",
+    "source_relative_path": "feyn_bench/tof_3.qc",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 29,
+    "max_imported_nvars": 31,
+    "name": "pyzx_optimized_tof_3_pyzx",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "s q[0];",
+      "s q[1];",
+      "t q[2];",
+      "cz q[1], q[4];",
+      "h q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "cx q[1], q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "cx q[3], q[4];",
+      "h q[4];",
+      "t q[4];",
+      "h q[3];",
+      "tdg q[3];",
+      "cx q[2], q[3];",
+      "t q[3];",
+      "cx q[4], q[3];",
+      "cx q[2], q[4];",
+      "tdg q[4];",
+      "cx q[2], q[4];",
+      "cz q[1], q[4];",
+      "h q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "cx q[1], q[4];",
+      "tdg q[4];",
+      "cx q[0], q[4];",
+      "t q[4];",
+      "h q[4];",
+      "cx q[0], q[1];",
+      "sdg q[1];",
+      "cx q[0], q[1];",
+      "tdg q[3];",
+      "cx q[2], q[3];",
+      "t q[3];",
+      "h q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/optimized/tof_3_pyzx.qc",
+    "source_relative_path": "optimized/tof_3_pyzx.qc",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original0",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[4];",
+      "cx q[1], q[0];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original0.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original0.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original1",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[1], q[0];",
+      "cx q[4], q[1];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original1.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original1.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original10",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[4], q[3];",
+      "cx q[3], q[2];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original10.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original10.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "pyzx_steiner_5qubits_2_Original11",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[3], q[4];",
+      "cx q[3], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original11.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original11.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original12",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[4], q[3];",
+      "cx q[2], q[0];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original12.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original12.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original13",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[1], q[0];",
+      "cx q[3], q[2];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original13.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original13.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original14",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[1];",
+      "cx q[1], q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original14.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original14.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "pyzx_steiner_5qubits_2_Original15",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[2], q[3];",
+      "cx q[0], q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original15.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original15.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original16",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[1], q[3];",
+      "cx q[3], q[0];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original16.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original16.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original17",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[4], q[2];",
+      "cx q[0], q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original17.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original17.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original18",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[4], q[1];",
+      "cx q[4], q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original18.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original18.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "pyzx_steiner_5qubits_2_Original19",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[4];",
+      "cx q[2], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original19.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original19.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original2",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[4], q[0];",
+      "cx q[3], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original2.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original2.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original3",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[4];",
+      "cx q[4], q[2];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original3.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original3.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original4",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[1];",
+      "cx q[4], q[3];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original4.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original4.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original5",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[1], q[3];",
+      "cx q[3], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original5.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original5.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original6",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[1], q[3];",
+      "cx q[3], q[2];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original6.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original6.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original7",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[2], q[1];",
+      "cx q[2], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original7.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original7.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original8",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[0], q[2];",
+      "cx q[0], q[4];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original8.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original8.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "pyzx_steiner_5qubits_2_Original9",
+    "qasm_lines": [
+      "// Initial wiring: [0, 1, 2, 3, 4]",
+      "// Resulting wiring: [0, 1, 2, 3, 4]",
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "cx q[3], q[4];",
+      "cx q[2], q[1];"
+    ],
+    "source": "PyZX",
+    "source_path": "/tmp/dlx4sop-corpus/pyzx/circuits/steiner/5qubits/2/Original9.qasm",
+    "source_relative_path": "steiner/5qubits/2/Original9.qasm",
+    "source_url": "https://github.com/zxcalc/pyzx"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "mqtbench_bv_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_2.qasm",
+    "source_relative_path": "bv_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 3,
+    "name": "mqtbench_bv_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_3.qasm",
+    "source_relative_path": "bv_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 4,
+    "name": "mqtbench_bv_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];",
+      "h q[3];",
+      "h q[3];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_4.qasm",
+    "source_relative_path": "bv_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 5,
+    "name": "mqtbench_bv_indep_5",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];",
+      "h q[3];",
+      "h q[3];",
+      "h q[4];",
+      "cz q[4],q[0];",
+      "h q[4];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_5.qasm",
+    "source_relative_path": "bv_indep_5.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000000",
+        "000000"
+      ],
+      [
+        "111111",
+        "111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 6,
+    "name": "mqtbench_bv_indep_6",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[6];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];",
+      "h q[3];",
+      "h q[3];",
+      "h q[4];",
+      "cz q[4],q[0];",
+      "h q[4];",
+      "h q[5];",
+      "h q[5];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_6.qasm",
+    "source_relative_path": "bv_indep_6.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000",
+        "0000000"
+      ],
+      [
+        "1111111",
+        "1111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 7,
+    "name": "mqtbench_bv_indep_7",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[7];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];",
+      "h q[3];",
+      "h q[3];",
+      "h q[4];",
+      "cz q[4],q[0];",
+      "h q[4];",
+      "h q[5];",
+      "h q[5];",
+      "h q[6];",
+      "cz q[6],q[0];",
+      "h q[6];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_7.qasm",
+    "source_relative_path": "bv_indep_7.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00000000",
+        "00000000"
+      ],
+      [
+        "11111111",
+        "11111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 8,
+    "name": "mqtbench_bv_indep_8",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[8];",
+      "x q[0];",
+      "h q[1];",
+      "h q[1];",
+      "h q[2];",
+      "cz q[2],q[0];",
+      "h q[2];",
+      "h q[3];",
+      "h q[3];",
+      "h q[4];",
+      "cz q[4],q[0];",
+      "h q[4];",
+      "h q[5];",
+      "h q[5];",
+      "h q[6];",
+      "cz q[6],q[0];",
+      "h q[6];",
+      "h q[7];",
+      "h q[7];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/bv_indep_8.qasm",
+    "source_relative_path": "bv_indep_8.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 1,
+    "name": "mqtbench_ghz_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "h q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_2.qasm",
+    "source_relative_path": "ghz_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "mqtbench_ghz_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_3.qasm",
+    "source_relative_path": "ghz_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 3,
+    "name": "mqtbench_ghz_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_4.qasm",
+    "source_relative_path": "ghz_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 4,
+    "name": "mqtbench_ghz_indep_5",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[5];",
+      "h q[4];",
+      "cx q[4],q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_5.qasm",
+    "source_relative_path": "ghz_indep_5.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000000",
+        "000000"
+      ],
+      [
+        "111111",
+        "111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 5,
+    "name": "mqtbench_ghz_indep_6",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[6];",
+      "h q[5];",
+      "cx q[5],q[4];",
+      "cx q[4],q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_6.qasm",
+    "source_relative_path": "ghz_indep_6.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000000",
+        "0000000"
+      ],
+      [
+        "1111111",
+        "1111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 6,
+    "name": "mqtbench_ghz_indep_7",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[7];",
+      "h q[6];",
+      "cx q[6],q[5];",
+      "cx q[5],q[4];",
+      "cx q[4],q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_7.qasm",
+    "source_relative_path": "ghz_indep_7.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00000000",
+        "00000000"
+      ],
+      [
+        "11111111",
+        "11111111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 7,
+    "name": "mqtbench_ghz_indep_8",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[8];",
+      "h q[7];",
+      "cx q[7],q[6];",
+      "cx q[6],q[5];",
+      "cx q[5],q[4];",
+      "cx q[4],q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/ghz_indep_8.qasm",
+    "source_relative_path": "ghz_indep_8.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "mqtbench_qft_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "h q[1];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qft_indep_2.qasm",
+    "source_relative_path": "qft_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "mqtbench_qft_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q[2];",
+      "cp(pi/2) q[2],q[1];",
+      "h q[1];",
+      "cp(pi/4) q[2],q[0];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qft_indep_3.qasm",
+    "source_relative_path": "qft_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 0,
+    "name": "mqtbench_qft_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[3];",
+      "cp(pi/2) q[3],q[2];",
+      "h q[2];",
+      "cp(pi/4) q[3],q[1];",
+      "cp(pi/2) q[2],q[1];",
+      "h q[1];",
+      "cp(pi/8) q[3],q[0];",
+      "cp(pi/4) q[2],q[0];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[3];",
+      "swap q[1],q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qft_indep_4.qasm",
+    "source_relative_path": "qft_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 2,
+    "max_imported_nvars": 3,
+    "name": "mqtbench_qftentangled_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "h q[1];",
+      "cx q[1],q[0];",
+      "h q[1];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qftentangled_indep_2.qasm",
+    "source_relative_path": "qftentangled_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 4,
+    "max_imported_nvars": 5,
+    "name": "mqtbench_qftentangled_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "h q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];",
+      "h q[2];",
+      "cp(pi/2) q[2],q[1];",
+      "h q[1];",
+      "cp(pi/4) q[2],q[0];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qftentangled_indep_3.qasm",
+    "source_relative_path": "qftentangled_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 6,
+    "max_imported_nvars": 7,
+    "name": "mqtbench_qftentangled_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "h q[3];",
+      "cx q[3],q[2];",
+      "cx q[2],q[1];",
+      "cx q[1],q[0];",
+      "h q[3];",
+      "cp(pi/2) q[3],q[2];",
+      "h q[2];",
+      "cp(pi/4) q[3],q[1];",
+      "cp(pi/2) q[2],q[1];",
+      "h q[1];",
+      "cp(pi/8) q[3],q[0];",
+      "cp(pi/4) q[2],q[0];",
+      "cp(pi/2) q[1],q[0];",
+      "h q[0];",
+      "swap q[0],q[3];",
+      "swap q[1],q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qftentangled_indep_4.qasm",
+    "source_relative_path": "qftentangled_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "mqtbench_qpeexact_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "qreg psi[1];",
+      "h q[0];",
+      "x psi[0];",
+      "cp(pi) psi[0],q[0];",
+      "h q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeexact_indep_2.qasm",
+    "source_relative_path": "qpeexact_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 3,
+    "name": "mqtbench_qpeexact_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "x psi[0];",
+      "cp(pi) psi[0],q[0];",
+      "swap q[0],q[1];",
+      "h q[0];",
+      "cp(-pi/2) q[1],q[0];",
+      "h q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeexact_indep_3.qasm",
+    "source_relative_path": "qpeexact_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 4,
+    "name": "mqtbench_qpeexact_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "x psi[0];",
+      "cp(pi) psi[0],q[0];",
+      "swap q[0],q[2];",
+      "h q[0];",
+      "cp(-pi/2) q[1],q[0];",
+      "h q[1];",
+      "cp(-pi/4) q[2],q[0];",
+      "cp(-pi/2) q[2],q[1];",
+      "h q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeexact_indep_4.qasm",
+    "source_relative_path": "qpeexact_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00000",
+        "00000"
+      ],
+      [
+        "11111",
+        "11111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 5,
+    "name": "mqtbench_qpeexact_indep_5",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[4];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "h q[3];",
+      "x psi[0];",
+      "cp(-7*pi/8) psi[0],q[0];",
+      "cp(pi/4) psi[0],q[1];",
+      "cp(pi/2) psi[0],q[2];",
+      "swap q[1],q[2];",
+      "cp(pi) psi[0],q[3];",
+      "swap q[0],q[3];",
+      "h q[0];",
+      "cp(-pi/2) q[1],q[0];",
+      "h q[1];",
+      "cp(-pi/4) q[2],q[0];",
+      "cp(-pi/2) q[2],q[1];",
+      "h q[2];",
+      "cp(-pi/8) q[3],q[0];",
+      "cp(-pi/4) q[3],q[1];",
+      "cp(-pi/2) q[3],q[2];",
+      "h q[3];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeexact_indep_5.qasm",
+    "source_relative_path": "qpeexact_indep_5.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 2,
+    "name": "mqtbench_qpeinexact_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[1];",
+      "qreg psi[1];",
+      "h q[0];",
+      "x psi[0];",
+      "cp(pi/2) psi[0],q[0];",
+      "h q[0];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeinexact_indep_2.qasm",
+    "source_relative_path": "qpeinexact_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "000",
+        "000"
+      ],
+      [
+        "111",
+        "111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 3,
+    "name": "mqtbench_qpeinexact_indep_3",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "x psi[0];",
+      "cp(3*pi/4) psi[0],q[0];",
+      "cp(-pi/2) psi[0],q[1];",
+      "swap q[0],q[1];",
+      "h q[0];",
+      "cp(-pi/2) q[1],q[0];",
+      "h q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeinexact_indep_3.qasm",
+    "source_relative_path": "qpeinexact_indep_3.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "0000",
+        "0000"
+      ],
+      [
+        "1111",
+        "1111"
+      ]
+    ],
+    "max_imported_edges": 0,
+    "max_imported_nvars": 4,
+    "name": "mqtbench_qpeinexact_indep_4",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[3];",
+      "qreg psi[1];",
+      "h q[0];",
+      "h q[1];",
+      "h q[2];",
+      "x psi[0];",
+      "cp(-7*pi/8) psi[0],q[0];",
+      "cp(pi/4) psi[0],q[1];",
+      "cp(pi/2) psi[0],q[2];",
+      "swap q[0],q[2];",
+      "h q[0];",
+      "cp(-pi/2) q[1],q[0];",
+      "h q[1];",
+      "cp(-pi/4) q[2],q[0];",
+      "cp(-pi/2) q[2],q[1];",
+      "h q[2];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/qpeinexact_indep_4.qasm",
+    "source_relative_path": "qpeinexact_indep_4.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  },
+  {
+    "boundaries": [
+      [
+        "00",
+        "00"
+      ],
+      [
+        "11",
+        "11"
+      ]
+    ],
+    "max_imported_edges": 5,
+    "max_imported_nvars": 6,
+    "name": "mqtbench_wstate_indep_2",
+    "qasm_lines": [
+      "OPENQASM 2.0;",
+      "include \"qelib1.inc\";",
+      "qreg q[2];",
+      "ry(-pi/4) q[0];",
+      "x q[1];",
+      "cz q[1],q[0];",
+      "ry(pi/4) q[0];",
+      "cx q[0],q[1];"
+    ],
+    "source": "MQT Bench",
+    "source_path": "/tmp/dlx4sop-corpus/mqt_qasm/wstate_indep_2.qasm",
+    "source_relative_path": "wstate_indep_2.qasm",
+    "source_url": "https://github.com/munich-quantum-toolkit/bench"
+  }
+]

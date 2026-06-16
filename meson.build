@@ -480,6 +480,24 @@ if python3.found()
     ],
   )
   test(
+    'build corpus help',
+    python3,
+    args: [
+      files('tools/build_corpus.py'),
+      '--help',
+    ],
+  )
+  test(
+    'build corpus verify',
+    python3,
+    args: [
+      files('tools/build_corpus.py'),
+      '--verify',
+      '--lock', files('benchmarks/corpus.lock.json'),
+      '--out', meson.current_source_dir() / 'benchmarks' / 'manifests',
+    ],
+  )
+  test(
     'native simulator benchmark smoke',
     python3,
     args: [

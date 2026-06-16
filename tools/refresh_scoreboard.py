@@ -46,16 +46,23 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("0-32", "dlx4sop-tier-0-32-treewidth-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-rankwidth-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-branch-hybrid-current.jsonl"),
+    ("0-32", "dlx4sop-tier-0-32-wmc-amplitude-current.jsonl"),
+    ("0-32", "dlx4sop-tier-0-32-wmc-residue-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-treewidth-fresh.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-branch-hybrid-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-rankwidth-min-fill-cut-current.jsonl"),
+    ("33-64", "dlx4sop-tier-33-64-wmc-amplitude-current.jsonl"),
+    ("33-64", "dlx4sop-tier-33-64-wmc-residue-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-treewidth-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-branch-hybrid-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-rankwidth-min-fill-cut-current.jsonl"),
+    ("65-128", "dlx4sop-tier-65-128-wmc-amplitude-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-branch-hybrid-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-treewidth-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-rankwidth-min-fill-cut-current.jsonl"),
+    ("129-256", "dlx4sop-tier-129-256-wmc-amplitude-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-treewidth-current.jsonl"),
+    ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amplitude-current.jsonl"),
 )
 
 DEFAULT_NATIVE_ARTIFACTS = tuple(
@@ -160,6 +167,13 @@ def format_count(value: int) -> str:
 
 def public_key_stats(stats: dict[str, int]) -> str:
     parts = []
+    if "wmc_export_elapsed_ns" in stats or "wmc_ganak_elapsed_ns" in stats:
+        parts.append(
+            f"ganak {format_ns(stats.get('wmc_ganak_elapsed_ns', 0))} + "
+            f"export {format_ns(stats.get('wmc_export_elapsed_ns', 0))}; "
+            f"{stats.get('wmc_mismatches', 0)} amplitude mismatches"
+        )
+        return "; ".join(parts)
     if "search_nodes" in stats:
         parts.append(f"{format_count(stats['search_nodes'])} nodes")
     if "cache_hits" in stats or "cache_misses" in stats:
@@ -379,7 +393,11 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
 
 
 def best_solver_configs(named_records: list[tuple[str, list[dict]]]) -> dict[str, str]:
-    rows = summarize_solver_records(named_records)
+    non_wmc = [
+        (tier, [r for r in records if r.get("backend") != "wmc"])
+        for tier, records in named_records
+    ]
+    rows = summarize_solver_records(non_wmc)
     best: dict[str, tuple[int, str]] = {}
     for row in rows:
         if row["ok"] == 0:
@@ -406,7 +424,11 @@ def filter_records_by_config(
 
 
 def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
-    rows = coverage_by_source(named_records)
+    non_wmc = [
+        (tier, [r for r in records if r.get("backend") != "wmc"])
+        for tier, records in named_records
+    ]
+    rows = coverage_by_source(non_wmc)
     print("## Benchmarks Used\n", file=file)
     print(
         "Counts are fixed-boundary QSOP rows currently used in solver comparisons. "
@@ -447,7 +469,7 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
             f"out of {total_attempted_large} attempted under the current timeout cap.",
             file=file,
         )
-    sample_rows = [record for tier, records in named_records for record in records if tier == "257-512 sample"]
+    sample_rows = [record for tier, records in non_wmc for record in records if tier == "257-512 sample"]
     if sample_rows:
         print("\n## 257-512 Sample Stratification\n", file=file)
         threshold, rows = stratify_large_sample(sample_rows)
@@ -499,11 +521,11 @@ def write_competitor_tables(
     print("\n## Competitor Comparisons\n", file=file)
     print(
         "These compare the best current QSOP configuration for each tier against "
-        "native QASM baselines on common rows. Until `sop2X` exporters exist, each "
-        "native tool is compared only on the QASM rows from that source that it can "
-        "parse and fit under its cap. Speedup is native elapsed time divided by "
-        "QSOP solve time, so values above `1.00x` mean QSOP is faster. Amplitude "
-        "error columns use completed rows where both sides recorded amplitudes.\n",
+        "native QASM baselines on common rows. Each native tool is compared only on "
+        "the QASM rows from that source that it can parse and fit under its cap. "
+        "Speedup is native elapsed time divided by QSOP solve time, so values above "
+        "`1.00x` mean QSOP is faster. Amplitude error columns use completed rows "
+        "where both sides recorded amplitudes.\n",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}, key=source_sort_key):
@@ -546,7 +568,8 @@ def write_competitor_tables(
 def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
     best = best_solver_configs(named_records)
     best_parts = [f"{tier}: `{best[tier]}`" for tier in SOLVER_TIERS if tier in best]
-    sample_rows = [record for tier, records in named_records for record in records if tier == "257-512 sample"]
+    non_wmc = [(tier, [r for r in records if r.get("backend") != "wmc"]) for tier, records in named_records]
+    sample_rows = [record for tier, records in non_wmc for record in records if tier == "257-512 sample"]
     sample_ok = sum(1 for record in sample_rows if record.get("status", "ok") == "ok")
     sample_total = len(sample_rows)
     print("## Current Takeaway\n", file=file)

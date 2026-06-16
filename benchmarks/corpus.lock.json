@@ -1,0 +1,88 @@
+{
+  "tool_versions": {
+    "ganak_sha1": "0b4881b40126fb5ae8a1b7c9fdd4878afa25b051",
+    "mqt_bench": "2.2.2",
+    "pyzx": "0.10.3",
+    "qiskit": "2.3.0"
+  },
+  "tiers": [
+    {
+      "name": "0-32",
+      "min_vars": 0,
+      "max_vars": 32,
+      "manifest": "dlx4sop-tier-0-32-manifest.json"
+    },
+    {
+      "name": "33-64",
+      "min_vars": 33,
+      "max_vars": 64,
+      "manifest": "dlx4sop-tier-33-64-manifest.json"
+    },
+    {
+      "name": "65-128",
+      "min_vars": 65,
+      "max_vars": 128,
+      "manifest": "dlx4sop-tier-65-128-manifest.json"
+    },
+    {
+      "name": "129-256",
+      "min_vars": 129,
+      "max_vars": 256,
+      "manifest": "dlx4sop-tier-129-256-manifest.json"
+    },
+    {
+      "name": "257-512 sample",
+      "min_vars": 257,
+      "max_vars": 512,
+      "manifest": "dlx4sop-tier-257-512-sample-manifest.json",
+      "sample": true,
+      "sample_cap_per_source": 50,
+      "sample_seed": 42
+    }
+  ],
+  "sources": [
+    {
+      "name": "Internal corpus",
+      "kind": "committed",
+      "url": "tests/qasm_solver_corpus.json",
+      "build": [
+        "read tests/qasm_solver_corpus.json directly; compute max_imported_nvars via qasm2sop on each boundary"
+      ]
+    },
+    {
+      "name": "FeynmanDD",
+      "kind": "git",
+      "url": "https://github.com/cqs-thu/feynman-decision-diagram",
+      "commit": "9ec9ff3b158899dc5c4c2fdd614b80abad0e7f43",
+      "root": ".",
+      "build": [
+        "python3 tools/build_external_qasm_manifest.py build/qasm2sop <root> --source-name FeynmanDD --source-url https://github.com/cqs-thu/feynman-decision-diagram --source-prefix feynmandd --strip-terminal-measurements --inline-simple-gates --boundaries zero-and-one --min-vars 0 --max-vars 512"
+      ]
+    },
+    {
+      "name": "PyZX",
+      "kind": "git",
+      "url": "https://github.com/zxcalc/pyzx",
+      "commit": "4f46241d87fcaf23ee1814a937676f1856b51704",
+      "root": "circuits",
+      "build": [
+        "python3 tools/build_external_qasm_manifest.py build/qasm2sop <root>/circuits --source-name PyZX --source-url https://github.com/zxcalc/pyzx --source-prefix pyzx --include-qc --qc2qasm tools/qc2qasm.py --boundaries zero-and-one --min-vars 0 --max-vars 512"
+      ]
+    },
+    {
+      "name": "MQT Bench",
+      "kind": "python-package",
+      "url": "https://github.com/munich-quantum-toolkit/bench",
+      "version": "2.2.2",
+      "scan_args": {
+        "benchmarks": "default",
+        "levels": "indep",
+        "sizes": [2, 3, 4, 5, 6, 7, 8]
+      },
+      "build": [
+        "python3 tools/scan_mqt_bench.py build/qasm2sop --sizes 2,3,4,5,6,7,8 --benchmarks default --levels indep --qasm-dir <work_dir>/mqt_qasm",
+        "python3 tools/build_external_qasm_manifest.py build/qasm2sop <work_dir>/mqt_qasm --source-name 'MQT Bench' --source-url https://github.com/munich-quantum-toolkit/bench --source-prefix mqt --boundaries zero-and-one --min-vars 0 --max-vars 512"
+      ]
+    }
+  ]
+}

@@ -64,3 +64,10 @@ __pycache__/
 
 # Local project planning
 tasks.md
+
+# Ephemeral benchmark artifacts (JSONL outputs from bench_* runners)
+*.jsonl
+
+# Ephemeral corpus clones (populated by tools/build_corpus.py --work-dir)
+# Default work-dir is /tmp so nothing to ignore here; non-default paths
+# outside the repo are also outside git scope.
