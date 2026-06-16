@@ -40,6 +40,7 @@ static void print_usage(FILE *file) {
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
+        "[--stats-jsonl PATH] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -444,6 +445,7 @@ int main(int argc, char **argv) {
   bool treewidth_order_set = false;
   bool include_result = false;
   bool include_probability = false;
+  const char *stats_jsonl_path = NULL;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -496,6 +498,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: unsupported trace format '%s'\n", trace_value);
         return 2;
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--stats-jsonl") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --stats-jsonl requires a path\n", stderr);
+        return 2;
+      }
+      stats_jsonl_path = argv[++i];
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -697,6 +707,18 @@ int main(int argc, char **argv) {
     }
   }
 
+  FILE *jsonl_file = NULL;
+  if (stats_jsonl_path != NULL) {
+    jsonl_file = fopen(stats_jsonl_path, "w");
+    if (jsonl_file == NULL) {
+      fprintf(stderr, "error: %s: %s\n", stats_jsonl_path, strerror(errno));
+      if (input != stdin) {
+        fclose(input);
+      }
+      return 1;
+    }
+  }
+
   qsop_error_t error = {0};
   qsop_instance_t *qsop = NULL;
   bool ok = qsop_parse_file(input, diagnostic_path, &qsop, &error);
@@ -704,6 +726,9 @@ int main(int argc, char **argv) {
     fclose(input);
   }
   if (!ok) {
+    if (jsonl_file != NULL) {
+      fclose(jsonl_file);
+    }
     print_error(&error, diagnostic_path);
     return 1;
   }
@@ -719,6 +744,12 @@ int main(int argc, char **argv) {
       .user = &csv_trace,
   };
   qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
+  qsop_backend_stats_sink_t sink = {
+      .file = jsonl_file,
+      .instance = diagnostic_path,
+      .next_id = 0,
+  };
+  qsop_backend_stats_sink_t *sink_ptr = jsonl_file != NULL ? &sink : NULL;
   if (backend == SOLVE_BACKEND_COMPONENTS) {
     ok = qsop_solve_components_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                            &solve_stats, trace_ptr, &error);
@@ -726,8 +757,9 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_residual_branch_heuristic_mode_trace_stats(
-        qsop, max_vars, branch_heuristic, solve_mode, &result, &solve_stats, trace_ptr, &error);
+    ok = qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
+        qsop, max_vars, branch_heuristic, solve_mode, sink_ptr, &result, &solve_stats, trace_ptr,
+        &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
@@ -759,6 +791,9 @@ int main(int argc, char **argv) {
   }
   qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);
+  if (jsonl_file != NULL) {
+    fclose(jsonl_file);
+  }
   if (!ok) {
     print_error(&error, diagnostic_path);
     return 1;

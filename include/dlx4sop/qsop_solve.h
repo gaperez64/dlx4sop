@@ -248,4 +248,23 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
 
 bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, qsop_error_t *error);
 
+/* ---------------------------------------------------------------------------
+ * JSONL backend-decision sink
+ *
+ * Create on the stack and pass to qsop_solve_residual_branch_*_sink_* to
+ * emit one JSON object per delegation decision.  Set file = NULL to disable.
+ * next_id is read/written by the emitter; initialise to 0.
+ * --------------------------------------------------------------------------- */
+
+typedef struct qsop_backend_stats_sink {
+  FILE *file;           /* JSONL output file — NULL disables emission */
+  const char *instance; /* value for the "instance" JSON field */
+  uint64_t next_id;     /* monotone record counter, incremented per record */
+} qsop_backend_stats_sink_t;
+
+bool qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
 #endif

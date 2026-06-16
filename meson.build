@@ -134,6 +134,16 @@ if python3.found()
     depends: sop_solve,
   )
   test(
+    'sop-solve jsonl smoke',
+    python3,
+    args: [
+      files('tests/test_sop_solve_jsonl.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+  )
+  test(
     'sop-stats golden',
     python3,
     args: [
