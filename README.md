@@ -51,7 +51,7 @@ sidecar files.
     Typically 10–100× faster than the residue encoding for r ≥ 8.
 - `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
   `tools/bench_wmc_ganak.py` drives `sop2wmc` + Ganak and cross-checks results
-  against `sop-solve`; supports `--encoding residue|amplitude|both`.
+  against `sop-solve`; supports `--encoding (residue, amplitude, or both)`.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at the benchmark/import boundary.
@@ -77,7 +77,7 @@ cst <constant_mod_r>
 u <vertex> <unary_coefficient_mod_r>
 q <u> <v> <quadratic_coefficient_mod_r>
 e <u> <v>
-f <vertex> <0|1>
+f <vertex> (0 or 1)
 ```
 
 `e u v` is shorthand for a sign edge with coefficient `r/2`. Pins (`f`) are
