@@ -77,7 +77,7 @@ cst <constant_mod_r>
 u <vertex> <unary_coefficient_mod_r>
 q <u> <v> <quadratic_coefficient_mod_r>
 e <u> <v>
-f <vertex> (0 or 1)
+f <vertex> <0 | 1>
 ```
 
 `e u v` is shorthand for a sign edge with coefficient `r/2`. Pins (`f`) are
