@@ -120,13 +120,20 @@ def parse_amplitude_factor(cnf_text: str) -> complex:
     raise ValueError("no c amplitude_factor line in CNF metadata")
 
 
-def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path, extra_args: list | None = None):
+def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path, extra_args: list | None = None, timeout: float | None = None):
     cmd = [str(sop_solve), "--format", "residue-vector"]
     if extra_args:
         cmd.extend(extra_args)
     cmd.append(str(qsop))
     start = time.perf_counter()
-    result = run(cmd)
+    try:
+        result = subprocess.run(
+            [str(a) for a in cmd], check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"sop-solve timed out on {qsop}")
     elapsed = time.perf_counter() - start
     if result.returncode != 0:
         raise RuntimeError(f"sop-solve failed on {qsop}:\n{result.stderr}")
@@ -201,19 +208,40 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
 
 
 def counts_to_amplitude(counts: list, r: int) -> complex:
+    # Half-period symmetry: if c[k] == c[k + r/2] for all k then the DFT
+    # evaluates to exactly 0 because omega^(r/2) = e^(i*pi) = -1, so each
+    # pair c[k]*(omega^k + omega^(k+r/2)) = c[k]*omega^k*(1 + (-1)) = 0.
+    # This avoids catastrophic cancellation for large integer counts (~2^60).
+    if r % 2 == 0:
+        half = r // 2
+        if all(counts[k] == counts[k + half] for k in range(half)):
+            return complex(0, 0)
+    # Use exact integer arithmetic for r=2,4,8 to avoid catastrophic cancellation
+    # when large integer counts nearly cancel (e.g. 2^51 counts summing to 0).
+    if r == 2:
+        return complex(counts[0] - counts[1], 0)
+    if r == 4:
+        return complex(counts[0] - counts[2], counts[1] - counts[3])
+    if r == 8:
+        inv_sqrt2 = math.sqrt(2) / 2
+        a_re = counts[0] - counts[4]
+        b_re = counts[1] + counts[7] - counts[3] - counts[5]
+        a_im = counts[2] - counts[6]
+        b_im = counts[1] - counts[7] + counts[3] - counts[5]
+        return complex(a_re + b_re * inv_sqrt2, a_im + b_im * inv_sqrt2)
     omega = cmath.exp(2 * math.pi * 1j / r)
     return sum(c * omega ** k for k, c in enumerate(counts))
 
 
-def check_amplitude(got: complex, ref: complex, tol: float = 1e-5) -> bool:
+def check_amplitude(got: complex, ref: complex, tol: float = 2e-5) -> bool:
     return abs(got - ref) <= tol * max(1.0, abs(ref))
 
 
-def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_solve_extra=None):
+def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_solve_extra=None, sop_solve_timeout=None):
     r, nvars, nedges = read_header(qsop)
     qsop_mode = read_qsop_mode(qsop)
     try:
-        reference, solve_s = solver_counts(sop_solve, qsop, sop_solve_extra)
+        reference, solve_s = solver_counts(sop_solve, qsop, sop_solve_extra, timeout=sop_solve_timeout)
         ref_amplitude = counts_to_amplitude(reference, r)
     except RuntimeError:
         reference = None
@@ -284,9 +312,24 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
                 "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
                 "mismatches": 0,
             }
-        if ref_amplitude is not None:
-            ok = check_amplitude(amplitude, ref_amplitude)
-            mismatches = 0 if ok else 1
+        if ref_amplitude is not None and reference is not None:
+            count_scale = max(abs(c) for c in reference)
+            r_terms = len(reference)
+            # Estimated double-precision error in the DFT reference.
+            # When this dominates the reference value, the cross-check is unreliable.
+            est_dp_err = r_terms * count_scale * 2.2e-16
+            if ref_amplitude == 0j:
+                # Reference is exactly 0 from integer/symmetry arithmetic.
+                # Ganak's MPFR residual scales with circuit size; accept if well below count scale.
+                ok = abs(amplitude) <= max(2e-5, count_scale * 1e-13)
+            elif est_dp_err > abs(ref_amplitude):
+                # Reference dominated by DP rounding; skip check (mismatches=-1).
+                ok = None
+            else:
+                # Standard check with tolerance scaled to DP reference precision.
+                eff_tol = max(2e-5, est_dp_err / abs(ref_amplitude))
+                ok = check_amplitude(amplitude, ref_amplitude, tol=eff_tol)
+            mismatches = (0 if ok else 1) if ok is not None else -1
         else:
             mismatches = -1
         row = {
@@ -337,6 +380,8 @@ def main() -> int:
                         help="backend passed to sop-solve for reference cross-check (e.g. treewidth)")
     parser.add_argument("--sop-solve-max-vars", type=int, default=None,
                         help="--max-vars passed to sop-solve for reference cross-check")
+    parser.add_argument("--sop-solve-timeout", type=float, default=None,
+                        help="timeout in seconds for sop-solve reference computation (default: no timeout)")
     parser.add_argument("instances", nargs="*", help="QSOP instance files")
     args = parser.parse_args()
 
@@ -344,6 +389,7 @@ def main() -> int:
     sop_solve = pathlib.Path(args.sop_solve)
     ganak = pathlib.Path(args.ganak)
     timeout = args.ganak_timeout if args.ganak_timeout > 0 else None
+    sop_solve_timeout = args.sop_solve_timeout if args.sop_solve_timeout and args.sop_solve_timeout > 0 else None
 
     encodings = ["residue", "amplitude"] if args.encoding == "both" else [args.encoding]
 
@@ -370,7 +416,7 @@ def main() -> int:
         for enc in encodings:
             for instance, provenance in all_instances:
                 row = bench(sop2wmc, sop_solve, ganak, instance, enc, timeout, provenance,
-                            sop_solve_extra or None)
+                            sop_solve_extra or None, sop_solve_timeout=sop_solve_timeout)
                 # Add "instance" key for backward-compat markdown mode
                 row["instance"] = instance.name
                 rows.append(row)

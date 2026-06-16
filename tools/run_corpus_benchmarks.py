@@ -43,6 +43,13 @@ WMC_TIMEOUT = {
     "129-256": 300,
     "257-512 sample": 60,
 }
+WMC_SOP_SOLVE_TIMEOUT = {
+    "0-32": 30,
+    "33-64": 60,
+    "65-128": 120,
+    "129-256": 300,
+    "257-512 sample": 60,
+}
 TIER_MAX_VARS = {
     "0-32": 32,
     "33-64": 64,
@@ -186,6 +193,7 @@ def run_wmc_jobs(
             continue
         slug = tier_slug(tier)
         timeout = str(WMC_TIMEOUT.get(tier, 30))
+        sop_timeout = str(WMC_SOP_SOLVE_TIMEOUT.get(tier, 30))
         max_vars = TIER_MAX_VARS.get(tier, 512)
         base_cmd = [
             sys.executable, str(bench),
@@ -198,6 +206,7 @@ def run_wmc_jobs(
             "--ganak-timeout", timeout,
             "--sop-solve-backend", "treewidth",
             "--sop-solve-max-vars", str(max_vars),
+            "--sop-solve-timeout", sop_timeout,
         ]
         # Amplitude: all tiers
         amp_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amplitude-current.jsonl"

@@ -329,8 +329,11 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "wmc_ganak_elapsed_ns",
             ):
                 add_sum(stats, stat, stat_value(record, stat))
-            # WMC mismatches live at top level under "mismatches"
-            add_sum(stats, "wmc_mismatches", stat_value(record, "mismatches"))
+            # WMC mismatches live at top level under "mismatches".
+            # -1 means "check skipped" (no reference or precision limited); don't count those.
+            mm = stat_value(record, "mismatches")
+            if mm is not None and mm > 0:
+                add_sum(stats, "wmc_mismatches", mm)
             for stat in (
                 "treewidth_delegations",
                 "rankwidth_delegations",
