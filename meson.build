@@ -165,6 +165,17 @@ if python3.found()
     depends: [sop_check, sop_solve],
   )
   test(
+    'differential backends',
+    python3,
+    args: [
+      files('tests/test_differential_backends.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 300,
+  )
+  test(
     'qasm2sop golden',
     python3,
     args: [
