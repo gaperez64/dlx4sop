@@ -1,6 +1,6 @@
 # Scoreboard
 
-Last updated: 2026-06-15.
+Last updated: 2026-06-16.
 
 This tracks progress toward a competitive exact strong simulator based on labelled quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
 
@@ -25,8 +25,10 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 | Tier | Configuration | Solved | Total solve time | Key stats |
 | --- | --- | ---: | ---: | --- |
 | 0-32 | `treewidth --treewidth-order min-fill` | 133 / 133 | 58.9 ms | tw width 2; max table 64; 8,933 join pairs |
+| 0-32 | `sop2wmc --encoding amplitude \| ganak --mode 6` | 32 / 32 ¹ | 57.3 ms ¹ | single WPCNF complex WMC; ganak 43.5 ms + export 13.8 ms; 0 amplitude mismatches; internal corpus only |
 | 0-32 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 133 / 133 | 86.0 ms | rw width 3; rw labelled-cut-signature=3, support=3; max table 48; rw table forecast 64; rw join forecast 324; rw cut estimates exact=718, proxy=0, assignments=1,073,741,880; max signatures 8; 42,519 join pairs; rankwidth kernels map=884/743.7 us max items=32, join=884/1.2 ms max items=32, labelled-map=359/1.6 ms max items=64, labelled=359/2.5 ms max items=48 |
 | 0-32 | `branch --branch-heuristic split` | 133 / 133 | 92.1 ms | 5,233 nodes; cache hits=1,813, misses=3,420, hit rate=0.346; cache avoided nodes=3,858, rate=0.737; cache canonical hits=1,762; cache canonical lookups=4,023, stores=2,495; cache entries=131, canonical=81, canonical rate=0.618, slots=1,048; cache bytes key=13,498, counts=8,384, estimated=51,578; cache trace lookup=5,232 events/9.5 ms, store=3,419 events/7.0 ms; canonical cache trace lookup=4,023 events/8.9 ms, store=2,495 events/6.1 ms; max table 64; 240 join pairs; delegations tw=1, rw=0; branch dispatch splits=2,473/694.2 us max components=7, root tw delegates=1/145.4 us max vars=32; branch policy fallthroughs=1,260, tw skips=0, rw skips=1; branch fallthrough max vars=30; rw skip reasons treewidth-preferred=1; max residual tw=2, cut-rank=0; branch table forecast rw=0, tw=64; branch join forecast rw=0, tw=256; branch root tw probe width=2, 1 events/56.1 us; max residual vars=32, components=7, largest=32 |
+| 0-32 | `sop2wmc --encoding residue \| ganak --mode 0` | 32 / 32 ¹ | 764.0 ms ¹ | r CNF files × integer #SAT; ganak 604.6 ms + export 159.4 ms; 0 count mismatches; internal corpus only |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 32 / 32 | 26.3 ms | tw width 3; max table 128; 11,772 join pairs |
 | 33-64 | `branch --branch-heuristic split` | 32 / 32 | 32.6 ms | 1,891 nodes; cache hits=752, misses=1,139, hit rate=0.398; cache avoided nodes=1,262, rate=0.667; cache canonical hits=725; cache canonical lookups=1,460, stores=784; cache entries=107, canonical=75, canonical rate=0.701, slots=1,712; cache bytes key=8,600, counts=13,696, estimated=37,144; cache trace lookup=1,876 events/1.7 ms, store=1,124 events/1.4 ms; canonical cache trace lookup=1,460 events/1.5 ms, store=784 events/1.0 ms; max table 128; 8,018 join pairs; delegations tw=20, rw=0; branch dispatch splits=820/245.9 us max components=9, tw delegates=5/1.1 ms max vars=53, root tw delegates=15/3.5 ms max vars=63; branch policy fallthroughs=399, tw skips=0, rw skips=20; branch fallthrough max vars=24; rw skip reasons treewidth-preferred=20; max residual tw=3, cut-rank=4; branch table forecast rw=0, tw=128; branch join forecast rw=0, tw=848; branch tw order width=3; branch root tw probe width=2, 15 events/2.5 ms; max residual vars=63, components=9, largest=63 |
 | 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 32 / 32 | 212.5 ms | rw width 6; rw labelled-cut-signature=6, support=6; max table 512; rw table forecast 512; rw join forecast 4,506; rw cut estimates exact=838, proxy=0, assignments=2,305,843,009,213,694,070; max signatures 64; 133,010 join pairs; rankwidth kernels map=1,126/1.8 ms max items=128, join=1,126/10.7 ms max items=128, labelled-map=419/10.9 ms max items=128, labelled=419/14.7 ms max items=512 |
@@ -84,6 +86,8 @@ These compare the best current QSOP configuration for each tier against native Q
 | 129-256 | `branch --branch-heuristic split` | `mqt-ddsim-statevector` | 38 / 44 | 973.8 ms | 181.5 ms | 0.19x | 7.95e-17 | 1.18e-15 | 19 | 16 | 10.0 | 4096 |
 | 129-256 | `branch --branch-heuristic split` | `pyzx-matrix` | 20 / 44 | 303.4 ms | 36.05 s | 118.84x | 2.08e-14 | 3.25e-14 | 19 | 10 | 10.0 | 4096 |
 | 129-256 | `branch --branch-heuristic split` | `qiskit-statevector` | 38 / 44 | 973.8 ms | 5.03 s | 5.16x | 3.22e-15 | 6e-15 | 19 | 16 | 10.0 | 4096 |
+
+¹ WMC rows benchmarked on the 32 internal corpus rows only; times include both export and Ganak runtime. Full coverage across all tiers is planned when the external corpora are rebuilt from manifests.
 
 ## Current Takeaway
 

@@ -33,6 +33,7 @@ dlx4sop_core = static_library(
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
     'src/core/qsop_stats.c',
+    'src/core/qsop_wmc.c',
     'src/core/qsop_write.c',
     'src/solve/branch.c',
     'src/solve/bruteforce.c',
@@ -48,6 +49,7 @@ dlx4sop_core = static_library(
 dlx4sop_core_dep = declare_dependency(
   include_directories: inc,
   link_with: dlx4sop_core,
+  dependencies: m_dep,
 )
 
 sop_check = executable(
@@ -78,6 +80,13 @@ qasm2sop = executable(
   install: true,
 )
 
+sop2wmc = executable(
+  'sop2wmc',
+  'src/cli/sop2wmc.c',
+  dependencies: dlx4sop_core_dep,
+  install: true,
+)
+
 test_residue = executable(
   'test-residue',
   'tests/unit/test_residue.c',
@@ -93,6 +102,14 @@ test_residual = executable(
 )
 
 test('residual unit', test_residual)
+
+test_wmc = executable(
+  'test-wmc',
+  'tests/unit/test_wmc.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('wmc unit', test_wmc)
 
 python3 = find_program('python3', required: false)
 if python3.found()
@@ -146,6 +163,17 @@ if python3.found()
       meson.current_source_dir(),
     ],
     depends: qasm2sop,
+  )
+  test(
+    'sop2wmc golden',
+    python3,
+    args: [
+      files('tests/test_sop2wmc.py'),
+      sop2wmc.full_path(),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: [sop2wmc, sop_solve],
   )
   test(
     'qasm2sop amplitudes',
@@ -444,6 +472,14 @@ if python3.found()
     ],
   )
   test(
+    'wmc ganak benchmark help',
+    python3,
+    args: [
+      files('tools/bench_wmc_ganak.py'),
+      '--help',
+    ],
+  )
+  test(
     'native simulator benchmark smoke',
     python3,
     args: [
@@ -461,6 +497,19 @@ if python3.found()
         sop_solve.full_path(),
       ],
       depends: [qasm2sop, sop_solve],
+    )
+  endif
+  if get_option('ganak_tests')
+    test(
+      'sop2wmc ganak',
+      python3,
+      args: [
+        files('tests/test_sop2wmc_ganak.py'),
+        sop2wmc.full_path(),
+        sop_solve.full_path(),
+        meson.current_source_dir(),
+      ],
+      depends: [sop2wmc, sop_solve],
     )
   endif
 endif
