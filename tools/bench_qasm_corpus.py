@@ -16,7 +16,7 @@ from typing import TextIO
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
-RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut")
+RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut", "min-fill-search", "best")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
 BRANCH_TREEWIDTH_SKIP_METRICS = {

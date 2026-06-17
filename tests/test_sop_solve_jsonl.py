@@ -136,6 +136,78 @@ def test_jsonl_small_instance_no_delegation(exe: pathlib.Path, tmpdir: pathlib.P
     assert isinstance(records, list), "JSONL output must be a list of records"
 
 
+def make_two_component_qsop(n1: int, n2: int, r: int = 8) -> str:
+    """Path of n1 nodes + path of n2 nodes (disjoint components)."""
+    nedges = (n1 - 1) + (n2 - 1)
+    lines = [f"p qsop {r} {n1 + n2} {nedges}", "n 0", "cst 0"]
+    for i in range(n1 - 1):
+        lines.append(f"q {i} {i + 1} 1")
+    for i in range(n2 - 1):
+        lines.append(f"q {n1 + i} {n1 + i + 1} 1")
+    return "\n".join(lines) + "\n"
+
+
+def test_jsonl_calibrate_output_unchanged(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
+    """--branch-calibrate-backends must not change the residue vector."""
+    qsop_text = make_two_component_qsop(35, 3)
+    jsonl_path = str(tmpdir / "cal_check.jsonl")
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(qsop_text)
+        qsop_path = f.name
+    without_cal = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64", qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    with_cal = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64",
+         "--branch-calibrate-backends", "--stats-jsonl", jsonl_path, qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert without_cal.returncode == 0, f"baseline failed: {without_cal.stderr}"
+    assert with_cal.returncode == 0, f"calibrate failed: {with_cal.stderr}"
+    assert without_cal.stdout == with_cal.stdout, \
+        "Calibration changed the residue vector"
+
+
+def test_jsonl_calibrate_rankwidth_timing(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
+    """A 2-component QSOP forces dp_delegate; calibration must populate rankwidth_actual_ms."""
+    jsonl_path = str(tmpdir / "calibrate.jsonl")
+    qsop_text = make_two_component_qsop(35, 3)
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(qsop_text)
+        qsop_path = f.name
+    result = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64",
+         "--branch-calibrate-backends", "--stats-jsonl", jsonl_path, qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode == 0, f"sop-solve failed: {result.stderr}"
+
+    with open(jsonl_path) as f:
+        records = [json.loads(line) for line in f if line.strip()]
+
+    assert len(records) >= 1, "Expected at least one JSONL record from dp_delegate path"
+    # With calibration, the treewidth-wins record should have rankwidth_actual_ms measured
+    calibrated = [r for r in records if r.get("rankwidth_actual_ms") is not None]
+    assert len(calibrated) >= 1, \
+        f"Expected calibrated record with rankwidth_actual_ms; got records: {records}"
+
+
+def test_jsonl_calibrate_requires_jsonl(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
+    """--branch-calibrate-backends without --stats-jsonl must be rejected."""
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(make_path_qsop(4))
+        qsop_path = f.name
+    result = subprocess.run(
+        [str(exe), "--backend", "branch", "--branch-calibrate-backends", qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode != 0, \
+        "--branch-calibrate-backends without --stats-jsonl should fail"
+    assert "stats-jsonl" in result.stderr, \
+        f"Expected error mentioning stats-jsonl, got: {result.stderr!r}"
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 3:
         print(f"usage: {argv[0]} <sop-solve> <source-root>")
@@ -150,6 +222,9 @@ def main(argv: list[str]) -> None:
         test_jsonl_result_unchanged(exe, tmpdir)
         test_jsonl_veto_reasons_present(exe, tmpdir)
         test_jsonl_small_instance_no_delegation(exe, tmpdir)
+        test_jsonl_calibrate_output_unchanged(exe, tmpdir)
+        test_jsonl_calibrate_rankwidth_timing(exe, tmpdir)
+        test_jsonl_calibrate_requires_jsonl(exe, tmpdir)
 
     print("all sop-solve JSONL tests passed")
 

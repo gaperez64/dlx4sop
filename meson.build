@@ -165,6 +165,61 @@ if python3.found()
     depends: [sop_check, sop_solve],
   )
   test(
+    'differential backends',
+    python3,
+    args: [
+      files('tests/test_differential_backends.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 300,
+  )
+  test(
+    'rankwidth v2',
+    python3,
+    args: [
+      files('tests/test_rankwidth_v2.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
+    'rankwidth dump',
+    python3,
+    args: [
+      files('tests/test_rankwidth_dump.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
+    'rankwidth best',
+    python3,
+    args: [
+      files('tests/test_rankwidth_best.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 120,
+  )
+  test(
+    'rankwidth search',
+    python3,
+    args: [
+      files('tests/test_rankwidth_search.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 120,
+  )
+  test(
     'qasm2sop golden',
     python3,
     args: [
@@ -447,6 +502,14 @@ if python3.found()
     args: [
       files('tests/test_compare_native_solver_results.py'),
       files('tools/compare_native_solver_results.py'),
+    ],
+  )
+  test(
+    'tune branch thresholds smoke',
+    python3,
+    args: [
+      files('tests/test_tune_branch_thresholds.py'),
+      files('tools/tune_branch_thresholds.py'),
     ],
   )
   test(
