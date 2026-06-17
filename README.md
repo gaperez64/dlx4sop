@@ -40,18 +40,30 @@ as `linux-x86_64` and `macos-arm64` tarballs with SHA-256 sidecar files.
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
   and `iswap`.
 - `sop2wmc`: export a QSOP to DIMACS CNF / WPCNF for external model counting.
-  Two encodings are available:
-  - `--encoding residue` (default): for each target residue `k`, models = `counts[k]`.
-    Use with any integer `#SAT` counter (Ganak `--mode 0`, d4, sharpSAT). Requires
-    `r` separate counter calls per instance.
-  - `--encoding amplitude`: single WPCNF with complex literal weights ω^coeff.
-    The weighted model count equals `sum_x omega^phase(x)` (without the constant
-    factor); multiply by `omega^constant` (printed in the `c amplitude_factor`
-    metadata line) to recover the full amplitude. Use `ganak --mode 6 --verb 0`.
-    Typically 10–100× faster than the residue encoding for r ≥ 8.
+  Five encodings are available via `--encoding <name>`:
+  - `residue-accumulator` (alias `residue`, default): one DIMACS CNF per
+    residue 0..r−1; plain #SAT each. Works with any integer counter (Ganak
+    `--mode 0`, d4, sharpSAT). Requires r calls per instance.
+  - `amp-and` (alias `amplitude`): single WPCNF with Tseitin AND auxiliaries
+    carrying hard complex weights ω^b. All auxiliaries are circuit-determined;
+    use `ganak --mode 6 --verb 0`. Multiply the raw WMC result by
+    ω^constant (from the `c amplitude_factor` metadata line) to get the full
+    amplitude.
+  - `amp-soft`: single WPCNF with implication-only auxiliaries and soft weights
+    ω^b − 1. Produces fewer clauses per edge than amp-and; Ganak integrates
+    over underdetermined variables.
+  - `residue-fourier`: r WPCNF blocks (one per Fourier exponent t) followed by
+    an outer iDFT. Inner encoding selectable via
+    `--wmc-fourier-inner (amp-and|amp-soft)`.
+  - `amp-block`: single WPCNF; detects a uniform complete bipartite subgraph
+    A×B in the edge set and encodes it with a mod-r adder counter per side plus
+    Tseitin selector variables with hard weights ω^(c·a·b mod r). Non-block
+    edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
+    and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
+    amp-soft output when no profitable block is found.
 - `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
   `tools/bench_wmc_ganak.py` drives `sop2wmc` + Ganak and cross-checks results
-  against `sop-solve`; supports `--encoding (residue, amplitude, or both)`.
+  against `sop-solve`; currently supports `--encoding (residue|amplitude)`.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at the benchmark/import boundary.
@@ -107,26 +119,35 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-The public performance summary is [scoreboard.md](scoreboard.md). Refresh it
-from generated JSONL artifacts with:
+The public performance summary is [scoreboard.md](scoreboard.md).
+
+To run the full benchmark pipeline and regenerate `scoreboard.md` (requires
+Ganak at `/tmp/ganak/ganak` or pass `--ganak <path>`):
 
 ```sh
-tools/refresh_scoreboard.py --artifact-dir /tmp --output scoreboard.md
+python3 tools/run_corpus_benchmarks.py \
+    --artifact-dir /tmp/dlx4sop-artifacts \
+    --output scoreboard.md
 ```
 
-For a fuller local run, include native simulator checks and the larger sample:
+All per-tier timeouts default to 30 s. Override with `--timeout <seconds>`.
+Pass `--skip-wmc`, `--skip-native`, or `--skip-solver` to run a subset.
+
+Render a scoreboard from existing artifacts without re-running benchmarks:
 
 ```sh
-tools/refresh_scoreboard.py --artifact-dir /tmp --run-native --run-large-sample --output scoreboard.md
+python3 tools/refresh_scoreboard.py \
+    --artifact-dir /tmp/dlx4sop-artifacts \
+    --allow-missing \
+    --output scoreboard.md
 ```
 
 Useful benchmark helpers:
 
-- `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a corpus.
-- `tools/bench_qasm_native_simulator.py`: compare against supported native
-  simulators.
-- `tools/render_scoreboard.py`: render ad hoc reports when you already have
-  JSONL inputs.
+- `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
+- `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
+- `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
+- `tools/render_scoreboard.py`: render ad hoc reports from JSONL artifact inputs.
 
 ## Current Status
 
