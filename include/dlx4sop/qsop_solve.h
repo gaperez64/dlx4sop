@@ -246,6 +246,11 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                       qsop_error_t *error);
 
+bool qsop_solve_rankwidth_v2_mode_trace_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, qsop_error_t *error);
 
 /* ---------------------------------------------------------------------------

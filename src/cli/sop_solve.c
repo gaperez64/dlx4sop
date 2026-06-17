@@ -37,6 +37,7 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
+        "[--rankwidth-table v1|v2] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -441,6 +442,7 @@ int main(int argc, char **argv) {
   bool branch_heuristic_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
+  bool rankwidth_table_v2 = false;
   bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
@@ -602,6 +604,22 @@ int main(int argc, char **argv) {
       rankwidth_mode_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--rankwidth-table") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-table requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "v1") == 0) {
+        rankwidth_table_v2 = false;
+      } else if (strcmp(value, "v2") == 0) {
+        rankwidth_table_v2 = true;
+      } else {
+        fprintf(stderr, "error: unsupported rankwidth table version '%s'\n", value);
+        return 2;
+      }
+      continue;
+    }
     if (strcmp(argv[i], "--solve-mode") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --solve-mode requires a value\n", stderr);
@@ -676,6 +694,10 @@ int main(int argc, char **argv) {
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_mode_set) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
+    return 2;
+  }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_v2) {
+    fputs("error: --rankwidth-table requires --backend rankwidth\n", stderr);
     return 2;
   }
   if (rankwidth_mode_set && solve_mode_set &&
@@ -795,9 +817,13 @@ int main(int argc, char **argv) {
                                                  &rankwidth_decomposition, &error);
     }
     if (ok) {
-      ok = qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                 rankwidth_mode, &result, &solve_stats, trace_ptr,
-                                                 &error);
+      ok = rankwidth_table_v2
+               ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
+                                                          rankwidth_mode, &result, &solve_stats,
+                                                          trace_ptr, &error)
+               : qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
+                                                       rankwidth_mode, &result, &solve_stats,
+                                                       trace_ptr, &error);
     }
   } else {
     ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,
