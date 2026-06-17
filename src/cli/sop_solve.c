@@ -37,6 +37,7 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
+        "[--rankwidth-dump PATH] "
         "[--rankwidth-table v1|v2] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
@@ -432,6 +433,7 @@ int main(int argc, char **argv) {
   const char *input_path = NULL;
   const char *rankwidth_decomposition_path = NULL;
   const char *rankwidth_decomposition_label = "left-deep";
+  const char *rankwidth_dump_path = NULL;
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
@@ -565,6 +567,14 @@ int main(int argc, char **argv) {
       rankwidth_decomposition_label = "explicit";
       continue;
     }
+    if (strcmp(argv[i], "--rankwidth-dump") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-dump requires a path\n", stderr);
+        return 2;
+      }
+      rankwidth_dump_path = argv[++i];
+      continue;
+    }
     if (strcmp(argv[i], "--rankwidth-generate") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --rankwidth-generate requires a value\n", stderr);
@@ -686,6 +696,10 @@ int main(int argc, char **argv) {
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path != NULL) {
     fputs("error: --rankwidth-decomposition requires --backend rankwidth\n", stderr);
+    return 2;
+  }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_dump_path != NULL) {
+    fputs("error: --rankwidth-dump requires --backend rankwidth\n", stderr);
     return 2;
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_generator_set) {
@@ -815,6 +829,23 @@ int main(int argc, char **argv) {
     } else {
       ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
                                                  &rankwidth_decomposition, &error);
+    }
+    if (ok && rankwidth_dump_path != NULL) {
+      FILE *dump_file = fopen(rankwidth_dump_path, "w");
+      if (dump_file == NULL) {
+        fprintf(stderr, "error: %s: %s\n", rankwidth_dump_path, strerror(errno));
+        qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+        qsop_free(qsop);
+        return 1;
+      }
+      ok = qsop_rankwidth_decomposition_write_file(dump_file, rankwidth_decomposition, &error);
+      fclose(dump_file);
+      if (!ok) {
+        print_error(&error, rankwidth_dump_path);
+        qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+        qsop_free(qsop);
+        return 1;
+      }
     }
     if (ok) {
       ok = rankwidth_table_v2

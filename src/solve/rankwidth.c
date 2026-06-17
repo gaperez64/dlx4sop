@@ -1004,6 +1004,33 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
   return true;
 }
 
+bool qsop_rankwidth_decomposition_write_file(FILE *file,
+                                             const qsop_rankwidth_decomposition_t *decomposition,
+                                             qsop_error_t *error) {
+  if (file == NULL || decomposition == NULL) {
+    set_error(error, "internal error: null rankwidth decomposition write argument");
+    return false;
+  }
+
+  fprintf(file, "p rwdec %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", decomposition->nvars,
+          decomposition->nnodes, decomposition->root);
+
+  for (uint32_t node = 0; node < decomposition->nnodes; node++) {
+    const rw_node_t *n = &decomposition->nodes[node];
+    if (n->kind == RW_NODE_LEAF) {
+      fprintf(file, "l %" PRIu32 " %" PRIu32 "\n", node, n->var);
+    } else if (n->kind == RW_NODE_JOIN) {
+      fprintf(file, "j %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", node, n->left, n->right);
+    }
+  }
+
+  if (ferror(file)) {
+    set_error(error, "write error while serializing rankwidth decomposition");
+    return false;
+  }
+  return true;
+}
+
 static uint64_t bitset_missing_edges_for(uint32_t v, const uint64_t *work,
                                          const uint64_t *active, uint64_t *remaining,
                                          size_t words, uint32_t nvars) {

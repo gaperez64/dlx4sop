@@ -187,6 +187,17 @@ if python3.found()
     timeout: 60,
   )
   test(
+    'rankwidth dump',
+    python3,
+    args: [
+      files('tests/test_rankwidth_dump.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
     'qasm2sop golden',
     python3,
     args: [
