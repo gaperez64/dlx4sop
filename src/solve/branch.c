@@ -226,7 +226,7 @@ typedef struct branch_search_stats {
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 32U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
-#define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 5U
+#define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 
@@ -1046,6 +1046,10 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
          treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
+/* Maximum labelled width tried during calibration runs. Wider sub-problems are
+   skipped to bound calibration cost even when policy vetoqs are bypassed. */
+#define BRANCH_CALIBRATION_MAX_WIDTH 20U
+
 static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
                                           uint32_t treewidth_width,
                                           uint32_t prefix_cut_rank,
@@ -1058,6 +1062,10 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   if (rw_data != NULL) {
     *rw_data = (branch_rw_decision_data_t){.attempted = true};
   }
+  /* In calibration mode, bypass policy vetoqs so both backends get timed. */
+  const bool calibrating = (stats->sink != NULL && stats->sink->calibrate_backends);
+  /* True when a veto fired in calibration mode: rankwidth is timed but its counts discarded. */
+  bool calibration_timing_only = false;
   uint64_t treewidth_table = 0;
   uint64_t treewidth_join_pairs = 0;
   if (treewidth_available) {
@@ -1073,7 +1081,11 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     if (rw_data != NULL) {
       rw_data->veto_reason = "rw_treewidth_preferred";
     }
-    return true;
+    if (!calibrating) {
+      return true;
+    }
+    /* Calibration: fall through to time rankwidth for comparison. */
+    calibration_timing_only = true;
   }
   if (treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
       prefix_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
@@ -1081,7 +1093,11 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     if (rw_data != NULL) {
       rw_data->veto_reason = "rw_prefix_proxy_rejected";
     }
-    return true;
+    if (!calibrating) {
+      return true;
+    }
+    /* Calibration: fall through to time rankwidth for comparison. */
+    calibration_timing_only = true;
   }
 
   qsop_rankwidth_decomposition_t *decomposition = NULL;
@@ -1157,8 +1173,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     if (rw_data != NULL) {
       rw_data->veto_reason = veto;
     }
-    qsop_rankwidth_decomposition_free(decomposition);
-    return true;
+    if (!calibrating || labelled_width > BRANCH_CALIBRATION_MAX_WIDTH) {
+      qsop_rankwidth_decomposition_free(decomposition);
+      return true;
+    }
+    /* Calibration: fall through to time rankwidth without adopting its counts. */
+    calibration_timing_only = true;
   }
 
   uint64_t *part_counts = NULL;
@@ -1167,6 +1187,11 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   const uint64_t solve_start_ns = qsop_trace_now_ns();
   const uint64_t solve_start = qsop_trace_begin(stats->trace);
   const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
+  if (calibration_timing_only && use_fourier) {
+    /* Cannot time Fourier mode into a scratch buffer; skip calibration timing. */
+    qsop_rankwidth_decomposition_free(decomposition);
+    return true;
+  }
   const bool ok =
       use_fourier
           ? qsop_solve_rankwidth_mode_trace_stats(sub, decomposition, sub->nvars,
@@ -1186,6 +1211,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   }
   if (rw_data != NULL) {
     rw_data->actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(solve_start_ns));
+  }
+  if (calibration_timing_only) {
+    /* Timed rankwidth for calibration; discard results, let caller proceed with treewidth. */
+    free(part_counts);
+    qsop_result_free(part_result);
+    return true;
   }
 
   const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
@@ -2108,6 +2139,52 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
     stats->max_residual_min_fill_width = width;
   }
 
+  /* Calibration: also time rankwidth on the root instance for comparison data. */
+  branch_rw_decision_data_t rw_data = {0};
+  if (recording && sink->calibrate_backends && mode != QSOP_SOLVE_MODE_FOURIER) {
+    /* Get a CRT prime so count arithmetic does not overflow for large circuits. */
+    uint64_t *cal_primes = NULL;
+    size_t cal_nprimes = 0;
+    qsop_error_t cal_err = {0};
+    uint64_t cal_modulus = 0;
+    if (qsop_crt_find_primes_for_nvars(qsop->nvars, &cal_primes, &cal_nprimes, &cal_err) &&
+        cal_nprimes > 0) {
+      cal_modulus = cal_primes[0];
+    }
+    free(cal_primes);
+    if (cal_modulus != 0) {
+      qsop_rankwidth_decomposition_t *cal_decomp = NULL;
+      const uint64_t rw_gen_start = qsop_trace_now_ns();
+      if (qsop_rankwidth_decomposition_generate(qsop, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+                                                &cal_decomp, &cal_err)) {
+        uint32_t cal_sw = 0, cal_lw = 0;
+        if (qsop_rankwidth_decomposition_widths(qsop, cal_decomp, &cal_sw, &cal_lw, &cal_err)) {
+          rw_data.attempted = true;
+          rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
+          rw_data.support_width = cal_sw;
+          rw_data.labelled_width = cal_lw;
+          if (cal_lw <= BRANCH_CALIBRATION_MAX_WIDTH) {
+            uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_lw), qsop->r);
+            uint64_t cal_jp = 0;
+            qsop_rankwidth_decomposition_forecast(qsop, cal_decomp, &cal_fe, &cal_jp, &cal_err);
+            rw_data.forecast_entries = cal_fe;
+            rw_data.forecast_join_pairs = cal_jp;
+            uint64_t *cal_counts = NULL;
+            qsop_solve_stats_t cal_stats = {0};
+            const uint64_t t0 = qsop_trace_now_ns();
+            if (qsop_counts_alloc(qsop->r, &cal_counts, &cal_err) &&
+                qsop_solve_rankwidth_count_table_mod_stats(qsop, cal_decomp, cal_modulus,
+                                                           cal_counts, &cal_stats, NULL, &cal_err)) {
+              rw_data.actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
+            }
+            free(cal_counts);
+          }
+        }
+        qsop_rankwidth_decomposition_free(cal_decomp);
+      }
+    }
+  }
+
   if (recording) {
     const uint64_t tw_fe = treewidth_table_forecast(width, qsop->r);
     const uint64_t tw_jp = treewidth_join_pair_forecast(width, qsop->nvars);
@@ -2115,7 +2192,8 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
                              "treewidth", "rw_treewidth_preferred",
                              probe_ms, true, width,
                              true, tw_fe, tw_jp,
-                             true, actual_ms, NULL);
+                             true, actual_ms,
+                             rw_data.attempted ? &rw_data : NULL);
   }
 
   *out = result;

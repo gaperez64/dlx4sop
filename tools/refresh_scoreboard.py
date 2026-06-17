@@ -54,7 +54,7 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("33-64", "dlx4sop-tier-33-64-wmc-amplitude-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-residue-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-treewidth-fresh.jsonl"),
-    ("65-128", "dlx4sop-tier-65-128-branch-hybrid-fresh.jsonl"),
+    ("65-128", "dlx4sop-tier-65-128-branch-hybrid-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-rankwidth-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-wmc-amplitude-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-branch-hybrid-current.jsonl"),
