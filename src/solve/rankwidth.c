@@ -522,6 +522,22 @@ static bool table_add_entry_mod(rw_table_t *table, uint32_t signature, uint32_t 
   return true;
 }
 
+static bool table_append_entry(rw_table_t *table, uint32_t signature, uint32_t residue,
+                               uint64_t count, qsop_error_t *error) {
+  if (count == 0) {
+    return true;
+  }
+  if (!reserve_entries(table, table->len + 1U, error)) {
+    return false;
+  }
+  table->entries[table->len++] = (rw_entry_t){
+      .signature = signature,
+      .residue = residue,
+      .count = count,
+  };
+  return true;
+}
+
 static void table_free(rw_table_t *table) {
   if (table == NULL) {
     return;
@@ -2465,31 +2481,90 @@ static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map
   return true;
 }
 
-static bool solve_join_v2(const qsop_instance_t *qsop, const rw_join_map_t *map,
-                           const rw_table_t *left, const rw_table_t *right, rw_table_t *out,
-                           size_t words, uint64_t *join_pairs, qsop_error_t *error) {
+/* Accumulator-based join: avoids the O(out.len) linear scan in table_add_entry by
+ * accumulating residue counts per signature into a direct-indexed array, then
+ * flushing once per (signature, residue) pair. Reduces table-operation cost from
+ * O(left_len * right_len * out_len) to O(map.len * r + n_parent_sigs * r).       */
+static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *map,
+                               const rw_table_t *left, const rw_table_t *right, rw_table_t *out,
+                               size_t words, uint64_t *join_pairs, qsop_error_t *error) {
+  if (map->len == 0) {
+    return true;
+  }
+
+  uint32_t max_parent_sig = 0;
+  for (size_t m = 0; m < map->len; m++) {
+    if (map->entries[m].parent_signature > max_parent_sig) {
+      max_parent_sig = map->entries[m].parent_signature;
+    }
+  }
+  const size_t n_sigs = (size_t)max_parent_sig + 1U;
+  const uint32_t r = qsop->r;
+  const uint32_t r_mask = r - 1U;
+  const bool r_pow2 = (r & r_mask) == 0;
+
+  uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
+  uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
+  if (acc == NULL || sig_map_idx == NULL) {
+    free(acc);
+    free(sig_map_idx);
+    set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+    return false;
+  }
+  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx)); /* UINT32_MAX = not seen */
+
   for (size_t m = 0; m < map->len; m++) {
     const rw_join_map_entry_t *me = &map->entries[m];
     size_t l_start, l_end, r_start, r_end;
     table_sig_range(left, me->left_signature, &l_start, &l_end);
     table_sig_range(right, me->right_signature, &r_start, &r_end);
+    const uint32_t ps = me->parent_signature;
+    if (sig_map_idx[ps] == UINT32_MAX) {
+      sig_map_idx[ps] = (uint32_t)m;
+    }
     for (size_t i = l_start; i < l_end; i++) {
       for (size_t j = r_start; j < r_end; j++) {
-        const uint32_t residue =
-            (uint32_t)(((uint64_t)left->entries[i].residue + right->entries[j].residue +
-                        me->residue_shift) %
-                       qsop->r);
+        const uint64_t rsum = (uint64_t)left->entries[i].residue + right->entries[j].residue +
+                              me->residue_shift;
+        const uint32_t res = r_pow2 ? (uint32_t)(rsum & r_mask) : (uint32_t)(rsum % r);
         uint64_t product = 0;
         if (!qsop_count_mul(left->entries[i].count, right->entries[j].count, &product, error) ||
-            !table_add_rep(out, me->parent_signature,
-                           join_map_assignment(map, m, words), words, error) ||
-            !table_add_entry(out, me->parent_signature, residue, product, error)) {
+            !qsop_count_add(&acc[ps * r + res], product, error)) {
+          free(acc);
+          free(sig_map_idx);
           return false;
         }
         (*join_pairs)++;
       }
     }
   }
+
+  /* flush accumulator: one table_add_rep + table_append_entry per (sig, residue) */
+  for (uint32_t s = 0; s < (uint32_t)n_sigs; s++) {
+    if (sig_map_idx[s] == UINT32_MAX) {
+      continue;
+    }
+    const size_t m = sig_map_idx[s];
+    if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
+      free(acc);
+      free(sig_map_idx);
+      return false;
+    }
+    for (uint32_t res = 0; res < r; res++) {
+      const uint64_t cnt = acc[(size_t)s * r + res];
+      if (cnt == 0) {
+        continue;
+      }
+      if (!table_append_entry(out, s, res, cnt, error)) {
+        free(acc);
+        free(sig_map_idx);
+        return false;
+      }
+    }
+  }
+
+  free(acc);
+  free(sig_map_idx);
   return true;
 }
 
@@ -3312,8 +3387,8 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
         join_signature_pairs += shared_map.len;
         qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, shared_map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_v2(qsop, &shared_map, &tables[node->left], &tables[node->right],
-                           &tables[node_id], decomposition->words, &join_pairs, error);
+        ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
+                               &tables[node_id], decomposition->words, &join_pairs, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.v2_join", 0, tables[node_id].len, join_start);
       }
     }
