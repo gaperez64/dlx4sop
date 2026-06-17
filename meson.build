@@ -505,6 +505,14 @@ if python3.found()
     ],
   )
   test(
+    'tune branch thresholds smoke',
+    python3,
+    args: [
+      files('tests/test_tune_branch_thresholds.py'),
+      files('tools/tune_branch_thresholds.py'),
+    ],
+  )
+  test(
     'rankwidth generator comparison smoke',
     python3,
     args: [
