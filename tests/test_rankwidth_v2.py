@@ -151,6 +151,52 @@ def test_v2_labelled_star_agrees_with_v1(exe: pathlib.Path) -> None:
             )
 
 
+def test_v2_sign_edge_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 sign-edge CRT path (nvars >= 64) must agree with v1 on a large path graph."""
+    for nvars in [70, 100]:
+        qsop_text = make_path_qsop(nvars, r=8)
+        r1 = run_rankwidth(exe, qsop_text, "v1",
+                           extra_args=["--max-vars", "256"])
+        r2 = run_rankwidth(exe, qsop_text, "v2",
+                           extra_args=["--max-vars", "256"])
+        assert r1.returncode == 0, f"v1 failed on sign-edge path-{nvars}: {r1.stderr}"
+        assert r2.returncode == 0, f"v2 failed on sign-edge path-{nvars}: {r2.stderr}"
+        assert r1.stdout == r2.stdout, (
+            f"v1/v2 mismatch on sign-edge path-{nvars}:\n"
+            f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+        )
+
+
+def test_fourier_count_table_agree_sign_edge(exe: pathlib.Path) -> None:
+    """--solve-mode fourier and --solve-mode count-table must agree on sign-edge SOPs."""
+    for nvars in range(3, 10):
+        for r in [2, 4, 8]:
+            qsop_text = make_path_qsop(nvars, r)
+            with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+                f.write(qsop_text)
+                qsop_path = f.name
+            r_ct = subprocess.run(
+                [str(exe), "--backend", "rankwidth", "--max-vars", "64",
+                 "--solve-mode", "count-table", qsop_path],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            r_ft = subprocess.run(
+                [str(exe), "--backend", "rankwidth", "--max-vars", "64",
+                 "--solve-mode", "fourier", qsop_path],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            assert r_ct.returncode == 0, (
+                f"count-table failed on path-{nvars} r={r}: {r_ct.stderr}"
+            )
+            assert r_ft.returncode == 0, (
+                f"fourier failed on path-{nvars} r={r}: {r_ft.stderr}"
+            )
+            assert r_ct.stdout == r_ft.stdout, (
+                f"fourier/count-table mismatch on path-{nvars} r={r}:\n"
+                f"  count-table: {r_ct.stdout!r}\n  fourier: {r_ft.stdout!r}"
+            )
+
+
 def test_validate_mode_passes_sign_edge(exe: pathlib.Path) -> None:
     """--rankwidth-table validate must succeed and produce the same output as v1."""
     for nvars in range(3, 9):
@@ -203,6 +249,8 @@ def main(argv: list[str]) -> None:
 
     test_v2_path_agrees_with_v1(exe)
     test_v2_cycle_agrees_with_v1(exe)
+    test_v2_sign_edge_large_crt_agrees_with_v1(exe)
+    test_fourier_count_table_agree_sign_edge(exe)
     test_v2_labelled_path_agrees_with_v1(exe)
     test_v2_labelled_large_crt_agrees_with_v1(exe)
     test_v2_labelled_star_agrees_with_v1(exe)
