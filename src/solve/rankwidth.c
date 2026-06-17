@@ -1256,6 +1256,128 @@ static uint32_t build_cut_rank_nodes(qsop_rankwidth_decomposition_t *decompositi
   return node;
 }
 
+/* Fill nodes[] for a left-deep decomposition from the given ordering, then
+ * call validate_decomposition to (re)compute node_vars and postorder.
+ * The decomposition must already be fully allocated (nnodes = 2*nvars-1). */
+static bool fill_left_deep_from_order(qsop_rankwidth_decomposition_t *decomposition,
+                                      const uint32_t *order, qsop_error_t *error) {
+  const uint32_t nvars = decomposition->nvars;
+  for (uint32_t i = 0; i < nvars; i++) {
+    decomposition->nodes[i] = (rw_node_t){.kind = RW_NODE_LEAF, .var = order[i]};
+  }
+  if (nvars == 1U) {
+    decomposition->root = 0;
+  } else {
+    uint32_t current = 0;
+    uint32_t next_join = nvars;
+    for (uint32_t i = 1; i < nvars; i++) {
+      decomposition->nodes[next_join] = (rw_node_t){
+          .kind = RW_NODE_JOIN, .left = current, .right = i};
+      current = next_join++;
+    }
+    decomposition->root = current;
+  }
+  return validate_decomposition(decomposition, error);
+}
+
+/* Adjacent-swap hill climbing on a left-deep ordering.
+ * Starts from initial_order, iteratively tries all adjacent transpositions,
+ * keeps those that reduce (max_table_entries, join_pairs) forecast. */
+static bool generate_left_deep_search(const qsop_instance_t *qsop,
+                                      const uint32_t *initial_order,
+                                      qsop_rankwidth_decomposition_t **out,
+                                      qsop_error_t *error) {
+  const uint32_t nvars = qsop->nvars;
+  const size_t words = qsop_bitset_words(nvars);
+
+  qsop_rankwidth_decomposition_t *decomp = calloc(1, sizeof(*decomp));
+  uint32_t *order = calloc(nvars == 0 ? 1U : nvars, sizeof(*order));
+  if (decomp == NULL || order == NULL) {
+    free(decomp);
+    free(order);
+    set_error(error, "out of memory in left-deep search");
+    return false;
+  }
+  decomp->nvars = nvars;
+  decomp->words = words;
+  decomp->nnodes = nvars == 0U ? 0U : 2U * nvars - 1U;
+  decomp->nodes = calloc(decomp->nnodes == 0U ? 1U : decomp->nnodes, sizeof(*decomp->nodes));
+  decomp->node_vars = calloc(
+      (decomp->nnodes == 0U ? 1U : decomp->nnodes) * (words == 0U ? 1U : words),
+      sizeof(*decomp->node_vars));
+  decomp->postorder = calloc(decomp->nnodes == 0U ? 1U : decomp->nnodes,
+                             sizeof(*decomp->postorder));
+  if (decomp->nodes == NULL || decomp->node_vars == NULL || decomp->postorder == NULL) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    set_error(error, "out of memory in left-deep search nodes");
+    return false;
+  }
+
+  if (nvars == 0U) {
+    free(order);
+    *out = decomp;
+    return true;
+  }
+
+  for (uint32_t i = 0; i < nvars; i++) {
+    order[i] = initial_order[i];
+  }
+
+  if (!fill_left_deep_from_order(decomp, order, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  uint64_t best_max = 0, best_pairs = 0;
+  if (!qsop_rankwidth_decomposition_forecast(qsop, decomp, &best_max, &best_pairs, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  bool improved = true;
+  while (improved) {
+    improved = false;
+    for (uint32_t i = 0; i + 1U < nvars; i++) {
+      uint32_t tmp = order[i];
+      order[i] = order[i + 1U];
+      order[i + 1U] = tmp;
+      if (!fill_left_deep_from_order(decomp, order, error)) {
+        qsop_rankwidth_decomposition_free(decomp);
+        free(order);
+        return false;
+      }
+      uint64_t cand_max = 0, cand_pairs = 0;
+      if (!qsop_rankwidth_decomposition_forecast(qsop, decomp, &cand_max, &cand_pairs, error)) {
+        qsop_rankwidth_decomposition_free(decomp);
+        free(order);
+        return false;
+      }
+      if (cand_max < best_max || (cand_max == best_max && cand_pairs < best_pairs)) {
+        best_max = cand_max;
+        best_pairs = cand_pairs;
+        improved = true;
+      } else {
+        tmp = order[i];
+        order[i] = order[i + 1U];
+        order[i + 1U] = tmp;
+      }
+    }
+  }
+
+  if (!fill_left_deep_from_order(decomp, order, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  free(order);
+  *out = decomp;
+  return true;
+}
+
 static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
                                                    qsop_rankwidth_decomposition_t **out,
                                                    qsop_error_t *error) {
@@ -1336,13 +1458,14 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     return true;
   }
 
-  /* BEST: generate all base generators, return the one with the lowest forecast. */
+  /* BEST: generate all base generators (including search), return lowest forecast. */
   if (generator == QSOP_RANKWIDTH_GENERATOR_BEST) {
     static const qsop_rankwidth_generator_t kCandidates[] = {
         QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,
         QSOP_RANKWIDTH_GENERATOR_BALANCED,
         QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
         QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
     };
     const size_t ncandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
     qsop_rankwidth_decomposition_t *winner = NULL;
@@ -1371,6 +1494,25 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     }
     *out = winner;
     return true;
+  }
+
+  /* MIN_FILL_SEARCH: min-fill ordering refined by adjacent-swap hill climbing. */
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH) {
+    uint32_t *mfs_order = calloc(qsop->nvars, sizeof(*mfs_order));
+    if (mfs_order == NULL) {
+      set_error(error, "out of memory while allocating min-fill-search order");
+      return false;
+    }
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      mfs_order[v] = v;
+    }
+    if (!make_min_fill_order(qsop, mfs_order, error)) {
+      free(mfs_order);
+      return false;
+    }
+    const bool ok = generate_left_deep_search(qsop, mfs_order, out, error);
+    free(mfs_order);
+    return ok;
   }
 
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
