@@ -154,3 +154,69 @@ Useful benchmark helpers:
 [scoreboard.md](scoreboard.md) tracks corpus coverage, solver timings, native
 simulator comparisons, and the current recommended solver configuration for
 each benchmark tier.
+
+## Deferred Work
+
+Four known issues from the post-sprint audit. All changes should be followed
+by `meson test -C build` (43 tests, ≥75% coverage gate).
+
+### 1. `scripts/refresh_scoreboard.py` — wire up `--refresh-native`
+
+**File:** `scripts/refresh_scoreboard.py:143,173`
+
+The `--refresh-native` flag prints "not yet implemented" and exits. The real
+native benchmark tool (`tools/bench_qasm_native_simulator.py`) reads a QASM
+manifest, but the local corpus (`benchmarks/corpus/sop/`) is pure QSOP with
+no manifest. Either generate a lightweight QASM manifest for the local corpus,
+or replace the message with a clear redirect to `tools/run_corpus_benchmarks.py`.
+
+**Acceptance:** `python3 scripts/refresh_scoreboard.py --refresh-native` does
+not print "not yet implemented".
+
+### 2. Branch backend errors — missing `--max-vars` passthrough
+
+**File:** `scripts/bench_sop.py:33,42,100`
+
+Six (instance, backend) pairs record `status=error` because `bench_sop.py`
+never passes `--max-vars` to `sop-solve --backend branch`, even though the
+branch solver has an internal cap below 26 variables. Affected instances:
+`tier-17-32-cycle-n26-r16-01`, `tier-17-32-path-n27-r8-00`,
+`tier-33-64-cycle-n35-r8-01`, `tier-33-64-path-n63-r8-00` (both `branch`
+and `branch:from-treewidth`).
+
+**Fix:**
+```python
+BACKEND_EXTRA_ARGS = {
+    "rankwidth": ["--max-vars", "256"],
+    "branch":    ["--max-vars", "64"],  # add this
+}
+# and in the branch:from-treewidth call (~line 100):
+["--branch-rw-source", "from-treewidth", "--max-vars", "64"]
+```
+
+### 3. `tier-33-64-sparse-n58-r8-02` — hard instance, all backends fail
+
+**File:** `benchmarks/corpus/sop/tier-33-64/tier-33-64-sparse-n58-r8-02.meta.json`
+
+58 vars, 249 edges, r=8. Induced treewidth ≈ 25 (8^25 ≈ 10^22 table entries —
+infeasible); rankwidth times out; branch hits the max-vars cap. Structurally
+outside every current backend's tractable range.
+
+Add `"known_hard": true` and `"skip_backends": ["treewidth", "rankwidth", "branch"]`
+to the meta.json, then honour `skip_backends` in `bench_instance()` in
+`bench_sop.py` so the instance is skipped cleanly instead of recording errors.
+
+### 4. Scoreboard scripts duplication — `scripts/` stack superseded by `tools/`
+
+`scripts/refresh_scoreboard.py` (180 lines) and `scripts/render_scoreboard.py`
+(232 lines) are a prototype pipeline that operates on the 12-instance local
+synthetic corpus only. `tools/refresh_scoreboard.py` (799 lines) and
+`tools/render_scoreboard.py` (868 lines) are the real pipeline covering all
+five tiers, all backends, all WMC encodings, and native simulator results.
+They were never reconciled.
+
+Options: (a) delete the `scripts/` scoreboard pair and make `scripts/bench_sop.py`
+emit artifacts in the format `tools/refresh_scoreboard.py` consumes — saves
+~400 lines of duplicate render logic; or (b) keep `scripts/` as a
+zero-dependency local smoke path but rename and document clearly that `tools/`
+is authoritative.
