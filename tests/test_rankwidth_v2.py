@@ -39,6 +39,16 @@ def make_path_qsop(nvars: int, r: int = 8) -> str:
     return "\n".join(lines) + "\n"
 
 
+def make_sign_edge_path_qsop(nvars: int, r: int = 8) -> str:
+    """Path graph with sign-edge coefficients (all edges = r/2, triggering the sign-edge path)."""
+    nedges = nvars - 1
+    sign = r // 2
+    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    for i in range(nedges):
+        lines.append(f"q {i} {i + 1} {sign}")
+    return "\n".join(lines) + "\n"
+
+
 def make_cycle_qsop(nvars: int, r: int = 8) -> str:
     """Return a QSOP string for a cycle with `nvars` nodes."""
     lines = [f"p qsop {r} {nvars} {nvars}", "n 0", "cst 0"]
@@ -152,26 +162,27 @@ def test_v2_labelled_star_agrees_with_v1(exe: pathlib.Path) -> None:
 
 
 def test_v2_sign_edge_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 sign-edge CRT path (nvars >= 64) must agree with v1 on a large path graph."""
+    """v2 sign-edge CRT path (nvars >= 64) must agree with v1 on large sign-edge path graphs."""
     for nvars in [70, 100]:
-        qsop_text = make_path_qsop(nvars, r=8)
-        r1 = run_rankwidth(exe, qsop_text, "v1",
-                           extra_args=["--max-vars", "256"])
-        r2 = run_rankwidth(exe, qsop_text, "v2",
-                           extra_args=["--max-vars", "256"])
-        assert r1.returncode == 0, f"v1 failed on sign-edge path-{nvars}: {r1.stderr}"
-        assert r2.returncode == 0, f"v2 failed on sign-edge path-{nvars}: {r2.stderr}"
-        assert r1.stdout == r2.stdout, (
-            f"v1/v2 mismatch on sign-edge path-{nvars}:\n"
-            f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
-        )
+        for r in [4, 8]:
+            qsop_text = make_sign_edge_path_qsop(nvars, r=r)
+            r1 = run_rankwidth(exe, qsop_text, "v1",
+                               extra_args=["--max-vars", "256"])
+            r2 = run_rankwidth(exe, qsop_text, "v2",
+                               extra_args=["--max-vars", "256"])
+            assert r1.returncode == 0, f"v1 failed on sign-edge path-{nvars} r={r}: {r1.stderr}"
+            assert r2.returncode == 0, f"v2 failed on sign-edge path-{nvars} r={r}: {r2.stderr}"
+            assert r1.stdout == r2.stdout, (
+                f"v1/v2 mismatch on sign-edge path-{nvars} r={r}:\n"
+                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            )
 
 
 def test_fourier_count_table_agree_sign_edge(exe: pathlib.Path) -> None:
     """--solve-mode fourier and --solve-mode count-table must agree on sign-edge SOPs."""
     for nvars in range(3, 10):
         for r in [2, 4, 8]:
-            qsop_text = make_path_qsop(nvars, r)
+            qsop_text = make_sign_edge_path_qsop(nvars, r)
             with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
                 f.write(qsop_text)
                 qsop_path = f.name
