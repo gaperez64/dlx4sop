@@ -100,7 +100,9 @@ static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink,
   }
   if (rw != NULL && rw->attempted) {
     fprintf(f, ",\"rankwidth_generation_ms\":%.4f", rw->generation_ms);
-    if (rw->veto_reason == NULL) {
+    /* Show detailed rankwidth data when: (a) rankwidth won, or (b) calibration populated it. */
+    const bool show_rw_details = (rw->veto_reason == NULL) || (rw->support_width > 0);
+    if (show_rw_details) {
       fprintf(f, ",\"rankwidth_support_width\":%" PRIu32, rw->support_width);
       fprintf(f, ",\"rankwidth_labelled_width\":%" PRIu32, rw->labelled_width);
       fprintf(f, ",\"rankwidth_forecast_entries\":%" PRIu64, rw->forecast_entries);
@@ -1210,6 +1212,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   }
 
   const bool recording = (stats->sink != NULL && stats->sink->file != NULL);
+  const bool calibrate = recording && stats->sink->calibrate_backends;
   const uint32_t active_edges = qsop_residual_active_edges(residual);
   const uint32_t modulus_r = qsop_residual_modulus(residual);
 
@@ -1241,11 +1244,44 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     return false;
   }
   if (delegated) {
+    /* Calibration: also run treewidth for timing when rankwidth won. */
+    double tw_cal_ms = 0.0;
+    bool tw_cal_set = false;
+    uint32_t tw_cal_width = 0;
+    const bool rw_won_fourier =
+        stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
+    if (!rw_won_fourier && calibrate && sub_stats.width_diagnostics_available &&
+        sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+      uint32_t *cal_order = NULL;
+      qsop_error_t cal_err = {0};
+      if (qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                     &cal_order, &tw_cal_width, &cal_err) &&
+          tw_cal_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+        uint64_t *cal_counts = NULL;
+        qsop_solve_stats_t cal_stats = {0};
+        const uint64_t t0 = qsop_trace_now_ns();
+        if (qsop_counts_alloc(sub.r, &cal_counts, &cal_err) &&
+            qsop_solve_treewidth_precomputed_order_count_mod_stats(
+                &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, cal_order, tw_cal_width,
+                stats->count_modulus, cal_counts, &cal_stats, NULL, &cal_err)) {
+          tw_cal_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
+          tw_cal_set = true;
+        }
+        free(cal_counts);
+      } else {
+        tw_cal_width = 0;
+      }
+      free(cal_order);
+    }
     if (recording) {
+      const uint64_t tw_fe = tw_cal_set ? treewidth_table_forecast(tw_cal_width, sub.r) : 0;
+      const uint64_t tw_jp =
+          tw_cal_set ? treewidth_join_pair_forecast(tw_cal_width, sub.nvars) : 0;
       branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
                                "rankwidth", NULL,
                                probe_ms, sub_stats.width_diagnostics_available,
-                               sub_stats.min_fill_width, false, 0, 0, false, 0.0, &rw_data);
+                               sub_stats.min_fill_width,
+                               tw_cal_set, tw_fe, tw_jp, tw_cal_set, tw_cal_ms, &rw_data);
     }
     free_subinstance(&sub);
     *out_delegated = true;
@@ -1324,6 +1360,41 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     free(part_counts);
     qsop_result_free(part_result);
     return false;
+  }
+
+  /* Calibration: also run rankwidth for timing when treewidth won. */
+  if (!use_fourier && calibrate) {
+    qsop_rankwidth_decomposition_t *cal_decomp = NULL;
+    qsop_error_t cal_err = {0};
+    const uint64_t rw_gen_start = qsop_trace_now_ns();
+    if (qsop_rankwidth_decomposition_generate(&sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+                                              &cal_decomp, &cal_err)) {
+      uint32_t cal_sw = 0, cal_lw = 0;
+      if (qsop_rankwidth_decomposition_widths(&sub, cal_decomp, &cal_sw, &cal_lw, &cal_err)) {
+        rw_data.attempted = true;
+        rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
+        rw_data.support_width = cal_sw;
+        rw_data.labelled_width = cal_lw;
+        if (cal_lw <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+          uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_lw), sub.r);
+          uint64_t cal_jp = 0;
+          qsop_error_t fore_err = {0};
+          qsop_rankwidth_decomposition_forecast(&sub, cal_decomp, &cal_fe, &cal_jp, &fore_err);
+          rw_data.forecast_entries = cal_fe;
+          rw_data.forecast_join_pairs = cal_jp;
+          uint64_t *cal_counts = NULL;
+          qsop_solve_stats_t cal_stats = {0};
+          const uint64_t t0 = qsop_trace_now_ns();
+          if (qsop_counts_alloc(sub.r, &cal_counts, &cal_err) &&
+              qsop_solve_rankwidth_count_table_mod_stats(&sub, cal_decomp, stats->count_modulus,
+                                                         cal_counts, &cal_stats, NULL, &cal_err)) {
+            rw_data.actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
+          }
+          free(cal_counts);
+        }
+      }
+      qsop_rankwidth_decomposition_free(cal_decomp);
+    }
   }
 
   if (recording) {

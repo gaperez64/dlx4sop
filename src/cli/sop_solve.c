@@ -40,7 +40,7 @@ static void print_usage(FILE *file) {
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
-        "[--stats-jsonl PATH] "
+        "[--stats-jsonl PATH] [--branch-calibrate-backends] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -446,6 +446,7 @@ int main(int argc, char **argv) {
   bool include_result = false;
   bool include_probability = false;
   const char *stats_jsonl_path = NULL;
+  bool calibrate_backends = false;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -506,6 +507,10 @@ int main(int argc, char **argv) {
         return 2;
       }
       stats_jsonl_path = argv[++i];
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-calibrate-backends") == 0) {
+      calibrate_backends = true;
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -653,6 +658,14 @@ int main(int argc, char **argv) {
     fputs("error: --branch-heuristic requires --backend branch\n", stderr);
     return 2;
   }
+  if (calibrate_backends && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --branch-calibrate-backends requires --backend branch\n", stderr);
+    return 2;
+  }
+  if (calibrate_backends && stats_jsonl_path == NULL) {
+    fputs("error: --branch-calibrate-backends requires --stats-jsonl\n", stderr);
+    return 2;
+  }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path != NULL) {
     fputs("error: --rankwidth-decomposition requires --backend rankwidth\n", stderr);
     return 2;
@@ -748,6 +761,7 @@ int main(int argc, char **argv) {
       .file = jsonl_file,
       .instance = diagnostic_path,
       .next_id = 0,
+      .calibrate_backends = calibrate_backends,
   };
   qsop_backend_stats_sink_t *sink_ptr = jsonl_file != NULL ? &sink : NULL;
   if (backend == SOLVE_BACKEND_COMPONENTS) {

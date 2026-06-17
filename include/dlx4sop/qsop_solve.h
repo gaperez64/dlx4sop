@@ -257,9 +257,10 @@ bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, q
  * --------------------------------------------------------------------------- */
 
 typedef struct qsop_backend_stats_sink {
-  FILE *file;           /* JSONL output file — NULL disables emission */
-  const char *instance; /* value for the "instance" JSON field */
-  uint64_t next_id;     /* monotone record counter, incremented per record */
+  FILE *file;               /* JSONL output file — NULL disables emission */
+  const char *instance;     /* value for the "instance" JSON field */
+  uint64_t next_id;         /* monotone record counter, incremented per record */
+  bool calibrate_backends;  /* if true, run the losing backend too for timing data */
 } qsop_backend_stats_sink_t;
 
 bool qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
