@@ -160,7 +160,7 @@ def run_solver_jobs(
         if not mf.exists():
             print(f"warning: manifest missing for {tier}: {mf}", file=sys.stderr)
             continue
-        timeout = str(SOLVER_TIMEOUT.get(tier, 60))
+        timeout = str(args.timeout if args.timeout is not None else SOLVER_TIMEOUT.get(tier, 60))
         max_vars = str(TIER_MAX_VARS.get(tier, 512))
         for stem, extra_args in SOLVER_JOBS.get(tier, []):
             output = artifact_dir / f"{stem}.jsonl"
@@ -192,8 +192,8 @@ def run_wmc_jobs(
             print(f"warning: manifest missing for {tier}: {mf}", file=sys.stderr)
             continue
         slug = tier_slug(tier)
-        timeout = str(WMC_TIMEOUT.get(tier, 30))
-        sop_timeout = str(WMC_SOP_SOLVE_TIMEOUT.get(tier, 30))
+        timeout = str(args.timeout if args.timeout is not None else WMC_TIMEOUT.get(tier, 30))
+        sop_timeout = str(args.timeout if args.timeout is not None else WMC_SOP_SOLVE_TIMEOUT.get(tier, 30))
         max_vars = TIER_MAX_VARS.get(tier, 512)
         base_cmd = [
             sys.executable, str(bench),
@@ -240,7 +240,7 @@ def run_native_jobs(
             "--engine", "all",
             "--max-qubits", str(args.native_max_qubits),
             "--engine-qubit-cap", f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
-            "--timeout", str(args.native_timeout),
+            "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
             "--memory-limit-mib", str(args.memory_limit_mib),
             "--skip-unsupported",
             "--format", "jsonl",
@@ -276,6 +276,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--skip-wmc", action="store_true", help="skip WMC jobs")
     parser.add_argument("--skip-native", action="store_true", help="skip native simulator jobs")
     parser.add_argument("--skip-scoreboard", action="store_true", help="skip scoreboard refresh")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="override all per-tier timeouts (solver, WMC, native) with this value")
     parser.add_argument("--native-max-qubits", type=int, default=16)
     parser.add_argument("--pyzx-matrix-max-qubits", type=int, default=10)
     parser.add_argument("--native-timeout", type=float, default=10.0)
