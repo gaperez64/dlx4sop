@@ -50,16 +50,16 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("0-32", "dlx4sop-tier-0-32-wmc-residue-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-treewidth-fresh.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-branch-hybrid-current.jsonl"),
-    ("33-64", "dlx4sop-tier-33-64-rankwidth-min-fill-cut-current.jsonl"),
+    ("33-64", "dlx4sop-tier-33-64-rankwidth-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-amplitude-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-residue-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-treewidth-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-branch-hybrid-fresh.jsonl"),
-    ("65-128", "dlx4sop-tier-65-128-rankwidth-min-fill-cut-current.jsonl"),
+    ("65-128", "dlx4sop-tier-65-128-rankwidth-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-wmc-amplitude-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-branch-hybrid-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-treewidth-current.jsonl"),
-    ("129-256", "dlx4sop-tier-129-256-rankwidth-min-fill-cut-current.jsonl"),
+    ("129-256", "dlx4sop-tier-129-256-rankwidth-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-wmc-amplitude-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-treewidth-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amplitude-current.jsonl"),
@@ -785,7 +785,7 @@ def main(argv: list[str]) -> int:
             with args.rankwidth_comparison_output.open("w", encoding="utf-8") as output:
                 compare_rankwidth_backends.write_markdown(
                     rankwidth_records,
-                    "rankwidth:min-fill-cut:count-table",
+                    "rankwidth:best:count-table",
                     args.rankwidth_comparison_top,
                     output,
                 )
