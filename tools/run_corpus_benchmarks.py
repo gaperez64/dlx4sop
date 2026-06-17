@@ -208,12 +208,28 @@ def run_wmc_jobs(
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
         ]
-        # Amplitude: all tiers
+        # amp-and (amplitude): all tiers
         amp_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amplitude-current.jsonl"
-        print(f"\n--- WMC amplitude: {tier} ---", file=sys.stderr)
+        print(f"\n--- WMC amp-and: {tier} ---", file=sys.stderr)
         run_to_jsonl([*base_cmd, "--encoding", "amplitude"], amp_output, args.verbose)
 
-        # Residue: only small tiers
+        # amp-soft: all tiers
+        amp_soft_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-soft-current.jsonl"
+        print(f"\n--- WMC amp-soft: {tier} ---", file=sys.stderr)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-soft"], amp_soft_output, args.verbose)
+
+        # amp-block: all tiers
+        amp_block_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-block-current.jsonl"
+        print(f"\n--- WMC amp-block: {tier} ---", file=sys.stderr)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-block"], amp_block_output, args.verbose)
+
+        # residue-fourier: small tiers only (r calls per instance, expensive)
+        if tier in WMC_RESIDUE_TIERS:
+            res_fourier_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-fourier-current.jsonl"
+            print(f"\n--- WMC residue-fourier: {tier} ---", file=sys.stderr)
+            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier"], res_fourier_output, args.verbose)
+
+        # residue (plain #SAT): small tiers only
         if tier in WMC_RESIDUE_TIERS:
             res_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-current.jsonl"
             print(f"\n--- WMC residue: {tier} ---", file=sys.stderr)
