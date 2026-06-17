@@ -120,6 +120,22 @@ def test_v2_labelled_path_agrees_with_v1(exe: pathlib.Path) -> None:
             )
 
 
+def test_v2_labelled_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 labelled CRT path (nvars >= 64) must agree with v1 on a large path graph."""
+    for nvars in [70, 100]:
+        qsop_text = make_labelled_path_qsop(nvars, r=8)
+        r1 = run_rankwidth(exe, qsop_text, "v1",
+                           extra_args=["--max-vars", "256"])
+        r2 = run_rankwidth(exe, qsop_text, "v2",
+                           extra_args=["--max-vars", "256"])
+        assert r1.returncode == 0, f"v1 failed on labelled path-{nvars}: {r1.stderr}"
+        assert r2.returncode == 0, f"v2 failed on labelled path-{nvars}: {r2.stderr}"
+        assert r1.stdout == r2.stdout, (
+            f"v1/v2 mismatch on labelled path-{nvars}:\n"
+            f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+        )
+
+
 def test_v2_labelled_star_agrees_with_v1(exe: pathlib.Path) -> None:
     """v2 must produce the same residue vector as v1 on labelled star graphs."""
     for nvars in range(3, 9):
@@ -188,6 +204,7 @@ def main(argv: list[str]) -> None:
     test_v2_path_agrees_with_v1(exe)
     test_v2_cycle_agrees_with_v1(exe)
     test_v2_labelled_path_agrees_with_v1(exe)
+    test_v2_labelled_large_crt_agrees_with_v1(exe)
     test_v2_labelled_star_agrees_with_v1(exe)
     test_validate_mode_passes_sign_edge(exe)
     test_validate_mode_passes_labelled(exe)
