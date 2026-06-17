@@ -288,6 +288,7 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   options.all_residues = true;
   options.residue = 0;
   options.emit_metadata = true;
+  options.stats_out = NULL;
   return options;
 }
 
@@ -304,8 +305,10 @@ static void write_weight(FILE *file, int var, double re, double im) {
   fprintf(file, "c p weight %d 1+0i 0\n", -var);
 }
 
+/* amp-and: Tseitin AND auxiliary per encoded edge.
+ * W(y=1) = omega^b, W(y=0) = 1. Three clauses per edge (2 binary + 1 ternary). */
 static bool write_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_metadata,
-                            qsop_error_t *error) {
+                            qsop_wmc_stats_t *stats_out, qsop_error_t *error) {
   const uint32_t r = qsop->r;
 
   /* Allocate space to record which DIMACS var each edge maps to. */
@@ -321,9 +324,14 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_m
   /* Build Tseitin AND clauses for edges with non-zero quadratic coefficient. */
   wmc_builder_t b = {0};
   b.nvars = qsop->nvars;
+  uint32_t encoded_edges = 0;
+  uint32_t skipped_edges = 0;
   for (uint32_t e = 0; e < qsop->nedges; e++) {
     if ((qsop->edge_q[e] % r) != 0U) {
       edge_var[e] = gate_and(&b, (int)(qsop->edge_u[e] + 1U), (int)(qsop->edge_v[e] + 1U));
+      encoded_edges++;
+    } else {
+      skipped_edges++;
     }
   }
   if (b.failed) {
@@ -341,7 +349,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_m
     double fre, fim;
     omega_power(c0, r, &fre, &fim);
     fprintf(file,
-            "c sop2wmc encoding=amplitude r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            "c sop2wmc encoding=amp-and r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
             " mode=%s norm_h=%" PRIu64 "\n",
             r, qsop->nvars, qsop->nedges, qsop_mode_name(qsop->mode), qsop->norm_h);
     fprintf(file, "c constant_phase %" PRIu32 "\n", c0);
@@ -364,7 +372,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_m
     }
   }
 
-  /* Literal weights for Tseitin AND variables. */
+  /* Literal weights for Tseitin AND variables: W(y=1) = omega^b, W(y=0) = 1. */
   for (uint32_t e = 0; e < qsop->nedges; e++) {
     const uint32_t coeff = (uint32_t)(qsop->edge_q[e] % r);
     if (coeff != 0U) {
@@ -381,6 +389,126 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_m
     } else {
       fprintf(file, "%d ", b.lits[i]);
     }
+  }
+
+  if (stats_out != NULL) {
+    stats_out->aux_vars = encoded_edges;
+    stats_out->clauses_unit = 0;
+    stats_out->clauses_binary = 2U * encoded_edges;
+    stats_out->clauses_ternary = encoded_edges;
+    stats_out->encoded_edges = encoded_edges;
+    stats_out->skipped_edges = skipped_edges;
+  }
+
+  free(edge_var);
+  builder_free(&b);
+  if (ferror(file)) {
+    set_error(error, "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
+/* amp-soft: y_e -> x_u and y_e -> x_v only (2 binary clauses per encoded edge,
+ * no ternary). W(y_e=1) = omega^b - 1, W(y_e=0) = 1.
+ * Correctness: when x_u=0 or x_v=0 the implications force y_e=0 (weight 1).
+ * When x_u=x_v=1, y_e sums freely: 1 + (omega^b - 1) = omega^b. */
+static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop, bool emit_metadata,
+                            qsop_wmc_stats_t *stats_out, qsop_error_t *error) {
+  const uint32_t r = qsop->r;
+
+  int *edge_var = NULL;
+  if (qsop->nedges > 0) {
+    edge_var = calloc(qsop->nedges, sizeof(*edge_var));
+    if (edge_var == NULL) {
+      set_error(error, "out of memory while building amp-soft CNF");
+      return false;
+    }
+  }
+
+  /* Build implication clauses for edges with non-trivial soft weight. */
+  wmc_builder_t b = {0};
+  b.nvars = qsop->nvars;
+  uint32_t encoded_edges = 0;
+  uint32_t skipped_edges = 0;
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    const uint32_t coeff = (uint32_t)(qsop->edge_q[e] % r);
+    if (coeff != 0U) {
+      const int y = new_var(&b);
+      edge_var[e] = y;
+      add_clause2(&b, -y, (int)(qsop->edge_u[e] + 1U));  /* y -> x_u */
+      add_clause2(&b, -y, (int)(qsop->edge_v[e] + 1U));  /* y -> x_v */
+      encoded_edges++;
+    } else {
+      skipped_edges++;
+    }
+  }
+  if (b.failed) {
+    set_error(error, "out of memory while building amp-soft CNF");
+    free(edge_var);
+    builder_free(&b);
+    return false;
+  }
+
+  /* Write header then metadata then weights then implication clauses. */
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+
+  if (emit_metadata) {
+    const uint32_t c0 = (uint32_t)(qsop->constant % r);
+    double fre, fim;
+    omega_power(c0, r, &fre, &fim);
+    fprintf(file,
+            "c sop2wmc encoding=amp-soft r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            " mode=%s norm_h=%" PRIu64 "\n",
+            r, qsop->nvars, qsop->nedges, qsop_mode_name(qsop->mode), qsop->norm_h);
+    fprintf(file, "c constant_phase %" PRIu32 "\n", c0);
+    fprintf(file, "c amplitude_factor %.17g+%.17gi\n", fre, fim);
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      fprintf(file, "c xvar %" PRIu32 " %" PRIu32 "\n", v, v + 1U);
+    }
+    fputs("c amplitude = ganak_output * amplitude_factor\n", file);
+    fputs("c probability = |amplitude|^2 * 2^(-norm_h)\n", file);
+    fputs("c invoke: ganak --mode 6 --verb 0 <this-file>\n", file);
+  }
+
+  /* Literal weights for free variables with non-zero unary coefficient. */
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    const uint32_t coeff = (uint32_t)(qsop->unary[v] % r);
+    if (coeff != 0U) {
+      double re, im;
+      omega_power(coeff, r, &re, &im);
+      write_weight(file, (int)(v + 1U), re, im);
+    }
+  }
+
+  /* Literal weights for soft auxiliaries: W(y=1) = omega^b - 1, W(y=0) = 1. */
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    if (edge_var[e] == 0) {
+      continue;
+    }
+    const uint32_t coeff = (uint32_t)(qsop->edge_q[e] % r);
+    double re, im;
+    omega_power(coeff, r, &re, &im);
+    re -= 1.0;  /* W(y=1) = omega^b - 1 */
+    write_weight(file, edge_var[e], re, im);
+  }
+
+  /* Binary implication clauses — no ternary backward clauses. */
+  for (size_t i = 0; i < b.len; i++) {
+    if (b.lits[i] == 0) {
+      fputs("0\n", file);
+    } else {
+      fprintf(file, "%d ", b.lits[i]);
+    }
+  }
+
+  if (stats_out != NULL) {
+    stats_out->aux_vars = encoded_edges;
+    stats_out->clauses_unit = 0;
+    stats_out->clauses_binary = 2U * encoded_edges;
+    stats_out->clauses_ternary = 0;
+    stats_out->encoded_edges = encoded_edges;
+    stats_out->skipped_edges = skipped_edges;
   }
 
   free(edge_var);
@@ -404,7 +532,10 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   }
 
   if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE) {
-    return write_amplitude(file, qsop, options->emit_metadata, error);
+    return write_amplitude(file, qsop, options->emit_metadata, options->stats_out, error);
+  }
+  if (options->encoding == QSOP_WMC_ENCODING_AMP_SOFT) {
+    return write_amp_soft(file, qsop, options->emit_metadata, options->stats_out, error);
   }
 
   /* RESIDUE encoding. */

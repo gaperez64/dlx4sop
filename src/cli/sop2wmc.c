@@ -9,7 +9,7 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop2wmc [--encoding residue|amplitude] [--residue K|all] "
+  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|residue-accumulator] [--residue K|all] "
         "[-o PATH] [--no-metadata] [PATH|-]\n",
         file);
 }
@@ -42,12 +42,15 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *enc = argv[++i];
-      if (strcmp(enc, "residue") == 0) {
+      if (strcmp(enc, "residue-accumulator") == 0 || strcmp(enc, "residue") == 0) {
         options.encoding = QSOP_WMC_ENCODING_RESIDUE;
-      } else if (strcmp(enc, "amplitude") == 0) {
+      } else if (strcmp(enc, "amp-and") == 0 || strcmp(enc, "amplitude") == 0) {
         options.encoding = QSOP_WMC_ENCODING_AMPLITUDE;
+      } else if (strcmp(enc, "amp-soft") == 0) {
+        options.encoding = QSOP_WMC_ENCODING_AMP_SOFT;
       } else {
-        fputs("error: --encoding must be 'residue' or 'amplitude'\n", stderr);
+        fputs("error: --encoding must be 'amp-and', 'amp-soft', or 'residue-accumulator'\n",
+              stderr);
         return 2;
       }
       continue;

@@ -231,6 +231,33 @@ def counts_to_amplitude(counts, r) -> complex:
     return sum(c * omega ** k for k, c in enumerate(counts))
 
 
+def eval_wmc_all_vars(weights: dict, amplitude_factor: complex,
+                      clauses: list, nvars_total: int) -> complex:
+    """Brute-force WMC over all 2^nvars_total assignments.
+
+    Unlike eval_wmc, this handles non-determined auxiliary variables (e.g.
+    amp-soft) by enumerating all assignments including auxiliaries.
+    """
+    total = complex(0, 0)
+    for bits in itertools.product((False, True), repeat=nvars_total):
+        sat = True
+        for clause in clauses:
+            if not any(
+                (bits[abs(lit) - 1] if lit > 0 else not bits[abs(lit) - 1])
+                for lit in clause
+            ):
+                sat = False
+                break
+        if not sat:
+            continue
+        w = complex(1, 0)
+        for var in range(1, nvars_total + 1):
+            if var in weights:
+                w *= weights[var][0] if bits[var - 1] else weights[var][1]
+        total += w
+    return total * amplitude_factor
+
+
 def verify_amplitude(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
     counts = reference_counts(sop_solve, qsop)
     r = len(counts)
@@ -246,6 +273,51 @@ def verify_amplitude(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathl
     if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
         raise AssertionError(
             f"{qsop}: amplitude {got} does not match sop-solve {ref_amplitude}"
+        )
+
+
+def verify_amp_soft(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
+    """Verify amp-soft: no ternary clauses, binary == 2*encoded, amplitude matches."""
+    counts = reference_counts(sop_solve, qsop)
+    r = len(counts)
+    ref_amplitude = counts_to_amplitude(counts, r)
+
+    result = run([str(sop2wmc), "--encoding", "amp-soft", str(qsop)])
+    if result.returncode != 0:
+        raise AssertionError(
+            f"sop2wmc --encoding amp-soft failed on {qsop}:\n{result.stderr}"
+        )
+
+    xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
+
+    # Parse nvars from metadata to determine number of aux vars.
+    sop_nvars = None
+    for line in result.stdout.splitlines():
+        if "encoding=amp-soft" in line:
+            for field in line.split():
+                if field.startswith("nvars="):
+                    sop_nvars = int(field.split("=", 1)[1])
+    if sop_nvars is None:
+        raise AssertionError(f"{qsop}: amp-soft missing nvars in metadata")
+
+    encoded_edges = nvars_total - sop_nvars
+
+    # Structural: no ternary (or longer) clauses.
+    ternary = [c for c in clauses if len(c) >= 3]
+    if ternary:
+        raise AssertionError(f"{qsop}: amp-soft has ternary/long clauses: {ternary}")
+
+    # Structural: exactly 2 binary clauses per encoded edge.
+    if len(clauses) != 2 * encoded_edges:
+        raise AssertionError(
+            f"{qsop}: amp-soft has {len(clauses)} clauses, expected {2*encoded_edges}"
+        )
+
+    # Amplitude correctness via brute force over all assignments.
+    got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+    if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
+        raise AssertionError(
+            f"{qsop}: amp-soft amplitude {got} != sop-solve reference {ref_amplitude}"
         )
 
 
@@ -269,6 +341,12 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         if "p cnf" not in out.read_text():
             raise AssertionError("output file missing DIMACS header")
 
+    # amp-and and amp-soft should both succeed.
+    for enc in ("amp-and", "amplitude", "amp-soft", "residue-accumulator", "residue"):
+        r = run([str(sop2wmc), "--encoding", enc, str(qsop)])
+        if r.returncode != 0:
+            raise AssertionError(f"--encoding {enc} unexpectedly failed:\n{r.stderr}")
+
     error_cases = [
         ([str(sop2wmc), "--residue"], "requires a value"),
         ([str(sop2wmc), "--residue", "nope", str(qsop)], "must be 'all'"),
@@ -278,7 +356,7 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(sop2wmc), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
         ([str(sop2wmc), "-o"], "requires a path"),
         ([str(sop2wmc), "--encoding"], "requires a value"),
-        ([str(sop2wmc), "--encoding", "nope", str(qsop)], "must be 'residue' or 'amplitude'"),
+        ([str(sop2wmc), "--encoding", "nope", str(qsop)], "must be 'amp-and'"),
     ]
     for cmd, expected in error_cases:
         completed = run(cmd)
@@ -298,6 +376,7 @@ def main() -> int:
         qsop = source_root / "tests" / "golden" / name
         verify_instance(sop2wmc, sop_solve, qsop)
         verify_amplitude(sop2wmc, sop_solve, qsop)
+        verify_amp_soft(sop2wmc, sop_solve, qsop)
     check_cli(sop2wmc, source_root)
     return 0
 

@@ -10,38 +10,53 @@
 /*
  * Export of a QSOP instance to DIMACS CNF / WPCNF for external counters.
  *
- * Two encodings are available:
+ * Encodings:
  *
- * QSOP_WMC_ENCODING_RESIDUE (plain #SAT, r separate CNF blocks):
- *   For target residue k, the models of the emitted CNF correspond exactly to
- *   assignments x in {0,1}^nvars with phase(x) == k. A plain #SAT counter
- *   returns counts[k]; the full amplitude is reconstructed as
- *     amplitude = sum_k counts[k] * exp(2*pi*i*k/r).
+ * QSOP_WMC_ENCODING_RESIDUE (plain #SAT, residue-accumulator):
+ *   Mod-r adder + plain #SAT, r CNF blocks. Debug/reference path.
+ *   amplitude = sum_k counts[k] * exp(2*pi*i*k/r).
  *
- * QSOP_WMC_ENCODING_AMPLITUDE (complex literal weights, single WPCNF call):
- *   Each free variable x_v carries the literal weight omega^unary[v] (true) / 1
- *   (false), and each Tseitin AND var y_e carries omega^edge_q[e] / 1. A single
- *   complex weighted model count equals
- *     sum_x omega^(unary-part + quadratic-part),
- *   and the full amplitude is obtained by multiplying by omega^constant (written
- *   as `c amplitude_factor` metadata in the CNF). Use Ganak --mode 6.
+ * QSOP_WMC_ENCODING_AMPLITUDE / QSOP_WMC_ENCODING_AMP_AND (amp-and):
+ *   Deterministic amplitude encoding. Each edge x_u*x_v*b gets a Tseitin
+ *   AND auxiliary y_e with W(y_e=1)=omega^b, W(y_e=0)=1. Three clauses per
+ *   encoded edge (2 binary + 1 ternary). Use Ganak --mode 6.
  *
- * Both encodings work for sign and labelled QSOPs without special-casing.
+ * QSOP_WMC_ENCODING_AMP_SOFT (amp-soft):
+ *   Soft-feature amplitude encoding. Each edge gets an implication auxiliary
+ *   y_e with only y_e->x_u and y_e->x_v (2 binary clauses, no ternary).
+ *   W(y_e=1) = omega^b - 1, W(y_e=0) = 1. Reduces ternary clause count.
+ *   amplitude = ganak_output * amplitude_factor.
+ *
+ * Both amplitude encodings work for sign and labelled QSOPs without
+ * special-casing.
  */
 
 typedef enum {
-  QSOP_WMC_ENCODING_RESIDUE,    /* mod-r adder + plain #SAT, r CNF blocks */
-  QSOP_WMC_ENCODING_AMPLITUDE,  /* complex literal weights, single WPCNF */
+  QSOP_WMC_ENCODING_RESIDUE,    /* mod-r adder + plain #SAT (residue-accumulator) */
+  QSOP_WMC_ENCODING_AMPLITUDE,  /* Tseitin AND aux, complex weights (amp-and) */
+  QSOP_WMC_ENCODING_AMP_SOFT,   /* implication aux, (omega^b - 1) weights (amp-soft) */
+  QSOP_WMC_ENCODING_AMP_AND = QSOP_WMC_ENCODING_AMPLITUDE,  /* alias */
 } qsop_wmc_encoding_t;
+
+/* Structural statistics collected during WMC export. */
+typedef struct qsop_wmc_stats {
+  uint32_t aux_vars;         /* auxiliary variables introduced */
+  uint64_t clauses_unit;     /* unit/forcing clauses */
+  uint64_t clauses_binary;   /* binary clauses */
+  uint64_t clauses_ternary;  /* ternary clauses */
+  uint32_t encoded_edges;    /* edges with non-trivial auxiliary */
+  uint32_t skipped_edges;    /* edges skipped (zero label mod r) */
+} qsop_wmc_stats_t;
 
 typedef struct qsop_wmc_options {
   qsop_wmc_encoding_t encoding; /* which encoding to emit */
   bool all_residues;    /* RESIDUE: emit one CNF block per residue 0..r-1 */
   uint32_t residue;     /* RESIDUE: residue to emit when !all_residues */
   bool emit_metadata;   /* prefix each block with `c` comment metadata */
+  qsop_wmc_stats_t *stats_out; /* if non-NULL, filled with structural stats */
 } qsop_wmc_options_t;
 
-/* Sensible defaults: residue encoding, all residues, metadata on. */
+/* Sensible defaults: residue encoding, all residues, metadata on, no stats. */
 qsop_wmc_options_t qsop_wmc_options_default(void);
 
 /*
