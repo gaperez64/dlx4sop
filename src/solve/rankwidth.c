@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RW_JOIN_MAP_INITIAL_CAP 1024U
+
 typedef enum rw_node_kind {
   RW_NODE_UNDEFINED,
   RW_NODE_LEAF,
@@ -2179,6 +2181,62 @@ static bool build_join_map(const qsop_instance_t *qsop,
   return true;
 }
 
+/* scratch must be 3 * max(1, words) uint64_t words:
+ *   [0 .. words-1]      outside bitset  (fully reinitialized on entry, no pre-zero needed)
+ *   [words .. 2w-1]     signature        (overwritten on entry, no init needed)
+ * map must be pre-allocated (len reset to 0 by caller before each call).           */
+static bool build_join_map_arena(const qsop_instance_t *qsop,
+                                  const qsop_rankwidth_decomposition_t *decomposition,
+                                  uint32_t node_id, const uint64_t *adj,
+                                  rw_signature_pool_t *pool, const rw_table_t *left,
+                                  const rw_table_t *right, rw_join_map_t *map,
+                                  uint64_t *scratch, qsop_error_t *error) {
+  const uint32_t sign = qsop->r / 2U;
+  if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
+    set_error(error, "rankwidth join map is too large");
+    return false;
+  }
+  const size_t words = decomposition->words;
+  const size_t w = words == 0 ? 1U : words;
+  if (!reserve_join_map(map, left->reps_len * right->reps_len, words, error)) {
+    return false;
+  }
+  uint64_t *outside = scratch;
+  uint64_t *signature = scratch + w;
+  for (uint32_t v = 0; v < decomposition->nvars; v++) {
+    qsop_bitset_set(outside, v);
+  }
+  qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), words);
+
+  for (size_t i = 0; i < left->reps_len; i++) {
+    for (size_t j = 0; j < right->reps_len; j++) {
+      const uint64_t *left_rep = table_assignment(left, i, words);
+      const uint64_t *right_rep = table_assignment(right, j, words);
+      const uint32_t parity =
+          cross_parity_bitsets(qsop->nvars, adj, left_rep, right_rep, words);
+      qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
+      qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
+      qsop_bitset_and(signature, outside, words);
+      uint32_t parent_signature = 0;
+      if (!signature_pool_intern(pool, signature, &parent_signature, error)) {
+        return false;
+      }
+
+      const size_t index = map->len++;
+      uint64_t *assignment = join_map_assignment(map, index, words);
+      qsop_bitset_copy(assignment, left_rep, words);
+      qsop_bitset_or(assignment, right_rep, words);
+      map->entries[index] = (rw_join_map_entry_t){
+          .left_signature = left->reps[i].signature,
+          .right_signature = right->reps[j].signature,
+          .parent_signature = parent_signature,
+          .residue_shift = (uint32_t)(((uint64_t)sign * parity) % qsop->r),
+      };
+    }
+  }
+  return true;
+}
+
 static const rw_join_map_entry_t *join_map_get(const rw_join_map_t *map, uint32_t left_signature,
                                                uint32_t right_signature, size_t *index_out) {
   for (size_t i = 0; i < map->len; i++) {
@@ -2223,6 +2281,31 @@ static bool solve_leaf(const qsop_instance_t *qsop, const uint64_t *adj, const r
   free(assignment);
   free(signature);
   return ok;
+}
+
+/* scratch must be 3 * max(1, words) uint64_t words:
+ *   [0 .. words-1]      zero bitset  (must be all-zeros on entry, never written)
+ *   [words .. 2w-1]     assignment   (must be all-zeros on entry, modified)
+ *   [2w .. 3w-1]        signature    (overwritten on entry, no init needed)      */
+static bool solve_leaf_arena(const qsop_instance_t *qsop, const uint64_t *adj,
+                              const rw_node_t *node, size_t words, rw_signature_pool_t *pool,
+                              rw_table_t *table, uint64_t *scratch, qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  uint64_t *zero = scratch;
+  uint64_t *assignment = scratch + w;
+  uint64_t *signature = scratch + 2U * w;
+
+  uint32_t zero_signature = 0;
+  uint32_t one_signature = 0;
+  qsop_bitset_copy(signature, qsop_bitset_const_row(adj, words, node->var), words);
+  qsop_bitset_clear(signature, node->var);
+  qsop_bitset_set(assignment, node->var);
+  return signature_pool_intern(pool, zero, &zero_signature, error) &&
+         signature_pool_intern(pool, signature, &one_signature, error) &&
+         table_add_rep(table, zero_signature, zero, words, error) &&
+         table_add_entry(table, zero_signature, 0, 1, error) &&
+         table_add_rep(table, one_signature, assignment, words, error) &&
+         table_add_entry(table, one_signature, qsop->unary[node->var] % qsop->r, 1, error);
 }
 
 static bool solve_join(const qsop_instance_t *qsop, const rw_join_map_t *map,
@@ -3123,6 +3206,22 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
     return false;
   }
 
+  /* Arena: 3 scratch bitsets (zero | assignment | sig_temp) shared across all nodes. */
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  uint64_t *scratch = calloc(3U * w, sizeof(*scratch));
+  rw_join_map_t shared_map = {0};
+  if (scratch == NULL || !reserve_join_map(&shared_map, RW_JOIN_MAP_INITIAL_CAP, w, error)) {
+    free(scratch);
+    join_map_free(&shared_map);
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      table_free(&tables[t]);
+    }
+    free(tables);
+    signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
+
   uint64_t join_pairs = 0;
   uint64_t join_signature_pairs = 0;
   uint64_t table_entries = 0;
@@ -3135,23 +3234,27 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
     const uint64_t start = qsop_trace_begin(trace);
     bool ok = false;
     if (node->kind == RW_NODE_LEAF) {
-      ok = solve_leaf(qsop, adj, node, decomposition->words, &pool, &tables[node_id], error);
+      /* Zero scratch[0] (zero bitset) and scratch[w] (assignment) before each leaf. */
+      memset(scratch, 0, 2U * w * sizeof(*scratch));
+      ok = solve_leaf_arena(qsop, adj, node, decomposition->words, &pool, &tables[node_id],
+                            scratch, error);
       qsop_trace_emit_elapsed(trace, "rankwidth.v2_leaf", 0, tables[node_id].len, start);
     } else {
-      rw_join_map_t map = {0};
-      ok = build_join_map(qsop, decomposition, node_id, adj, &pool, &tables[node->left],
-                          &tables[node->right], &map, error);
+      shared_map.len = 0;
+      ok = build_join_map_arena(qsop, decomposition, node_id, adj, &pool, &tables[node->left],
+                                &tables[node->right], &shared_map, scratch, error);
       if (ok) {
-        join_signature_pairs += map.len;
-        qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, map.len, start);
+        join_signature_pairs += shared_map.len;
+        qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, shared_map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_v2(qsop, &map, &tables[node->left], &tables[node->right],
+        ok = solve_join_v2(qsop, &shared_map, &tables[node->left], &tables[node->right],
                            &tables[node_id], decomposition->words, &join_pairs, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.v2_join", 0, tables[node_id].len, join_start);
       }
-      join_map_free(&map);
     }
     if (!ok) {
+      free(scratch);
+      join_map_free(&shared_map);
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         table_free(&tables[t]);
       }
@@ -3170,6 +3273,9 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
       max_signature_entries = tables[node_id].reps_len;
     }
   }
+
+  free(scratch);
+  join_map_free(&shared_map);
 
   const rw_table_t *root = &tables[decomposition->root];
   for (size_t i = 0; i < root->len; i++) {
