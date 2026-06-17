@@ -1181,6 +1181,314 @@ static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
   return true;
 }
 
+/* Replay the min-fill elimination order to build the fill-in (chordal) graph,
+ * then find each position's parent in the elimination tree (the earliest
+ * subsequently-eliminated fill-in neighbor).  The fill array is n*words bitsets;
+ * parent_pos[pos] = UINT32_MAX for the root (last eliminated). */
+static bool make_fill_in_and_parents(const qsop_instance_t *qsop, const uint32_t *order,
+                                     uint64_t *fill, uint32_t *parent_pos,
+                                     qsop_error_t *error) {
+  const uint32_t n = qsop->nvars;
+  const size_t words = qsop_bitset_words(n);
+  uint64_t *active = calloc(words == 0 ? 1U : words, sizeof(*active));
+  uint64_t *scratch = calloc(words == 0 ? 1U : words, sizeof(*scratch));
+  if (active == NULL || scratch == NULL) {
+    free(active);
+    free(scratch);
+    set_error(error, "out of memory building fill-in graph");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < n; v++) {
+    qsop_bitset_set(active, v);
+  }
+
+  /* Replay elimination: at each step, clique-ify active neighbors. */
+  for (uint32_t pos = 0; pos < n; pos++) {
+    const uint32_t v = order[pos];
+    uint64_t *v_row = qsop_bitset_row(fill, words, v);
+
+    /* Collect active neighbors into scratch. */
+    for (size_t w = 0; w < words; w++) {
+      scratch[w] = v_row[w] & active[w];
+    }
+
+    /* Add fill edges: connect all pairs of active neighbors. */
+    for (uint32_t u = 0; u < n; u++) {
+      if (!qsop_bitset_get(scratch, u)) {
+        continue;
+      }
+      uint64_t *u_row = qsop_bitset_row(fill, words, u);
+      for (size_t w = 0; w < words; w++) {
+        u_row[w] |= scratch[w];
+      }
+      qsop_bitset_clear(u_row, u); /* no self-loop */
+    }
+
+    /* Remove v from active. */
+    qsop_bitset_clear(active, v);
+  }
+
+  /* Build pos_of inverse map. */
+  uint32_t *pos_of = calloc(n == 0 ? 1U : n, sizeof(*pos_of));
+  if (pos_of == NULL) {
+    free(active);
+    free(scratch);
+    set_error(error, "out of memory building pos_of map");
+    return false;
+  }
+  for (uint32_t pos = 0; pos < n; pos++) {
+    pos_of[order[pos]] = pos;
+  }
+
+  /* For each pos, parent = fill-in neighbor with smallest pos > pos. */
+  for (uint32_t pos = 0; pos < n; pos++) {
+    const uint32_t v = order[pos];
+    const uint64_t *v_row = qsop_bitset_const_row(fill, words, v);
+    uint32_t best = UINT32_MAX;
+    for (uint32_t u = 0; u < n; u++) {
+      if (!qsop_bitset_get(v_row, u)) {
+        continue;
+      }
+      const uint32_t q = pos_of[u];
+      if (q > pos && (best == UINT32_MAX || q < best)) {
+        best = q;
+      }
+    }
+    parent_pos[pos] = best;
+  }
+
+  free(active);
+  free(scratch);
+  free(pos_of);
+  return true;
+}
+
+/* Build rank decomposition subtree for elimination-tree node at position pos.
+ * child_subtrees[pos] must already hold the subtree root ids for each child.
+ * Returns the root node id of the subtree rooted at pos. */
+typedef struct etree_dfs_frame {
+  uint32_t pos;
+  uint32_t child_idx; /* which child we're processing next */
+} etree_dfs_frame_t;
+
+static bool build_etree_subtrees(qsop_rankwidth_decomposition_t *d, uint32_t root_pos,
+                                 uint32_t **children_arr, uint32_t *children_cnt,
+                                 uint32_t *subtree_root, uint32_t n, uint32_t *next_join,
+                                 qsop_error_t *error) {
+  /* Iterative post-order DFS to avoid stack overflow on deep trees. */
+  uint32_t *stack = calloc(n == 0 ? 1U : n, sizeof(*stack));
+  uint32_t *result = calloc(n == 0 ? 1U : n, sizeof(*result));
+  if (stack == NULL || result == NULL) {
+    free(stack);
+    free(result);
+    set_error(error, "out of memory building from-treewidth subtrees");
+    return false;
+  }
+  uint32_t sp = 0;
+  stack[sp++] = root_pos;
+
+  /* First pass: topological sort (post-order) via DFS. */
+  uint32_t *visit_order = calloc(n == 0 ? 1U : n, sizeof(*visit_order));
+  if (visit_order == NULL) {
+    free(stack);
+    free(result);
+    set_error(error, "out of memory building from-treewidth visit order");
+    return false;
+  }
+  uint32_t visit_len = 0;
+
+  /* Iterative DFS for post-order: push right-to-left so left is processed first. */
+  while (sp > 0) {
+    const uint32_t pos = stack[--sp];
+    visit_order[visit_len++] = pos;
+    /* Push children right-to-left so they're processed before this node. */
+    for (uint32_t i = children_cnt[pos]; i > 0U; i--) {
+      stack[sp++] = children_arr[pos][i - 1U];
+    }
+  }
+
+  /* Second pass: build rank decomposition nodes in reverse visit order (post-order). */
+  /* But visit_order above is pre-order; reverse it for post-order. */
+  for (uint32_t i = visit_len; i > 0U; i--) {
+    const uint32_t pos = visit_order[i - 1U];
+    const uint32_t own_leaf = pos; /* node index = pos for leaves */
+    const uint32_t k = children_cnt[pos];
+    if (k == 0U) {
+      result[pos] = own_leaf;
+    } else {
+      /* Collect child subtree roots. */
+      uint32_t current = result[children_arr[pos][0]];
+      for (uint32_t j = 1U; j < k; j++) {
+        const uint32_t node = (*next_join)++;
+        d->nodes[node] = (rw_node_t){
+            .kind = RW_NODE_JOIN,
+            .left = current,
+            .right = result[children_arr[pos][j]],
+        };
+        current = node;
+      }
+      /* Join with own leaf. */
+      const uint32_t node = (*next_join)++;
+      d->nodes[node] = (rw_node_t){
+          .kind = RW_NODE_JOIN,
+          .left = current,
+          .right = own_leaf,
+      };
+      result[pos] = node;
+    }
+  }
+
+  *subtree_root = result[root_pos];
+  free(stack);
+  free(result);
+  free(visit_order);
+  return true;
+}
+
+static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
+                                              qsop_rankwidth_decomposition_t **out,
+                                              qsop_error_t *error) {
+  const uint32_t n = qsop->nvars;
+  const size_t words = qsop_bitset_words(n);
+
+  /* Step 1: compute min-fill elimination order. */
+  uint32_t *order = calloc(n == 0 ? 1U : n, sizeof(*order));
+  if (order == NULL) {
+    set_error(error, "out of memory in from-treewidth generator");
+    return false;
+  }
+  for (uint32_t v = 0; v < n; v++) {
+    order[v] = v;
+  }
+  if (!make_min_fill_order(qsop, order, error)) {
+    free(order);
+    return false;
+  }
+
+  /* Step 2: replay elimination to get fill-in graph + elimination tree parents. */
+  uint64_t *fill = calloc((n == 0 ? 1U : n) * (words == 0 ? 1U : words), sizeof(*fill));
+  uint32_t *parent_pos = calloc(n == 0 ? 1U : n, sizeof(*parent_pos));
+  if (fill == NULL || parent_pos == NULL) {
+    free(order);
+    free(fill);
+    free(parent_pos);
+    set_error(error, "out of memory in from-treewidth fill-in allocation");
+    return false;
+  }
+  /* Initialize fill from original graph. */
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    qsop_bitset_set(qsop_bitset_row(fill, words, qsop->edge_u[e]), qsop->edge_v[e]);
+    qsop_bitset_set(qsop_bitset_row(fill, words, qsop->edge_v[e]), qsop->edge_u[e]);
+  }
+  if (!make_fill_in_and_parents(qsop, order, fill, parent_pos, error)) {
+    free(order);
+    free(fill);
+    free(parent_pos);
+    return false;
+  }
+  free(fill); /* no longer needed */
+
+  /* Step 3: build children lists for elimination tree. */
+  uint32_t *children_flat = calloc(n == 0 ? 1U : n, sizeof(*children_flat));
+  uint32_t **children_arr = calloc(n == 0 ? 1U : n, sizeof(*children_arr));
+  uint32_t *children_cnt = calloc(n == 0 ? 1U : n, sizeof(*children_cnt));
+  if (children_flat == NULL || children_arr == NULL || children_cnt == NULL) {
+    free(order);
+    free(parent_pos);
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    set_error(error, "out of memory building elimination tree children");
+    return false;
+  }
+
+  uint32_t root_pos = 0;
+  for (uint32_t pos = 0; pos < n; pos++) {
+    if (parent_pos[pos] == UINT32_MAX) {
+      root_pos = pos;
+    } else {
+      children_cnt[parent_pos[pos]]++;
+    }
+  }
+
+  /* Allocate children_arr[pos] using offsets into children_flat. */
+  uint32_t offset = 0;
+  for (uint32_t pos = 0; pos < n; pos++) {
+    children_arr[pos] = children_flat + offset;
+    offset += children_cnt[pos];
+    children_cnt[pos] = 0; /* reset for fill pass */
+  }
+  for (uint32_t pos = 0; pos < n; pos++) {
+    if (parent_pos[pos] != UINT32_MAX) {
+      const uint32_t par = parent_pos[pos];
+      children_arr[par][children_cnt[par]++] = pos;
+    }
+  }
+  free(parent_pos);
+
+  /* Step 4: allocate decomposition (2n-1 nodes). */
+  qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
+  if (decomposition == NULL) {
+    free(order);
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    set_error(error, "out of memory allocating from-treewidth decomposition");
+    return false;
+  }
+  decomposition->nvars = n;
+  decomposition->words = words;
+  decomposition->nnodes = n <= 1U ? 1U : 2U * n - 1U;
+  decomposition->nodes = calloc(decomposition->nnodes, sizeof(*decomposition->nodes));
+  decomposition->node_vars = calloc((size_t)decomposition->nnodes * (words == 0 ? 1U : words),
+                                    sizeof(*decomposition->node_vars));
+  decomposition->postorder = calloc(decomposition->nnodes, sizeof(*decomposition->postorder));
+  if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
+      decomposition->postorder == NULL) {
+    free(order);
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    qsop_rankwidth_decomposition_free(decomposition);
+    set_error(error, "out of memory allocating from-treewidth decomposition nodes");
+    return false;
+  }
+
+  /* Leaf nodes: node[pos].var = order[pos] (same layout as other generators). */
+  for (uint32_t pos = 0; pos < n; pos++) {
+    decomposition->nodes[pos] = (rw_node_t){.kind = RW_NODE_LEAF, .var = order[pos]};
+  }
+  free(order);
+
+  if (n == 1U) {
+    decomposition->root = 0;
+  } else {
+    uint32_t next_join = n;
+    uint32_t subtree_root = 0;
+    if (!build_etree_subtrees(decomposition, root_pos, children_arr, children_cnt,
+                              &subtree_root, n, &next_join, error)) {
+      free(children_flat);
+      free(children_arr);
+      free(children_cnt);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    decomposition->root = subtree_root;
+  }
+
+  free(children_flat);
+  free(children_arr);
+  free(children_cnt);
+
+  if (!validate_decomposition(decomposition, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
+  *out = decomposition;
+  return true;
+}
+
 bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_generator_t generator,
                                            qsop_rankwidth_decomposition_t **out,
@@ -1199,6 +1507,11 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     *out = empty;
     return true;
   }
+
+  if (generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
+    return make_from_treewidth_decomposition(qsop, out, error);
+  }
+
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
   uint32_t *leaf_nodes = calloc(qsop->nvars, sizeof(*leaf_nodes));
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));

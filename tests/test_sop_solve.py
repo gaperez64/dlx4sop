@@ -1121,6 +1121,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "balanced")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill-cut")
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "from-treewidth")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
     assert_rankwidth_matches(
         exe,

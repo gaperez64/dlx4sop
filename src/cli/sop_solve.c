@@ -36,7 +36,7 @@ static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
-        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut] "
+        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -94,6 +94,8 @@ static const char *rankwidth_generator_name(qsop_rankwidth_generator_t generator
     return "min-fill";
   case QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT:
     return "min-fill-cut";
+  case QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH:
+    return "from-treewidth";
   }
   return "unknown";
 }
@@ -562,6 +564,8 @@ int main(int argc, char **argv) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_MIN_FILL;
       } else if (strcmp(value, "min-fill-cut") == 0) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT;
+      } else if (strcmp(value, "from-treewidth") == 0) {
+        rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
       } else {
         fprintf(stderr, "error: unsupported rankwidth generator '%s'\n", value);
         return 2;

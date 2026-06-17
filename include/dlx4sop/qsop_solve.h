@@ -69,6 +69,8 @@ typedef enum qsop_rankwidth_generator {
   QSOP_RANKWIDTH_GENERATOR_BALANCED,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+  /* Derive rank decomposition from min-fill treewidth elimination tree. */
+  QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH,
 } qsop_rankwidth_generator_t;
 
 typedef enum qsop_rankwidth_solve_mode {
