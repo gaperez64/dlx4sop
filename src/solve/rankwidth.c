@@ -3087,6 +3087,86 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
   return true;
 }
 
+/* Modular accumulator join for the labelled CRT path (counts are reduced mod modulus). */
+static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t *map,
+                                   const rw_table_t *left, const rw_table_t *right,
+                                   uint64_t modulus, rw_table_t *out,
+                                   size_t words, uint64_t *join_pairs, qsop_error_t *error) {
+  if (map->len == 0) {
+    return true;
+  }
+
+  uint32_t max_parent_sig = 0;
+  for (size_t m = 0; m < map->len; m++) {
+    if (map->entries[m].parent_signature > max_parent_sig) {
+      max_parent_sig = map->entries[m].parent_signature;
+    }
+  }
+  const size_t n_sigs = (size_t)max_parent_sig + 1U;
+  const uint32_t r = qsop->r;
+
+  uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
+  uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
+  if (acc == NULL || sig_map_idx == NULL) {
+    free(acc);
+    free(sig_map_idx);
+    set_error(error, "out of memory while allocating rankwidth v2 labelled join accumulator");
+    return false;
+  }
+  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
+
+  for (size_t m = 0; m < map->len; m++) {
+    const rw_join_map_entry_t *me = &map->entries[m];
+    size_t l_start, l_end, r_start, r_end;
+    table_sig_range(left, me->left_signature, &l_start, &l_end);
+    table_sig_range(right, me->right_signature, &r_start, &r_end);
+    const uint32_t ps = me->parent_signature;
+    if (sig_map_idx[ps] == UINT32_MAX) {
+      sig_map_idx[ps] = (uint32_t)m;
+    }
+    for (size_t i = l_start; i < l_end; i++) {
+      for (size_t j = r_start; j < r_end; j++) {
+        const uint32_t res =
+            (uint32_t)(((uint64_t)left->entries[i].residue + right->entries[j].residue +
+                        me->residue_shift) %
+                       r);
+        const uint64_t product =
+            qsop_mod_mul_u64(left->entries[i].count, right->entries[j].count, modulus);
+        acc[(size_t)ps * r + res] =
+            qsop_mod_add_u64(acc[(size_t)ps * r + res], product, modulus);
+        (*join_pairs)++;
+      }
+    }
+  }
+
+  for (uint32_t s = 0; s < (uint32_t)n_sigs; s++) {
+    if (sig_map_idx[s] == UINT32_MAX) {
+      continue;
+    }
+    const size_t m = sig_map_idx[s];
+    if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
+      free(acc);
+      free(sig_map_idx);
+      return false;
+    }
+    for (uint32_t res = 0; res < r; res++) {
+      const uint64_t cnt = acc[(size_t)s * r + res];
+      if (cnt == 0) {
+        continue;
+      }
+      if (!table_append_entry(out, s, res, cnt, error)) {
+        free(acc);
+        free(sig_map_idx);
+        return false;
+      }
+    }
+  }
+
+  free(acc);
+  free(sig_map_idx);
+  return true;
+}
+
 static bool build_labelled_join_map(const qsop_instance_t *qsop,
                                     const qsop_rankwidth_decomposition_t *decomposition,
                                     uint32_t node_id, const uint32_t *coeffs,
@@ -4144,6 +4224,316 @@ static bool solve_labelled_count_table_crt(
   return true;
 }
 
+/* v2 labelled path: direct big-integer solve for nvars < 64 using shared join map +
+ * accumulator join (eliminates O(out_len) linear scan from the hot multiply loop). */
+static bool solve_labelled_count_table_v2_direct(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  rw_table_t *tables =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
+  if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    free(tables);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating labelled rankwidth v2 direct solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+
+  rw_label_signature_pool_t pool = {0};
+  if (!label_signature_pool_init(&pool, qsop->nvars, error)) {
+    free(tables);
+    qsop_result_free(result);
+    return false;
+  }
+
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  rw_join_map_t shared_map = {0};
+  if (!reserve_join_map(&shared_map, RW_JOIN_MAP_INITIAL_CAP, w, error)) {
+    free(tables);
+    label_signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
+
+  uint64_t join_pairs = 0;
+  uint64_t join_signature_pairs = 0;
+  uint64_t table_entries = 0;
+  uint64_t signature_entries = 0;
+  uint64_t max_table_entries = 0;
+  uint64_t max_signature_entries = 0;
+  for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
+    const uint32_t node_id = decomposition->postorder[i];
+    const rw_node_t *node = &decomposition->nodes[node_id];
+    const uint64_t start = qsop_trace_begin(trace);
+    bool ok = false;
+    if (node->kind == RW_NODE_LEAF) {
+      ok = solve_labelled_leaf(qsop, coeffs, node, decomposition->words, &pool,
+                               &tables[node_id], error);
+      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_leaf", 0, tables[node_id].len, start);
+    } else {
+      shared_map.len = 0;
+      ok = build_labelled_join_map(qsop, decomposition, node_id, coeffs, &pool,
+                                   &tables[node->left], &tables[node->right], &shared_map, error);
+      if (ok) {
+        join_signature_pairs += shared_map.len;
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join_map", 0, shared_map.len, start);
+        const uint64_t join_start = qsop_trace_begin(trace);
+        ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
+                               &tables[node_id], decomposition->words, &join_pairs, error);
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join", 0, tables[node_id].len,
+                                join_start);
+      }
+    }
+    if (!ok) {
+      join_map_free(&shared_map);
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      label_signature_pool_free(&pool);
+      qsop_result_free(result);
+      return false;
+    }
+    table_entries += tables[node_id].len;
+    signature_entries += tables[node_id].reps_len;
+    if (tables[node_id].len > max_table_entries) {
+      max_table_entries = tables[node_id].len;
+    }
+    if (tables[node_id].reps_len > max_signature_entries) {
+      max_signature_entries = tables[node_id].reps_len;
+    }
+  }
+
+  const rw_table_t *root = &tables[decomposition->root];
+  for (size_t i = 0; i < root->len; i++) {
+    if (root->entries[i].signature != 0) {
+      continue;
+    }
+    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    if (!qsop_count_add(&result->counts[residue], root->entries[i].count, error)) {
+      join_map_free(&shared_map);
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      label_signature_pool_free(&pool);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  if (stats != NULL) {
+    stats->table_entries = table_entries;
+    stats->max_table_entries = max_table_entries;
+    stats->signature_entries = signature_entries;
+    stats->max_signature_entries = max_signature_entries;
+    stats->join_pairs = join_pairs;
+    stats->join_signature_pairs = join_signature_pairs;
+    stats->decomposition_width = ceil_log2_u64(max_signature_entries);
+  }
+
+  join_map_free(&shared_map);
+  for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+    table_free(&tables[t]);
+  }
+  free(tables);
+  label_signature_pool_free(&pool);
+  *out = result;
+  return true;
+}
+
+/* v2 labelled CRT: one modular pass using shared join map + accumulator join. */
+static bool solve_labelled_count_table_v2_mod_once(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, uint64_t modulus, uint64_t *counts, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  rw_table_t *tables =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
+  rw_label_signature_pool_t pool = {0};
+  if (tables == NULL || !label_signature_pool_init(&pool, qsop->nvars, error)) {
+    free(tables);
+    set_error(error, "out of memory while allocating labelled rankwidth v2 CRT solve state");
+    return false;
+  }
+
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  rw_join_map_t shared_map = {0};
+  if (!reserve_join_map(&shared_map, RW_JOIN_MAP_INITIAL_CAP, w, error)) {
+    free(tables);
+    label_signature_pool_free(&pool);
+    return false;
+  }
+
+  uint64_t join_pairs = 0;
+  uint64_t join_signature_pairs = 0;
+  uint64_t table_entries = 0;
+  uint64_t signature_entries = 0;
+  uint64_t max_table_entries = 0;
+  uint64_t max_signature_entries = 0;
+  for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
+    const uint32_t node_id = decomposition->postorder[i];
+    const rw_node_t *node = &decomposition->nodes[node_id];
+    const uint64_t start = qsop_trace_begin(trace);
+    bool ok = false;
+    if (node->kind == RW_NODE_LEAF) {
+      ok = solve_labelled_leaf_mod(qsop, coeffs, node, decomposition->words, &pool, modulus,
+                                   &tables[node_id], error);
+      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_leaf", 0, tables[node_id].len,
+                              start);
+    } else {
+      shared_map.len = 0;
+      ok = build_labelled_join_map(qsop, decomposition, node_id, coeffs, &pool,
+                                   &tables[node->left], &tables[node->right], &shared_map, error);
+      if (ok) {
+        join_signature_pairs += shared_map.len;
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_join_map", 0, shared_map.len,
+                                start);
+        const uint64_t join_start = qsop_trace_begin(trace);
+        ok = solve_join_v2_acc_mod(qsop, &shared_map, &tables[node->left], &tables[node->right],
+                                   modulus, &tables[node_id], decomposition->words, &join_pairs,
+                                   error);
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_join", 0, tables[node_id].len,
+                                join_start);
+      }
+    }
+    if (!ok) {
+      join_map_free(&shared_map);
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      label_signature_pool_free(&pool);
+      return false;
+    }
+    table_entries += tables[node_id].len;
+    signature_entries += tables[node_id].reps_len;
+    if (tables[node_id].len > max_table_entries) {
+      max_table_entries = tables[node_id].len;
+    }
+    if (tables[node_id].reps_len > max_signature_entries) {
+      max_signature_entries = tables[node_id].reps_len;
+    }
+  }
+
+  const rw_table_t *root = &tables[decomposition->root];
+  for (size_t i = 0; i < root->len; i++) {
+    if (root->entries[i].signature != 0) {
+      continue;
+    }
+    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    counts[residue] = qsop_mod_add_u64(counts[residue], root->entries[i].count, modulus);
+  }
+
+  if (stats != NULL) {
+    stats->table_entries = table_entries;
+    stats->max_table_entries = max_table_entries;
+    stats->signature_entries = signature_entries;
+    stats->max_signature_entries = max_signature_entries;
+    stats->join_pairs = join_pairs;
+    stats->join_signature_pairs = join_signature_pairs;
+    stats->decomposition_width = ceil_log2_u64(max_signature_entries);
+  }
+
+  join_map_free(&shared_map);
+  for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+    table_free(&tables[t]);
+  }
+  free(tables);
+  label_signature_pool_free(&pool);
+  return true;
+}
+
+/* v2 CRT wrapper: same structure as solve_labelled_count_table_crt but uses the
+ * v2 mod-once function (shared join map + accumulator join). */
+static bool solve_labelled_count_table_v2_crt(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "labelled rankwidth v2 CRT count table is too large");
+    return false;
+  }
+
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating labelled rankwidth v2 CRT solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating labelled rankwidth v2 CRT result strings");
+    return false;
+  }
+
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!solve_labelled_count_table_v2_mod_once(qsop, decomposition, coeffs, primes[p],
+                                                &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                                                trace_for_prime, error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes, &result->count_strings[residue],
+                                 error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
+  return true;
+}
+
+static bool solve_labelled_count_table_v2(const qsop_instance_t *qsop,
+                                           const qsop_rankwidth_decomposition_t *decomposition,
+                                           const uint32_t *coeffs, qsop_result_t **out,
+                                           qsop_solve_stats_t *stats,
+                                           qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop->nvars >= 64U) {
+    return solve_labelled_count_table_v2_crt(qsop, decomposition, coeffs, out, stats, trace,
+                                             error);
+  }
+  return solve_labelled_count_table_v2_direct(qsop, decomposition, coeffs, out, stats, trace,
+                                              error);
+}
+
 static bool solve_labelled_count_table(const qsop_instance_t *qsop,
                                        const qsop_rankwidth_decomposition_t *decomposition,
                                        const uint32_t *coeffs, qsop_result_t **out,
@@ -4917,7 +5307,7 @@ bool qsop_solve_rankwidth_v2_mode_trace_stats(
   const bool ok =
       mode == QSOP_RANKWIDTH_SOLVE_FOURIER
           ? solve_rankwidth_labelled_fourier(qsop, decomposition, coeffs, out, stats, trace, error)
-          : solve_labelled_count_table(qsop, decomposition, coeffs, out, stats, trace, error);
+          : solve_labelled_count_table_v2(qsop, decomposition, coeffs, out, stats, trace, error);
   free(coeffs);
   return ok;
 }
