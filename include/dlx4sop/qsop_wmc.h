@@ -32,9 +32,10 @@
  */
 
 typedef enum {
-  QSOP_WMC_ENCODING_RESIDUE,    /* mod-r adder + plain #SAT (residue-accumulator) */
-  QSOP_WMC_ENCODING_AMPLITUDE,  /* Tseitin AND aux, complex weights (amp-and) */
-  QSOP_WMC_ENCODING_AMP_SOFT,   /* implication aux, (omega^b - 1) weights (amp-soft) */
+  QSOP_WMC_ENCODING_RESIDUE,          /* mod-r adder + plain #SAT (residue-accumulator) */
+  QSOP_WMC_ENCODING_AMPLITUDE,        /* Tseitin AND aux, complex weights (amp-and) */
+  QSOP_WMC_ENCODING_AMP_SOFT,         /* implication aux, (omega^b - 1) weights (amp-soft) */
+  QSOP_WMC_ENCODING_RESIDUE_FOURIER,  /* r WPCNF blocks (one per Fourier exponent t) + outer iDFT */
   QSOP_WMC_ENCODING_AMP_AND = QSOP_WMC_ENCODING_AMPLITUDE,  /* alias */
 } qsop_wmc_encoding_t;
 
@@ -75,6 +76,9 @@ typedef struct qsop_wmc_options {
   bool emit_metadata;   /* prefix each block with `c` comment metadata */
   qsop_wmc_preprocess_t preprocess; /* factor-graph preprocessing before WPCNF write */
   uint32_t peel2_fill_budget;  /* PEEL2_SAFE: max fill edges to create (default 0 = unlimited) */
+  /* RESIDUE_FOURIER: inner amplitude encoding for each Fourier exponent block.
+   * Accepts AMPLITUDE (amp-and) or AMP_SOFT. Defaults to AMP_SOFT. */
+  qsop_wmc_encoding_t fourier_inner;
   qsop_wmc_stats_t *stats_out; /* if non-NULL, filled with structural stats */
 } qsop_wmc_options_t;
 

@@ -290,6 +290,7 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   options.emit_metadata = true;
   options.preprocess = QSOP_WMC_PREPROCESS_NONE;
   options.peel2_fill_budget = 0;
+  options.fourier_inner = QSOP_WMC_ENCODING_AMP_SOFT;
   options.stats_out = NULL;
   return options;
 }
@@ -356,17 +357,18 @@ static void fg_free(wmc_factor_graph_t *fg) {
   fg->pair_active = NULL;
 }
 
-/* Build a factor graph from a labelled quadratic SOP for Fourier exponent t=1. */
-static bool fg_from_qsop(const qsop_instance_t *qsop, wmc_factor_graph_t *fg,
+/* Build a factor graph for Fourier exponent t: weights become omega^(t*label mod r). */
+static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_graph_t *fg,
                           qsop_error_t *error) {
   const uint32_t r = qsop->r;
   *fg = (wmc_factor_graph_t){0};
   fg->nvars = qsop->nvars;
 
-  /* Global factor: omega^c0. */
-  omega_power((uint32_t)(qsop->constant % r), r, &fg->global_re, &fg->global_im);
+  /* Global factor: omega^(t*c0 mod r). */
+  omega_power((uint32_t)((t * (uint64_t)(qsop->constant % r)) % r), r,
+              &fg->global_re, &fg->global_im);
 
-  /* Per-variable true-weights: omega^a_v. w_false[v] = 1 (implicit). */
+  /* Per-variable true-weights: omega^(t*a_v mod r). w_false[v] = 1 (implicit). */
   if (qsop->nvars > 0) {
     fg->w_true_re = malloc(qsop->nvars * sizeof(*fg->w_true_re));
     fg->w_true_im = malloc(qsop->nvars * sizeof(*fg->w_true_im));
@@ -378,12 +380,13 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, wmc_factor_graph_t *fg,
       return false;
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
-      omega_power((uint32_t)(qsop->unary[v] % r), r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      const uint32_t coeff = (uint32_t)((t * (uint64_t)(qsop->unary[v] % r)) % r);
+      omega_power(coeff, r, &fg->w_true_re[v], &fg->w_true_im[v]);
       fg->var_active[v] = true;
     }
   }
 
-  /* Pair factors: only edges whose label mod r is non-zero (R_uv != 1). */
+  /* Pair factors: only edges whose t-scaled label mod r is non-zero. */
   if (qsop->nedges > 0) {
     fg->pairs = malloc(qsop->nedges * sizeof(*fg->pairs));
     fg->pair_active = malloc(qsop->nedges * sizeof(*fg->pair_active));
@@ -394,7 +397,7 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, wmc_factor_graph_t *fg,
     }
     fg->npairs = 0;
     for (uint32_t e = 0; e < qsop->nedges; e++) {
-      const uint32_t coeff = (uint32_t)(qsop->edge_q[e] % r);
+      const uint32_t coeff = (uint32_t)((t * (uint64_t)(qsop->edge_q[e] % r)) % r);
       if (coeff == 0U) {
         continue;
       }
@@ -832,7 +835,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE ||
       options->encoding == QSOP_WMC_ENCODING_AMP_SOFT) {
     wmc_factor_graph_t fg = {0};
-    if (!fg_from_qsop(qsop, &fg, error)) {
+    if (!fg_from_qsop(qsop, 1U, &fg, error)) {
       return false;
     }
 
@@ -851,6 +854,63 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     }
     fg_free(&fg);
     return ok;
+  }
+
+  if (options->encoding == QSOP_WMC_ENCODING_RESIDUE_FOURIER) {
+    const uint32_t r = qsop->r;
+    qsop_wmc_encoding_t inner = options->fourier_inner;
+    /* Default inner encoding: amp-soft. */
+    if (inner != QSOP_WMC_ENCODING_AMPLITUDE && inner != QSOP_WMC_ENCODING_AMP_SOFT) {
+      inner = QSOP_WMC_ENCODING_AMP_SOFT;
+    }
+
+    for (uint32_t t = 0; t < r; t++) {
+      if (options->emit_metadata) {
+        fprintf(file, "c --- fourier t=%" PRIu32 " r=%" PRIu32 " ---\n", t, r);
+      }
+
+      if (t == 0) {
+        /* Z_0 = 2^n (all assignments contribute omega^0 = 1). Skip Ganak. */
+        fprintf(file, "p cnf %" PRIu32 " 0\n", qsop->nvars);
+        if (options->emit_metadata) {
+          fprintf(file,
+                  "c sop2wmc encoding=fourier-t0 r=%" PRIu32 " nvars=%" PRIu32
+                  " t=0 z0_log2=%" PRIu32 "\n",
+                  r, qsop->nvars, qsop->nvars);
+          fputs("c amplitude_factor 1+0i\n", file);
+          fputs("c z0 = 2^nvars (trivial: no Ganak call needed)\n", file);
+        }
+        if (ferror(file)) {
+          set_error(error, "write failed: %s", strerror(errno));
+          return false;
+        }
+        continue;
+      }
+
+      wmc_factor_graph_t fg = {0};
+      if (!fg_from_qsop(qsop, t, &fg, error)) {
+        return false;
+      }
+
+      if (options->preprocess == QSOP_WMC_PREPROCESS_PEEL1 ||
+          options->preprocess == QSOP_WMC_PREPROCESS_PEEL2_SAFE) {
+        fg_peel1(&fg);
+      }
+
+      bool ok;
+      if (fg.is_zero) {
+        ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+      } else if (inner == QSOP_WMC_ENCODING_AMPLITUDE) {
+        ok = write_amplitude(file, qsop, &fg, options->emit_metadata, NULL, error);
+      } else {
+        ok = write_amp_soft(file, qsop, &fg, options->emit_metadata, NULL, error);
+      }
+      fg_free(&fg);
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /* RESIDUE encoding. */

@@ -9,7 +9,8 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|residue-accumulator] "
+  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|residue-fourier|residue-accumulator] "
+        "[--wmc-fourier-inner amp-and|amp-soft] "
         "[--wmc-preprocess none|peel1|peel2-safe] [--residue K|all] "
         "[-o PATH] [--no-metadata] [PATH|-]\n",
         file);
@@ -49,8 +50,11 @@ int main(int argc, char **argv) {
         options.encoding = QSOP_WMC_ENCODING_AMPLITUDE;
       } else if (strcmp(enc, "amp-soft") == 0) {
         options.encoding = QSOP_WMC_ENCODING_AMP_SOFT;
+      } else if (strcmp(enc, "residue-fourier") == 0) {
+        options.encoding = QSOP_WMC_ENCODING_RESIDUE_FOURIER;
       } else {
-        fputs("error: --encoding must be 'amp-and', 'amp-soft', or 'residue-accumulator'\n",
+        fputs("error: --encoding must be 'amp-and', 'amp-soft', 'residue-fourier', "
+              "or 'residue-accumulator'\n",
               stderr);
         return 2;
       }
@@ -83,6 +87,22 @@ int main(int argc, char **argv) {
         return 2;
       }
       output_path = argv[++i];
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-fourier-inner") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-fourier-inner requires a value\n", stderr);
+        return 2;
+      }
+      const char *inner = argv[++i];
+      if (strcmp(inner, "amp-and") == 0 || strcmp(inner, "amplitude") == 0) {
+        options.fourier_inner = QSOP_WMC_ENCODING_AMPLITUDE;
+      } else if (strcmp(inner, "amp-soft") == 0) {
+        options.fourier_inner = QSOP_WMC_ENCODING_AMP_SOFT;
+      } else {
+        fputs("error: --wmc-fourier-inner must be 'amp-and' or 'amp-soft'\n", stderr);
+        return 2;
+      }
       continue;
     }
     if (strcmp(argv[i], "--wmc-preprocess") == 0) {

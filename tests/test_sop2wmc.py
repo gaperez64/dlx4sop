@@ -321,6 +321,84 @@ def verify_amp_soft(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathli
         )
 
 
+def parse_fourier_blocks(text: str):
+    """Parse residue-fourier multi-block output into a list of (t, nvars_total, weights, clauses)."""
+    blocks = []
+    current_t = None
+    current_lines = []
+    for line in text.splitlines():
+        m = re.match(r"c --- fourier t=(\d+) r=(\d+) ---", line)
+        if m:
+            if current_t is not None:
+                blocks.append((current_t, "\n".join(current_lines)))
+            current_t = int(m.group(1))
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_t is not None:
+        blocks.append((current_t, "\n".join(current_lines)))
+    return blocks
+
+
+def verify_residue_fourier(
+    sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path
+) -> None:
+    """Verify residue-fourier: inverse DFT of brute-force amplitudes matches sop-solve counts."""
+    ref_counts = reference_counts(sop_solve, qsop)
+    r = len(ref_counts)
+
+    result = run([str(sop2wmc), "--encoding", "residue-fourier", str(qsop)])
+    if result.returncode != 0:
+        raise AssertionError(
+            f"sop2wmc --encoding residue-fourier failed on {qsop}:\n{result.stderr}"
+        )
+
+    blocks = parse_fourier_blocks(result.stdout)
+    if len(blocks) != r:
+        raise AssertionError(f"{qsop}: expected {r} fourier blocks, got {len(blocks)}")
+
+    # Compute amplitudes Z_t for each block via brute-force WMC.
+    omega = cmath.exp(2 * math.pi * 1j / r)
+    z_values = []
+    for t, block_text in sorted(blocks):
+        if "encoding=fourier-t0" in block_text:
+            # Z_0 = 2^n.
+            nvars_line = next(
+                (l for l in block_text.splitlines() if "z0_log2=" in l), ""
+            )
+            n = int(re.search(r"z0_log2=(\d+)", nvars_line).group(1))
+            z_values.append(complex(1 << n, 0))
+        else:
+            xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(block_text)
+            z_t = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+            z_values.append(z_t)
+
+    # Inverse DFT: N_k = (1/r) * sum_t Z_t * omega^(-t*k).
+    got_counts = []
+    for k in range(r):
+        n_k = sum(z_values[t] * omega ** (-t * k) for t in range(r)) / r
+        # Check imaginary part is near zero and real part is near integer.
+        if abs(n_k.imag) > 1e-6:
+            raise AssertionError(
+                f"{qsop}: iDFT count[{k}] has large imaginary part: {n_k}"
+            )
+        rounded = round(n_k.real)
+        if abs(n_k.real - rounded) > 1e-6:
+            raise AssertionError(
+                f"{qsop}: iDFT count[{k}] is not near integer: {n_k.real}"
+            )
+        if rounded < 0:
+            raise AssertionError(
+                f"{qsop}: iDFT count[{k}] is negative: {rounded}"
+            )
+        got_counts.append(int(rounded))
+
+    if got_counts != ref_counts:
+        raise AssertionError(
+            f"{qsop}: residue-fourier counts {got_counts} != sop-solve {ref_counts}"
+        )
+
+
 def verify_peel1(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
     """Verify that peel1 preprocessing gives the same amplitude as no-preprocess."""
     counts = reference_counts(sop_solve, qsop)
@@ -372,20 +450,30 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         if "p cnf" not in out.read_text():
             raise AssertionError("output file missing DIMACS header")
 
-    # amp-and and amp-soft should both succeed.
-    for enc in ("amp-and", "amplitude", "amp-soft", "residue-accumulator", "residue"):
+    # All valid encodings should succeed.
+    for enc in ("amp-and", "amplitude", "amp-soft", "residue-fourier",
+                "residue-accumulator", "residue"):
         r = run([str(sop2wmc), "--encoding", enc, str(qsop)])
         if r.returncode != 0:
             raise AssertionError(f"--encoding {enc} unexpectedly failed:\n{r.stderr}")
 
-    # peel1 preprocessing should succeed for both amplitude encodings.
-    for enc in ("amp-and", "amp-soft"):
+    # peel1 preprocessing should succeed for amplitude encodings and residue-fourier.
+    for enc in ("amp-and", "amp-soft", "residue-fourier"):
         for pp in ("none", "peel1"):
             r = run([str(sop2wmc), "--encoding", enc, "--wmc-preprocess", pp, str(qsop)])
             if r.returncode != 0:
                 raise AssertionError(
                     f"--encoding {enc} --wmc-preprocess {pp} failed:\n{r.stderr}"
                 )
+
+    # Fourier inner encoding flag.
+    for inner in ("amp-and", "amp-soft"):
+        r = run([str(sop2wmc), "--encoding", "residue-fourier",
+                 "--wmc-fourier-inner", inner, str(qsop)])
+        if r.returncode != 0:
+            raise AssertionError(
+                f"--wmc-fourier-inner {inner} unexpectedly failed:\n{r.stderr}"
+            )
 
     error_cases = [
         ([str(sop2wmc), "--residue"], "requires a value"),
@@ -417,6 +505,7 @@ def main() -> int:
         verify_instance(sop2wmc, sop_solve, qsop)
         verify_amplitude(sop2wmc, sop_solve, qsop)
         verify_amp_soft(sop2wmc, sop_solve, qsop)
+        verify_residue_fourier(sop2wmc, sop_solve, qsop)
         verify_peel1(sop2wmc, sop_solve, qsop)
     check_cli(sop2wmc, source_root)
     return 0
