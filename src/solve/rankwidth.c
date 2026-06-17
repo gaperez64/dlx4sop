@@ -66,6 +66,8 @@ typedef struct rw_join_map_entry {
 typedef struct rw_join_map {
   rw_join_map_entry_t *entries;
   uint64_t *assignments;
+  uint64_t *sorted_keys; /* packed (left_sig << 32 | right_sig) in sorted order */
+  uint32_t *sorted_idx;  /* original entry index in sorted key order */
   size_t len;
   size_t cap;
 } rw_join_map_t;
@@ -618,7 +620,52 @@ static void join_map_free(rw_join_map_t *map) {
   }
   free(map->entries);
   free(map->assignments);
+  free(map->sorted_keys);
+  free(map->sorted_idx);
   *map = (rw_join_map_t){0};
+}
+
+typedef struct {
+  uint64_t key;
+  uint32_t idx;
+} rw_join_sort_entry_t;
+
+static int compare_join_sort_entries(const void *a, const void *b) {
+  const rw_join_sort_entry_t *sa = (const rw_join_sort_entry_t *)a;
+  const rw_join_sort_entry_t *sb = (const rw_join_sort_entry_t *)b;
+  if (sa->key < sb->key) return -1;
+  if (sa->key > sb->key) return 1;
+  return 0;
+}
+
+static bool join_map_build_sorted_idx(rw_join_map_t *map, qsop_error_t *error) {
+  if (map->len == 0) {
+    return true;
+  }
+  rw_join_sort_entry_t *tmp = malloc(map->len * sizeof(*tmp));
+  uint32_t *sorted_idx = malloc(map->len * sizeof(*sorted_idx));
+  uint64_t *sorted_keys = malloc(map->len * sizeof(*sorted_keys));
+  if (tmp == NULL || sorted_idx == NULL || sorted_keys == NULL) {
+    free(tmp);
+    free(sorted_idx);
+    free(sorted_keys);
+    set_error(error, "out of memory while building rankwidth join map index");
+    return false;
+  }
+  for (size_t i = 0; i < map->len; i++) {
+    tmp[i].key = ((uint64_t)map->entries[i].left_signature << 32) |
+                 map->entries[i].right_signature;
+    tmp[i].idx = (uint32_t)i;
+  }
+  qsort(tmp, map->len, sizeof(*tmp), compare_join_sort_entries);
+  for (size_t i = 0; i < map->len; i++) {
+    sorted_keys[i] = tmp[i].key;
+    sorted_idx[i] = tmp[i].idx;
+  }
+  free(tmp);
+  map->sorted_keys = sorted_keys;
+  map->sorted_idx = sorted_idx;
+  return true;
 }
 
 static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t r,
@@ -2178,7 +2225,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
   }
   free(outside);
   free(signature);
-  return true;
+  return join_map_build_sorted_idx(map, error);
 }
 
 /* scratch must be 3 * max(1, words) uint64_t words:
@@ -2239,6 +2286,24 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
 
 static const rw_join_map_entry_t *join_map_get(const rw_join_map_t *map, uint32_t left_signature,
                                                uint32_t right_signature, size_t *index_out) {
+  if (map->sorted_keys != NULL) {
+    const uint64_t target = ((uint64_t)left_signature << 32) | right_signature;
+    size_t lo = 0, hi = map->len;
+    while (lo < hi) {
+      const size_t mid = lo + (hi - lo) / 2;
+      if (map->sorted_keys[mid] < target) {
+        lo = mid + 1;
+      } else if (map->sorted_keys[mid] > target) {
+        hi = mid;
+      } else {
+        if (index_out != NULL) {
+          *index_out = map->sorted_idx[mid];
+        }
+        return &map->entries[map->sorted_idx[mid]];
+      }
+    }
+    return NULL;
+  }
   for (size_t i = 0; i < map->len; i++) {
     if (map->entries[i].left_signature == left_signature &&
         map->entries[i].right_signature == right_signature) {
@@ -2485,7 +2550,7 @@ static bool build_labelled_join_map(const qsop_instance_t *qsop,
   }
   free(outside);
   free(signature);
-  return true;
+  return join_map_build_sorted_idx(map, error);
 }
 
 static bool solve_labelled_leaf(const qsop_instance_t *qsop, const uint32_t *coeffs,
@@ -2826,7 +2891,7 @@ static bool build_labelled_fourier_join_map(
   }
   free(outside);
   free(signature);
-  return true;
+  return join_map_build_sorted_idx(map, error);
 }
 
 static bool solve_fourier_join(const qsop_instance_t *qsop, const rw_join_map_t *map,
