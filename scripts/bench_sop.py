@@ -25,7 +25,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop"
 DEFAULT_SOP_SOLVE = REPO_ROOT / "build" / "sop-solve"
 
-BACKENDS = ["components", "brute-force", "branch", "treewidth"]
+BACKENDS = ["components", "brute-force", "branch", "treewidth", "rankwidth"]
 BRANCH_HEURISTICS = ["split", "treewidth", "cutrank-proxy"]
 BRANCH_RW_SOURCES = ["native", "from-treewidth"]
 
@@ -35,6 +35,12 @@ BACKEND_MAX_VARS = {
     "components":  22,
     "branch":      64,
     "treewidth":  256,
+    "rankwidth":  256,
+}
+
+# Extra CLI args required by some backends.
+BACKEND_EXTRA_ARGS = {
+    "rankwidth": ["--max-vars", "256"],
 }
 
 
@@ -79,7 +85,8 @@ def bench_instance(sop_solve: pathlib.Path, qsop: pathlib.Path, meta: dict,
         max_vars = BACKEND_MAX_VARS.get(backend, 64)
         if nvars > max_vars:
             continue
-        result = run_backend(sop_solve, qsop, backend, [], timeout)
+        extra = BACKEND_EXTRA_ARGS.get(backend, [])
+        result = run_backend(sop_solve, qsop, backend, extra, timeout)
         record = {
             "name": name, "tier": tier_name, "nvars": nvars, "nedges": nedges,
             "r": r, "backend": backend,

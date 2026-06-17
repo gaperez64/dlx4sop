@@ -36,6 +36,7 @@ typedef enum {
   QSOP_WMC_ENCODING_AMPLITUDE,        /* Tseitin AND aux, complex weights (amp-and) */
   QSOP_WMC_ENCODING_AMP_SOFT,         /* implication aux, (omega^b - 1) weights (amp-soft) */
   QSOP_WMC_ENCODING_RESIDUE_FOURIER,  /* r WPCNF blocks (one per Fourier exponent t) + outer iDFT */
+  QSOP_WMC_ENCODING_AMP_BLOCK,        /* block counter + residue-pair selectors, amp-soft fallback */
   QSOP_WMC_ENCODING_AMP_AND = QSOP_WMC_ENCODING_AMPLITUDE,  /* alias */
 } qsop_wmc_encoding_t;
 
@@ -80,6 +81,8 @@ typedef struct qsop_wmc_options {
    * Accepts AMPLITUDE (amp-and) or AMP_SOFT. Defaults to AMP_SOFT. */
   qsop_wmc_encoding_t fourier_inner;
   qsop_wmc_stats_t *stats_out; /* if non-NULL, filled with structural stats */
+  uint32_t block_min_side;    /* AMP_BLOCK: min |A|, |B| for a block to qualify (default 4) */
+  int64_t  block_min_savings; /* AMP_BLOCK: min (|A|*|B| - est_block_cost) to trigger (default 0) */
 } qsop_wmc_options_t;
 
 /* Sensible defaults: residue encoding, all residues, metadata on, no preprocess, no stats. */

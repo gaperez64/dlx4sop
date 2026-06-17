@@ -292,6 +292,8 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   options.peel2_fill_budget = 0;
   options.fourier_inner = QSOP_WMC_ENCODING_AMP_SOFT;
   options.stats_out = NULL;
+  options.block_min_side = 4;
+  options.block_min_savings = 0;
   return options;
 }
 
@@ -821,6 +823,343 @@ static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool e
   return true;
 }
 
+/* Estimated cost in auxiliary variables for a block of size a x b with modulus r. */
+static int64_t block_cost(uint32_t a, uint32_t b, uint32_t r) {
+  const uint32_t w = width_for_modulus(r);
+  return (int64_t)(5U * w) * (int64_t)(a + b) + (int64_t)r * (int64_t)r;
+}
+
+/*
+ * Find the best uniform-label complete bipartite block in qsop.
+ * Returns true and fills *a_out and *b_out (caller must free) if a block
+ * with savings >= min_savings and both sides >= min_side is found.
+ */
+static bool find_block(const qsop_instance_t *qsop,
+                       uint32_t min_side, int64_t min_savings,
+                       uint32_t **a_out, uint32_t *a_len_out,
+                       uint32_t **b_out, uint32_t *b_len_out,
+                       uint32_t *label_out) {
+  const uint32_t n = qsop->nvars;
+  const uint32_t r = qsop->r;
+
+  if (n == 0 || qsop->nedges == 0) return false;
+
+  /* Build adjacency matrix: adj[u*n + v] = label (0 if no edge). */
+  uint32_t *adj = calloc((size_t)n * n, sizeof(*adj));
+  if (adj == NULL) return false;
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    const uint32_t u = qsop->edge_u[e];
+    const uint32_t v = qsop->edge_v[e];
+    const uint32_t lbl = qsop->edge_q[e] % r;
+    if (lbl != 0) {
+      adj[u * n + v] = lbl;
+      adj[v * n + u] = lbl;
+    }
+  }
+
+  uint32_t best_score = 0;
+  uint32_t *best_a = NULL, *best_b = NULL;
+  uint32_t best_a_len = 0, best_b_len = 0;
+  uint32_t best_label = 0;
+
+  uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
+  uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
+  if (!b_tmp || !a_tmp) {
+    free(b_tmp); free(a_tmp); free(adj);
+    return false;
+  }
+
+  for (uint32_t c = 1; c < r; c++) {
+    for (uint32_t u = 0; u < n; u++) {
+      /* B = neighbours of u with label c */
+      uint32_t b_len = 0;
+      for (uint32_t v = 0; v < n; v++) {
+        if (adj[u * n + v] == c) b_tmp[b_len++] = v;
+      }
+      if (b_len < min_side) continue;
+
+      /* A = vertices not in B whose entire c-neighbourhood contains B */
+      uint32_t a_len = 0;
+      for (uint32_t up = 0; up < n; up++) {
+        /* up must not be in B */
+        bool in_b = false;
+        for (uint32_t bi = 0; bi < b_len; bi++) {
+          if (b_tmp[bi] == up) { in_b = true; break; }
+        }
+        if (in_b) continue;
+        /* up must have an edge of label c to every vertex in B */
+        bool covers_b = true;
+        for (uint32_t bi = 0; bi < b_len; bi++) {
+          if (adj[up * n + b_tmp[bi]] != c) { covers_b = false; break; }
+        }
+        if (covers_b) a_tmp[a_len++] = up;
+      }
+      if (a_len < min_side) continue;
+
+      const int64_t sv = (int64_t)a_len * (int64_t)b_len - block_cost(a_len, b_len, r);
+      if (sv < min_savings) continue;
+      const uint32_t score = a_len * b_len;
+      if (score > best_score) {
+        best_score = score;
+        best_label = c;
+        best_a_len = a_len;
+        best_b_len = b_len;
+        free(best_a); free(best_b);
+        best_a = malloc(a_len * sizeof(*best_a));
+        best_b = malloc(b_len * sizeof(*best_b));
+        if (!best_a || !best_b) {
+          free(best_a); free(best_b);
+          free(a_tmp); free(b_tmp); free(adj);
+          return false;
+        }
+        memcpy(best_a, a_tmp, a_len * sizeof(*best_a));
+        memcpy(best_b, b_tmp, b_len * sizeof(*best_b));
+      }
+    }
+  }
+
+  free(a_tmp); free(b_tmp); free(adj);
+
+  if (best_score == 0) return false;
+  *a_out = best_a; *a_len_out = best_a_len;
+  *b_out = best_b; *b_len_out = best_b_len;
+  *label_out = best_label;
+  return true;
+}
+
+/* Build a mod-r counter accumulator over n_vars DIMACS variables. */
+static void build_counter(wmc_builder_t *b, const int *vars, uint32_t n_vars,
+                          int lit_true, uint32_t w, uint32_t r, int *acc) {
+  const int lit_false = -lit_true;
+  for (uint32_t j = 0; j < w; j++) acc[j] = lit_false;
+  for (uint32_t i = 0; i < n_vars; i++) {
+    add_addend(b, acc, w, r, 1, vars[i], lit_true);
+  }
+}
+
+/* Return literal that is true iff acc[0..w-1] encodes value val. */
+static int build_eq_lit(wmc_builder_t *b, const int *acc, uint32_t w, uint32_t val) {
+  int result = ((val & 1U) ? acc[0] : -acc[0]);
+  for (uint32_t k = 1; k < w; k++) {
+    const int bit = (((val >> k) & 1U) ? acc[k] : -acc[k]);
+    result = gate_and(b, result, bit);
+  }
+  return result;
+}
+
+static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
+                             bool emit_metadata,
+                             uint32_t min_side, int64_t min_savings,
+                             qsop_wmc_stats_t *stats_out,
+                             qsop_error_t *error) {
+  uint32_t *a_verts = NULL, *b_verts = NULL;
+  uint32_t a_len = 0, b_len = 0, block_label = 0;
+  const bool has_block = find_block(qsop, min_side, min_savings,
+                                     &a_verts, &a_len, &b_verts, &b_len, &block_label);
+
+  if (!has_block) {
+    /* Fallback: amp-soft on the full instance */
+    wmc_factor_graph_t fg = {0};
+    if (!fg_from_qsop(qsop, 1U, &fg, error)) return false;
+    const bool ok = write_amp_soft(file, qsop, &fg, emit_metadata, stats_out, error);
+    fg_free(&fg);
+    return ok;
+  }
+
+  const uint32_t r = qsop->r;
+  const uint32_t w = width_for_modulus(r);
+
+  /* Build a mark set for vertices in A and B. */
+  bool *in_a = calloc(qsop->nvars, sizeof(*in_a));
+  bool *in_b = calloc(qsop->nvars, sizeof(*in_b));
+  if (!in_a || !in_b) {
+    free(in_a); free(in_b); free(a_verts); free(b_verts);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+  for (uint32_t i = 0; i < a_len; i++) in_a[a_verts[i]] = true;
+  for (uint32_t i = 0; i < b_len; i++) in_b[b_verts[i]] = true;
+
+  /* Build a mark of block edges (u in A, v in B, label == block_label). */
+  bool *is_block_edge = calloc(qsop->nedges, sizeof(*is_block_edge));
+  if (!is_block_edge) {
+    free(in_a); free(in_b); free(a_verts); free(b_verts);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    const uint32_t u = qsop->edge_u[e], v = qsop->edge_v[e];
+    const uint32_t lbl = qsop->edge_q[e] % r;
+    if (lbl == block_label &&
+        ((in_a[u] && in_b[v]) || (in_a[v] && in_b[u]))) {
+      is_block_edge[e] = true;
+    }
+  }
+
+  /* Global factor from constant phase: omega^(constant mod r) */
+  double global_re, global_im;
+  omega_power((uint32_t)(qsop->constant % r), r, &global_re, &global_im);
+
+  wmc_builder_t b = {0};
+  b.nvars = qsop->nvars;
+
+  const int lit_true = new_var(&b);
+  add_clause1(&b, lit_true);
+
+  /* Build mod-r counter for A and B */
+  int *a_dimacs = malloc(a_len * sizeof(*a_dimacs));
+  int *b_dimacs = malloc(b_len * sizeof(*b_dimacs));
+  int *acc_a = malloc(w * sizeof(*acc_a));
+  int *acc_b = malloc(w * sizeof(*acc_b));
+  if (!a_dimacs || !b_dimacs || !acc_a || !acc_b) {
+    free(a_dimacs); free(b_dimacs); free(acc_a); free(acc_b);
+    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+    builder_free(&b);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+  for (uint32_t i = 0; i < a_len; i++) a_dimacs[i] = (int)(a_verts[i] + 1U);
+  for (uint32_t i = 0; i < b_len; i++) b_dimacs[i] = (int)(b_verts[i] + 1U);
+
+  build_counter(&b, a_dimacs, a_len, lit_true, w, r, acc_a);
+  build_counter(&b, b_dimacs, b_len, lit_true, w, r, acc_b);
+
+  /* Selector variables y_{a2,b2} and their weights */
+  int *sel_var = calloc((size_t)r * r, sizeof(*sel_var));
+  double *sel_re = calloc((size_t)r * r, sizeof(*sel_re));
+  double *sel_im = calloc((size_t)r * r, sizeof(*sel_im));
+  if (!sel_var || !sel_re || !sel_im) {
+    free(sel_var); free(sel_re); free(sel_im);
+    free(a_dimacs); free(b_dimacs); free(acc_a); free(acc_b);
+    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+    builder_free(&b);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+
+  uint32_t n_selectors = 0;
+  for (uint32_t a2 = 0; a2 < r; a2++) {
+    for (uint32_t b2 = 0; b2 < r; b2++) {
+      const uint32_t phase = (uint32_t)(((uint64_t)block_label * a2 % r) * b2 % r);
+      if (phase == 0) continue; /* omega^0 = 1: no variable needed */
+      const int eq_a = build_eq_lit(&b, acc_a, w, a2);
+      const int eq_b = build_eq_lit(&b, acc_b, w, b2);
+      const int y = gate_and(&b, eq_a, eq_b);
+      sel_var[a2 * r + b2] = y;
+      omega_power(phase, r, &sel_re[a2 * r + b2], &sel_im[a2 * r + b2]);
+      n_selectors++;
+    }
+  }
+
+  /* Non-block pair auxiliaries (amp-soft style) */
+  uint32_t n_extra = 0;
+  int *extra_var = malloc(qsop->nedges * sizeof(*extra_var));
+  double *extra_re = malloc(qsop->nedges * sizeof(*extra_re));
+  double *extra_im = malloc(qsop->nedges * sizeof(*extra_im));
+  if (!extra_var || !extra_re || !extra_im) {
+    free(extra_var); free(extra_re); free(extra_im);
+    free(sel_var); free(sel_re); free(sel_im);
+    free(a_dimacs); free(b_dimacs); free(acc_a); free(acc_b);
+    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+    builder_free(&b);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    if (is_block_edge[e]) continue;
+    const uint32_t lbl = qsop->edge_q[e] % r;
+    if (lbl == 0) continue;
+    const int y = gate_and(&b, (int)(qsop->edge_u[e] + 1U), (int)(qsop->edge_v[e] + 1U));
+    double re, im;
+    omega_power(lbl, r, &re, &im);
+    extra_var[n_extra] = y;
+    extra_re[n_extra] = re;
+    extra_im[n_extra] = im;
+    n_extra++;
+  }
+
+  if (b.failed) {
+    free(extra_var); free(extra_re); free(extra_im);
+    free(sel_var); free(sel_re); free(sel_im);
+    free(a_dimacs); free(b_dimacs); free(acc_a); free(acc_b);
+    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+    builder_free(&b);
+    set_error(error, "out of memory building amp-block CNF");
+    return false;
+  }
+
+  /* Write WPCNF */
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+  if (emit_metadata) {
+    fprintf(file,
+            "c sop2wmc encoding=amp-block r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            " mode=%s norm_h=%" PRIu64 "\n",
+            r, qsop->nvars, qsop->nedges, qsop_mode_name(qsop->mode), qsop->norm_h);
+    fprintf(file, "c block label=%" PRIu32 " a_size=%" PRIu32 " b_size=%" PRIu32 "\n",
+            block_label, a_len, b_len);
+    fprintf(file, "c amplitude_factor %.17g+%.17gi\n", global_re, global_im);
+    fputs("c amplitude = ganak_output * amplitude_factor\n", file);
+    fputs("c invoke: ganak --mode 6 --verb 0 <this-file>\n", file);
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      fprintf(file, "c xvar %" PRIu32 " %" PRIu32 "\n", v, v + 1U);
+    }
+  }
+
+  /* Unary weights */
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    const uint32_t coeff = qsop->unary[v] % r;
+    if (coeff != 0) {
+      double re, im;
+      omega_power(coeff, r, &re, &im);
+      write_weight(file, (int)(v + 1U), re, im);
+    }
+  }
+
+  /* Selector weights: W(y=1) = omega^phase (hard, Tseitin-constrained), W(y=0) = 1 */
+  for (uint32_t a2 = 0; a2 < r; a2++) {
+    for (uint32_t b2 = 0; b2 < r; b2++) {
+      const int y = sel_var[a2 * r + b2];
+      if (y == 0) continue;
+      write_weight(file, y, sel_re[a2 * r + b2], sel_im[a2 * r + b2]);
+    }
+  }
+
+  /* Non-block pair weights */
+  for (uint32_t i = 0; i < n_extra; i++) {
+    write_weight(file, extra_var[i], extra_re[i], extra_im[i]);
+  }
+
+  /* Clauses */
+  for (size_t ci = 0; ci < b.len; ci++) {
+    if (b.lits[ci] == 0) {
+      fputs("0\n", file);
+    } else {
+      fprintf(file, "%d ", b.lits[ci]);
+    }
+  }
+
+  if (stats_out != NULL) {
+    stats_out->aux_vars = b.nvars - qsop->nvars;
+    stats_out->clauses_unit = 1;
+    stats_out->clauses_binary = 2U * n_extra;
+    stats_out->clauses_ternary = 0;
+    stats_out->encoded_edges = (uint32_t)(a_len * b_len) + n_extra;
+    stats_out->skipped_edges = 0;
+  }
+
+  free(extra_var); free(extra_re); free(extra_im);
+  free(sel_var); free(sel_re); free(sel_im);
+  free(a_dimacs); free(b_dimacs); free(acc_a); free(acc_b);
+  free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+  builder_free(&b);
+
+  if (ferror(file)) {
+    set_error(error, "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
 bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_options_t *options,
                     qsop_error_t *error) {
   if (file == NULL || qsop == NULL || options == NULL) {
@@ -830,6 +1169,12 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   if (qsop->r < 2U || (qsop->r % 2U) != 0U) {
     set_error(error, "WMC export requires a positive even modulus, got %" PRIu32, qsop->r);
     return false;
+  }
+
+  if (options->encoding == QSOP_WMC_ENCODING_AMP_BLOCK) {
+    return write_amp_block(file, qsop, options->emit_metadata,
+                           options->block_min_side, options->block_min_savings,
+                           options->stats_out, error);
   }
 
   if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE ||

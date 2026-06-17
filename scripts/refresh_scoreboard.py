@@ -52,6 +52,15 @@ def run_bench_sop(sop_solve: pathlib.Path, corpus_dir: pathlib.Path,
     return result.returncode
 
 
+def _ganak_result_hash(stdout: str) -> str:
+    """Extract a short hash of the complex WMC result from ganak output."""
+    import hashlib
+    for line in stdout.splitlines():
+        if line.startswith("c s exact quadruple float"):
+            return hashlib.sha1(line.encode()).hexdigest()[:12]
+    return ""
+
+
 def run_ganak_refresh(sop2wmc: pathlib.Path, corpus_dir: pathlib.Path,
                       timeout: float, out_path: pathlib.Path,
                       encodings: list[str]) -> None:
@@ -82,12 +91,13 @@ def run_ganak_refresh(sop2wmc: pathlib.Path, corpus_dir: pathlib.Path,
                             result_hash = ""
                         else:
                             ganak_proc = subprocess.run(
-                                [str(ganak_bin)],
+                                [str(ganak_bin), "--mode", "6", "--verb", "0",
+                                 "/dev/stdin"],
                                 input=wmc_proc.stdout,
                                 capture_output=True, text=True, timeout=timeout)
                             wall_ms = (time.monotonic() - t0) * 1000
                             status = "ok" if ganak_proc.returncode == 0 else "error"
-                            result_hash = ""
+                            result_hash = _ganak_result_hash(ganak_proc.stdout)
                     except subprocess.TimeoutExpired:
                         wall_ms = timeout * 1000
                         status = "timeout"
