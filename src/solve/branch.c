@@ -94,6 +94,7 @@ typedef struct branch_search_stats {
   residual_cache_t cache;
   qsop_solve_trace_t *trace;
   qsop_branch_heuristic_t heuristic;
+  qsop_branch_rw_source_t rw_source;
   qsop_solve_mode_t mode;
   uint64_t count_modulus;
   uint32_t depth;
@@ -953,10 +954,16 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     return true;
   }
 
+  /* Select decomposition generator based on rw_source policy. */
+  qsop_rankwidth_generator_t primary_gen =
+      (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO)
+          ? QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH
+          : QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT;
+
   qsop_rankwidth_decomposition_t *decomposition = NULL;
   const uint64_t generate_start = qsop_trace_begin(stats->trace);
-  if (!qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
-                                             &decomposition, error)) {
+  if (!qsop_rankwidth_decomposition_generate(sub, primary_gen, &decomposition, error)) {
     return false;
   }
 
@@ -982,6 +989,36 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   }
   branch_trace_event(stats, "branch.rankwidth_table_forecast", rankwidth_table_forecast);
   branch_trace_event(stats, "branch.rankwidth_join_pair_forecast", rankwidth_join_pair_forecast);
+
+  /* BOTH policy: also try the native generator and keep whichever forecasts better. */
+  if (stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH &&
+      primary_gen == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
+    qsop_rankwidth_decomposition_t *native_dec = NULL;
+    if (qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+                                              &native_dec, error)) {
+      uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(labelled_width), sub->r);
+      uint64_t native_join = 0;
+      if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join,
+                                                NULL)) {
+        if (native_table < rankwidth_table_forecast ||
+            (native_table == rankwidth_table_forecast && native_join < rankwidth_join_pair_forecast)) {
+          qsop_rankwidth_decomposition_free(decomposition);
+          decomposition = native_dec;
+          native_dec = NULL;
+          rankwidth_table_forecast = native_table;
+          rankwidth_join_pair_forecast = native_join;
+          branch_trace_event(stats, "branch.rankwidth_source_native_preferred", native_table);
+        }
+      }
+      qsop_rankwidth_decomposition_free(native_dec);
+    } else {
+      /* Native generation failed; clear error and proceed with primary. */
+      if (error != NULL) {
+        error->message[0] = '\0';
+      }
+    }
+  }
+
   if (rankwidth_table_forecast > stats->rankwidth_table_forecast) {
     stats->rankwidth_table_forecast = rankwidth_table_forecast;
   }
@@ -1172,6 +1209,7 @@ static void branch_search_free(branch_search_stats_t *search) {
 
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
                                      qsop_branch_heuristic_t heuristic,
+                                     qsop_branch_rw_source_t rw_source,
                                      qsop_solve_mode_t mode, uint64_t *counts,
                                      qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                      qsop_error_t *error) {
@@ -1179,6 +1217,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
   branch_search_stats_t search = {
       .trace = trace,
       .heuristic = heuristic,
+      .rw_source = rw_source,
       .mode = mode,
       .count_modulus = count_modulus,
   };
@@ -1651,8 +1690,9 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 }
 
 static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_t heuristic,
-                             qsop_result_t **out, qsop_solve_stats_t *stats,
-                             qsop_solve_trace_t *trace, qsop_error_t *error) {
+                             qsop_branch_rw_source_t rw_source, qsop_result_t **out,
+                             qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                             qsop_error_t *error) {
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
@@ -1690,7 +1730,8 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_
   for (size_t p = 0; p < nprimes; p++) {
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
-    if (!branch_solve_counts_once(qsop, primes[p], heuristic, QSOP_SOLVE_MODE_COUNT_TABLE,
+    if (!branch_solve_counts_once(qsop, primes[p], heuristic, rw_source,
+                                  QSOP_SOLVE_MODE_COUNT_TABLE,
                                   &all_counts[p * (size_t)qsop->r], stats_for_prime,
                                   trace_for_prime, error)) {
       free(primes);
@@ -1898,7 +1939,8 @@ bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
     return true;
   }
   if (qsop->nvars >= 64U) {
-    return solve_branch_crt(qsop, heuristic, out, stats, trace, error);
+    return solve_branch_crt(qsop, heuristic, QSOP_BRANCH_RW_SOURCE_NATIVE, out, stats, trace,
+                            error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -1913,7 +1955,68 @@ bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
     return false;
   }
 
-  if (!branch_solve_counts_once(qsop, 0, heuristic, mode, result->counts, stats, trace, error)) {
+  if (!branch_solve_counts_once(qsop, 0, heuristic, QSOP_BRANCH_RW_SOURCE_NATIVE, mode,
+                                result->counts, stats, trace, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+
+  *out = result;
+  return true;
+}
+
+bool qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_branch_rw_source_t rw_source, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null result pointer");
+    return false;
+  }
+  *out = NULL;
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (mode != QSOP_SOLVE_MODE_COUNT_TABLE && mode != QSOP_SOLVE_MODE_FOURIER) {
+    set_error(error, "internal error: unsupported residual branch solve mode");
+    return false;
+  }
+  if (qsop->nvars > max_vars) {
+    set_error(error,
+              "residual branch solver refuses %" PRIu32
+              " variables; pass a larger --max-vars or use a future backend",
+              qsop->nvars);
+    return false;
+  }
+  bool root_handled = false;
+  if (!branch_try_root_treewidth_fast_path(qsop, out, stats, trace, mode, &root_handled, error)) {
+    return false;
+  }
+  if (root_handled) {
+    return true;
+  }
+  if (qsop->nvars >= 64U) {
+    return solve_branch_crt(qsop, heuristic, rw_source, out, stats, trace, error);
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL) {
+    set_error(error, "out of memory while allocating result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+
+  if (!branch_solve_counts_once(qsop, 0, heuristic, rw_source, mode, result->counts, stats,
+                                trace, error)) {
     qsop_result_free(result);
     return false;
   }

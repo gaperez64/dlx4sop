@@ -90,6 +90,15 @@ typedef enum qsop_branch_heuristic {
   QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY,
 } qsop_branch_heuristic_t;
 
+/* Policy for how the branch solver sources a rank decomposition when considering
+ * rankwidth delegation. */
+typedef enum qsop_branch_rw_source {
+  QSOP_BRANCH_RW_SOURCE_NATIVE,         /* use min-fill-cut (original behavior) */
+  QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
+  QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
+  QSOP_BRANCH_RW_SOURCE_AUTO,           /* from-treewidth by default (alias) */
+} qsop_branch_rw_source_t;
+
 typedef struct qsop_solve_trace_event {
   const char *phase;
   uint32_t depth;
@@ -208,6 +217,11 @@ bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
     qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_branch_rw_source_t rw_source, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint32_t nvars,
                                              qsop_rankwidth_decomposition_t **out,

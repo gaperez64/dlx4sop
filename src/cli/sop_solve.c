@@ -36,6 +36,7 @@ static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
+        "[--branch-rw-source native|from-treewidth|both|auto] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
@@ -436,10 +437,12 @@ int main(int argc, char **argv) {
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
+  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
   bool branch_heuristic_set = false;
+  bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
   bool solve_mode_set = false;
@@ -517,6 +520,27 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_heuristic_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-source") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-rw-source requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "native") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
+      } else if (strcmp(value, "from-treewidth") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH;
+      } else if (strcmp(value, "both") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_BOTH;
+      } else if (strcmp(value, "auto") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
+      } else {
+        fprintf(stderr, "error: unsupported --branch-rw-source '%s'\n", value);
+        return 2;
+      }
+      branch_rw_source_set = true;
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -647,6 +671,10 @@ int main(int argc, char **argv) {
     fputs("error: --branch-heuristic requires --backend branch\n", stderr);
     return 2;
   }
+  if (branch_rw_source_set && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --branch-rw-source requires --backend branch\n", stderr);
+    return 2;
+  }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path != NULL) {
     fputs("error: --rankwidth-decomposition requires --backend rankwidth\n", stderr);
     return 2;
@@ -730,8 +758,9 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_residual_branch_heuristic_mode_trace_stats(
-        qsop, max_vars, branch_heuristic, solve_mode, &result, &solve_stats, trace_ptr, &error);
+    ok = qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
+        qsop, max_vars, branch_heuristic, branch_rw_source, solve_mode, &result, &solve_stats,
+        trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");

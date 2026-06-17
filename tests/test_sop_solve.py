@@ -90,6 +90,24 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{branch_fourier.stdout}\n"
         )
 
+    for rw_source in ("native", "from-treewidth", "both", "auto"):
+        branch_rw = subprocess.run(
+            [str(exe), "--backend", "branch", "--branch-rw-source", rw_source, str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if branch_rw.returncode != 0:
+            raise AssertionError(
+                f"{name}: branch --branch-rw-source {rw_source} failed\n{branch_rw.stderr}"
+            )
+        if branch_rw.stdout != expected_text:
+            raise AssertionError(
+                f"{name}: branch --branch-rw-source {rw_source} mismatch\n"
+                f"expected:\n{expected_text}\nactual:\n{branch_rw.stdout}\n"
+            )
+
     components_fourier = subprocess.run(
         [str(exe), "--backend", "components", "--solve-mode", "fourier", str(qsop)],
         check=False,
