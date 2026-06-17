@@ -48,15 +48,37 @@ typedef struct qsop_wmc_stats {
   uint32_t skipped_edges;    /* edges skipped (zero label mod r) */
 } qsop_wmc_stats_t;
 
+/*
+ * WMC preprocessing applied inside the exporter after complex weights are
+ * assigned. This never writes back to the QSOP core.
+ *
+ * NONE:      No preprocessing; factor graph is written as-is.
+ * PEEL1:     Degree-0 and degree-1 variable elimination. Absorbed variables
+ *            are summed out analytically: degree-0 multiplies the global factor
+ *            by (1 + w_true[v]); degree-1 absorbs the x-sum into the neighbor's
+ *            unary weight. Zero-factor cases force the neighbor to true/false or
+ *            short-circuit to amplitude=0.
+ * PEEL2_SAFE: PEEL1 plus degree-2 elimination when all factor denominators are
+ *             nonzero and the fill budget is not exceeded. Behind a flag; not
+ *             default until benchmarked.
+ */
+typedef enum {
+  QSOP_WMC_PREPROCESS_NONE = 0,
+  QSOP_WMC_PREPROCESS_PEEL1 = 1,
+  QSOP_WMC_PREPROCESS_PEEL2_SAFE = 2,
+} qsop_wmc_preprocess_t;
+
 typedef struct qsop_wmc_options {
   qsop_wmc_encoding_t encoding; /* which encoding to emit */
   bool all_residues;    /* RESIDUE: emit one CNF block per residue 0..r-1 */
   uint32_t residue;     /* RESIDUE: residue to emit when !all_residues */
   bool emit_metadata;   /* prefix each block with `c` comment metadata */
+  qsop_wmc_preprocess_t preprocess; /* factor-graph preprocessing before WPCNF write */
+  uint32_t peel2_fill_budget;  /* PEEL2_SAFE: max fill edges to create (default 0 = unlimited) */
   qsop_wmc_stats_t *stats_out; /* if non-NULL, filled with structural stats */
 } qsop_wmc_options_t;
 
-/* Sensible defaults: residue encoding, all residues, metadata on, no stats. */
+/* Sensible defaults: residue encoding, all residues, metadata on, no preprocess, no stats. */
 qsop_wmc_options_t qsop_wmc_options_default(void);
 
 /*

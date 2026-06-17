@@ -288,6 +288,8 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   options.all_residues = true;
   options.residue = 0;
   options.emit_metadata = true;
+  options.preprocess = QSOP_WMC_PREPROCESS_NONE;
+  options.peel2_fill_budget = 0;
   options.stats_out = NULL;
   return options;
 }
@@ -311,6 +313,7 @@ static void write_weight(FILE *file, int var, double re, double im) {
  * where R_uv is the active pair multiplier when x_u = x_v = 1.
  *
  * This is strictly internal to qsop_wmc.c and never touches the SOP core.
+ * var_active and pair_active are set by preprocessing (peel1/peel2-safe).
  */
 typedef struct wmc_pair {
   uint32_t u;
@@ -321,13 +324,19 @@ typedef struct wmc_pair {
 
 typedef struct wmc_factor_graph {
   uint32_t nvars;
-  double global_re;  /* omega^c0 */
+  double global_re;   /* accumulated global complex factor */
   double global_im;
-  double *w_true_re; /* w_true[v] = omega^a_v (length nvars) */
+  double *w_true_re;  /* w_true[v] = omega^a_v, modified by preprocessing (length nvars) */
   double *w_true_im;
-  wmc_pair_t *pairs; /* pairs with R_uv != 1 (i.e., coeff != 0 mod r) */
-  size_t npairs;
+  wmc_pair_t *pairs;  /* pairs with R_uv != 1 at construction time (length npairs_alloc) */
+  size_t npairs;      /* original pair count (includes deactivated pairs) */
+  bool *var_active;   /* length nvars: variable remains in the WPCNF after preprocessing */
+  int8_t *var_forced; /* length nvars: 0=not forced, +1=force true, -1=force false */
+  bool *pair_active;  /* length npairs: pair remains in the WPCNF after preprocessing */
+  bool is_zero;       /* amplitude is analytically zero; skip WPCNF entirely */
 } wmc_factor_graph_t;
+
+#define FG_CMAG2(re, im) ((re) * (re) + (im) * (im))
 
 static void fg_free(wmc_factor_graph_t *fg) {
   if (fg == NULL) {
@@ -336,9 +345,15 @@ static void fg_free(wmc_factor_graph_t *fg) {
   free(fg->w_true_re);
   free(fg->w_true_im);
   free(fg->pairs);
+  free(fg->var_active);
+  free(fg->var_forced);
+  free(fg->pair_active);
   fg->w_true_re = NULL;
   fg->w_true_im = NULL;
   fg->pairs = NULL;
+  fg->var_active = NULL;
+  fg->var_forced = NULL;
+  fg->pair_active = NULL;
 }
 
 /* Build a factor graph from a labelled quadratic SOP for Fourier exponent t=1. */
@@ -355,20 +370,24 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, wmc_factor_graph_t *fg,
   if (qsop->nvars > 0) {
     fg->w_true_re = malloc(qsop->nvars * sizeof(*fg->w_true_re));
     fg->w_true_im = malloc(qsop->nvars * sizeof(*fg->w_true_im));
-    if (fg->w_true_re == NULL || fg->w_true_im == NULL) {
+    fg->var_active = malloc(qsop->nvars * sizeof(*fg->var_active));
+    fg->var_forced = calloc(qsop->nvars, sizeof(*fg->var_forced));
+    if (!fg->w_true_re || !fg->w_true_im || !fg->var_active || !fg->var_forced) {
       set_error(error, "out of memory building WMC factor graph");
       fg_free(fg);
       return false;
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
       omega_power((uint32_t)(qsop->unary[v] % r), r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      fg->var_active[v] = true;
     }
   }
 
   /* Pair factors: only edges whose label mod r is non-zero (R_uv != 1). */
   if (qsop->nedges > 0) {
     fg->pairs = malloc(qsop->nedges * sizeof(*fg->pairs));
-    if (fg->pairs == NULL) {
+    fg->pair_active = malloc(qsop->nedges * sizeof(*fg->pair_active));
+    if (!fg->pairs || !fg->pair_active) {
       set_error(error, "out of memory building WMC factor graph");
       fg_free(fg);
       return false;
@@ -379,33 +398,202 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, wmc_factor_graph_t *fg,
       if (coeff == 0U) {
         continue;
       }
-      wmc_pair_t *p = &fg->pairs[fg->npairs++];
+      wmc_pair_t *p = &fg->pairs[fg->npairs];
       p->u = qsop->edge_u[e];
       p->v = qsop->edge_v[e];
       omega_power(coeff, r, &p->R_re, &p->R_im);
+      fg->pair_active[fg->npairs] = true;
+      fg->npairs++;
     }
   }
 
   return true;
 }
 
+/* Complex multiply a *= b (in-place). */
+static void cmul_ip(double *a_re, double *a_im, double b_re, double b_im) {
+  const double re = *a_re * b_re - *a_im * b_im;
+  const double im = *a_re * b_im + *a_im * b_re;
+  *a_re = re;
+  *a_im = im;
+}
+
+/* Complex multiply-then-divide: a *= (b / c) in-place. Assumes |c| > 0. */
+static void cmul_div_ip(double *a_re, double *a_im, double b_re, double b_im, double c_re,
+                        double c_im) {
+  const double mag2 = FG_CMAG2(c_re, c_im);
+  /* a *= b * conj(c) / |c|^2 */
+  const double bc_re = b_re * c_re + b_im * c_im;  /* Re(b * conj(c)) */
+  const double bc_im = b_im * c_re - b_re * c_im;  /* Im(b * conj(c)) */
+  const double ab_re = *a_re * bc_re - *a_im * bc_im;
+  const double ab_im = *a_re * bc_im + *a_im * bc_re;
+  *a_re = ab_re / mag2;
+  *a_im = ab_im / mag2;
+}
+
+#define FG_ZERO_EPS 1e-12
+
+/*
+ * Peel1: analytical degree-0 and degree-1 variable elimination.
+ *
+ * Degree-0: sum_v w(x_v) = 1 + w_true[v] → absorb into global, remove v.
+ * Degree-1: sum over x_v given its one neighbor y → absorb F0 into global,
+ *           adjust w_true[y] by F1/F0, remove v and pair. Zero-factor cases:
+ *           - F0=F1=0: amplitude is zero, set is_zero.
+ *           - F0=0: force y=1, absorb w_true[y]*F1; then peel y recursively.
+ *           - F1=0: force y=0, absorb F0 into global; then peel y recursively.
+ */
+static void fg_peel1(wmc_factor_graph_t *fg) {
+  bool changed = true;
+  while (changed && !fg->is_zero) {
+    changed = false;
+
+    for (uint32_t v = 0; v < fg->nvars && !fg->is_zero; v++) {
+      if (!fg->var_active[v]) {
+        continue;
+      }
+
+      if (fg->var_forced[v] != 0) {
+        /* Forced variable: absorb all its active pairs into neighbors, then absorb it. */
+        bool all_pairs_done = true;
+        for (size_t p = 0; p < fg->npairs; p++) {
+          if (!fg->pair_active[p]) {
+            continue;
+          }
+          uint32_t u = fg->pairs[p].u, w = fg->pairs[p].v;
+          if (u != v && w != v) {
+            continue;
+          }
+          const uint32_t z = (u == v) ? w : u;
+          if (fg->var_forced[v] == +1) {
+            /* y=1 always: pair contributes R when z=1, 1 when z=0 → w_true[z] *= R */
+            cmul_ip(&fg->w_true_re[z], &fg->w_true_im[z], fg->pairs[p].R_re, fg->pairs[p].R_im);
+          }
+          /* If var_forced[v] == -1: pair contributes 1 (since v=0), just drop it. */
+          fg->pair_active[p] = false;
+          all_pairs_done = false;
+          changed = true;
+        }
+        if (all_pairs_done || changed) {
+          /* All pairs processed; absorb v's own weight then deactivate. */
+          if (fg->var_forced[v] == +1) {
+            /* v=1: absorb w_true[v] into global */
+            cmul_ip(&fg->global_re, &fg->global_im, fg->w_true_re[v], fg->w_true_im[v]);
+          }
+          /* v=0: w_false[v]=1, nothing to absorb into global */
+          fg->var_active[v] = false;
+          changed = true;
+        }
+        continue;
+      }
+
+      /* Count active pair degree and remember the single neighbor. */
+      uint32_t deg = 0;
+      size_t single_p = 0;
+      for (size_t p = 0; p < fg->npairs; p++) {
+        if (!fg->pair_active[p]) {
+          continue;
+        }
+        if (fg->pairs[p].u == v || fg->pairs[p].v == v) {
+          single_p = p;
+          deg++;
+        }
+      }
+
+      if (deg == 0) {
+        /* Degree-0: sum_v = 1 + w_true[v] */
+        cmul_ip(&fg->global_re, &fg->global_im,
+                1.0 + fg->w_true_re[v], fg->w_true_im[v]);
+        fg->var_active[v] = false;
+        changed = true;
+      } else if (deg == 1) {
+        /* Degree-1: sum over v given neighbor y. */
+        const uint32_t y =
+            (fg->pairs[single_p].u == v) ? fg->pairs[single_p].v : fg->pairs[single_p].u;
+        const double R_re = fg->pairs[single_p].R_re;
+        const double R_im = fg->pairs[single_p].R_im;
+        const double U_re = fg->w_true_re[v];
+        const double U_im = fg->w_true_im[v];
+
+        /* F0 = 1 + U (contribution when y=0) */
+        const double F0_re = 1.0 + U_re;
+        const double F0_im = U_im;
+
+        /* F1 = 1 + U*R (contribution when y=1) */
+        const double F1_re = 1.0 + U_re * R_re - U_im * R_im;
+        const double F1_im = U_re * R_im + U_im * R_re;
+
+        const double mag2_F0 = FG_CMAG2(F0_re, F0_im);
+        const double mag2_F1 = FG_CMAG2(F1_re, F1_im);
+
+        if (mag2_F0 < FG_ZERO_EPS * FG_ZERO_EPS && mag2_F1 < FG_ZERO_EPS * FG_ZERO_EPS) {
+          fg->is_zero = true;
+        } else if (mag2_F0 < FG_ZERO_EPS * FG_ZERO_EPS) {
+          /* F0=0: force y=1. Absorb F1 into w_true[y] (= old_w_true[y] * F1). */
+          cmul_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im);
+          fg->var_forced[y] = +1;
+          fg->var_active[v] = false;
+          fg->pair_active[single_p] = false;
+          changed = true;
+        } else if (mag2_F1 < FG_ZERO_EPS * FG_ZERO_EPS) {
+          /* F1=0: force y=0. Absorb F0 into global. */
+          cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
+          fg->var_forced[y] = -1;
+          fg->var_active[v] = false;
+          fg->pair_active[single_p] = false;
+          changed = true;
+        } else {
+          /* Normal: global *= F0, w_true[y] *= F1/F0. */
+          cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
+          cmul_div_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im, F0_re, F0_im);
+          fg->var_active[v] = false;
+          fg->pair_active[single_p] = false;
+          changed = true;
+        }
+      }
+    }
+  }
+}
+
 /* Shared metadata writer for amplitude encodings. */
 static void write_amp_metadata(FILE *file, const qsop_instance_t *qsop,
-                                const wmc_factor_graph_t *fg, const char *encoding_tag) {
+                                const wmc_factor_graph_t *fg, const char *encoding_tag,
+                                uint32_t n_active_vars, uint32_t n_active_pairs) {
   const uint32_t r = qsop->r;
   const uint32_t c0 = (uint32_t)(qsop->constant % r);
   fprintf(file,
           "c sop2wmc encoding=%s r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
           " mode=%s norm_h=%" PRIu64 "\n",
           encoding_tag, r, qsop->nvars, qsop->nedges, qsop_mode_name(qsop->mode), qsop->norm_h);
+  if (n_active_vars != qsop->nvars || n_active_pairs != (uint32_t)fg->npairs) {
+    fprintf(file, "c preprocess nvars_after=%" PRIu32 " pairs_after=%" PRIu32 "\n",
+            n_active_vars, n_active_pairs);
+  }
   fprintf(file, "c constant_phase %" PRIu32 "\n", c0);
   fprintf(file, "c amplitude_factor %.17g+%.17gi\n", fg->global_re, fg->global_im);
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    fprintf(file, "c xvar %" PRIu32 " %" PRIu32 "\n", v, v + 1U);
-  }
   fputs("c amplitude = ganak_output * amplitude_factor\n", file);
   fputs("c probability = |amplitude|^2 * 2^(-norm_h)\n", file);
   fputs("c invoke: ganak --mode 6 --verb 0 <this-file>\n", file);
+}
+
+/*
+ * Build a compact DIMACS variable map for active (non-eliminated) variables.
+ * Returns the number of active variables. var_dimacs[v] = 0 for eliminated v.
+ * Caller must free the returned array.
+ */
+static int *fg_build_var_map(const wmc_factor_graph_t *fg, uint32_t *n_active_out) {
+  int *var_dimacs = calloc(fg->nvars, sizeof(*var_dimacs));
+  if (var_dimacs == NULL) {
+    return NULL;
+  }
+  int next_id = 1;
+  for (uint32_t v = 0; v < fg->nvars; v++) {
+    if (fg->var_active[v]) {
+      var_dimacs[v] = next_id++;
+    }
+  }
+  *n_active_out = (uint32_t)(next_id - 1);
+  return var_dimacs;
 }
 
 /* amp-and: Tseitin AND auxiliary per encoded edge.
@@ -413,49 +601,66 @@ static void write_amp_metadata(FILE *file, const qsop_instance_t *qsop,
 static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
                             const wmc_factor_graph_t *fg, bool emit_metadata,
                             qsop_wmc_stats_t *stats_out, qsop_error_t *error) {
-  /* Build Tseitin AND clauses for each pair in the factor graph. */
-  wmc_builder_t b = {0};
-  b.nvars = fg->nvars;
+  uint32_t n_active_vars = 0;
+  int *var_dimacs = fg_build_var_map(fg, &n_active_vars);
+  if (fg->nvars > 0 && var_dimacs == NULL) {
+    set_error(error, "out of memory while building amplitude CNF");
+    return false;
+  }
 
-  int *pair_var = NULL;
-  if (fg->npairs > 0) {
-    pair_var = calloc(fg->npairs, sizeof(*pair_var));
-    if (pair_var == NULL) {
-      set_error(error, "out of memory while building amplitude CNF");
-      return false;
+  /* Count active pairs and build Tseitin AND clauses. */
+  wmc_builder_t b = {0};
+  b.nvars = n_active_vars;
+
+  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
+  if (fg->npairs > 0 && pair_var == NULL) {
+    set_error(error, "out of memory while building amplitude CNF");
+    free(var_dimacs);
+    return false;
+  }
+  uint32_t encoded_edges = 0;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
-    for (size_t p = 0; p < fg->npairs; p++) {
-      pair_var[p] = gate_and(&b, (int)(fg->pairs[p].u + 1U), (int)(fg->pairs[p].v + 1U));
-    }
+    pair_var[p] = gate_and(&b, var_dimacs[fg->pairs[p].u], var_dimacs[fg->pairs[p].v]);
+    encoded_edges++;
   }
   if (b.failed) {
     set_error(error, "out of memory while building amplitude CNF");
     free(pair_var);
+    free(var_dimacs);
     builder_free(&b);
     return false;
   }
 
-  const uint32_t encoded_edges = (uint32_t)fg->npairs;
-  const uint32_t skipped_edges = qsop->nedges - encoded_edges;
-
   fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
   if (emit_metadata) {
-    write_amp_metadata(file, qsop, fg, "amp-and");
+    write_amp_metadata(file, qsop, fg, "amp-and", n_active_vars, encoded_edges);
+    for (uint32_t v = 0; v < fg->nvars; v++) {
+      if (var_dimacs[v] != 0) {
+        fprintf(file, "c xvar %" PRIu32 " %d\n", v, var_dimacs[v]);
+      }
+    }
   }
 
-  /* Literal weights for free variables with non-trivial true-weight (omega^a_v != 1). */
+  /* Literal weights for active variables with non-trivial true-weight. */
   for (uint32_t v = 0; v < fg->nvars; v++) {
+    if (var_dimacs[v] == 0) {
+      continue;
+    }
     const double re = fg->w_true_re[v];
     const double im = fg->w_true_im[v];
-    if (re * re + im * im < (1.0 - 1e-12) * (1.0 - 1e-12) ||
-        re * re + im * im > (1.0 + 1e-12) * (1.0 + 1e-12) || fabs(im) > 1e-12 ||
-        fabs(re - 1.0) > 1e-12) {
-      write_weight(file, (int)(v + 1U), re, im);
+    if (fabs(re - 1.0) > 1e-12 || fabs(im) > 1e-12) {
+      write_weight(file, var_dimacs[v], re, im);
     }
   }
 
   /* Literal weights for Tseitin AND variables: W(y=1) = R_uv, W(y=0) = 1. */
   for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
     write_weight(file, pair_var[p], fg->pairs[p].R_re, fg->pairs[p].R_im);
   }
 
@@ -474,10 +679,11 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
     stats_out->clauses_binary = 2U * encoded_edges;
     stats_out->clauses_ternary = encoded_edges;
     stats_out->encoded_edges = encoded_edges;
-    stats_out->skipped_edges = skipped_edges;
+    stats_out->skipped_edges = qsop->nedges - encoded_edges;
   }
 
   free(pair_var);
+  free(var_dimacs);
   builder_free(&b);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
@@ -493,49 +699,68 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
 static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
                             const wmc_factor_graph_t *fg, bool emit_metadata,
                             qsop_wmc_stats_t *stats_out, qsop_error_t *error) {
-  wmc_builder_t b = {0};
-  b.nvars = fg->nvars;
+  uint32_t n_active_vars = 0;
+  int *var_dimacs = fg_build_var_map(fg, &n_active_vars);
+  if (fg->nvars > 0 && var_dimacs == NULL) {
+    set_error(error, "out of memory while building amp-soft CNF");
+    return false;
+  }
 
-  int *pair_var = NULL;
-  if (fg->npairs > 0) {
-    pair_var = calloc(fg->npairs, sizeof(*pair_var));
-    if (pair_var == NULL) {
-      set_error(error, "out of memory while building amp-soft CNF");
-      return false;
+  wmc_builder_t b = {0};
+  b.nvars = n_active_vars;
+
+  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
+  if (fg->npairs > 0 && pair_var == NULL) {
+    set_error(error, "out of memory while building amp-soft CNF");
+    free(var_dimacs);
+    return false;
+  }
+  uint32_t encoded_edges = 0;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
-    for (size_t p = 0; p < fg->npairs; p++) {
-      const int y = new_var(&b);
-      pair_var[p] = y;
-      add_clause2(&b, -y, (int)(fg->pairs[p].u + 1U));  /* y -> x_u */
-      add_clause2(&b, -y, (int)(fg->pairs[p].v + 1U));  /* y -> x_v */
-    }
+    const int y = new_var(&b);
+    pair_var[p] = y;
+    add_clause2(&b, -y, var_dimacs[fg->pairs[p].u]);  /* y -> x_u */
+    add_clause2(&b, -y, var_dimacs[fg->pairs[p].v]);  /* y -> x_v */
+    encoded_edges++;
   }
   if (b.failed) {
     set_error(error, "out of memory while building amp-soft CNF");
     free(pair_var);
+    free(var_dimacs);
     builder_free(&b);
     return false;
   }
 
-  const uint32_t encoded_edges = (uint32_t)fg->npairs;
-  const uint32_t skipped_edges = qsop->nedges - encoded_edges;
-
   fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
   if (emit_metadata) {
-    write_amp_metadata(file, qsop, fg, "amp-soft");
+    write_amp_metadata(file, qsop, fg, "amp-soft", n_active_vars, encoded_edges);
+    for (uint32_t v = 0; v < fg->nvars; v++) {
+      if (var_dimacs[v] != 0) {
+        fprintf(file, "c xvar %" PRIu32 " %d\n", v, var_dimacs[v]);
+      }
+    }
   }
 
-  /* Literal weights for free variables with non-trivial true-weight. */
+  /* Literal weights for active variables with non-trivial true-weight. */
   for (uint32_t v = 0; v < fg->nvars; v++) {
+    if (var_dimacs[v] == 0) {
+      continue;
+    }
     const double re = fg->w_true_re[v];
     const double im = fg->w_true_im[v];
     if (fabs(re - 1.0) > 1e-12 || fabs(im) > 1e-12) {
-      write_weight(file, (int)(v + 1U), re, im);
+      write_weight(file, var_dimacs[v], re, im);
     }
   }
 
   /* Literal weights for soft auxiliaries: W(y=1) = R_uv - 1, W(y=0) = 1. */
   for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
     write_weight(file, pair_var[p], fg->pairs[p].R_re - 1.0, fg->pairs[p].R_im);
   }
 
@@ -549,16 +774,43 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
   }
 
   if (stats_out != NULL) {
+    const uint32_t total_skipped = qsop->nedges - (uint32_t)fg->npairs + (uint32_t)fg->npairs -
+                                    encoded_edges;
     stats_out->aux_vars = encoded_edges;
     stats_out->clauses_unit = 0;
     stats_out->clauses_binary = 2U * encoded_edges;
     stats_out->clauses_ternary = 0;
     stats_out->encoded_edges = encoded_edges;
-    stats_out->skipped_edges = skipped_edges;
+    stats_out->skipped_edges = total_skipped;
   }
 
   free(pair_var);
+  free(var_dimacs);
   builder_free(&b);
+  if (ferror(file)) {
+    set_error(error, "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
+/*
+ * Write a WPCNF for a zero-amplitude result (amplitude = 0).
+ * Emits a trivially unsatisfiable CNF: empty clause (0 0) with amplitude_factor = 0+0i.
+ */
+static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_metadata,
+                                  qsop_error_t *error) {
+  fprintf(file, "p cnf 0 1\n");
+  if (emit_metadata) {
+    fprintf(file,
+            "c sop2wmc encoding=zero r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            " mode=%s norm_h=%" PRIu64 "\n",
+            qsop->r, qsop->nvars, qsop->nedges, qsop_mode_name(qsop->mode), qsop->norm_h);
+    fputs("c amplitude_factor 0+0i\n", file);
+    fputs("c amplitude = 0 (analytically determined by preprocessing)\n", file);
+  }
+  /* Empty clause (no literals before 0) → UNSAT → WMC = 0. */
+  fputs("0\n", file);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
@@ -583,8 +835,16 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     if (!fg_from_qsop(qsop, &fg, error)) {
       return false;
     }
+
+    if (options->preprocess == QSOP_WMC_PREPROCESS_PEEL1 ||
+        options->preprocess == QSOP_WMC_PREPROCESS_PEEL2_SAFE) {
+      fg_peel1(&fg);
+    }
+
     bool ok;
-    if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE) {
+    if (fg.is_zero) {
+      ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+    } else if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE) {
       ok = write_amplitude(file, qsop, &fg, options->emit_metadata, options->stats_out, error);
     } else {
       ok = write_amp_soft(file, qsop, &fg, options->emit_metadata, options->stats_out, error);

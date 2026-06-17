@@ -9,7 +9,8 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|residue-accumulator] [--residue K|all] "
+  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|residue-accumulator] "
+        "[--wmc-preprocess none|peel1|peel2-safe] [--residue K|all] "
         "[-o PATH] [--no-metadata] [PATH|-]\n",
         file);
 }
@@ -82,6 +83,24 @@ int main(int argc, char **argv) {
         return 2;
       }
       output_path = argv[++i];
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-preprocess") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-preprocess requires a value\n", stderr);
+        return 2;
+      }
+      const char *pp = argv[++i];
+      if (strcmp(pp, "none") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_NONE;
+      } else if (strcmp(pp, "peel1") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_PEEL1;
+      } else if (strcmp(pp, "peel2-safe") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_PEEL2_SAFE;
+      } else {
+        fputs("error: --wmc-preprocess must be 'none', 'peel1', or 'peel2-safe'\n", stderr);
+        return 2;
+      }
       continue;
     }
     if (strcmp(argv[i], "--no-metadata") == 0) {

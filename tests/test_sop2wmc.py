@@ -321,6 +321,37 @@ def verify_amp_soft(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathli
         )
 
 
+def verify_peel1(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
+    """Verify that peel1 preprocessing gives the same amplitude as no-preprocess."""
+    counts = reference_counts(sop_solve, qsop)
+    r = len(counts)
+    ref_amplitude = counts_to_amplitude(counts, r)
+
+    for enc in ("amp-and", "amp-soft"):
+        result = run(
+            [str(sop2wmc), "--encoding", enc, "--wmc-preprocess", "peel1", str(qsop)]
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"sop2wmc --encoding {enc} --wmc-preprocess peel1 failed on {qsop}:\n{result.stderr}"
+            )
+
+        # Handle the special zero-amplitude case.
+        if "encoding=zero" in result.stdout:
+            if abs(ref_amplitude) > 1e-9:
+                raise AssertionError(
+                    f"{qsop}: peel1 emitted zero-amplitude WPCNF but reference is {ref_amplitude}"
+                )
+            continue
+
+        xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
+        got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+        if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
+            raise AssertionError(
+                f"{qsop} {enc} peel1: got {got}, reference {ref_amplitude}"
+            )
+
+
 def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
 
@@ -346,6 +377,15 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         r = run([str(sop2wmc), "--encoding", enc, str(qsop)])
         if r.returncode != 0:
             raise AssertionError(f"--encoding {enc} unexpectedly failed:\n{r.stderr}")
+
+    # peel1 preprocessing should succeed for both amplitude encodings.
+    for enc in ("amp-and", "amp-soft"):
+        for pp in ("none", "peel1"):
+            r = run([str(sop2wmc), "--encoding", enc, "--wmc-preprocess", pp, str(qsop)])
+            if r.returncode != 0:
+                raise AssertionError(
+                    f"--encoding {enc} --wmc-preprocess {pp} failed:\n{r.stderr}"
+                )
 
     error_cases = [
         ([str(sop2wmc), "--residue"], "requires a value"),
@@ -377,6 +417,7 @@ def main() -> int:
         verify_instance(sop2wmc, sop_solve, qsop)
         verify_amplitude(sop2wmc, sop_solve, qsop)
         verify_amp_soft(sop2wmc, sop_solve, qsop)
+        verify_peel1(sop2wmc, sop_solve, qsop)
     check_cli(sop2wmc, source_root)
     return 0
 
