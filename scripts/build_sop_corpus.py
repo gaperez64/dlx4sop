@@ -139,12 +139,25 @@ def main() -> int:
     args = parser.parse_args()
 
     all_written = []
+    all_meta = []
     for i, tier in enumerate(TIERS):
         written = build_tier(tier, args.output_dir, args.seed + i * 1000)
         all_written.extend(written)
+        for qsop_rel in written:
+            meta_path = REPO_ROOT / qsop_rel.replace(".qsop", ".meta.json")
+            if meta_path.exists():
+                with open(meta_path, encoding="utf-8") as f:
+                    m = json.load(f)
+                m["tier"] = tier["name"]
+                m["qsop_path"] = qsop_rel
+                all_meta.append(m)
         print(f"[{tier['name']}] wrote {len(written)} QSOP files", file=sys.stderr)
 
-    print(f"corpus: {len(all_written)} files total", file=sys.stderr)
+    manifest_path = args.output_dir / "manifest.jsonl"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        for m in all_meta:
+            f.write(json.dumps(m) + "\n")
+    print(f"corpus: {len(all_written)} files total; manifest -> {manifest_path}", file=sys.stderr)
     return 0
 
 
