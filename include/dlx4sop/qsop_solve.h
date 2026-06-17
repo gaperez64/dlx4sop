@@ -71,6 +71,8 @@ typedef enum qsop_rankwidth_generator {
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
   /* Derive rank decomposition from min-fill treewidth elimination tree. */
   QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH,
+  QSOP_RANKWIDTH_GENERATOR_BEST,
+  QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
 } qsop_rankwidth_generator_t;
 
 typedef enum qsop_rankwidth_solve_mode {
@@ -262,6 +264,35 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                       qsop_error_t *error);
 
+bool qsop_solve_rankwidth_v2_mode_trace_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_rankwidth_decomposition_write_file(FILE *file,
+                                             const qsop_rankwidth_decomposition_t *decomposition,
+                                             qsop_error_t *error);
+
 bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, qsop_error_t *error);
+
+/* ---------------------------------------------------------------------------
+ * JSONL backend-decision sink
+ *
+ * Create on the stack and pass to qsop_solve_residual_branch_*_sink_* to
+ * emit one JSON object per delegation decision.  Set file = NULL to disable.
+ * next_id is read/written by the emitter; initialise to 0.
+ * --------------------------------------------------------------------------- */
+
+typedef struct qsop_backend_stats_sink {
+  FILE *file;               /* JSONL output file — NULL disables emission */
+  const char *instance;     /* value for the "instance" JSON field */
+  uint64_t next_id;         /* monotone record counter, incremented per record */
+  bool calibrate_backends;  /* if true, run the losing backend too for timing data */
+} qsop_backend_stats_sink_t;
+
+bool qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 #endif

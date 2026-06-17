@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RW_JOIN_MAP_INITIAL_CAP 1024U
+
 typedef enum rw_node_kind {
   RW_NODE_UNDEFINED,
   RW_NODE_LEAF,
@@ -64,6 +66,8 @@ typedef struct rw_join_map_entry {
 typedef struct rw_join_map {
   rw_join_map_entry_t *entries;
   uint64_t *assignments;
+  uint64_t *sorted_keys; /* packed (left_sig << 32 | right_sig) in sorted order */
+  uint32_t *sorted_idx;  /* original entry index in sorted key order */
   size_t len;
   size_t cap;
 } rw_join_map_t;
@@ -518,6 +522,22 @@ static bool table_add_entry_mod(rw_table_t *table, uint32_t signature, uint32_t 
   return true;
 }
 
+static bool table_append_entry(rw_table_t *table, uint32_t signature, uint32_t residue,
+                               uint64_t count, qsop_error_t *error) {
+  if (count == 0) {
+    return true;
+  }
+  if (!reserve_entries(table, table->len + 1U, error)) {
+    return false;
+  }
+  table->entries[table->len++] = (rw_entry_t){
+      .signature = signature,
+      .residue = residue,
+      .count = count,
+  };
+  return true;
+}
+
 static void table_free(rw_table_t *table) {
   if (table == NULL) {
     return;
@@ -526,6 +546,50 @@ static void table_free(rw_table_t *table) {
   free(table->reps);
   free(table->assignments);
   *table = (rw_table_t){0};
+}
+
+static int compare_entries_sig_residue(const void *a, const void *b) {
+  const rw_entry_t *ea = (const rw_entry_t *)a;
+  const rw_entry_t *eb = (const rw_entry_t *)b;
+  if (ea->signature != eb->signature) {
+    return (ea->signature < eb->signature) ? -1 : 1;
+  }
+  if (ea->residue != eb->residue) {
+    return (ea->residue < eb->residue) ? -1 : 1;
+  }
+  return 0;
+}
+
+static void table_sort(rw_table_t *table) {
+  if (table->len <= 1) {
+    return;
+  }
+  qsort(table->entries, table->len, sizeof(*table->entries), compare_entries_sig_residue);
+}
+
+static void table_sig_range(const rw_table_t *table, uint32_t sig,
+                            size_t *start_out, size_t *end_out) {
+  size_t lo = 0, hi = table->len;
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    if (table->entries[mid].signature < sig) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  *start_out = lo;
+  hi = table->len;
+  lo = *start_out;
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    if (table->entries[mid].signature <= sig) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  *end_out = lo;
 }
 
 static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words,
@@ -572,7 +636,52 @@ static void join_map_free(rw_join_map_t *map) {
   }
   free(map->entries);
   free(map->assignments);
+  free(map->sorted_keys);
+  free(map->sorted_idx);
   *map = (rw_join_map_t){0};
+}
+
+typedef struct {
+  uint64_t key;
+  uint32_t idx;
+} rw_join_sort_entry_t;
+
+static int compare_join_sort_entries(const void *a, const void *b) {
+  const rw_join_sort_entry_t *sa = (const rw_join_sort_entry_t *)a;
+  const rw_join_sort_entry_t *sb = (const rw_join_sort_entry_t *)b;
+  if (sa->key < sb->key) return -1;
+  if (sa->key > sb->key) return 1;
+  return 0;
+}
+
+static bool join_map_build_sorted_idx(rw_join_map_t *map, qsop_error_t *error) {
+  if (map->len == 0) {
+    return true;
+  }
+  rw_join_sort_entry_t *tmp = malloc(map->len * sizeof(*tmp));
+  uint32_t *sorted_idx = malloc(map->len * sizeof(*sorted_idx));
+  uint64_t *sorted_keys = malloc(map->len * sizeof(*sorted_keys));
+  if (tmp == NULL || sorted_idx == NULL || sorted_keys == NULL) {
+    free(tmp);
+    free(sorted_idx);
+    free(sorted_keys);
+    set_error(error, "out of memory while building rankwidth join map index");
+    return false;
+  }
+  for (size_t i = 0; i < map->len; i++) {
+    tmp[i].key = ((uint64_t)map->entries[i].left_signature << 32) |
+                 map->entries[i].right_signature;
+    tmp[i].idx = (uint32_t)i;
+  }
+  qsort(tmp, map->len, sizeof(*tmp), compare_join_sort_entries);
+  for (size_t i = 0; i < map->len; i++) {
+    sorted_keys[i] = tmp[i].key;
+    sorted_idx[i] = tmp[i].idx;
+  }
+  free(tmp);
+  map->sorted_keys = sorted_keys;
+  map->sorted_idx = sorted_idx;
+  return true;
 }
 
 static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t r,
@@ -895,6 +1004,33 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
   return true;
 }
 
+bool qsop_rankwidth_decomposition_write_file(FILE *file,
+                                             const qsop_rankwidth_decomposition_t *decomposition,
+                                             qsop_error_t *error) {
+  if (file == NULL || decomposition == NULL) {
+    set_error(error, "internal error: null rankwidth decomposition write argument");
+    return false;
+  }
+
+  fprintf(file, "p rwdec %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", decomposition->nvars,
+          decomposition->nnodes, decomposition->root);
+
+  for (uint32_t node = 0; node < decomposition->nnodes; node++) {
+    const rw_node_t *n = &decomposition->nodes[node];
+    if (n->kind == RW_NODE_LEAF) {
+      fprintf(file, "l %" PRIu32 " %" PRIu32 "\n", node, n->var);
+    } else if (n->kind == RW_NODE_JOIN) {
+      fprintf(file, "j %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", node, n->left, n->right);
+    }
+  }
+
+  if (ferror(file)) {
+    set_error(error, "write error while serializing rankwidth decomposition");
+    return false;
+  }
+  return true;
+}
+
 static uint64_t bitset_missing_edges_for(uint32_t v, const uint64_t *work,
                                          const uint64_t *active, uint64_t *remaining,
                                          size_t words, uint32_t nvars) {
@@ -1118,6 +1254,128 @@ static uint32_t build_cut_rank_nodes(qsop_rankwidth_decomposition_t *decompositi
       .right = right,
   };
   return node;
+}
+
+/* Fill nodes[] for a left-deep decomposition from the given ordering, then
+ * call validate_decomposition to (re)compute node_vars and postorder.
+ * The decomposition must already be fully allocated (nnodes = 2*nvars-1). */
+static bool fill_left_deep_from_order(qsop_rankwidth_decomposition_t *decomposition,
+                                      const uint32_t *order, qsop_error_t *error) {
+  const uint32_t nvars = decomposition->nvars;
+  for (uint32_t i = 0; i < nvars; i++) {
+    decomposition->nodes[i] = (rw_node_t){.kind = RW_NODE_LEAF, .var = order[i]};
+  }
+  if (nvars == 1U) {
+    decomposition->root = 0;
+  } else {
+    uint32_t current = 0;
+    uint32_t next_join = nvars;
+    for (uint32_t i = 1; i < nvars; i++) {
+      decomposition->nodes[next_join] = (rw_node_t){
+          .kind = RW_NODE_JOIN, .left = current, .right = i};
+      current = next_join++;
+    }
+    decomposition->root = current;
+  }
+  return validate_decomposition(decomposition, error);
+}
+
+/* Adjacent-swap hill climbing on a left-deep ordering.
+ * Starts from initial_order, iteratively tries all adjacent transpositions,
+ * keeps those that reduce (max_table_entries, join_pairs) forecast. */
+static bool generate_left_deep_search(const qsop_instance_t *qsop,
+                                      const uint32_t *initial_order,
+                                      qsop_rankwidth_decomposition_t **out,
+                                      qsop_error_t *error) {
+  const uint32_t nvars = qsop->nvars;
+  const size_t words = qsop_bitset_words(nvars);
+
+  qsop_rankwidth_decomposition_t *decomp = calloc(1, sizeof(*decomp));
+  uint32_t *order = calloc(nvars == 0 ? 1U : nvars, sizeof(*order));
+  if (decomp == NULL || order == NULL) {
+    free(decomp);
+    free(order);
+    set_error(error, "out of memory in left-deep search");
+    return false;
+  }
+  decomp->nvars = nvars;
+  decomp->words = words;
+  decomp->nnodes = nvars == 0U ? 0U : 2U * nvars - 1U;
+  decomp->nodes = calloc(decomp->nnodes == 0U ? 1U : decomp->nnodes, sizeof(*decomp->nodes));
+  decomp->node_vars = calloc(
+      (decomp->nnodes == 0U ? 1U : decomp->nnodes) * (words == 0U ? 1U : words),
+      sizeof(*decomp->node_vars));
+  decomp->postorder = calloc(decomp->nnodes == 0U ? 1U : decomp->nnodes,
+                             sizeof(*decomp->postorder));
+  if (decomp->nodes == NULL || decomp->node_vars == NULL || decomp->postorder == NULL) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    set_error(error, "out of memory in left-deep search nodes");
+    return false;
+  }
+
+  if (nvars == 0U) {
+    free(order);
+    *out = decomp;
+    return true;
+  }
+
+  for (uint32_t i = 0; i < nvars; i++) {
+    order[i] = initial_order[i];
+  }
+
+  if (!fill_left_deep_from_order(decomp, order, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  uint64_t best_max = 0, best_pairs = 0;
+  if (!qsop_rankwidth_decomposition_forecast(qsop, decomp, &best_max, &best_pairs, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  bool improved = true;
+  while (improved) {
+    improved = false;
+    for (uint32_t i = 0; i + 1U < nvars; i++) {
+      uint32_t tmp = order[i];
+      order[i] = order[i + 1U];
+      order[i + 1U] = tmp;
+      if (!fill_left_deep_from_order(decomp, order, error)) {
+        qsop_rankwidth_decomposition_free(decomp);
+        free(order);
+        return false;
+      }
+      uint64_t cand_max = 0, cand_pairs = 0;
+      if (!qsop_rankwidth_decomposition_forecast(qsop, decomp, &cand_max, &cand_pairs, error)) {
+        qsop_rankwidth_decomposition_free(decomp);
+        free(order);
+        return false;
+      }
+      if (cand_max < best_max || (cand_max == best_max && cand_pairs < best_pairs)) {
+        best_max = cand_max;
+        best_pairs = cand_pairs;
+        improved = true;
+      } else {
+        tmp = order[i];
+        order[i] = order[i + 1U];
+        order[i + 1U] = tmp;
+      }
+    }
+  }
+
+  if (!fill_left_deep_from_order(decomp, order, error)) {
+    qsop_rankwidth_decomposition_free(decomp);
+    free(order);
+    return false;
+  }
+
+  free(order);
+  *out = decomp;
+  return true;
 }
 
 static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
@@ -1510,6 +1768,63 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
 
   if (generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
     return make_from_treewidth_decomposition(qsop, out, error);
+  }
+
+  /* BEST: generate all base generators (including search), return lowest forecast. */
+  if (generator == QSOP_RANKWIDTH_GENERATOR_BEST) {
+    static const qsop_rankwidth_generator_t kCandidates[] = {
+        QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,
+        QSOP_RANKWIDTH_GENERATOR_BALANCED,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
+    };
+    const size_t ncandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
+    qsop_rankwidth_decomposition_t *winner = NULL;
+    uint64_t winner_max = UINT64_MAX, winner_pairs = UINT64_MAX;
+    for (size_t k = 0; k < ncandidates; k++) {
+      qsop_rankwidth_decomposition_t *cand = NULL;
+      if (!qsop_rankwidth_decomposition_generate(qsop, kCandidates[k], &cand, error)) {
+        qsop_rankwidth_decomposition_free(winner);
+        return false;
+      }
+      uint64_t cand_max = 0, cand_pairs = 0;
+      if (!qsop_rankwidth_decomposition_forecast(qsop, cand, &cand_max, &cand_pairs, error)) {
+        qsop_rankwidth_decomposition_free(cand);
+        qsop_rankwidth_decomposition_free(winner);
+        return false;
+      }
+      if (winner == NULL || cand_max < winner_max ||
+          (cand_max == winner_max && cand_pairs < winner_pairs)) {
+        qsop_rankwidth_decomposition_free(winner);
+        winner = cand;
+        winner_max = cand_max;
+        winner_pairs = cand_pairs;
+      } else {
+        qsop_rankwidth_decomposition_free(cand);
+      }
+    }
+    *out = winner;
+    return true;
+  }
+
+  /* MIN_FILL_SEARCH: min-fill ordering refined by adjacent-swap hill climbing. */
+  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH) {
+    uint32_t *mfs_order = calloc(qsop->nvars, sizeof(*mfs_order));
+    if (mfs_order == NULL) {
+      set_error(error, "out of memory while allocating min-fill-search order");
+      return false;
+    }
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      mfs_order[v] = v;
+    }
+    if (!make_min_fill_order(qsop, mfs_order, error)) {
+      free(mfs_order);
+      return false;
+    }
+    const bool ok = generate_left_deep_search(qsop, mfs_order, out, error);
+    free(mfs_order);
+    return ok;
   }
 
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
@@ -2445,11 +2760,85 @@ static bool build_join_map(const qsop_instance_t *qsop,
   }
   free(outside);
   free(signature);
+  return join_map_build_sorted_idx(map, error);
+}
+
+/* scratch must be 3 * max(1, words) uint64_t words:
+ *   [0 .. words-1]      outside bitset  (fully reinitialized on entry, no pre-zero needed)
+ *   [words .. 2w-1]     signature        (overwritten on entry, no init needed)
+ * map must be pre-allocated (len reset to 0 by caller before each call).           */
+static bool build_join_map_arena(const qsop_instance_t *qsop,
+                                  const qsop_rankwidth_decomposition_t *decomposition,
+                                  uint32_t node_id, const uint64_t *adj,
+                                  rw_signature_pool_t *pool, const rw_table_t *left,
+                                  const rw_table_t *right, rw_join_map_t *map,
+                                  uint64_t *scratch, qsop_error_t *error) {
+  const uint32_t sign = qsop->r / 2U;
+  if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
+    set_error(error, "rankwidth join map is too large");
+    return false;
+  }
+  const size_t words = decomposition->words;
+  const size_t w = words == 0 ? 1U : words;
+  if (!reserve_join_map(map, left->reps_len * right->reps_len, words, error)) {
+    return false;
+  }
+  uint64_t *outside = scratch;
+  uint64_t *signature = scratch + w;
+  for (uint32_t v = 0; v < decomposition->nvars; v++) {
+    qsop_bitset_set(outside, v);
+  }
+  qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), words);
+
+  for (size_t i = 0; i < left->reps_len; i++) {
+    for (size_t j = 0; j < right->reps_len; j++) {
+      const uint64_t *left_rep = table_assignment(left, i, words);
+      const uint64_t *right_rep = table_assignment(right, j, words);
+      const uint32_t parity =
+          cross_parity_bitsets(qsop->nvars, adj, left_rep, right_rep, words);
+      qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
+      qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
+      qsop_bitset_and(signature, outside, words);
+      uint32_t parent_signature = 0;
+      if (!signature_pool_intern(pool, signature, &parent_signature, error)) {
+        return false;
+      }
+
+      const size_t index = map->len++;
+      uint64_t *assignment = join_map_assignment(map, index, words);
+      qsop_bitset_copy(assignment, left_rep, words);
+      qsop_bitset_or(assignment, right_rep, words);
+      map->entries[index] = (rw_join_map_entry_t){
+          .left_signature = left->reps[i].signature,
+          .right_signature = right->reps[j].signature,
+          .parent_signature = parent_signature,
+          .residue_shift = (uint32_t)(((uint64_t)sign * parity) % qsop->r),
+      };
+    }
+  }
   return true;
 }
 
 static const rw_join_map_entry_t *join_map_get(const rw_join_map_t *map, uint32_t left_signature,
                                                uint32_t right_signature, size_t *index_out) {
+  if (map->sorted_keys != NULL) {
+    const uint64_t target = ((uint64_t)left_signature << 32) | right_signature;
+    size_t lo = 0, hi = map->len;
+    while (lo < hi) {
+      const size_t mid = lo + (hi - lo) / 2;
+      if (map->sorted_keys[mid] < target) {
+        lo = mid + 1;
+      } else if (map->sorted_keys[mid] > target) {
+        hi = mid;
+      } else {
+        if (index_out != NULL) {
+          *index_out = map->sorted_idx[mid];
+        }
+        return &map->entries[map->sorted_idx[mid]];
+      }
+    }
+    return NULL;
+  }
   for (size_t i = 0; i < map->len; i++) {
     if (map->entries[i].left_signature == left_signature &&
         map->entries[i].right_signature == right_signature) {
@@ -2492,6 +2881,31 @@ static bool solve_leaf(const qsop_instance_t *qsop, const uint64_t *adj, const r
   free(assignment);
   free(signature);
   return ok;
+}
+
+/* scratch must be 3 * max(1, words) uint64_t words:
+ *   [0 .. words-1]      zero bitset  (must be all-zeros on entry, never written)
+ *   [words .. 2w-1]     assignment   (must be all-zeros on entry, modified)
+ *   [2w .. 3w-1]        signature    (overwritten on entry, no init needed)      */
+static bool solve_leaf_arena(const qsop_instance_t *qsop, const uint64_t *adj,
+                              const rw_node_t *node, size_t words, rw_signature_pool_t *pool,
+                              rw_table_t *table, uint64_t *scratch, qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  uint64_t *zero = scratch;
+  uint64_t *assignment = scratch + w;
+  uint64_t *signature = scratch + 2U * w;
+
+  uint32_t zero_signature = 0;
+  uint32_t one_signature = 0;
+  qsop_bitset_copy(signature, qsop_bitset_const_row(adj, words, node->var), words);
+  qsop_bitset_clear(signature, node->var);
+  qsop_bitset_set(assignment, node->var);
+  return signature_pool_intern(pool, zero, &zero_signature, error) &&
+         signature_pool_intern(pool, signature, &one_signature, error) &&
+         table_add_rep(table, zero_signature, zero, words, error) &&
+         table_add_entry(table, zero_signature, 0, 1, error) &&
+         table_add_rep(table, one_signature, assignment, words, error) &&
+         table_add_entry(table, one_signature, qsop->unary[node->var] % qsop->r, 1, error);
 }
 
 static bool solve_join(const qsop_instance_t *qsop, const rw_join_map_t *map,
@@ -2586,6 +3000,93 @@ static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map
   return true;
 }
 
+/* Accumulator-based join: avoids the O(out.len) linear scan in table_add_entry by
+ * accumulating residue counts per signature into a direct-indexed array, then
+ * flushing once per (signature, residue) pair. Reduces table-operation cost from
+ * O(left_len * right_len * out_len) to O(map.len * r + n_parent_sigs * r).       */
+static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *map,
+                               const rw_table_t *left, const rw_table_t *right, rw_table_t *out,
+                               size_t words, uint64_t *join_pairs, qsop_error_t *error) {
+  if (map->len == 0) {
+    return true;
+  }
+
+  uint32_t max_parent_sig = 0;
+  for (size_t m = 0; m < map->len; m++) {
+    if (map->entries[m].parent_signature > max_parent_sig) {
+      max_parent_sig = map->entries[m].parent_signature;
+    }
+  }
+  const size_t n_sigs = (size_t)max_parent_sig + 1U;
+  const uint32_t r = qsop->r;
+  const uint32_t r_mask = r - 1U;
+  const bool r_pow2 = (r & r_mask) == 0;
+
+  uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
+  uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
+  if (acc == NULL || sig_map_idx == NULL) {
+    free(acc);
+    free(sig_map_idx);
+    set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+    return false;
+  }
+  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx)); /* UINT32_MAX = not seen */
+
+  for (size_t m = 0; m < map->len; m++) {
+    const rw_join_map_entry_t *me = &map->entries[m];
+    size_t l_start, l_end, r_start, r_end;
+    table_sig_range(left, me->left_signature, &l_start, &l_end);
+    table_sig_range(right, me->right_signature, &r_start, &r_end);
+    const uint32_t ps = me->parent_signature;
+    if (sig_map_idx[ps] == UINT32_MAX) {
+      sig_map_idx[ps] = (uint32_t)m;
+    }
+    for (size_t i = l_start; i < l_end; i++) {
+      for (size_t j = r_start; j < r_end; j++) {
+        const uint64_t rsum = (uint64_t)left->entries[i].residue + right->entries[j].residue +
+                              me->residue_shift;
+        const uint32_t res = r_pow2 ? (uint32_t)(rsum & r_mask) : (uint32_t)(rsum % r);
+        uint64_t product = 0;
+        if (!qsop_count_mul(left->entries[i].count, right->entries[j].count, &product, error) ||
+            !qsop_count_add(&acc[ps * r + res], product, error)) {
+          free(acc);
+          free(sig_map_idx);
+          return false;
+        }
+        (*join_pairs)++;
+      }
+    }
+  }
+
+  /* flush accumulator: one table_add_rep + table_append_entry per (sig, residue) */
+  for (uint32_t s = 0; s < (uint32_t)n_sigs; s++) {
+    if (sig_map_idx[s] == UINT32_MAX) {
+      continue;
+    }
+    const size_t m = sig_map_idx[s];
+    if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
+      free(acc);
+      free(sig_map_idx);
+      return false;
+    }
+    for (uint32_t res = 0; res < r; res++) {
+      const uint64_t cnt = acc[(size_t)s * r + res];
+      if (cnt == 0) {
+        continue;
+      }
+      if (!table_append_entry(out, s, res, cnt, error)) {
+        free(acc);
+        free(sig_map_idx);
+        return false;
+      }
+    }
+  }
+
+  free(acc);
+  free(sig_map_idx);
+  return true;
+}
+
 static bool build_labelled_join_map(const qsop_instance_t *qsop,
                                     const qsop_rankwidth_decomposition_t *decomposition,
                                     uint32_t node_id, const uint32_t *coeffs,
@@ -2643,7 +3144,7 @@ static bool build_labelled_join_map(const qsop_instance_t *qsop,
   }
   free(outside);
   free(signature);
-  return true;
+  return join_map_build_sorted_idx(map, error);
 }
 
 static bool solve_labelled_leaf(const qsop_instance_t *qsop, const uint32_t *coeffs,
@@ -2984,7 +3485,7 @@ static bool build_labelled_fourier_join_map(
   }
   free(outside);
   free(signature);
-  return true;
+  return join_map_build_sorted_idx(map, error);
 }
 
 static bool solve_fourier_join(const qsop_instance_t *qsop, const rw_join_map_t *map,
@@ -3290,6 +3791,150 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
       max_signature_entries = tables[node_id].reps_len;
     }
   }
+
+  const rw_table_t *root = &tables[decomposition->root];
+  for (size_t i = 0; i < root->len; i++) {
+    if (root->entries[i].signature != 0) {
+      continue;
+    }
+    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    if (!qsop_count_add(&result->counts[residue], root->entries[i].count, error)) {
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      signature_pool_free(&pool);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  if (stats != NULL) {
+    stats->table_entries = table_entries;
+    stats->max_table_entries = max_table_entries;
+    stats->signature_entries = signature_entries;
+    stats->max_signature_entries = max_signature_entries;
+    stats->join_pairs = join_pairs;
+    stats->join_signature_pairs = join_signature_pairs;
+    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    if (stats->decomposition_width == UINT32_MAX) {
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      signature_pool_free(&pool);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+    table_free(&tables[t]);
+  }
+  free(tables);
+  signature_pool_free(&pool);
+  *out = result;
+  return true;
+}
+
+static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
+                                           const qsop_rankwidth_decomposition_t *decomposition,
+                                           const uint64_t *adj, qsop_result_t **out,
+                                           qsop_solve_stats_t *stats,
+                                           qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop->nvars >= 64U) {
+    return solve_rankwidth_count_table_crt(qsop, decomposition, adj, out, stats, trace, error);
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  rw_table_t *tables =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
+  if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    free(tables);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth v2 solve state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+
+  rw_signature_pool_t pool = {0};
+  if (!signature_pool_init(&pool, decomposition->words, error)) {
+    free(tables);
+    qsop_result_free(result);
+    return false;
+  }
+
+  /* Arena: 3 scratch bitsets (zero | assignment | sig_temp) shared across all nodes. */
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  uint64_t *scratch = calloc(3U * w, sizeof(*scratch));
+  rw_join_map_t shared_map = {0};
+  if (scratch == NULL || !reserve_join_map(&shared_map, RW_JOIN_MAP_INITIAL_CAP, w, error)) {
+    free(scratch);
+    join_map_free(&shared_map);
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      table_free(&tables[t]);
+    }
+    free(tables);
+    signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
+
+  uint64_t join_pairs = 0;
+  uint64_t join_signature_pairs = 0;
+  uint64_t table_entries = 0;
+  uint64_t signature_entries = 0;
+  uint64_t max_table_entries = 0;
+  uint64_t max_signature_entries = 0;
+  for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
+    const uint32_t node_id = decomposition->postorder[i];
+    const rw_node_t *node = &decomposition->nodes[node_id];
+    const uint64_t start = qsop_trace_begin(trace);
+    bool ok = false;
+    if (node->kind == RW_NODE_LEAF) {
+      /* Zero scratch[0] (zero bitset) and scratch[w] (assignment) before each leaf. */
+      memset(scratch, 0, 2U * w * sizeof(*scratch));
+      ok = solve_leaf_arena(qsop, adj, node, decomposition->words, &pool, &tables[node_id],
+                            scratch, error);
+      qsop_trace_emit_elapsed(trace, "rankwidth.v2_leaf", 0, tables[node_id].len, start);
+    } else {
+      shared_map.len = 0;
+      ok = build_join_map_arena(qsop, decomposition, node_id, adj, &pool, &tables[node->left],
+                                &tables[node->right], &shared_map, scratch, error);
+      if (ok) {
+        join_signature_pairs += shared_map.len;
+        qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, shared_map.len, start);
+        const uint64_t join_start = qsop_trace_begin(trace);
+        ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
+                               &tables[node_id], decomposition->words, &join_pairs, error);
+        qsop_trace_emit_elapsed(trace, "rankwidth.v2_join", 0, tables[node_id].len, join_start);
+      }
+    }
+    if (!ok) {
+      free(scratch);
+      join_map_free(&shared_map);
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        table_free(&tables[t]);
+      }
+      free(tables);
+      signature_pool_free(&pool);
+      qsop_result_free(result);
+      return false;
+    }
+    table_sort(&tables[node_id]);
+    table_entries += tables[node_id].len;
+    signature_entries += tables[node_id].reps_len;
+    if (tables[node_id].len > max_table_entries) {
+      max_table_entries = tables[node_id].len;
+    }
+    if (tables[node_id].reps_len > max_signature_entries) {
+      max_signature_entries = tables[node_id].reps_len;
+    }
+  }
+
+  free(scratch);
+  join_map_free(&shared_map);
 
   const rw_table_t *root = &tables[decomposition->root];
   for (size_t i = 0; i < root->len; i++) {
@@ -4217,4 +4862,62 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
   return qsop_solve_rankwidth_mode_trace_stats(qsop, decomposition, max_vars,
                                                QSOP_RANKWIDTH_SOLVE_COUNT_TABLE, out, stats,
                                                trace, error);
+}
+
+bool qsop_solve_rankwidth_v2_mode_trace_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null result pointer");
+    return false;
+  }
+  *out = NULL;
+  if (qsop == NULL || decomposition == NULL) {
+    set_error(error, "internal error: null rankwidth v2 solve argument");
+    return false;
+  }
+  if (qsop->nvars != decomposition->nvars) {
+    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    return false;
+  }
+  if (qsop->nvars > max_vars) {
+    set_error(error,
+              "rankwidth v2 solver refuses %" PRIu32
+              " variables; pass a larger --max-vars",
+              qsop->nvars);
+    return false;
+  }
+  if (qsop->nvars == 0) {
+    return solve_rankwidth_constant_result(qsop, out, stats, trace, error);
+  }
+  if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
+    return false;
+  }
+  if (qsop_is_sign_edge_instance(qsop)) {
+    uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
+    if (adj == NULL) {
+      return false;
+    }
+    const bool ok =
+        mode == QSOP_RANKWIDTH_SOLVE_FOURIER
+            ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
+            : solve_rankwidth_count_table_v2(qsop, decomposition, adj, out, stats, trace, error);
+    free(adj);
+    return ok;
+  }
+
+  uint32_t *coeffs = coefficient_matrix(qsop, error);
+  if (coeffs == NULL) {
+    return false;
+  }
+  const bool ok =
+      mode == QSOP_RANKWIDTH_SOLVE_FOURIER
+          ? solve_rankwidth_labelled_fourier(qsop, decomposition, coeffs, out, stats, trace, error)
+          : solve_labelled_count_table(qsop, decomposition, coeffs, out, stats, trace, error);
+  free(coeffs);
+  return ok;
 }
