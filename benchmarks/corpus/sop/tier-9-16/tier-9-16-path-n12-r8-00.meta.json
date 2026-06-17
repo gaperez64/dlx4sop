@@ -1,0 +1,9 @@
+{
+  "name": "tier-9-16-path-n12-r8-00",
+  "generator": "build_sop_corpus.py:v1",
+  "r": 8,
+  "nvars": 12,
+  "nedges": 11,
+  "description": "Synthetic path graph, 12 vars, r=8, seed=1042+0",
+  "solvable_without_external_tools": true
+}
