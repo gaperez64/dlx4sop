@@ -69,6 +69,7 @@ typedef enum qsop_rankwidth_generator {
   QSOP_RANKWIDTH_GENERATOR_BALANCED,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+  QSOP_RANKWIDTH_GENERATOR_BEST,
 } qsop_rankwidth_generator_t;
 
 typedef enum qsop_rankwidth_solve_mode {

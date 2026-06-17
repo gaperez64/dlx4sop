@@ -1335,6 +1335,44 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     *out = empty;
     return true;
   }
+
+  /* BEST: generate all base generators, return the one with the lowest forecast. */
+  if (generator == QSOP_RANKWIDTH_GENERATOR_BEST) {
+    static const qsop_rankwidth_generator_t kCandidates[] = {
+        QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,
+        QSOP_RANKWIDTH_GENERATOR_BALANCED,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+    };
+    const size_t ncandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
+    qsop_rankwidth_decomposition_t *winner = NULL;
+    uint64_t winner_max = UINT64_MAX, winner_pairs = UINT64_MAX;
+    for (size_t k = 0; k < ncandidates; k++) {
+      qsop_rankwidth_decomposition_t *cand = NULL;
+      if (!qsop_rankwidth_decomposition_generate(qsop, kCandidates[k], &cand, error)) {
+        qsop_rankwidth_decomposition_free(winner);
+        return false;
+      }
+      uint64_t cand_max = 0, cand_pairs = 0;
+      if (!qsop_rankwidth_decomposition_forecast(qsop, cand, &cand_max, &cand_pairs, error)) {
+        qsop_rankwidth_decomposition_free(cand);
+        qsop_rankwidth_decomposition_free(winner);
+        return false;
+      }
+      if (winner == NULL || cand_max < winner_max ||
+          (cand_max == winner_max && cand_pairs < winner_pairs)) {
+        qsop_rankwidth_decomposition_free(winner);
+        winner = cand;
+        winner_max = cand_max;
+        winner_pairs = cand_pairs;
+      } else {
+        qsop_rankwidth_decomposition_free(cand);
+      }
+    }
+    *out = winner;
+    return true;
+  }
+
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
   uint32_t *leaf_nodes = calloc(qsop->nvars, sizeof(*leaf_nodes));
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
