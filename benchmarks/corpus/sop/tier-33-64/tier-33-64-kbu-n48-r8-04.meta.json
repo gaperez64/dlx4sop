@@ -1,0 +1,19 @@
+{
+  "name": "tier-33-64-kbu-n48-r8-04",
+  "generator": "build_sop_corpus.py:v1",
+  "r": 8,
+  "nvars": 48,
+  "nedges": 576,
+  "description": "K_{24,24} uniform coeff=1, r=8; labelled cut rank \u2248 2, treewidth \u2248 24",
+  "solvable_without_external_tools": true,
+  "family": "complete-bipartite-uniform",
+  "benchmark_roles": [
+    "local-tuning",
+    "rankwidth-positive"
+  ],
+  "expected_winner": "rankwidth",
+  "skip_backends": [
+    "treewidth"
+  ],
+  "skip_reason": "treewidth \u2248 24; table size r^tw = 8^24 exceeds practical limit"
+}

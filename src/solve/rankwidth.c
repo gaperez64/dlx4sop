@@ -698,29 +698,36 @@ static void table_sort(rw_table_t *table) {
   qsort(table->entries, table->len, sizeof(*table->entries), compare_entries_sig_residue);
 }
 
-static void table_sig_range(const rw_table_t *table, uint32_t sig,
-                            size_t *start_out, size_t *end_out) {
-  size_t lo = 0, hi = table->len;
-  while (lo < hi) {
-    const size_t mid = lo + (hi - lo) / 2;
-    if (table->entries[mid].signature < sig) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
+/* Build an O(1) signature-to-entry-range index over a sorted table.
+ * Replaces per-entry binary search in join hot paths.
+ * starts[sig] == UINT32_MAX means sig is absent from the table.
+ * Caller owns *starts_out and *ends_out and must free both. */
+static bool build_sig_range_index(const rw_table_t *table, uint32_t max_sig,
+                                   uint32_t **starts_out, uint32_t **ends_out,
+                                   qsop_error_t *error) {
+  const size_t n = (size_t)max_sig + 1U;
+  uint32_t *starts = malloc(n * sizeof(*starts));
+  uint32_t *ends   = malloc(n * sizeof(*ends));
+  if (starts == NULL || ends == NULL) {
+    free(starts);
+    free(ends);
+    set_error(error, "out of memory allocating sig range index");
+    return false;
   }
-  *start_out = lo;
-  hi = table->len;
-  lo = *start_out;
-  while (lo < hi) {
-    const size_t mid = lo + (hi - lo) / 2;
-    if (table->entries[mid].signature <= sig) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
+  memset(starts, 0xFF, n * sizeof(*starts));
+  for (size_t i = 0; i < table->len; i++) {
+    const uint32_t sig = table->entries[i].signature;
+    if (sig > max_sig) {
+      continue;
     }
+    if (starts[sig] == UINT32_MAX) {
+      starts[sig] = (uint32_t)i;
+    }
+    ends[sig] = (uint32_t)(i + 1U);
   }
-  *end_out = lo;
+  *starts_out = starts;
+  *ends_out   = ends;
+  return true;
 }
 
 static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words,
@@ -3285,11 +3292,12 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
     return true;
   }
 
-  uint32_t max_parent_sig = 0;
+  uint32_t max_parent_sig = 0, max_left_sig = 0, max_right_sig = 0;
   for (size_t m = 0; m < map->len; m++) {
-    if (map->entries[m].parent_signature > max_parent_sig) {
-      max_parent_sig = map->entries[m].parent_signature;
-    }
+    const rw_join_map_entry_t *me = &map->entries[m];
+    if (me->parent_signature > max_parent_sig) max_parent_sig = me->parent_signature;
+    if (me->left_signature   > max_left_sig)   max_left_sig   = me->left_signature;
+    if (me->right_signature  > max_right_sig)  max_right_sig  = me->right_signature;
   }
   const size_t n_sigs = (size_t)max_parent_sig + 1U;
   const uint32_t r = qsop->r;
@@ -3298,33 +3306,52 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
 
   uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
   uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
-  if (acc == NULL || sig_map_idx == NULL) {
-    free(acc);
-    free(sig_map_idx);
-    set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+  uint32_t *left_starts = NULL, *left_ends = NULL;
+  uint32_t *right_starts = NULL, *right_ends = NULL;
+  if (acc == NULL || sig_map_idx == NULL ||
+      !build_sig_range_index(left,  max_left_sig,  &left_starts,  &left_ends,  error) ||
+      !build_sig_range_index(right, max_right_sig, &right_starts, &right_ends, error)) {
+    free(acc); free(sig_map_idx);
+    free(left_starts); free(left_ends);
+    free(right_starts); free(right_ends);
+    if (acc == NULL || sig_map_idx == NULL) {
+      set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+    }
     return false;
   }
-  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx)); /* UINT32_MAX = not seen */
+  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
 
   for (size_t m = 0; m < map->len; m++) {
     const rw_join_map_entry_t *me = &map->entries[m];
-    size_t l_start, l_end, r_start, r_end;
-    table_sig_range(left, me->left_signature, &l_start, &l_end);
-    table_sig_range(right, me->right_signature, &r_start, &r_end);
-    const uint32_t ps = me->parent_signature;
+    const uint32_t lsig  = me->left_signature;
+    const uint32_t rsig  = me->right_signature;
+    const uint32_t ps    = me->parent_signature;
+    const uint32_t shift = me->residue_shift;
+    size_t l_start = 0, l_end = 0;
+    if (left_starts[lsig] != UINT32_MAX) {
+      l_start = left_starts[lsig];
+      l_end   = left_ends[lsig];
+    }
+    size_t r_start = 0, r_end = 0;
+    if (right_starts[rsig] != UINT32_MAX) {
+      r_start = right_starts[rsig];
+      r_end   = right_ends[rsig];
+    }
     if (sig_map_idx[ps] == UINT32_MAX) {
       sig_map_idx[ps] = (uint32_t)m;
     }
     for (size_t i = l_start; i < l_end; i++) {
+      const uint32_t l_res = left->entries[i].residue;
+      const uint64_t l_cnt = left->entries[i].count;
       for (size_t j = r_start; j < r_end; j++) {
-        const uint64_t rsum = (uint64_t)left->entries[i].residue + right->entries[j].residue +
-                              me->residue_shift;
+        const uint64_t rsum = (uint64_t)l_res + right->entries[j].residue + shift;
         const uint32_t res = r_pow2 ? (uint32_t)(rsum & r_mask) : (uint32_t)(rsum % r);
         uint64_t product = 0;
-        if (!qsop_count_mul(left->entries[i].count, right->entries[j].count, &product, error) ||
+        if (!qsop_count_mul(l_cnt, right->entries[j].count, &product, error) ||
             !qsop_count_add(&acc[ps * r + res], product, error)) {
-          free(acc);
-          free(sig_map_idx);
+          free(acc); free(sig_map_idx);
+          free(left_starts); free(left_ends);
+          free(right_starts); free(right_ends);
           return false;
         }
         (*join_pairs)++;
@@ -3339,8 +3366,9 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
     }
     const size_t m = sig_map_idx[s];
     if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
-      free(acc);
-      free(sig_map_idx);
+      free(acc); free(sig_map_idx);
+      free(left_starts); free(left_ends);
+      free(right_starts); free(right_ends);
       return false;
     }
     for (uint32_t res = 0; res < r; res++) {
@@ -3349,15 +3377,17 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
         continue;
       }
       if (!table_append_entry(out, s, res, cnt, error)) {
-        free(acc);
-        free(sig_map_idx);
+        free(acc); free(sig_map_idx);
+        free(left_starts); free(left_ends);
+        free(right_starts); free(right_ends);
         return false;
       }
     }
   }
 
-  free(acc);
-  free(sig_map_idx);
+  free(acc); free(sig_map_idx);
+  free(left_starts); free(left_ends);
+  free(right_starts); free(right_ends);
   return true;
 }
 
@@ -3370,44 +3400,59 @@ static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map
     return true;
   }
 
-  uint32_t max_parent_sig = 0;
+  uint32_t max_parent_sig = 0, max_left_sig = 0, max_right_sig = 0;
   for (size_t m = 0; m < map->len; m++) {
-    if (map->entries[m].parent_signature > max_parent_sig) {
-      max_parent_sig = map->entries[m].parent_signature;
-    }
+    const rw_join_map_entry_t *me = &map->entries[m];
+    if (me->parent_signature > max_parent_sig) max_parent_sig = me->parent_signature;
+    if (me->left_signature   > max_left_sig)   max_left_sig   = me->left_signature;
+    if (me->right_signature  > max_right_sig)  max_right_sig  = me->right_signature;
   }
   const size_t n_sigs = (size_t)max_parent_sig + 1U;
   const uint32_t r = qsop->r;
 
   uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
   uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
-  if (acc == NULL || sig_map_idx == NULL) {
-    free(acc);
-    free(sig_map_idx);
-    set_error(error, "out of memory while allocating rankwidth v2 labelled join accumulator");
+  uint32_t *left_starts = NULL, *left_ends = NULL;
+  uint32_t *right_starts = NULL, *right_ends = NULL;
+  if (acc == NULL || sig_map_idx == NULL ||
+      !build_sig_range_index(left,  max_left_sig,  &left_starts,  &left_ends,  error) ||
+      !build_sig_range_index(right, max_right_sig, &right_starts, &right_ends, error)) {
+    free(acc); free(sig_map_idx);
+    free(left_starts); free(left_ends);
+    free(right_starts); free(right_ends);
+    if (acc == NULL || sig_map_idx == NULL) {
+      set_error(error, "out of memory while allocating rankwidth v2 labelled join accumulator");
+    }
     return false;
   }
   memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
 
   for (size_t m = 0; m < map->len; m++) {
     const rw_join_map_entry_t *me = &map->entries[m];
-    size_t l_start, l_end, r_start, r_end;
-    table_sig_range(left, me->left_signature, &l_start, &l_end);
-    table_sig_range(right, me->right_signature, &r_start, &r_end);
-    const uint32_t ps = me->parent_signature;
+    const uint32_t lsig  = me->left_signature;
+    const uint32_t rsig  = me->right_signature;
+    const uint32_t ps    = me->parent_signature;
+    size_t l_start = 0, l_end = 0;
+    if (left_starts[lsig] != UINT32_MAX) {
+      l_start = left_starts[lsig];
+      l_end   = left_ends[lsig];
+    }
+    size_t r_start = 0, r_end = 0;
+    if (right_starts[rsig] != UINT32_MAX) {
+      r_start = right_starts[rsig];
+      r_end   = right_ends[rsig];
+    }
     if (sig_map_idx[ps] == UINT32_MAX) {
       sig_map_idx[ps] = (uint32_t)m;
     }
     for (size_t i = l_start; i < l_end; i++) {
+      const uint32_t l_res = left->entries[i].residue;
+      const uint64_t l_cnt = left->entries[i].count;
       for (size_t j = r_start; j < r_end; j++) {
         const uint32_t res =
-            (uint32_t)(((uint64_t)left->entries[i].residue + right->entries[j].residue +
-                        me->residue_shift) %
-                       r);
-        const uint64_t product =
-            qsop_mod_mul_u64(left->entries[i].count, right->entries[j].count, modulus);
-        acc[(size_t)ps * r + res] =
-            qsop_mod_add_u64(acc[(size_t)ps * r + res], product, modulus);
+            (uint32_t)(((uint64_t)l_res + right->entries[j].residue + me->residue_shift) % r);
+        const uint64_t product = qsop_mod_mul_u64(l_cnt, right->entries[j].count, modulus);
+        acc[(size_t)ps * r + res] = qsop_mod_add_u64(acc[(size_t)ps * r + res], product, modulus);
         (*join_pairs)++;
       }
     }
@@ -3419,8 +3464,9 @@ static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map
     }
     const size_t m = sig_map_idx[s];
     if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
-      free(acc);
-      free(sig_map_idx);
+      free(acc); free(sig_map_idx);
+      free(left_starts); free(left_ends);
+      free(right_starts); free(right_ends);
       return false;
     }
     for (uint32_t res = 0; res < r; res++) {
@@ -3429,15 +3475,17 @@ static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map
         continue;
       }
       if (!table_append_entry(out, s, res, cnt, error)) {
-        free(acc);
-        free(sig_map_idx);
+        free(acc); free(sig_map_idx);
+        free(left_starts); free(left_ends);
+        free(right_starts); free(right_ends);
         return false;
       }
     }
   }
 
-  free(acc);
-  free(sig_map_idx);
+  free(acc); free(sig_map_idx);
+  free(left_starts); free(left_ends);
+  free(right_starts); free(right_ends);
   return true;
 }
 

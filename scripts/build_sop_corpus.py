@@ -27,6 +27,16 @@ TIERS = [
     {"name": "tier-33-64", "min_vars": 33, "max_vars": 64, "r_choices": [8],  "count": 3},
 ]
 
+# Rankwidth-positive instances: complete-bipartite-uniform K_{a,b} with all
+# quadratic coefficients = 1. Treewidth = min(a,b); labelled cut rank ≈ 2.
+# Rankwidth wins massively; pure treewidth backend is too slow (skip_backends).
+RW_POSITIVE_INSTANCES = [
+    {"tier": "tier-17-32", "nvars": 20, "r": 8,  "idx": "04"},
+    {"tier": "tier-17-32", "nvars": 24, "r": 8,  "idx": "05"},
+    {"tier": "tier-33-64", "nvars": 40, "r": 8,  "idx": "03"},
+    {"tier": "tier-33-64", "nvars": 48, "r": 8,  "idx": "04"},
+]
+
 # Provenance template for generated instances.
 GENERATOR = "build_sop_corpus.py:v1"
 
@@ -48,8 +58,8 @@ def write_qsop(path: pathlib.Path, r: int, norm_h: int,
 
 
 def write_meta(path: pathlib.Path, name: str, r: int, nvars: int, nedges: int,
-               description: str) -> None:
-    meta = {
+               description: str, **extra: object) -> None:
+    meta: dict = {
         "name": name,
         "generator": GENERATOR,
         "r": r,
@@ -58,6 +68,7 @@ def write_meta(path: pathlib.Path, name: str, r: int, nvars: int, nedges: int,
         "description": description,
         "solvable_without_external_tools": True,
     }
+    meta.update(extra)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
         f.write("\n")
@@ -95,11 +106,27 @@ def gen_star_graph(rng: random.Random, nvars: int, r: int) -> dict:
     return {"unary": unary, "edges": edges, "constant": 0}
 
 
+def gen_complete_bipartite_uniform(rng: random.Random, nvars: int, r: int) -> dict:
+    """Complete bipartite K_{a,b} with all quadratic coefficients = 1.
+
+    The uniform coefficient forces rank-1 interaction across the (A,B) cut:
+    sum_{u in A, v in B} x_u*x_v = (sum_A x_u)*(sum_B x_v).
+    Labelled cut rank ≈ 2 regardless of |A|; treewidth = min(|A|,|B|) = nvars/2.
+    Rankwidth wins massively on these instances.
+    """
+    a = nvars // 2
+    b = nvars - a
+    unary = [rng.randint(0, r - 1) for _ in range(nvars)]
+    edges = [(u, a + v, 1) for u in range(a) for v in range(b)]
+    return {"unary": unary, "edges": edges, "constant": 0}
+
+
 GENERATORS = {
     "path": gen_path_graph,
     "cycle": gen_cycle_graph,
     "sparse": gen_random_sparse,
     "star": gen_star_graph,
+    "kbu": gen_complete_bipartite_uniform,
 }
 
 SHAPES = ["path", "cycle", "sparse", "star", "path", "sparse"]
@@ -130,6 +157,46 @@ def build_tier(tier: dict, output_dir: pathlib.Path, seed: int) -> list[str]:
     return written
 
 
+def build_rw_positive_instances(output_dir: pathlib.Path, seed: int) -> list[str]:
+    """Generate rankwidth-positive complete-bipartite-uniform instances.
+
+    These are separate from the existing tier instances and never overwrite them
+    (distinct shape prefix "kbu" and indices starting above existing tier counts).
+    Pure treewidth backend is skipped via meta skip_backends because tw ≈ nvars/2
+    makes table allocation impractical.
+    """
+    rng = random.Random(seed)
+    written = []
+    for spec in RW_POSITIVE_INSTANCES:
+        tier_name = spec["tier"]
+        nvars = spec["nvars"]
+        r = spec["r"]
+        idx = spec["idx"]
+        a = nvars // 2
+
+        tier_dir = output_dir / tier_name
+        tier_dir.mkdir(parents=True, exist_ok=True)
+
+        data = gen_complete_bipartite_uniform(rng, nvars, r)
+        edges = data["edges"]
+        name = f"{tier_name}-kbu-n{nvars}-r{r}-{idx}"
+        qsop_path = tier_dir / f"{name}.qsop"
+        meta_path = tier_dir / f"{name}.meta.json"
+
+        write_qsop(qsop_path, r, nvars + 2, nvars, data["constant"], data["unary"], edges)
+        write_meta(
+            meta_path, name, r, nvars, len(edges),
+            f"K_{{{a},{nvars - a}}} uniform coeff=1, r={r}; labelled cut rank ≈ 2, treewidth ≈ {a}",
+            family="complete-bipartite-uniform",
+            benchmark_roles=["local-tuning", "rankwidth-positive"],
+            expected_winner="rankwidth",
+            skip_backends=["treewidth"],
+            skip_reason=f"treewidth ≈ {a}; table size r^tw = {r}^{a} exceeds practical limit",
+        )
+        written.append(str(qsop_path.relative_to(output_dir.parent.parent)))
+    return written
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=pathlib.Path, default=DEFAULT_OUTPUT,
@@ -152,6 +219,21 @@ def main() -> int:
                 m["qsop_path"] = qsop_rel
                 all_meta.append(m)
         print(f"[{tier['name']}] wrote {len(written)} QSOP files", file=sys.stderr)
+
+    rw_written = build_rw_positive_instances(args.output_dir, args.seed + 9000)
+    all_written.extend(rw_written)
+    for qsop_rel in rw_written:
+        meta_path = REPO_ROOT / qsop_rel.replace(".qsop", ".meta.json")
+        if meta_path.exists():
+            with open(meta_path, encoding="utf-8") as f:
+                m = json.load(f)
+            # Derive tier from path
+            parts = pathlib.Path(qsop_rel).parts
+            tier_part = parts[2] if len(parts) >= 3 else "unknown"
+            m["tier"] = tier_part
+            m["qsop_path"] = qsop_rel
+            all_meta.append(m)
+    print(f"[rw-positive] wrote {len(rw_written)} QSOP files", file=sys.stderr)
 
     manifest_path = args.output_dir / "manifest.jsonl"
     with open(manifest_path, "w", encoding="utf-8") as f:
