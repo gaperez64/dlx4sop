@@ -1307,8 +1307,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    # v2 is the default; trace events are rankwidth.v2_leaf / rankwidth.v2_join_map / rankwidth.v2_join.
-    # Accept either v1 or v2 names so the test works with both --rankwidth-table v1 and v2.
+    # v2 is the only solve path; trace events are rankwidth.v2_leaf / rankwidth.v2_join_map / rankwidth.v2_join.
     if (
         traced.returncode != 0
         or ("rankwidth.leaf" not in traced.stderr and "rankwidth.v2_leaf" not in traced.stderr)

@@ -53,7 +53,7 @@ static void print_usage(FILE *file) {
         "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--rankwidth-table v1|v2|validate] "
+        "[--rankwidth-table v2|validate] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -768,17 +768,15 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "v1") == 0) {
-        rankwidth_table_v2 = false;
-        rankwidth_table_validate = false;
-      } else if (strcmp(value, "v2") == 0) {
+      if (strcmp(value, "v2") == 0) {
         rankwidth_table_v2 = true;
         rankwidth_table_validate = false;
       } else if (strcmp(value, "validate") == 0) {
         rankwidth_table_v2 = false;
         rankwidth_table_validate = true;
       } else {
-        fprintf(stderr, "error: unsupported rankwidth table version '%s'\n", value);
+        fprintf(stderr, "error: unsupported rankwidth table version '%s' (expected v2|validate)\n",
+                value);
         return 2;
       }
       rankwidth_table_set = true;
