@@ -27,6 +27,12 @@ typedef enum solve_trace_format {
   SOLVE_TRACE_CSV,
 } solve_trace_format_t;
 
+typedef enum rankwidth_memory_policy {
+  RW_MEMORY_POLICY_SKIP,
+  RW_MEMORY_POLICY_FALLBACK,
+  RW_MEMORY_POLICY_HARD_ERROR,
+} rankwidth_memory_policy_t;
+
 typedef struct csv_trace_writer {
   FILE *file;
   bool wrote_header;
@@ -52,6 +58,7 @@ static void print_usage(FILE *file) {
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
         "[--stats-jsonl PATH] [--branch-calibrate-backends] "
+        "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-policy skip|fallback|hard-error] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -471,6 +478,8 @@ int main(int argc, char **argv) {
   bool include_probability = false;
   const char *stats_jsonl_path = NULL;
   bool calibrate_backends = false;
+  uint64_t rw_memory_budget_bytes = 0; /* 0 = no limit */
+  rankwidth_memory_policy_t rw_memory_policy = RW_MEMORY_POLICY_SKIP;
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -535,6 +544,40 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--branch-calibrate-backends") == 0) {
       calibrate_backends = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-memory-budget-mib") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-budget-mib requires an integer value\n", stderr);
+        return 2;
+      }
+      errno = 0;
+      char *end = NULL;
+      unsigned long mib = strtoul(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-memory-budget-mib requires a non-negative integer\n", stderr);
+        return 2;
+      }
+      rw_memory_budget_bytes = (uint64_t)mib * 1024ULL * 1024ULL;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-memory-policy") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-policy requires skip|fallback|hard-error\n", stderr);
+        return 2;
+      }
+      const char *pol = argv[++i];
+      if (strcmp(pol, "skip") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_SKIP;
+      } else if (strcmp(pol, "fallback") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_FALLBACK;
+      } else if (strcmp(pol, "hard-error") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_HARD_ERROR;
+      } else {
+        fprintf(stderr, "error: unknown memory policy '%s' (expected skip|fallback|hard-error)\n",
+                pol);
+        return 2;
+      }
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -946,6 +989,53 @@ int main(int argc, char **argv) {
         return 1;
       }
     }
+    /* D1: memory budget gate — check forecast before allocating solve state. */
+    if (ok && rw_memory_budget_bytes > 0) {
+      uint64_t fe = 0;
+      uint64_t jp = 0;
+      qsop_error_t fe_err = {0};
+      if (qsop_rankwidth_decomposition_forecast(qsop, rankwidth_decomposition, &fe, &jp,
+                                                &fe_err)) {
+        const uint64_t forecast_bytes = fe * (uint64_t)qsop->r * sizeof(uint64_t);
+        if (forecast_bytes > rw_memory_budget_bytes) {
+          if (rw_memory_policy == RW_MEMORY_POLICY_HARD_ERROR) {
+            fprintf(stderr,
+                    "error: rankwidth memory forecast %" PRIu64 " MiB exceeds budget %" PRIu64
+                    " MiB\n",
+                    (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
+                    (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            qsop_free(qsop);
+            return 1;
+          } else if (rw_memory_policy == RW_MEMORY_POLICY_SKIP) {
+            if (format == SOLVE_FORMAT_STATS) {
+              fprintf(stdout, "backend: %s\n", backend_name(backend));
+              fprintf(stdout, "status: memory-skip\n");
+              fprintf(stdout, "rankwidth_memory_forecast_bytes: %" PRIu64 "\n", forecast_bytes);
+              fprintf(stdout, "rankwidth_memory_budget_bytes: %" PRIu64 "\n",
+                      rw_memory_budget_bytes);
+            } else {
+              fprintf(stderr,
+                      "rankwidth: memory-skip (forecast %" PRIu64 " MiB > budget %" PRIu64
+                      " MiB)\n",
+                      (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
+                      (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+            }
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            qsop_free(qsop);
+            return 0;
+          } else {
+            /* RW_MEMORY_POLICY_FALLBACK: fall through to treewidth below. */
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            rankwidth_decomposition = NULL;
+            ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order,
+                                                             solve_mode, &result, &solve_stats,
+                                                             trace_ptr, &error);
+            goto rankwidth_done;
+          }
+        }
+      }
+    }
     if (ok) {
       if (rankwidth_table_validate) {
         qsop_result_t *result_v1 = NULL;
@@ -1007,6 +1097,7 @@ int main(int argc, char **argv) {
                                                          trace_ptr, &error);
       }
     }
+rankwidth_done:;
   } else {
     ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,
                                                      &result, &solve_stats, trace_ptr, &error);

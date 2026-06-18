@@ -2121,6 +2121,65 @@ def run_branch_stats_sink(exe: pathlib.Path) -> None:
             sink.unlink()
 
 
+def run_rankwidth_memory_budget(exe: pathlib.Path) -> None:
+    """D1: --rankwidth-memory-budget-mib and --rankwidth-memory-policy option parsing."""
+    p5 = _path_qsop(5, 8)
+
+    # Large budget: solve proceeds normally.
+    ok = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "16",
+         "--rankwidth-memory-budget-mib", "1000", "--rankwidth-memory-policy", "skip",
+         "--format", "stats", "-"],
+        input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if ok.returncode != 0:
+        raise AssertionError(f"rankwidth with large budget failed\n{ok.stderr}")
+    if "backend: rankwidth" not in ok.stdout:
+        raise AssertionError(f"expected rankwidth stats output\n{ok.stdout}")
+
+    # Hard-error policy with large budget: solve still succeeds.
+    ok2 = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "16",
+         "--rankwidth-memory-budget-mib", "1000", "--rankwidth-memory-policy", "hard-error",
+         "--format", "stats", "-"],
+        input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if ok2.returncode != 0:
+        raise AssertionError(f"rankwidth hard-error with large budget failed\n{ok2.stderr}")
+
+    # Fallback policy with large budget: solve succeeds.
+    ok3 = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "16",
+         "--rankwidth-memory-budget-mib", "1000", "--rankwidth-memory-policy", "fallback",
+         "--format", "stats", "-"],
+        input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if ok3.returncode != 0:
+        raise AssertionError(f"rankwidth fallback with large budget failed\n{ok3.stderr}")
+
+    # Invalid policy value must be rejected (exit 2).
+    bad_pol = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "16",
+         "--rankwidth-memory-policy", "bad-value", "-"],
+        input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if bad_pol.returncode != 2:
+        raise AssertionError(
+            f"expected exit 2 for invalid --rankwidth-memory-policy, got {bad_pol.returncode}"
+        )
+
+    # Invalid budget value must be rejected (exit 2).
+    bad_bud = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "16",
+         "--rankwidth-memory-budget-mib", "notanumber", "-"],
+        input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if bad_bud.returncode != 2:
+        raise AssertionError(
+            f"expected exit 2 for invalid --rankwidth-memory-budget-mib, got {bad_bud.returncode}"
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -2148,6 +2207,7 @@ def main() -> int:
     run_branch_large_from_treewidth(exe)
     run_branch_large_fourier(exe)
     run_branch_stats_sink(exe)
+    run_rankwidth_memory_budget(exe)
     return 0
 
 
