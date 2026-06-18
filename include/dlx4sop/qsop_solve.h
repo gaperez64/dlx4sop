@@ -243,11 +243,11 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
                                              qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_support_width(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_widths(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_forecast(
