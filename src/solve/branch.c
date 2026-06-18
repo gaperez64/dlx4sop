@@ -178,6 +178,78 @@ typedef struct residual_cache {
   size_t bucket_count;
 } residual_cache_t;
 
+/* Small ring-buffer cache of treewidth elimination orders keyed on graph
+ * adjacency (nvars, nedges, edge endpoints), ignoring edge/unary coefficients.
+ * Lets sibling residuals (x=0 vs x=1 branches) reuse the same min-fill order
+ * since both have identical adjacency after the branched variable is removed. */
+#define BRANCH_ORDER_CACHE_CAP 16U
+
+typedef struct branch_order_cache_entry {
+  uint64_t fp;
+  uint32_t nvars;
+  uint32_t nedges;
+  uint32_t width;
+  uint32_t *order;
+} branch_order_cache_entry_t;
+
+typedef struct branch_order_cache {
+  branch_order_cache_entry_t slots[BRANCH_ORDER_CACHE_CAP];
+  uint32_t next;
+} branch_order_cache_t;
+
+static uint64_t branch_order_adj_fp(const qsop_instance_t *sub) {
+  uint64_t fp = UINT64_C(1469598103934665603);
+  fp ^= (uint64_t)sub->nvars;  fp *= UINT64_C(1099511628211);
+  fp ^= (uint64_t)sub->nedges; fp *= UINT64_C(1099511628211);
+  for (uint32_t e = 0; e < sub->nedges; e++) {
+    fp ^= (uint64_t)sub->edge_u[e]; fp *= UINT64_C(1099511628211);
+    fp ^= (uint64_t)sub->edge_v[e]; fp *= UINT64_C(1099511628211);
+  }
+  return fp;
+}
+
+static void branch_order_cache_free_entries(branch_order_cache_t *c) {
+  for (uint32_t i = 0; i < BRANCH_ORDER_CACHE_CAP; i++) {
+    free(c->slots[i].order);
+    c->slots[i].order = NULL;
+  }
+}
+
+/* Returns a malloc'd copy of a cached order; NULL if not found. */
+static uint32_t *branch_order_cache_lookup(branch_order_cache_t *c,
+                                            const qsop_instance_t *sub, uint64_t fp,
+                                            uint32_t *width_out) {
+  for (uint32_t i = 0; i < BRANCH_ORDER_CACHE_CAP; i++) {
+    const branch_order_cache_entry_t *e = &c->slots[i];
+    if (e->order != NULL && e->fp == fp && e->nvars == sub->nvars && e->nedges == sub->nedges) {
+      uint32_t *copy = malloc((size_t)sub->nvars * sizeof(*copy));
+      if (copy == NULL) {
+        return NULL;
+      }
+      memcpy(copy, e->order, (size_t)sub->nvars * sizeof(*copy));
+      *width_out = e->width;
+      return copy;
+    }
+  }
+  return NULL;
+}
+
+static void branch_order_cache_insert(branch_order_cache_t *c, const qsop_instance_t *sub,
+                                       uint64_t fp, const uint32_t *order, uint32_t width) {
+  const uint32_t slot = c->next % BRANCH_ORDER_CACHE_CAP;
+  free(c->slots[slot].order);
+  c->slots[slot].order = NULL;
+  uint32_t *copy = malloc((size_t)sub->nvars * sizeof(*copy));
+  if (copy == NULL) {
+    c->next++;
+    return;
+  }
+  memcpy(copy, order, (size_t)sub->nvars * sizeof(*copy));
+  c->slots[slot] = (branch_order_cache_entry_t){
+      .fp = fp, .nvars = sub->nvars, .nedges = sub->nedges, .width = width, .order = copy};
+  c->next++;
+}
+
 typedef struct branch_search_stats {
   uint64_t nodes;
   uint64_t leaves;
@@ -212,6 +284,7 @@ typedef struct branch_search_stats {
   uint64_t *work;
   uint64_t *tmp;
   residual_cache_t cache;
+  branch_order_cache_t order_cache;
   qsop_solve_trace_t *trace;
   qsop_backend_stats_sink_t *sink;
   qsop_branch_heuristic_t heuristic;
@@ -1317,9 +1390,9 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                           sub_stats.min_fill_width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
 
-  /* D2: precompute the elimination order once when from-treewidth rankwidth mode will need
-   * it and treewidth solving might also be attempted.  Both paths share this one allocation,
-   * eliminating one min-fill run when both are attempted on the same residual. */
+  /* D2+D3: precompute the elimination order once; share between rankwidth and treewidth paths.
+   * D3: check the adjacency-keyed order cache first — sibling residuals (x=0 vs x=1) have
+   * identical adjacency and can reuse the same min-fill order without recomputing it. */
   const bool rw_uses_from_treewidth =
       (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
        stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
@@ -1327,14 +1400,22 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   uint32_t *shared_order = NULL;
   uint32_t shared_order_width = 0;
   double shared_order_probe_ms = 0.0;
+  uint64_t shared_order_adj_fp = 0;
   if (rw_uses_from_treewidth && sub_stats.width_diagnostics_available &&
       sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     const uint64_t order_start_ns_pre = recording ? qsop_trace_now_ns() : 0;
     const uint64_t order_start_pre = qsop_trace_begin(stats->trace);
-    if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
-                                    &shared_order, &shared_order_width, error)) {
-      free_subinstance(&sub);
-      return false;
+    shared_order_adj_fp = branch_order_adj_fp(&sub);
+    shared_order = branch_order_cache_lookup(&stats->order_cache, &sub,
+                                             shared_order_adj_fp, &shared_order_width);
+    if (shared_order == NULL) {
+      if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                      &shared_order, &shared_order_width, error)) {
+        free_subinstance(&sub);
+        return false;
+      }
+      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp,
+                                shared_order, shared_order_width);
     }
     qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
                             shared_order_width, order_start_pre);
@@ -1428,18 +1509,23 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
-  /* Obtain the treewidth elimination order — reuse shared_order if precomputed,
-   * otherwise compute it now. */
+  /* Obtain the treewidth elimination order — reuse shared_order if precomputed (D2),
+   * else try the adjacency order cache (D3), else compute fresh. */
   uint32_t *order = shared_order;
   uint32_t order_width = shared_order_width;
   double order_probe_ms = shared_order_probe_ms;
   if (order == NULL) {
     const uint64_t order_start_ns = recording ? qsop_trace_now_ns() : 0;
     const uint64_t order_start = qsop_trace_begin(stats->trace);
-    if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
-                                    &order_width, error)) {
-      free_subinstance(&sub);
-      return false;
+    const uint64_t tw_adj_fp = branch_order_adj_fp(&sub);
+    order = branch_order_cache_lookup(&stats->order_cache, &sub, tw_adj_fp, &order_width);
+    if (order == NULL) {
+      if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
+                                      &order_width, error)) {
+        free_subinstance(&sub);
+        return false;
+      }
+      branch_order_cache_insert(&stats->order_cache, &sub, tw_adj_fp, order, order_width);
     }
     qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
                             order_width, order_start);
@@ -1555,6 +1641,7 @@ static void branch_search_free(branch_search_stats_t *search) {
   if (search == NULL) {
     return;
   }
+  branch_order_cache_free_entries(&search->order_cache);
   residual_cache_free(&search->cache);
   free(search->work);
   free(search->tmp);
