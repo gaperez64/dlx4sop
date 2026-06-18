@@ -581,6 +581,16 @@ if python3.found()
     depends: sop_solve,
   )
   test(
+    'branch regression guard smoke',
+    python3,
+    args: [
+      files('tests/test_branch_regression_guard.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 90,
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [
