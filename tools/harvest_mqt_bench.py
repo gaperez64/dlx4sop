@@ -193,8 +193,9 @@ def harvest(
                         break
                 # We don't know tier yet; check after import
                 try:
-                    level = BenchmarkLevel.Indep
-                    qc = get_benchmark(family, nqubits, level, opt_level)
+                    level = (BenchmarkLevel.Indep if hasattr(BenchmarkLevel, "Indep")
+                             else BenchmarkLevel.INDEP)
+                    qc = get_benchmark(family, level, nqubits, opt_level=opt_level)
                 except Exception as exc:
                     if verbose:
                         print(f"  skip {family}/{nqubits}/opt{opt_level}: {exc}", file=sys.stderr)

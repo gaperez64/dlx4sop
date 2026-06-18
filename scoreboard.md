@@ -84,13 +84,6 @@ Best configuration per tier at a glance. See [scoreboard-details.md](scoreboard-
 | 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 162 / 202 | 1760.96 s |
 | 257-512 sample | `sop2wmc amp-block + ganak` | 158 / 202 | 1955.80 s |
 
-## 257-512 Sample Stratification
-
-| Bucket | Rows | Solved | Timeouts | Max width | Max table |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Solved, width ≤ 19 | 162 | 162 | 0 | 19 | 8,388,608 |
-| Timeouts | 40 | 0 | 40 | 0 | 0 |
-
 ## Competitor Comparisons
 
 Best-performing native simulator per source and tier. See [scoreboard-details.md](scoreboard-details.md) for the full per-engine breakdown.
@@ -115,7 +108,7 @@ Best-performing native simulator per source and tier. See [scoreboard-details.md
 
 Best current internal configurations by tier: all tiers use `treewidth --treewidth-order min-fill-max-degree` as the direct DP baseline; `branch --branch-heuristic split` is the best widened-tier configuration when component splitting and treewidth handoff trigger (close to treewidth speed, wider coverage). Rankwidth wins on structured instances where its width is significantly smaller than treewidth width.
 
-The 257-512 stratified sample is not a full tier yet: 162 / 202 rows solve under the current timeout cap. Dense statevector native tools can win on low-qubit rows; QSOP remains strong on fixed-boundary rows with large imported variable counts where statevector simulation is infeasible.
+The 257-512 sample (162 / 202 rows solved) is exploratory: dense statevector native tools can win on low-qubit rows, but QSOP remains strong on fixed-boundary rows with large imported variable counts where statevector simulation is infeasible.
 
 ---
 

@@ -168,7 +168,42 @@ def _canonical_backend(rec: dict) -> str:
             "both": "branch:auto",
         }
         return mapping.get(rw_source, "branch:auto")
+    engine = rec.get("engine", "")
+    if engine and not backend:
+        return f"native:{engine}"
     return backend
+
+
+def _best_native_curves(
+    records: list[dict],
+    source: str,
+) -> dict[str, tuple[list[int], list[float]]]:
+    """Build a single 'best native' survival curve taking the fastest native engine per instance."""
+    # key: (case, boundary) → minimum elapsed_ns across all native engines
+    INF = 10**18
+    best_ns: dict[tuple, int] = {}
+    found_any = False
+    for r in records:
+        rec_source = r.get("provenance", {}).get("source", r.get("source", ""))
+        if rec_source != source:
+            continue
+        engine = r.get("engine", "")
+        if not engine or r.get("backend"):
+            continue
+        found_any = True
+        status = r.get("status", "")
+        ns = int(r.get("elapsed_ns") or INF) if status == "ok" else INF
+        key = (r.get("case", ""), r.get("boundary", ""))
+        if key not in best_ns or ns < best_ns[key]:
+            best_ns[key] = ns
+
+    if not found_any or not best_ns:
+        return {}
+
+    sorted_ns = sorted(best_ns.values())
+    total = len(sorted_ns)
+    fracs = [sum(1 for ns in sorted_ns if ns <= b) / total for b in NS_BUDGETS]
+    return {"best native": (list(NS_BUDGETS), fracs)}
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +227,9 @@ def _survival_curves(
             by_backend[b].append(r)
 
     curves: dict[str, tuple[list[int], list[float]]] = {}
+    if "best native" in backends:
+        curves.update(_best_native_curves(records, source))
+
     for backend, recs in by_backend.items():
         total = len(recs)
         if total == 0:
@@ -221,7 +259,7 @@ def plot_survival_svg(
 ) -> None:
     if backends is None:
         backends = ["treewidth", "branch:auto", "branch:no-rankwidth",
-                    "rankwidth:best", "rankwidth:from-treewidth"]
+                    "rankwidth:best", "rankwidth:from-treewidth", "best native"]
 
     curves = _survival_curves(records, source, backends)
     if not curves:
