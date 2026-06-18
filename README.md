@@ -220,3 +220,29 @@ emit artifacts in the format `tools/refresh_scoreboard.py` consumes — saves
 ~400 lines of duplicate render logic; or (b) keep `scripts/` as a
 zero-dependency local smoke path but rename and document clearly that `tools/`
 is authoritative.
+
+### 5. Incremental scoreboard refresh — rerun only the changed backend
+
+`run_corpus_benchmarks.py` always reruns everything. When only one backend or
+encoding changes, this wastes time on the unchanged jobs.
+
+The artifact layout already supports incremental updates: each job writes to
+its own per-(tier, backend) file, and `refresh_scoreboard.py` reads whatever
+is present in `--artifact-dir`. So replacing only one artifact file and
+re-rendering is already correct — what's missing is a convenient way to do it.
+
+**What to add:** two filter flags on `run_corpus_benchmarks.py`:
+
+- `--only-backend <name>` — restricts `SOLVER_JOBS` to entries whose
+  `--backend` arg matches (e.g. `rankwidth`, `treewidth`, `branch`).
+- `--only-encoding <name>` — restricts WMC jobs to the named encoding
+  (e.g. `amp-block`, `amplitude`).
+
+Either flag skips the unmatched jobs and still calls `refresh_scoreboard.py`
+at the end, so the scoreboard is updated from the mix of new and existing
+artifacts.
+
+Until these flags exist, the manual workaround is to call `bench_qasm_corpus.py`
+(or `bench_wmc_ganak.py`) directly with the changed backend, write the output
+to `--artifact-dir` with the correct filename stem, then call
+`tools/refresh_scoreboard.py --artifact-dir ... --allow-missing --output scoreboard.md`.
