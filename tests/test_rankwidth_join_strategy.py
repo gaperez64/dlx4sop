@@ -258,6 +258,29 @@ def run_tests(sop_solve):
         else:
             print(f"    OK: {f.name} fourier+streaming matches count-table")
 
+    # 9. D2.2: streaming join on sign-edge instance records streaming_join_events > 0.
+    print("  test: D2.2 streaming join on sign-edge records streaming_join_events > 0")
+    r = _run_rankwidth_stdin(sop_solve, _SIGN_EDGE_4CYCLE,
+                             ["--rankwidth-join-strategy", "streaming"],
+                             format_stats=True)
+    if r.returncode != 0:
+        print(f"    FAIL: sign-edge streaming failed: {r.stderr.decode()[:80]}")
+        all_passed = False
+    else:
+        text = r.stdout.decode(errors="replace")
+        stream_events = 0
+        mat_events = 0
+        for line in text.splitlines():
+            if line.startswith("rankwidth_streaming_join_events:"):
+                stream_events = int(line.split(":")[1].strip())
+            elif line.startswith("rankwidth_materialized_join_events:"):
+                mat_events = int(line.split(":")[1].strip())
+        if stream_events == 0:
+            print(f"    FAIL: streaming_join_events=0 on sign-edge (mat_events={mat_events})")
+            all_passed = False
+        else:
+            print(f"    OK: streaming_join_events={stream_events}, materialized_join_events={mat_events}")
+
     return all_passed
 
 

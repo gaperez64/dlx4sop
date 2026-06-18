@@ -490,7 +490,6 @@ int main(int argc, char **argv) {
   bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_v2 = true; /* v2 is the default performance path */
   bool rankwidth_table_validate = false;
   bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
@@ -826,10 +825,8 @@ int main(int argc, char **argv) {
       }
       const char *value = argv[++i];
       if (strcmp(value, "v2") == 0) {
-        rankwidth_table_v2 = true;
         rankwidth_table_validate = false;
       } else if (strcmp(value, "validate") == 0) {
-        rankwidth_table_v2 = false;
         rankwidth_table_validate = true;
       } else {
         fprintf(stderr, "error: unsupported rankwidth table version '%s' (expected v2|validate)\n",
@@ -1159,17 +1156,13 @@ int main(int argc, char **argv) {
           }
         }
       } else {
-        ok = rankwidth_table_v2
-                 ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                            rankwidth_mode, &result, &solve_stats,
-                                                            trace_ptr, &error)
-                 : qsop_solve_rankwidth_options_mode_trace_stats(
-                       qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
-                       &(qsop_rankwidth_solve_options_t){
-                           .join_strategy = rw_join_strategy,
-                           .materialize_join_max_pairs = rw_materialize_join_max_pairs,
-                       },
-                       &result, &solve_stats, trace_ptr, &error);
+        ok = qsop_solve_rankwidth_options_mode_trace_stats(
+            qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+            &(qsop_rankwidth_solve_options_t){
+                .join_strategy = rw_join_strategy,
+                .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+            },
+            &result, &solve_stats, trace_ptr, &error);
       }
     }
 rankwidth_done:;

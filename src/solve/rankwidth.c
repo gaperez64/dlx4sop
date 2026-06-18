@@ -6197,20 +6197,17 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   const rw_join_strategy_t js = (options != NULL)
       ? (rw_join_strategy_t)options->join_strategy : RW_JOIN_STRATEGY_AUTO;
   const uint64_t mp = (options != NULL) ? options->materialize_join_max_pairs : 0;
-  /* D2.3: Fourier and labelled paths do not support streaming join.
-   * Fall back to materialized to avoid silent huge materialization. */
-  const rw_join_strategy_t js_ct =
-      (js == RW_JOIN_STRATEGY_STREAMING) ? RW_JOIN_STRATEGY_MATERIALIZED : js;
 
   if (qsop_is_sign_edge_instance(qsop)) {
     uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
     if (adj == NULL) {
       return false;
     }
+    /* D2.3: Fourier path does not support streaming; count-table path does. */
     const bool ok =
         mode == QSOP_RANKWIDTH_SOLVE_FOURIER
             ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
-            : solve_rankwidth_count_table_v2(qsop, decomposition, adj, js_ct, mp, out, stats, trace, error);
+            : solve_rankwidth_count_table_v2(qsop, decomposition, adj, js, mp, out, stats, trace, error);
     free(adj);
     return ok;
   }
