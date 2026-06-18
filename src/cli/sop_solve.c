@@ -58,7 +58,8 @@ static void print_usage(FILE *file) {
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
         "[--stats-jsonl PATH] [--branch-calibrate-backends] "
-        "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-policy skip|fallback|hard-error] "
+        "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
+        "[--rankwidth-memory-policy skip|fallback|hard-error] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -559,6 +560,21 @@ int main(int argc, char **argv) {
         return 2;
       }
       rw_memory_budget_bytes = (uint64_t)mib * 1024ULL * 1024ULL;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-memory-budget-bytes") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-budget-bytes requires an integer value\n", stderr);
+        return 2;
+      }
+      errno = 0;
+      char *end = NULL;
+      unsigned long long b = strtoull(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-memory-budget-bytes requires a non-negative integer\n", stderr);
+        return 2;
+      }
+      rw_memory_budget_bytes = (uint64_t)b;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-memory-policy") == 0) {

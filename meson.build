@@ -591,6 +591,16 @@ if python3.found()
     timeout: 90,
   )
   test(
+    'rankwidth memory budget smoke',
+    python3,
+    args: [
+      files('tests/test_rankwidth_memory_budget.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [
