@@ -1,21 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300">
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="460" viewBox="0 0 720 460">
 <style>text{font-family:sans-serif;font-size:11px;}</style>
-<rect x="100.0" y="40.0" width="460.0" height="220.0" fill="#f8f8f8" opacity="1.00"/>
+<rect x="100.0" y="40.0" width="460.0" height="380.0" fill="#f8f8f8" opacity="1.00"/>
 <text x="360.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Solver time by tier (total, log scale)</text>
-<text x="95.0" y="150.0" text-anchor="end" fill="#333" font-size="10"></text>
+<text x="95.0" y="78.0" text-anchor="end" fill="#333" font-size="10">0-32</text>
 <line x1="100.0" y1="40.0" x2="560.0" y2="40.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="42.0" width="460.0" height="34.7" fill="#1f77b4" opacity="0.80"/>
-<text x="563.0" y="75.7" text-anchor="start" fill="#333" font-size="9">578262ms</text>
-<rect x="100.0" y="78.7" width="407.6" height="34.7" fill="#ff7f0e" opacity="0.80"/>
-<text x="510.6" y="112.3" text-anchor="start" fill="#333" font-size="9">26441ms</text>
+<rect x="100.0" y="42.0" width="296.1" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="399.1" y="58.0" text-anchor="start" fill="#333" font-size="9">131ms</text>
+<rect x="100.0" y="61.0" width="300.2" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="403.2" y="77.0" text-anchor="start" fill="#333" font-size="9">171ms</text>
+<rect x="100.0" y="80.0" width="323.9" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="426.9" y="96.0" text-anchor="start" fill="#333" font-size="9">760ms</text>
+<text x="95.0" y="154.0" text-anchor="end" fill="#333" font-size="10">33-64</text>
+<line x1="100.0" y1="116.0" x2="560.0" y2="116.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="118.0" width="284.5" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="387.5" y="134.0" text-anchor="start" fill="#333" font-size="9">63ms</text>
+<rect x="100.0" y="137.0" width="293.9" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="396.9" y="153.0" text-anchor="start" fill="#333" font-size="9">114ms</text>
+<rect x="100.0" y="156.0" width="312.0" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="415.0" y="172.0" text-anchor="start" fill="#333" font-size="9">358ms</text>
+<text x="95.0" y="230.0" text-anchor="end" fill="#333" font-size="10">65-128</text>
+<line x1="100.0" y1="192.0" x2="560.0" y2="192.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="194.0" width="332.6" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="435.6" y="210.0" text-anchor="start" fill="#333" font-size="9">1321ms</text>
+<rect x="100.0" y="213.0" width="339.8" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="442.8" y="229.0" text-anchor="start" fill="#333" font-size="9">2072ms</text>
+<rect x="100.0" y="232.0" width="460.0" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="563.0" y="248.0" text-anchor="start" fill="#333" font-size="9">4100447ms</text>
+<text x="95.0" y="306.0" text-anchor="end" fill="#333" font-size="10">129-256</text>
+<line x1="100.0" y1="268.0" x2="560.0" y2="268.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="270.0" width="374.3" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="477.3" y="286.0" text-anchor="start" fill="#333" font-size="9">18367ms</text>
+<rect x="100.0" y="289.0" width="378.6" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="481.6" y="305.0" text-anchor="start" fill="#333" font-size="9">24083ms</text>
+<text x="95.0" y="382.0" text-anchor="end" fill="#333" font-size="10">257-512 sample</text>
+<line x1="100.0" y1="344.0" x2="560.0" y2="344.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="346.0" width="446.6" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="549.6" y="362.0" text-anchor="start" fill="#333" font-size="9">1760959ms</text>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
 <rect x="570.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
 <text x="585.0" y="66.0" text-anchor="start" fill="#333" font-size="10">branch:auto</text>
-<rect x="570.0" y="73.0" width="12.0" height="9.0" fill="#2ca02c" opacity="1.00"/>
-<text x="585.0" y="82.0" text-anchor="start" fill="#333" font-size="10">branch:no-rankwidth</text>
-<rect x="570.0" y="89.0" width="12.0" height="9.0" fill="#9467bd" opacity="1.00"/>
-<text x="585.0" y="98.0" text-anchor="start" fill="#333" font-size="10">rankwidth:from-treewidth</text>
-<rect x="570.0" y="105.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>
-<text x="585.0" y="114.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best</text>
+<rect x="570.0" y="73.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>
+<text x="585.0" y="82.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best</text>
 </svg>

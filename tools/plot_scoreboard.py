@@ -176,6 +176,49 @@ def _canonical_backend(rec: dict) -> str:
     return backend
 
 
+def _records_from_summary(summary: list[dict]) -> list[dict]:
+    """Synthesize flat records from scoreboard.json solver_summary for tier-based plots.
+
+    Only used when no raw JSONL artifact records are available. Each summary entry
+    represents one solver configuration and tier; we emit one synthetic record so
+    tier aggregation in plot functions still works.
+    """
+    records = []
+    for entry in summary:
+        backend_raw = entry.get("backend", "")
+        config = entry.get("config", "")
+        tier = entry.get("tier", "")
+        elapsed_ns = int(entry.get("elapsed_ns", 0))
+        stats = dict(entry.get("stats", {}))
+
+        if backend_raw == "branch":
+            rec_backend = "branch"
+            rec_backend_config = {"branch_rw_source": "auto"}
+        elif backend_raw == "rankwidth":
+            rec_backend = "rankwidth"
+            rec_backend_config = {}
+        else:
+            rec_backend = backend_raw
+            rec_backend_config = {}
+
+        # WMC plots look for ganak_elapsed_ns / export_elapsed_ns in stats;
+        # the summary uses wmc_* prefixed names — alias them.
+        if "wmc_ganak_elapsed_ns" in stats:
+            stats["ganak_elapsed_ns"] = stats["wmc_ganak_elapsed_ns"]
+        if "wmc_export_elapsed_ns" in stats:
+            stats["export_elapsed_ns"] = stats["wmc_export_elapsed_ns"]
+
+        records.append({
+            "status": "ok",
+            "tier": tier,
+            "backend": rec_backend,
+            "backend_config": rec_backend_config,
+            "solve_elapsed_ns": elapsed_ns,
+            "stats": stats,
+        })
+    return records
+
+
 def _best_native_curves(
     records: list[dict],
     source: str,
@@ -330,8 +373,7 @@ def plot_solver_time_by_tier_svg(
     backends: list[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["treewidth", "branch:auto", "branch:no-rankwidth",
-                    "rankwidth:from-treewidth", "rankwidth:best"]
+        backends = ["treewidth", "branch:auto", "rankwidth:best"]
 
     # Aggregate: {tier: {backend: total_ns}}
     import re
@@ -428,7 +470,7 @@ def plot_speedup_vs_treewidth_svg(
     backends: list[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["branch:auto", "branch:no-rankwidth", "rankwidth:best"]
+        backends = ["branch:auto", "rankwidth:best"]
 
     import re
     # Aggregate per tier
@@ -622,8 +664,10 @@ def plot_wmc_time_svg(
             continue
         tier = r.get("tier", "")
         stats = r.get("stats", {})
-        tier_data[tier]["ganak_ns"] += int(stats.get("ganak_elapsed_ns", 0))
-        tier_data[tier]["export_ns"] += int(stats.get("export_elapsed_ns", 0))
+        tier_data[tier]["ganak_ns"] += int(
+            stats.get("ganak_elapsed_ns", stats.get("wmc_ganak_elapsed_ns", 0)))
+        tier_data[tier]["export_ns"] += int(
+            stats.get("export_elapsed_ns", stats.get("wmc_export_elapsed_ns", 0)))
 
     def _tier_key(t: str) -> int:
         m = re.match(r"(\d+)", t)
@@ -696,16 +740,23 @@ def main(argv: list[str] | None = None) -> int:
                         help="Sources to plot survival curves for (default: all known)")
     args = parser.parse_args(argv)
 
-    # Load records
+    # Load records: prefer raw JSONL (richest), then summary-derived (tier plots only)
     records: list[dict] = []
+    summary_records: list[dict] = []
+    scoreboard_data: dict = {}
     if args.scoreboard_json.exists():
-        data = json.loads(args.scoreboard_json.read_text(encoding="utf-8"))
-        records = data.get("records", [])
+        scoreboard_data = json.loads(args.scoreboard_json.read_text(encoding="utf-8"))
+        records = scoreboard_data.get("records", [])
+        summary = scoreboard_data.get("solver_summary", [])
+        if summary:
+            summary_records = _records_from_summary(summary)
 
     if not records and args.artifact_dir.exists():
         records = load_records_from_artifacts(args.artifact_dir)
 
-    if not records:
+    # survival plots need individual records (raw JSONL); other plots work from summary
+    tier_records = records if records else summary_records
+    if not tier_records:
         print("warning: no records found; plots will be empty", file=sys.stderr)
 
     sources = args.sources or list(SOURCE_SLUGS.keys())
@@ -719,17 +770,17 @@ def main(argv: list[str] | None = None) -> int:
         slug = SOURCE_SLUGS.get(source, source.lower().replace(" ", "-"))
         plot_survival_svg(records, source, out / f"survival-{slug}.svg")
 
-    # Solver time by tier
-    plot_solver_time_by_tier_svg(records, out / "solver-time-by-tier.svg")
+    # Solver time by tier — uses summary-derived records if raw JSONL unavailable
+    plot_solver_time_by_tier_svg(tier_records, out / "solver-time-by-tier.svg")
 
     # Speedup vs treewidth
-    plot_speedup_vs_treewidth_svg(records, out / "solver-speedup-vs-treewidth.svg")
+    plot_speedup_vs_treewidth_svg(tier_records, out / "solver-speedup-vs-treewidth.svg")
 
     # Branch dispatch
-    plot_branch_dispatch_svg(records, out / "branch-dispatch-by-tier.svg")
+    plot_branch_dispatch_svg(tier_records, out / "branch-dispatch-by-tier.svg")
 
     # WMC time breakdown
-    plot_wmc_time_svg(records, out / "wmc-time-breakdown.svg")
+    plot_wmc_time_svg(tier_records, out / "wmc-time-breakdown.svg")
 
     print(f"Plots written to {out}/", file=sys.stderr)
     return 0

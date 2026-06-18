@@ -83,7 +83,13 @@ def _load_mqt(source: pathlib.Path | None) -> Any:
 
 
 def _qasm_bytes(qc: Any, mod: dict) -> bytes:
-    return mod["qasm2_dumps"](qc).encode()
+    raw = mod["qasm2_dumps"](qc)
+    # qasm2sop rejects classical OpenQASM constructs (creg/measure); strip them.
+    stripped = "\n".join(
+        line for line in raw.splitlines()
+        if not line.strip().startswith("creg") and not line.strip().startswith("measure")
+    )
+    return stripped.encode()
 
 
 def _sha256(data: bytes) -> str:
