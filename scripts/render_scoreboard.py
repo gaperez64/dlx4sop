@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Render compact scoreboard markdown from local and external bench JSONL.
 
+DEPRECATED: use tools/bench.py render instead.
+    python3 tools/bench.py render --artifact-dir artifacts --view local --output scoreboard.md
+
+This script remains for backwards compatibility but tools/bench.py is authoritative.
+
 Reads JSONL records produced by bench_sop.py (--local) and optionally
 refresh_scoreboard.py (--external), and writes a scoreboard.md with:
   - compact bar/bucket local backend summary per tier

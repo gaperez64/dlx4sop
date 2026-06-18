@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Refresh the local scoreboard by running bench_sop.py and optional external tools.
 
+DEPRECATED: use tools/bench.py instead.
+    python3 tools/bench.py local --out artifacts/local.jsonl
+    python3 tools/bench.py render --artifact-dir artifacts --view local --output scoreboard.md
+    python3 tools/bench.py full --ganak /tmp/ganak/ganak --output scoreboard.md
+
+This script remains for backwards compatibility but tools/bench.py is authoritative.
+
 For local-only refresh (no external tools required):
     python3 scripts/refresh_scoreboard.py \\
         --out results/local_backends.jsonl
@@ -171,7 +178,15 @@ def main() -> int:
             print("error: ganak not found in PATH; skipping Ganak refresh", file=sys.stderr)
 
     if args.refresh_native:
-        print("[native] native-solver refresh not yet implemented", file=sys.stderr)
+        print(
+            "[native] The local QSOP corpus has no QASM manifest; "
+            "native-simulator benchmarks require QASM manifests.\n"
+            "  For a full refresh including native simulators, use:\n"
+            "    python3 tools/bench.py full --ganak <path> --manifests benchmarks/manifests\n"
+            "  To run native only from an existing manifest:\n"
+            "    python3 tools/bench.py native --manifest benchmarks/manifests/<manifest>.json",
+            file=sys.stderr,
+        )
 
     return 0
 

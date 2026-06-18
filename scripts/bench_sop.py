@@ -41,6 +41,7 @@ BACKEND_MAX_VARS = {
 # Extra CLI args required by some backends.
 BACKEND_EXTRA_ARGS = {
     "rankwidth": ["--max-vars", "256"],
+    "branch":    ["--max-vars", "64"],
 }
 
 
@@ -79,9 +80,12 @@ def bench_instance(sop_solve: pathlib.Path, qsop: pathlib.Path, meta: dict,
     nedges = meta.get("nedges", 0)
     r = meta.get("r", 8)
     name = meta.get("name", qsop.stem)
+    skip_set = set(meta.get("skip_backends", []))
     records = []
 
     for backend in backends:
+        if backend in skip_set:
+            continue
         max_vars = BACKEND_MAX_VARS.get(backend, 64)
         if nvars > max_vars:
             continue
@@ -97,9 +101,10 @@ def bench_instance(sop_solve: pathlib.Path, qsop: pathlib.Path, meta: dict,
         records.append(record)
 
     # Branch with from-treewidth rw_source.
-    if "branch" in backends and nvars <= BACKEND_MAX_VARS["branch"]:
+    if "branch" in backends and "branch" not in skip_set and nvars <= BACKEND_MAX_VARS["branch"]:
         result = run_backend(sop_solve, qsop, "branch",
-                             ["--branch-rw-source", "from-treewidth"], timeout)
+                             ["--branch-rw-source", "from-treewidth", "--max-vars", "64"],
+                             timeout)
         record = {
             "name": name, "tier": tier_name, "nvars": nvars, "nedges": nedges,
             "r": r, "backend": "branch:from-treewidth",
