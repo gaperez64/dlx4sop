@@ -168,6 +168,8 @@ def _canonical_backend(rec: dict) -> str:
             "both": "branch:auto",
         }
         return mapping.get(rw_source, "branch:auto")
+    if backend == "rankwidth":
+        return "rankwidth:best"
     engine = rec.get("engine", "")
     if engine and not backend:
         return f"native:{engine}"
@@ -258,8 +260,7 @@ def plot_survival_svg(
     backends: list[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["treewidth", "branch:auto", "branch:no-rankwidth",
-                    "rankwidth:best", "rankwidth:from-treewidth", "best native"]
+        backends = ["treewidth", "branch:auto", "rankwidth:best", "best native"]
 
     curves = _survival_curves(records, source, backends)
     if not curves:
