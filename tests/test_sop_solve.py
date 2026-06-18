@@ -1876,7 +1876,6 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if not expected_phases.issubset(phases):
         raise AssertionError(f"treewidth trace missing phases {expected_phases - phases}\n{traced.stderr}")
 
-
 def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
     expected_stats = source_root / "tests" / "golden" / "solve_branch.stats"
@@ -1944,6 +1943,184 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         )
 
 
+def _path_qsop(nvars: int, r: int) -> str:
+    edges = "\n".join(f"q {i} {i + 1} 1" for i in range(nvars - 1))
+    return f"p qsop {r} {nvars} {nvars - 1}\nn 0\ncst 0\n{edges}\n"
+
+
+def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
+    # P_20: nvars=20 >= BRANCH_TREEWIDTH_DELEGATE_MIN_VARS=16 → enters branch_try_dp_delegate.
+    # from-treewidth source sets rw_uses_from_treewidth=true → order cache MISS path
+    # (lines 1416-1420, 1448-1453, 1460-1480 in branch.c).
+    p20 = _path_qsop(20, 8)
+    native = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "32", "-"],
+        input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    ft = subprocess.run(
+        [str(exe), "--backend", "branch", "--branch-rw-source", "from-treewidth",
+         "--max-vars", "32", "-"],
+        input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if native.returncode != 0 or ft.returncode != 0 or ft.stdout != native.stdout:
+        raise AssertionError(
+            f"branch from-treewidth P_20 mismatch\nnative: {native.stdout}{native.stderr}\n"
+            f"from-treewidth: {ft.stdout}{ft.stderr}"
+        )
+
+    # Asymmetric 2×P_20: component A has a unary term (u 0 1), component B is a plain P_20.
+    # The two components share the same adjacency fingerprint (both re-index to edges 0-1..18-19)
+    # but have different residual-cache keys (different unary[0]).  Component A goes through
+    # branch_try_dp_delegate, misses the order cache, and inserts its order.  Component B also
+    # misses the residual cache (different unary) → hits branch_try_dp_delegate → order cache
+    # HIT → covers branch_order_cache_lookup success body (lines 225-231) and the cache-hit
+    # branch of branch_try_dp_delegate (lines 1456-1457).
+    # With --stats-jsonl the treewidth-delegation recording path fires for each component
+    # (lines 1672-1678 in branch.c).
+    asym_two_paths = (
+        f"p qsop 8 40 38\nn 0\ncst 0\nu 0 1\n"
+        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        + "\n"
+        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        sink = pathlib.Path(td) / "asym_sink.jsonl"
+        asym_ft = subprocess.run(
+            [str(exe), "--backend", "branch", "--branch-rw-source", "from-treewidth",
+             "--max-vars", "64", "--stats-jsonl", str(sink), "-"],
+            input=asym_two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+        asym_ref = subprocess.run(
+            [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+            input=asym_two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+    if asym_ft.returncode != 0 or asym_ref.returncode != 0 or asym_ft.stdout != asym_ref.stdout:
+        raise AssertionError(
+            f"branch from-treewidth asymmetric 2×P_20 mismatch\n"
+            f"from-treewidth: {asym_ft.stdout}{asym_ft.stderr}\n"
+            f"ref: {asym_ref.stdout}{asym_ref.stderr}"
+        )
+
+    # K_16 complete graph (r=2, all edges weight 1 = r/2 → sign mode, labelled_width=1).
+    # min_fill_width=15 > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH=14 AND rw_uses_from_treewidth=true
+    # → use_stats_order_for_rankwidth=true → covers lines 1460-1463 (wide path in branch_try_dp_delegate).
+    k16_edges = "\n".join(
+        f"q {u} {v} 1" for u in range(16) for v in range(u + 1, 16)
+    )
+    k16 = f"p qsop 2 16 120\nn 0\ncst 0\n{k16_edges}\n"
+    k16_ft = subprocess.run(
+        [str(exe), "--backend", "branch", "--branch-rw-source", "from-treewidth",
+         "--max-vars", "32", "-"],
+        input=k16, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    k16_ref = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "32", "-"],
+        input=k16, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if k16_ft.returncode != 0 or k16_ref.returncode != 0 or k16_ft.stdout != k16_ref.stdout:
+        raise AssertionError(
+            f"branch from-treewidth K_16 mismatch\n"
+            f"from-treewidth: {k16_ft.stdout}{k16_ft.stderr}\n"
+            f"ref: {k16_ref.stdout}{k16_ref.stderr}"
+        )
+
+    # 2×P_20 symmetric (both components identical): exercise the "both" rw_source code path.
+    two_paths = (
+        f"p qsop 8 40 38\nn 0\ncst 0\n"
+        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        + "\n"
+        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n"
+    )
+    for rw_source in ("from-treewidth", "both"):
+        ft2 = subprocess.run(
+            [str(exe), "--backend", "branch", "--branch-rw-source", rw_source,
+             "--max-vars", "64", "-"],
+            input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        ref2 = subprocess.run(
+            [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+            input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if ft2.returncode != 0 or ref2.returncode != 0 or ft2.stdout != ref2.stdout:
+            raise AssertionError(
+                f"branch {rw_source} 2×P_20 mismatch\n{ft2.stdout}{ft2.stderr}\n"
+                f"ref: {ref2.stdout}{ref2.stderr}"
+            )
+
+
+def run_branch_large_fourier(exe: pathlib.Path) -> None:
+    # P_20 with --solve-mode fourier triggers use_fourier=true inside branch_try_dp_delegate
+    # when treewidth delegation fires (min_fill=2 <= 14), covering line 1618 in branch.c.
+    p20 = _path_qsop(20, 8)
+    fourier = subprocess.run(
+        [str(exe), "--backend", "branch", "--solve-mode", "fourier", "--max-vars", "32", "-"],
+        input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    ct = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "32", "-"],
+        input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if fourier.returncode != 0 or ct.returncode != 0 or fourier.stdout != ct.stdout:
+        raise AssertionError(
+            f"branch Fourier P_20 mismatch\nfourier: {fourier.stdout}{fourier.stderr}\n"
+            f"count-table: {ct.stdout}{ct.stderr}"
+        )
+
+    # 2×P_20 disconnected with Fourier: branch_solve_residual_split_components runs with
+    # use_fourier=true, covering the NTT prime/root setup and per-component convolution
+    # (lines 1853-1875, 1883-1890, 1920-1932 in branch.c).
+    two_paths = (
+        f"p qsop 8 40 38\nn 0\ncst 0\n"
+        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        + "\n"
+        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n"
+    )
+    fourier2 = subprocess.run(
+        [str(exe), "--backend", "branch", "--solve-mode", "fourier", "--max-vars", "64", "-"],
+        input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    ct2 = subprocess.run(
+        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if fourier2.returncode != 0 or ct2.returncode != 0 or fourier2.stdout != ct2.stdout:
+        raise AssertionError(
+            f"branch Fourier 2×P_20 mismatch\nfourier: {fourier2.stdout}{fourier2.stderr}\n"
+            f"count-table: {ct2.stdout}{ct2.stderr}"
+        )
+
+
+def run_branch_stats_sink(exe: pathlib.Path) -> None:
+    # K_{20,20}: rankwidth wins → recording after rankwidth delegation (lines 1537-1543).
+    knn_edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
+    knn = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{knn_edges}\n"
+    # P_20: treewidth wins → recording after treewidth delegation (lines 1672-1678).
+    p20 = _path_qsop(20, 8)
+
+    with tempfile.TemporaryDirectory() as td:
+        sink = pathlib.Path(td) / "sink.jsonl"
+        for label, qsop_text, max_vars in [("K_{20,20}", knn, "40"), ("P_20", p20, "32")]:
+            result = subprocess.run(
+                [str(exe), "--backend", "branch", "--max-vars", max_vars,
+                 "--stats-jsonl", str(sink), "-"],
+                input=qsop_text, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            if result.returncode != 0:
+                raise AssertionError(
+                    f"branch stats-sink {label} failed\n{result.stderr}"
+                )
+            if not sink.exists() or sink.stat().st_size == 0:
+                raise AssertionError(
+                    f"branch stats-sink {label}: expected JSONL output in {sink}"
+                )
+            sink.unlink()
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -1968,6 +2145,9 @@ def main() -> int:
     run_branch_heuristics(exe, source_root)
     run_treewidth_backend(exe, source_root)
     run_trace_csv(exe, source_root)
+    run_branch_large_from_treewidth(exe)
+    run_branch_large_fourier(exe)
+    run_branch_stats_sink(exe)
     return 0
 
 

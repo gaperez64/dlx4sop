@@ -1201,7 +1201,8 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   /* Select decomposition generator based on rw_source policy. */
   qsop_rankwidth_generator_t primary_gen =
       (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
-       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO)
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH)
           ? QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH
           : QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT;
 
