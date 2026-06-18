@@ -1,22 +1,27 @@
 # Legacy benchmark scripts
 
-The scripts in `tools/` that predate the local SOP corpus workflow are
-considered legacy. They depend on external generators (MQT Bench, FeynmanDD,
-PyZX, Qiskit) and native simulators (Stim, etc.) and are not required for
-routine local backend tuning.
+The scripts in this subdirectory (`scripts/legacy/`) are superseded by the
+unified `tools/bench.py` pipeline and are kept only for historical reference.
 
-## Replacements
+## Current benchmark entry points
 
-| Old script (tools/) | Replacement (scripts/) |
+| Purpose | Script |
 |---|---|
-| `bench_qasm_corpus.py` | `bench_sop.py` + local SOP corpus |
-| `run_corpus_benchmarks.py` | `bench_sop.py` |
-| `refresh_scoreboard.py` | `refresh_scoreboard.py` |
-| `render_scoreboard.py` | `render_scoreboard.py` |
-| `build_corpus.py` | `build_sop_corpus.py` |
-| `bench_wmc_ganak.py` | `refresh_scoreboard.py --refresh-ganak` |
-| `compare_rankwidth_backends.py` | `bench_sop.py --backend branch --backend branch:from-treewidth` |
+| Local corpus smoke test (no external deps) | `scripts/bench_sop.py` |
+| Full scoreboard refresh (Ganak + native) | `tools/bench.py full` |
+| Render scoreboard from JSONL artifacts | `tools/bench.py render` |
 
-The old scripts remain in `tools/` for external scoreboard refresh workflows
-that require third-party generators. They are not maintained as part of the
-local tuning workflow.
+## Two-track design
+
+`scripts/` contains a **lightweight local path** that works without external
+tools, manifests, or Ganak. It operates on the 12-instance synthetic corpus
+in `benchmarks/corpus/sop/` and produces a simple local report. It is useful
+for fast iteration during backend tuning.
+
+`tools/bench.py` is the **authoritative full pipeline**: reads artifact JSONL
+from all tiers, all backends, all WMC encodings, and native simulators, and
+renders the complete multi-section scoreboard. Use this for public scoreboard
+updates.
+
+The two tracks produce different output formats and cover different corpus
+scopes — they do not conflict but also do not share data files.

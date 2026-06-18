@@ -132,7 +132,7 @@ for backend in backends:
 
 ---
 
-## 4. Scoreboard scripts duplication — `scripts/` stack superseded by `tools/`
+## 4. ✅ Scoreboard scripts duplication — `scripts/` stack superseded by `tools/`
 
 **Files:** `scripts/refresh_scoreboard.py` (180 lines),
 `scripts/render_scoreboard.py` (232 lines) vs `tools/refresh_scoreboard.py`
