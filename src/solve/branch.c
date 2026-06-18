@@ -297,11 +297,20 @@ typedef struct branch_search_stats {
   uint32_t rankwidth_labelled_width;
 } branch_search_stats_t;
 
-#define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 32U
+#define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
+/* When prefix_cut_rank is at most this threshold, bypass the blanket
+ * "treewidth preferred" early veto and let the full forecast comparison decide.
+ * A very small cut rank (e.g. 1 for uniform complete-bipartite) is a strong
+ * signal that rankwidth will beat treewidth regardless of treewidth width. */
+#define BRANCH_RANKWIDTH_LOW_RANK_BYPASS 3U
+/* Minimum treewidth width at which the root fast path still considers bypassing
+ * to rankwidth when prefix_cut_rank is small.  Below this the treewidth DP is
+ * cheap enough that no bypass is warranted (e.g. path/star graphs with tw=1). */
+#define BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH 5U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 
 static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
@@ -1158,7 +1167,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     branch_trace_event(stats, "branch.treewidth_table_forecast", treewidth_table);
     branch_trace_event(stats, "branch.treewidth_join_pair_forecast", treewidth_join_pairs);
   }
-  if (treewidth_available &&
+  /* Early veto: if treewidth is narrow (≤ max+margin), prefer treewidth.
+   * Exception: bypass when prefix_cut_rank is very small — a strong signal
+   * that rankwidth will compress the problem far more than treewidth can. */
+  const bool low_rank_bypass =
+      treewidth_available && prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS;
+  if (!low_rank_bypass && treewidth_available &&
       treewidth_width <=
           BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN) {
     note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_preferred", treewidth_width);
@@ -2271,6 +2285,20 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   }
   if (components != 1U) {
     return true;
+  }
+
+  /* D5: when prefix_cut_rank is very small but treewidth is non-trivial, rankwidth
+   * will win massively (e.g. K_{a,b} uniform: tw = a, cut rank = 1).  Bypass the
+   * fast path so the main branch recursion can evaluate rankwidth instead.
+   * Gate on min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH to avoid
+   * bypassing on genuinely cheap graphs (paths/stars with tw = 1-2). */
+  qsop_stats_t root_stats = {0};
+  qsop_error_t stats_err = {0};
+  if (qsop_compute_stats(qsop, &root_stats, &stats_err) &&
+      root_stats.width_diagnostics_available &&
+      root_stats.prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
+      root_stats.min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH) {
+    return true;  /* not handled: let main recursion try rankwidth */
   }
 
   uint32_t *order = NULL;
