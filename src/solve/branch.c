@@ -1051,15 +1051,25 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
    skipped to bound calibration cost even when policy vetoqs are bypassed. */
 #define BRANCH_CALIBRATION_MAX_WIDTH 20U
 
+/* precomputed_order: if non-NULL, used instead of running min-fill inside the from-treewidth
+ * generator (D2 optimization: share one min-fill run with the treewidth solver path). */
 static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
                                           uint32_t treewidth_width,
                                           uint32_t prefix_cut_rank,
                                           bool treewidth_available,
                                           uint32_t constant_shift,
+                                          const uint32_t *precomputed_order,
                                           branch_search_stats_t *stats,
                                           branch_rw_decision_data_t *rw_data,
                                           bool *out_delegated, qsop_error_t *error) {
   *out_delegated = false;
+  /* NONE policy: skip rankwidth entirely without any attempt. */
+  if (stats->rw_source == QSOP_BRANCH_RW_SOURCE_NONE) {
+    if (rw_data != NULL) {
+      *rw_data = (branch_rw_decision_data_t){.attempted = false};
+    }
+    return true;
+  }
   if (rw_data != NULL) {
     *rw_data = (branch_rw_decision_data_t){.attempted = true};
   }
@@ -1111,7 +1121,14 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   qsop_rankwidth_decomposition_t *decomposition = NULL;
   const uint64_t generate_start_ns = qsop_trace_now_ns();
   const uint64_t generate_start = qsop_trace_begin(stats->trace);
-  if (!qsop_rankwidth_decomposition_generate(sub, primary_gen, &decomposition, error)) {
+  const bool use_precomputed =
+      precomputed_order != NULL &&
+      primary_gen == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
+  const bool gen_ok =
+      use_precomputed
+          ? qsop_rankwidth_decomposition_from_order(sub, precomputed_order, &decomposition, error)
+          : qsop_rankwidth_decomposition_generate(sub, primary_gen, &decomposition, error);
+  if (!gen_ok) {
     return false;
   }
 
@@ -1300,14 +1317,40 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                           sub_stats.min_fill_width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
 
+  /* D2: precompute the elimination order once when from-treewidth rankwidth mode will need
+   * it and treewidth solving might also be attempted.  Both paths share this one allocation,
+   * eliminating one min-fill run when both are attempted on the same residual. */
+  const bool rw_uses_from_treewidth =
+      (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH);
+  uint32_t *shared_order = NULL;
+  uint32_t shared_order_width = 0;
+  double shared_order_probe_ms = 0.0;
+  if (rw_uses_from_treewidth && sub_stats.width_diagnostics_available &&
+      sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    const uint64_t order_start_ns_pre = recording ? qsop_trace_now_ns() : 0;
+    const uint64_t order_start_pre = qsop_trace_begin(stats->trace);
+    if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                    &shared_order, &shared_order_width, error)) {
+      free_subinstance(&sub);
+      return false;
+    }
+    qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
+                            shared_order_width, order_start_pre);
+    shared_order_probe_ms =
+        recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(order_start_ns_pre)) : 0.0;
+  }
+
   bool delegated = false;
   branch_rw_decision_data_t rw_data = {0};
   branch_rw_decision_data_t *rw_ptr = recording ? &rw_data : NULL;
   if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
                                      sub_stats.prefix_cut_rank,
                                      sub_stats.width_diagnostics_available,
-                                     qsop_residual_constant(residual), stats, rw_ptr,
-                                     &delegated, error)) {
+                                     qsop_residual_constant(residual), shared_order, stats,
+                                     rw_ptr, &delegated, error)) {
+    free(shared_order);
     free_subinstance(&sub);
     return false;
   }
@@ -1315,18 +1358,27 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     /* Calibration: also run treewidth for timing when rankwidth won. */
     double tw_cal_ms = 0.0;
     bool tw_cal_set = false;
-    uint32_t tw_cal_width = 0;
+    uint32_t tw_cal_width = shared_order_width;
     const bool rw_won_fourier =
         stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
     if (!rw_won_fourier && calibrate && sub_stats.width_diagnostics_available &&
         sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
-      uint32_t *cal_order = NULL;
-      qsop_error_t cal_err = {0};
-      if (qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
-                                     &cal_order, &tw_cal_width, &cal_err) &&
-          tw_cal_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+      /* Reuse shared_order if precomputed; otherwise compute fresh. */
+      uint32_t *cal_order = shared_order;
+      bool cal_order_owned = false;
+      if (cal_order == NULL) {
+        qsop_error_t cal_err = {0};
+        if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                        &cal_order, &tw_cal_width, &cal_err)) {
+          cal_order = NULL;
+        } else {
+          cal_order_owned = true;
+        }
+      }
+      if (cal_order != NULL && tw_cal_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
         uint64_t *cal_counts = NULL;
         qsop_solve_stats_t cal_stats = {0};
+        qsop_error_t cal_err = {0};
         const uint64_t t0 = qsop_trace_now_ns();
         if (qsop_counts_alloc(sub.r, &cal_counts, &cal_err) &&
             qsop_solve_treewidth_precomputed_order_count_mod_stats(
@@ -1339,7 +1391,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       } else {
         tw_cal_width = 0;
       }
-      free(cal_order);
+      if (cal_order_owned) free(cal_order);
     }
     if (recording) {
       const uint64_t tw_fe = tw_cal_set ? treewidth_table_forecast(tw_cal_width, sub.r) : 0;
@@ -1351,6 +1403,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                                sub_stats.min_fill_width,
                                tw_cal_set, tw_fe, tw_jp, tw_cal_set, tw_cal_ms, &rw_data);
     }
+    free(shared_order);
     free_subinstance(&sub);
     *out_delegated = true;
     return true;
@@ -1370,23 +1423,28 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                                probe_ms, sub_stats.width_diagnostics_available,
                                sub_stats.min_fill_width, false, 0, 0, false, 0.0, &rw_data);
     }
+    free(shared_order);
     free_subinstance(&sub);
     return true;
   }
 
-  uint32_t *order = NULL;
-  uint32_t order_width = 0;
-  const uint64_t order_start_ns = recording ? qsop_trace_now_ns() : 0;
-  const uint64_t order_start = qsop_trace_begin(stats->trace);
-  if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
-                                  &order_width, error)) {
-    free_subinstance(&sub);
-    return false;
+  /* Obtain the treewidth elimination order — reuse shared_order if precomputed,
+   * otherwise compute it now. */
+  uint32_t *order = shared_order;
+  uint32_t order_width = shared_order_width;
+  double order_probe_ms = shared_order_probe_ms;
+  if (order == NULL) {
+    const uint64_t order_start_ns = recording ? qsop_trace_now_ns() : 0;
+    const uint64_t order_start = qsop_trace_begin(stats->trace);
+    if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
+                                    &order_width, error)) {
+      free_subinstance(&sub);
+      return false;
+    }
+    qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
+                            order_width, order_start);
+    order_probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(order_start_ns)) : 0.0;
   }
-  qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
-                          order_width, order_start);
-  const double order_probe_ms =
-      recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(order_start_ns)) : 0.0;
   if (order_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     note_treewidth_skip(stats, "branch.treewidth_skip_order_width", order_width);
     if (recording) {

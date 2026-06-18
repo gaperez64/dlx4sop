@@ -1307,11 +1307,13 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
+    # v2 is the default; trace events are rankwidth.v2_leaf / rankwidth.v2_join_map / rankwidth.v2_join.
+    # Accept either v1 or v2 names so the test works with both --rankwidth-table v1 and v2.
     if (
         traced.returncode != 0
-        or "rankwidth.leaf" not in traced.stderr
-        or "rankwidth.join_map" not in traced.stderr
-        or "rankwidth.join" not in traced.stderr
+        or ("rankwidth.leaf" not in traced.stderr and "rankwidth.v2_leaf" not in traced.stderr)
+        or ("rankwidth.join_map" not in traced.stderr and "rankwidth.v2_join_map" not in traced.stderr)
+        or ("rankwidth.join" not in traced.stderr and "rankwidth.v2_join" not in traced.stderr)
     ):
         raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
 
@@ -1613,9 +1615,12 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if (
         labelled_trace.returncode != 0
-        or "rankwidth.labelled_leaf" not in labelled_trace.stderr
-        or "rankwidth.labelled_join_map" not in labelled_trace.stderr
-        or "rankwidth.labelled_join" not in labelled_trace.stderr
+        or ("rankwidth.labelled_leaf" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_leaf" not in labelled_trace.stderr)
+        or ("rankwidth.labelled_join_map" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_join_map" not in labelled_trace.stderr)
+        or ("rankwidth.labelled_join" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_join" not in labelled_trace.stderr)
     ):
         raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
 

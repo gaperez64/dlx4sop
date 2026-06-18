@@ -80,12 +80,21 @@ typedef struct rw_fourier_table {
   size_t cap;
 } rw_fourier_table_t;
 
+/* Open-addressing hash table for signature pool fast lookup.
+ * Slot value UINT32_MAX means empty; no deletions so no tombstones. */
+typedef struct rw_sig_ht {
+  uint32_t *slots;  /* maps hash bucket → pool index (UINT32_MAX = empty) */
+  uint64_t *keys;   /* parallel fingerprint for fast comparison without dereferencing pool */
+  uint32_t mask;    /* slot count − 1 (power of two) */
+} rw_sig_ht_t;
+
 typedef struct rw_signature_pool {
   uint64_t *bits;
   uint64_t *fingerprints;
   size_t len;
   size_t cap;
   size_t words;
+  rw_sig_ht_t ht; /* hash table index; only populated when len > RW_SIG_HT_THRESHOLD */
 } rw_signature_pool_t;
 
 typedef struct rw_label_signature_pool {
@@ -94,7 +103,10 @@ typedef struct rw_label_signature_pool {
   size_t len;
   size_t cap;
   uint32_t nvars;
+  rw_sig_ht_t ht; /* hash table index */
 } rw_label_signature_pool_t;
+
+#define RW_SIG_HT_THRESHOLD 32U /* use linear scan below this; hash table above */
 
 typedef struct rw_decomposition_score {
   uint32_t labelled_width;
@@ -197,6 +209,43 @@ static const uint32_t *label_signature_coeffs_const(const rw_label_signature_poo
   return pool->coeffs + (size_t)signature * pool->nvars;
 }
 
+/* Build or rebuild an open-addressing hash table from an array of fingerprints.
+ * The new table has capacity ≥ 2n+1 (power of two) so load ≤ 50% after insertion. */
+static bool rw_sig_ht_build(rw_sig_ht_t *ht, const uint64_t *fingerprints, uint32_t n,
+                             qsop_error_t *error) {
+  size_t cap = 64U;
+  while (cap < (size_t)n * 2U + 1U) cap *= 2U;
+  uint32_t *slots = malloc(cap * sizeof(*slots));
+  uint64_t *keys  = malloc(cap * sizeof(*keys));
+  if (slots == NULL || keys == NULL) {
+    free(slots);
+    free(keys);
+    set_error(error, "out of memory building signature hash table");
+    return false;
+  }
+  memset(slots, 0xFF, cap * sizeof(*slots));  /* UINT32_MAX = empty */
+  uint32_t mask = (uint32_t)(cap - 1U);
+  for (uint32_t i = 0; i < n; i++) {
+    uint64_t fp = fingerprints[i];
+    uint32_t h = (uint32_t)(fp ^ (fp >> 32U)) & mask;
+    while (slots[h] != UINT32_MAX) h = (h + 1U) & mask;
+    slots[h] = i;
+    keys[h] = fp;
+  }
+  free(ht->slots);
+  free(ht->keys);
+  ht->slots = slots;
+  ht->keys  = keys;
+  ht->mask  = mask;
+  return true;
+}
+
+static void rw_sig_ht_free(rw_sig_ht_t *ht) {
+  free(ht->slots);
+  free(ht->keys);
+  *ht = (rw_sig_ht_t){0};
+}
+
 static bool signature_pool_init(rw_signature_pool_t *pool, size_t words, qsop_error_t *error) {
   if (pool == NULL) {
     set_error(error, "internal error: null rankwidth signature pool");
@@ -212,6 +261,7 @@ static void signature_pool_free(rw_signature_pool_t *pool) {
   if (pool == NULL) {
     return;
   }
+  rw_sig_ht_free(&pool->ht);
   free(pool->bits);
   free(pool->fingerprints);
   *pool = (rw_signature_pool_t){0};
@@ -263,6 +313,43 @@ static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bit
   }
 
   const uint64_t fingerprint = qsop_bitset_fingerprint(bits, pool->words);
+  rw_sig_ht_t *ht = &pool->ht;
+
+  if (ht->slots != NULL) {
+    /* Hash table fast path: O(1) expected lookup */
+    uint32_t h = (uint32_t)(fingerprint ^ (fingerprint >> 32U)) & ht->mask;
+    for (;;) {
+      if (ht->slots[h] == UINT32_MAX) break;  /* empty: not found */
+      if (ht->keys[h] == fingerprint &&
+          qsop_bitset_equal(signature_bits(pool, ht->slots[h]), bits, pool->words)) {
+        *out = ht->slots[h];
+        return true;
+      }
+      h = (h + 1U) & ht->mask;
+    }
+    /* h is the insertion slot; rebuild ht if load would exceed 50% */
+    if (pool->len + 1U > (size_t)(ht->mask + 1U) / 2U) {
+      if (!rw_sig_ht_build(ht, pool->fingerprints, (uint32_t)pool->len, error))
+        return false;
+      h = (uint32_t)(fingerprint ^ (fingerprint >> 32U)) & ht->mask;
+      while (ht->slots[h] != UINT32_MAX) h = (h + 1U) & ht->mask;
+    }
+    if (pool->len > UINT32_MAX) {
+      set_error(error, "rankwidth signature pool exceeds uint32 ids");
+      return false;
+    }
+    if (!signature_pool_reserve(pool, pool->len + 1U, error)) return false;
+    uint64_t *dst = qsop_bitset_row(pool->bits, pool->words, (uint32_t)pool->len);
+    qsop_bitset_copy(dst, bits, pool->words);
+    pool->fingerprints[pool->len] = fingerprint;
+    ht->slots[h] = (uint32_t)pool->len;
+    ht->keys[h]  = fingerprint;
+    *out = (uint32_t)pool->len;
+    pool->len++;
+    return true;
+  }
+
+  /* Linear scan below RW_SIG_HT_THRESHOLD */
   for (size_t i = 0; i < pool->len; i++) {
     if (pool->fingerprints[i] == fingerprint &&
         qsop_bitset_equal(signature_bits(pool, (uint32_t)i), bits, pool->words)) {
@@ -274,14 +361,17 @@ static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bit
     set_error(error, "rankwidth signature pool exceeds uint32 ids");
     return false;
   }
-  if (!signature_pool_reserve(pool, pool->len + 1U, error)) {
-    return false;
-  }
+  if (!signature_pool_reserve(pool, pool->len + 1U, error)) return false;
   uint64_t *dst = qsop_bitset_row(pool->bits, pool->words, (uint32_t)pool->len);
   qsop_bitset_copy(dst, bits, pool->words);
   pool->fingerprints[pool->len] = fingerprint;
   *out = (uint32_t)pool->len;
   pool->len++;
+  /* Build hash table once pool crosses the linear-scan threshold */
+  if (pool->len >= RW_SIG_HT_THRESHOLD &&
+      !rw_sig_ht_build(ht, pool->fingerprints, (uint32_t)pool->len, error)) {
+    return false;
+  }
   return true;
 }
 
@@ -301,6 +391,7 @@ static void label_signature_pool_free(rw_label_signature_pool_t *pool) {
   if (pool == NULL) {
     return;
   }
+  rw_sig_ht_free(&pool->ht);
   free(pool->coeffs);
   free(pool->fingerprints);
   *pool = (rw_label_signature_pool_t){0};
@@ -361,6 +452,44 @@ static bool label_signature_pool_intern(rw_label_signature_pool_t *pool, const u
   }
 
   const uint64_t fingerprint = label_signature_fingerprint(coeffs, pool->nvars);
+  rw_sig_ht_t *ht = &pool->ht;
+
+  if (ht->slots != NULL) {
+    /* Hash table fast path */
+    uint32_t h = (uint32_t)(fingerprint ^ (fingerprint >> 32U)) & ht->mask;
+    for (;;) {
+      if (ht->slots[h] == UINT32_MAX) break;
+      if (ht->keys[h] == fingerprint) {
+        const uint32_t *candidate = label_signature_coeffs_const(pool, ht->slots[h]);
+        if (memcmp(candidate, coeffs, (size_t)pool->nvars * sizeof(*coeffs)) == 0) {
+          *out = ht->slots[h];
+          return true;
+        }
+      }
+      h = (h + 1U) & ht->mask;
+    }
+    if (pool->len + 1U > (size_t)(ht->mask + 1U) / 2U) {
+      if (!rw_sig_ht_build(ht, pool->fingerprints, (uint32_t)pool->len, error))
+        return false;
+      h = (uint32_t)(fingerprint ^ (fingerprint >> 32U)) & ht->mask;
+      while (ht->slots[h] != UINT32_MAX) h = (h + 1U) & ht->mask;
+    }
+    if (pool->len > UINT32_MAX) {
+      set_error(error, "labelled rankwidth signature pool exceeds uint32 ids");
+      return false;
+    }
+    if (!label_signature_pool_reserve(pool, pool->len + 1U, error)) return false;
+    uint32_t *dst = label_signature_coeffs(pool, (uint32_t)pool->len);
+    memcpy(dst, coeffs, (size_t)pool->nvars * sizeof(*dst));
+    pool->fingerprints[pool->len] = fingerprint;
+    ht->slots[h] = (uint32_t)pool->len;
+    ht->keys[h]  = fingerprint;
+    *out = (uint32_t)pool->len;
+    pool->len++;
+    return true;
+  }
+
+  /* Linear scan below RW_SIG_HT_THRESHOLD */
   for (size_t i = 0; i < pool->len; i++) {
     const uint32_t *candidate = label_signature_coeffs_const(pool, (uint32_t)i);
     if (pool->fingerprints[i] == fingerprint &&
@@ -373,14 +502,16 @@ static bool label_signature_pool_intern(rw_label_signature_pool_t *pool, const u
     set_error(error, "labelled rankwidth signature pool exceeds uint32 ids");
     return false;
   }
-  if (!label_signature_pool_reserve(pool, pool->len + 1U, error)) {
-    return false;
-  }
+  if (!label_signature_pool_reserve(pool, pool->len + 1U, error)) return false;
   uint32_t *dst = label_signature_coeffs(pool, (uint32_t)pool->len);
   memcpy(dst, coeffs, (size_t)pool->nvars * sizeof(*dst));
   pool->fingerprints[pool->len] = fingerprint;
   *out = (uint32_t)pool->len;
   pool->len++;
+  if (pool->len >= RW_SIG_HT_THRESHOLD &&
+      !rw_sig_ht_build(ht, pool->fingerprints, (uint32_t)pool->len, error)) {
+    return false;
+  }
   return true;
 }
 
@@ -1735,6 +1866,149 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     decomposition->root = subtree_root;
   }
 
+  free(children_flat);
+  free(children_arr);
+  free(children_cnt);
+
+  if (!validate_decomposition(decomposition, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
+  *out = decomposition;
+  return true;
+}
+
+/* Build a from-treewidth decomposition using a caller-supplied elimination order,
+ * avoiding a second min-fill run when the caller already holds one from treewidth solving. */
+bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
+                                             const uint32_t *order,
+                                             qsop_rankwidth_decomposition_t **out,
+                                             qsop_error_t *error) {
+  if (qsop == NULL || out == NULL) {
+    set_error(error, "internal error: null argument to rankwidth decomposition from-order");
+    return false;
+  }
+  *out = NULL;
+  if (qsop->nvars == 0) {
+    qsop_rankwidth_decomposition_t *empty = calloc(1, sizeof(*empty));
+    if (empty == NULL) {
+      set_error(error, "out of memory while allocating empty rankwidth decomposition");
+      return false;
+    }
+    *out = empty;
+    return true;
+  }
+  if (order == NULL) {
+    set_error(error, "internal error: null order for rankwidth decomposition from-order");
+    return false;
+  }
+  /* Copy the provided order into a writable buffer (make_fill_in_and_parents needs a uint32_t[]). */
+  const uint32_t n = qsop->nvars;
+  uint32_t *order_copy = malloc(n * sizeof(*order_copy));
+  if (order_copy == NULL) {
+    set_error(error, "out of memory while copying order for rankwidth from-order");
+    return false;
+  }
+  memcpy(order_copy, order, n * sizeof(*order_copy));
+
+  /* Delegate to the internal from-treewidth builder, which owns order_copy. */
+  const size_t words = qsop_bitset_words(n);
+  uint64_t *fill = calloc((size_t)n * (words == 0 ? 1U : words), sizeof(*fill));
+  uint32_t *parent_pos = calloc(n, sizeof(*parent_pos));
+  if (fill == NULL || parent_pos == NULL) {
+    free(order_copy);
+    free(fill);
+    free(parent_pos);
+    set_error(error, "out of memory in from-order fill-in allocation");
+    return false;
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    qsop_bitset_set(qsop_bitset_row(fill, words, qsop->edge_u[e]), qsop->edge_v[e]);
+    qsop_bitset_set(qsop_bitset_row(fill, words, qsop->edge_v[e]), qsop->edge_u[e]);
+  }
+  if (!make_fill_in_and_parents(qsop, order_copy, fill, parent_pos, error)) {
+    free(order_copy);
+    free(fill);
+    free(parent_pos);
+    return false;
+  }
+  free(fill);
+  free(order_copy);
+
+  /* Build children lists, then the decomposition tree (same as make_from_treewidth_decomposition). */
+  uint32_t *children_flat = calloc(n, sizeof(*children_flat));
+  uint32_t **children_arr = calloc(n, sizeof(*children_arr));
+  uint32_t *children_cnt  = calloc(n, sizeof(*children_cnt));
+  qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
+  if (children_flat == NULL || children_arr == NULL || children_cnt == NULL ||
+      decomposition == NULL) {
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    free(parent_pos);
+    qsop_rankwidth_decomposition_free(decomposition);
+    set_error(error, "out of memory in from-order children allocation");
+    return false;
+  }
+  decomposition->nvars = n;
+  decomposition->words = words;
+  decomposition->nnodes = 2U * n - 1U;
+  decomposition->nodes = calloc(decomposition->nnodes, sizeof(*decomposition->nodes));
+  decomposition->node_vars = calloc((size_t)decomposition->nnodes * words,
+                                    sizeof(*decomposition->node_vars));
+  decomposition->postorder = calloc(decomposition->nnodes, sizeof(*decomposition->postorder));
+  if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
+      decomposition->postorder == NULL) {
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    free(parent_pos);
+    qsop_rankwidth_decomposition_free(decomposition);
+    set_error(error, "out of memory in from-order decomposition nodes");
+    return false;
+  }
+
+  /* Build children lists from parent_pos (same logic as make_from_treewidth_decomposition). */
+  uint32_t root_pos = 0;
+  for (uint32_t pos = 0; pos < n; pos++) {
+    if (parent_pos[pos] == UINT32_MAX) {
+      root_pos = pos;
+    } else {
+      children_cnt[parent_pos[pos]]++;
+    }
+  }
+  uint32_t offset = 0;
+  for (uint32_t pos = 0; pos < n; pos++) {
+    children_arr[pos] = children_flat + offset;
+    offset += children_cnt[pos];
+    children_cnt[pos] = 0;
+  }
+  for (uint32_t pos = 0; pos < n; pos++) {
+    if (parent_pos[pos] != UINT32_MAX) {
+      const uint32_t par = parent_pos[pos];
+      children_arr[par][children_cnt[par]++] = pos;
+    }
+  }
+  free(parent_pos);
+
+  for (uint32_t i = 0; i < n; i++) {
+    decomposition->nodes[i] = (rw_node_t){.kind = RW_NODE_LEAF, .var = order[i]};
+  }
+  if (n == 1U) {
+    decomposition->root = 0;
+  } else {
+    uint32_t next_join = n;
+    uint32_t subtree_root = 0;
+    if (!build_etree_subtrees(decomposition, root_pos, children_arr, children_cnt,
+                              &subtree_root, n, &next_join, error)) {
+      free(children_flat);
+      free(children_arr);
+      free(children_cnt);
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    decomposition->root = subtree_root;
+  }
   free(children_flat);
   free(children_arr);
   free(children_cnt);

@@ -99,6 +99,7 @@ typedef enum qsop_branch_rw_source {
   QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
   QSOP_BRANCH_RW_SOURCE_AUTO,           /* from-treewidth by default (alias) */
+  QSOP_BRANCH_RW_SOURCE_NONE,           /* never attempt rankwidth delegation */
 } qsop_branch_rw_source_t;
 
 typedef struct qsop_solve_trace_event {
@@ -233,6 +234,13 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_generator_t generator,
                                            qsop_rankwidth_decomposition_t **out,
                                            qsop_error_t *error);
+
+/* Build a from-treewidth rankwidth decomposition from a precomputed elimination order,
+ * avoiding a second min-fill run when the caller already holds a treewidth order. */
+bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
+                                             const uint32_t *order,
+                                             qsop_rankwidth_decomposition_t **out,
+                                             qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_support_width(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,

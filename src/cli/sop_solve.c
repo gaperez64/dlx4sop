@@ -453,8 +453,9 @@ int main(int argc, char **argv) {
   bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_v2 = false;
+  bool rankwidth_table_v2 = true; /* v2 is the default performance path */
   bool rankwidth_table_validate = false;
+  bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
@@ -560,6 +561,8 @@ int main(int argc, char **argv) {
         branch_rw_source = QSOP_BRANCH_RW_SOURCE_BOTH;
       } else if (strcmp(value, "auto") == 0) {
         branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
+      } else if (strcmp(value, "none") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_NONE;
       } else {
         fprintf(stderr, "error: unsupported --branch-rw-source '%s'\n", value);
         return 2;
@@ -670,6 +673,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: unsupported rankwidth table version '%s'\n", value);
         return 2;
       }
+      rankwidth_table_set = true;
       continue;
     }
     if (strcmp(argv[i], "--solve-mode") == 0) {
@@ -756,7 +760,7 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
     return 2;
   }
-  if (backend != SOLVE_BACKEND_RANKWIDTH && (rankwidth_table_v2 || rankwidth_table_validate)) {
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_set) {
     fputs("error: --rankwidth-table requires --backend rankwidth\n", stderr);
     return 2;
   }
