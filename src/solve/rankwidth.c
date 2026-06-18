@@ -5528,14 +5528,15 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
       if (adj == NULL) {
         return false;
       }
-      ok = solve_rankwidth_count_table(qsop, decomposition, adj, &result, stats, trace, error);
+      ok = solve_rankwidth_count_table_v2(qsop, decomposition, adj, &result, stats, trace, error);
       free(adj);
     } else {
       uint32_t *coeffs = coefficient_matrix(qsop, error);
       if (coeffs == NULL) {
         return false;
       }
-      ok = solve_labelled_count_table(qsop, decomposition, coeffs, &result, stats, trace, error);
+      ok = solve_labelled_count_table_v2(qsop, decomposition, coeffs, &result, stats, trace,
+                                         error);
       free(coeffs);
     }
     if (!ok) {
@@ -6025,7 +6026,7 @@ bool qsop_solve_rankwidth_mode_trace_stats(
     const bool ok =
         mode == QSOP_RANKWIDTH_SOLVE_FOURIER
             ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
-            : solve_rankwidth_count_table(qsop, decomposition, adj, out, stats, trace, error);
+            : solve_rankwidth_count_table_v2(qsop, decomposition, adj, out, stats, trace, error);
     free(adj);
     return ok;
   }
@@ -6037,7 +6038,7 @@ bool qsop_solve_rankwidth_mode_trace_stats(
   const bool ok =
       mode == QSOP_RANKWIDTH_SOLVE_FOURIER
           ? solve_rankwidth_labelled_fourier(qsop, decomposition, coeffs, out, stats, trace, error)
-          : solve_labelled_count_table(qsop, decomposition, coeffs, out, stats, trace, error);
+          : solve_labelled_count_table_v2(qsop, decomposition, coeffs, out, stats, trace, error);
   free(coeffs);
   return ok;
 }
