@@ -726,6 +726,76 @@ static bool build_sig_range_index(const rw_table_t *table, uint32_t max_sig,
   return true;
 }
 
+/* Writes the range index into pre-allocated starts/ends buffers (no malloc).
+ * starts and ends must each have at least (max_sig + 1) uint32_t entries. */
+static void build_sig_range_index_into(const rw_table_t *table, uint32_t max_sig,
+                                       uint32_t *starts, uint32_t *ends) {
+  const size_t n = (size_t)max_sig + 1U;
+  memset(starts, 0xFF, n * sizeof(*starts));
+  for (size_t i = 0; i < table->len; i++) {
+    const uint32_t sig = table->entries[i].signature;
+    if (sig > max_sig) {
+      continue;
+    }
+    if (starts[sig] == UINT32_MAX) {
+      starts[sig] = (uint32_t)i;
+    }
+    ends[sig] = (uint32_t)(i + 1U);
+  }
+}
+
+/* Per-solve workspace for join accumulator buffers. Eliminates per-join malloc/free
+ * pairs for acc, sig_map_idx, and the four range index arrays. */
+typedef struct rw_join_workspace {
+  uint64_t *acc;          /* [cap_entries] — zeroed by caller before each join */
+  uint32_t *sig_map_idx;  /* [cap_sigs]    — 0xFF-filled by caller before each join */
+  uint32_t *left_starts;  /* [cap_sigs] */
+  uint32_t *left_ends;    /* [cap_sigs] */
+  uint32_t *right_starts; /* [cap_sigs] */
+  uint32_t *right_ends;   /* [cap_sigs] */
+  size_t cap_entries;     /* capacity of acc in uint64_t elements (= cap_sigs * r) */
+  size_t cap_sigs;        /* max signatures per node */
+} rw_join_workspace_t;
+
+static bool join_workspace_alloc(size_t cap_sigs, uint32_t r, rw_join_workspace_t *ws,
+                                 qsop_error_t *error) {
+  const size_t cap_entries = cap_sigs * (size_t)r;
+  ws->cap_sigs    = cap_sigs;
+  ws->cap_entries = cap_entries;
+  ws->acc         = calloc(cap_entries == 0 ? 1U : cap_entries, sizeof(*ws->acc));
+  ws->sig_map_idx = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->sig_map_idx));
+  ws->left_starts = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->left_starts));
+  ws->left_ends   = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->left_ends));
+  ws->right_starts= malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->right_starts));
+  ws->right_ends  = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->right_ends));
+  if (ws->acc == NULL || ws->sig_map_idx == NULL || ws->left_starts == NULL ||
+      ws->left_ends == NULL || ws->right_starts == NULL || ws->right_ends == NULL) {
+    free(ws->acc);
+    free(ws->sig_map_idx);
+    free(ws->left_starts);
+    free(ws->left_ends);
+    free(ws->right_starts);
+    free(ws->right_ends);
+    *ws = (rw_join_workspace_t){0};
+    set_error(error, "out of memory allocating join workspace");
+    return false;
+  }
+  return true;
+}
+
+static void join_workspace_free(rw_join_workspace_t *ws) {
+  if (ws == NULL) {
+    return;
+  }
+  free(ws->acc);
+  free(ws->sig_map_idx);
+  free(ws->left_starts);
+  free(ws->left_ends);
+  free(ws->right_starts);
+  free(ws->right_ends);
+  *ws = (rw_join_workspace_t){0};
+}
+
 static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words,
                              qsop_error_t *error) {
   if (needed <= map->cap) {
@@ -3314,7 +3384,8 @@ static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map
  * O(left_len * right_len * out_len) to O(map.len * r + n_parent_sigs * r).       */
 static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *map,
                                const rw_table_t *left, const rw_table_t *right, rw_table_t *out,
-                               size_t words, uint64_t *join_pairs, qsop_error_t *error) {
+                               size_t words, uint64_t *join_pairs,
+                               rw_join_workspace_t *ws, qsop_error_t *error) {
   if (map->len == 0) {
     return true;
   }
@@ -3331,22 +3402,45 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
   const uint32_t r_mask = r - 1U;
   const bool r_pow2 = (r & r_mask) == 0;
 
-  uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
-  uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
-  uint32_t *left_starts = NULL, *left_ends = NULL;
-  uint32_t *right_starts = NULL, *right_ends = NULL;
-  if (acc == NULL || sig_map_idx == NULL ||
-      !build_sig_range_index(left,  max_left_sig,  &left_starts,  &left_ends,  error) ||
-      !build_sig_range_index(right, max_right_sig, &right_starts, &right_ends, error)) {
-    free(acc); free(sig_map_idx);
-    free(left_starts); free(left_ends);
-    free(right_starts); free(right_ends);
-    if (acc == NULL || sig_map_idx == NULL) {
-      set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+  /* Use pre-allocated workspace buffers when available and large enough. */
+  const bool use_ws = ws != NULL && n_sigs <= ws->cap_sigs &&
+                      (size_t)max_left_sig  < ws->cap_sigs &&
+                      (size_t)max_right_sig < ws->cap_sigs;
+  uint64_t *acc;
+  uint32_t *sig_map_idx;
+  uint32_t *left_starts, *left_ends;
+  uint32_t *right_starts, *right_ends;
+  if (use_ws) {
+    acc          = ws->acc;
+    sig_map_idx  = ws->sig_map_idx;
+    left_starts  = ws->left_starts;
+    left_ends    = ws->left_ends;
+    right_starts = ws->right_starts;
+    right_ends   = ws->right_ends;
+    memset(acc, 0, n_sigs * r * sizeof(*acc));
+    memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
+    build_sig_range_index_into(left,  max_left_sig,  left_starts,  left_ends);
+    build_sig_range_index_into(right, max_right_sig, right_starts, right_ends);
+  } else {
+    acc = calloc(n_sigs * r, sizeof(*acc));
+    sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
+    left_starts = NULL; left_ends = NULL;
+    right_starts = NULL; right_ends = NULL;
+    if (acc == NULL || sig_map_idx == NULL ||
+        !build_sig_range_index(left,  max_left_sig,  &left_starts,  &left_ends,  error) ||
+        !build_sig_range_index(right, max_right_sig, &right_starts, &right_ends, error)) {
+      if (!use_ws) { free(acc); free(sig_map_idx); free(left_starts); free(left_ends);
+                     free(right_starts); free(right_ends); }
+      if (acc == NULL || sig_map_idx == NULL) {
+        set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+      }
+      return false;
     }
-    return false;
+    memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
   }
-  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
+
+#define JOIN_CLEANUP() do { if (!use_ws) { free(acc); free(sig_map_idx); \
+    free(left_starts); free(left_ends); free(right_starts); free(right_ends); } } while (0)
 
   for (size_t m = 0; m < map->len; m++) {
     const rw_join_map_entry_t *me = &map->entries[m];
@@ -3376,9 +3470,7 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
         uint64_t product = 0;
         if (!qsop_count_mul(l_cnt, right->entries[j].count, &product, error) ||
             !qsop_count_add(&acc[ps * r + res], product, error)) {
-          free(acc); free(sig_map_idx);
-          free(left_starts); free(left_ends);
-          free(right_starts); free(right_ends);
+          JOIN_CLEANUP();
           return false;
         }
         (*join_pairs)++;
@@ -3386,15 +3478,13 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
     }
   }
 
-  /* flush accumulator: pre-reserve output capacity once to avoid per-entry realloc */
+  /* Flush accumulator: pre-reserve output capacity once to avoid per-entry realloc. */
   size_t nonzero_count = 0;
   for (size_t i = 0; i < n_sigs * r; i++) {
     if (acc[i] != 0) nonzero_count++;
   }
   if (!reserve_entries(out, out->len + nonzero_count, error)) {
-    free(acc); free(sig_map_idx);
-    free(left_starts); free(left_ends);
-    free(right_starts); free(right_ends);
+    JOIN_CLEANUP();
     return false;
   }
   for (uint32_t s = 0; s < (uint32_t)n_sigs; s++) {
@@ -3403,9 +3493,7 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
     }
     const size_t m = sig_map_idx[s];
     if (!table_add_rep(out, s, join_map_assignment(map, m, words), words, error)) {
-      free(acc); free(sig_map_idx);
-      free(left_starts); free(left_ends);
-      free(right_starts); free(right_ends);
+      JOIN_CLEANUP();
       return false;
     }
     for (uint32_t res = 0; res < r; res++) {
@@ -3417,9 +3505,12 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
     }
   }
 
-  free(acc); free(sig_map_idx);
-  free(left_starts); free(left_ends);
-  free(right_starts); free(right_ends);
+#undef JOIN_CLEANUP
+  if (!use_ws) {
+    free(acc); free(sig_map_idx);
+    free(left_starts); free(left_ends);
+    free(right_starts); free(right_ends);
+  }
   return true;
 }
 
@@ -4569,6 +4660,24 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
     return false;
   }
 
+  /* Pre-allocate join workspace to amortize malloc/free over all join nodes. */
+  const size_t ws_cap_sigs = decomposition->score_cached && decomposition->cached_table_forecast > 0
+      ? (size_t)(decomposition->cached_table_forecast / qsop->r) + 1U
+      : 0U;
+  rw_join_workspace_t join_ws = {0};
+  if (ws_cap_sigs > 0 &&
+      !join_workspace_alloc(ws_cap_sigs, qsop->r, &join_ws, error)) {
+    free(scratch);
+    join_map_free(&shared_map);
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      table_free(&tables[t]);
+    }
+    free(tables);
+    signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
+
   uint64_t join_pairs = 0;
   uint64_t join_signature_pairs = 0;
   uint64_t table_entries = 0;
@@ -4595,11 +4704,13 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
         qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, shared_map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
         ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
-                               &tables[node_id], decomposition->words, &join_pairs, error);
+                               &tables[node_id], decomposition->words, &join_pairs,
+                               join_ws.acc ? &join_ws : NULL, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.v2_join", 0, tables[node_id].len, join_start);
       }
     }
     if (!ok) {
+      join_workspace_free(&join_ws);
       free(scratch);
       join_map_free(&shared_map);
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
@@ -4621,6 +4732,7 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
     }
   }
 
+  join_workspace_free(&join_ws);
   free(scratch);
   join_map_free(&shared_map);
 
@@ -4866,6 +4978,20 @@ static bool solve_labelled_count_table_v2_direct(
     return false;
   }
 
+  /* Pre-allocate join workspace to amortize malloc/free over all join nodes. */
+  const size_t ws_cap_sigs2 = decomposition->score_cached && decomposition->cached_table_forecast > 0
+      ? (size_t)(decomposition->cached_table_forecast / qsop->r) + 1U
+      : 0U;
+  rw_join_workspace_t join_ws = {0};
+  if (ws_cap_sigs2 > 0 &&
+      !join_workspace_alloc(ws_cap_sigs2, qsop->r, &join_ws, error)) {
+    join_map_free(&shared_map);
+    free(tables);
+    label_signature_pool_free(&pool);
+    qsop_result_free(result);
+    return false;
+  }
+
   uint64_t join_pairs = 0;
   uint64_t join_signature_pairs = 0;
   uint64_t table_entries = 0;
@@ -4890,12 +5016,14 @@ static bool solve_labelled_count_table_v2_direct(
         qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join_map", 0, shared_map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
         ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
-                               &tables[node_id], decomposition->words, &join_pairs, error);
+                               &tables[node_id], decomposition->words, &join_pairs,
+                               join_ws.acc ? &join_ws : NULL, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join", 0, tables[node_id].len,
                                 join_start);
       }
     }
     if (!ok) {
+      join_workspace_free(&join_ws);
       join_map_free(&shared_map);
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         table_free(&tables[t]);
@@ -4914,6 +5042,8 @@ static bool solve_labelled_count_table_v2_direct(
       max_signature_entries = tables[node_id].reps_len;
     }
   }
+
+  join_workspace_free(&join_ws);
 
   const rw_table_t *root = &tables[decomposition->root];
   for (size_t i = 0; i < root->len; i++) {
