@@ -111,6 +111,14 @@ test_wmc = executable(
 
 test('wmc unit', test_wmc)
 
+test_branch_api = executable(
+  'test-branch-api',
+  'tests/unit/test_branch_api.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch api unit', test_branch_api)
+
 python3 = find_program('python3', required: false)
 if python3.found()
   test(
