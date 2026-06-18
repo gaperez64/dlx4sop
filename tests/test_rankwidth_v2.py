@@ -7,12 +7,45 @@ import sys
 import tempfile
 
 
+def make_labelled_path_qsop(nvars: int, r: int = 8) -> str:
+    """Path graph with non-sign unary and quadratic terms (labelled instance)."""
+    nedges = nvars - 1
+    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 1"]
+    for i in range(nvars):
+        lines.append(f"u {i} {(i % (r - 1)) + 1}")
+    for i in range(nedges):
+        coeff = (i % (r // 2 - 1)) + 1
+        lines.append(f"q {i} {i + 1} {coeff}")
+    return "\n".join(lines) + "\n"
+
+
+def make_labelled_star_qsop(nvars: int, r: int = 8) -> str:
+    """Star graph (center=0) with non-sign unary and quadratic terms."""
+    nedges = nvars - 1
+    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    for i in range(nvars):
+        lines.append(f"u {i} {(i * 3 % (r - 1)) + 1}")
+    for v in range(1, nvars):
+        lines.append(f"q 0 {v} {(v % (r // 2 - 1)) + 1}")
+    return "\n".join(lines) + "\n"
+
+
 def make_path_qsop(nvars: int, r: int = 8) -> str:
     """Return a QSOP string for a path graph with `nvars` nodes."""
     nedges = nvars - 1
     lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nedges):
         lines.append(f"q {i} {i + 1} 1")
+    return "\n".join(lines) + "\n"
+
+
+def make_sign_edge_path_qsop(nvars: int, r: int = 8) -> str:
+    """Path graph with sign-edge coefficients (all edges = r/2, triggering the sign-edge path)."""
+    nedges = nvars - 1
+    sign = r // 2
+    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    for i in range(nedges):
+        lines.append(f"q {i} {i + 1} {sign}")
     return "\n".join(lines) + "\n"
 
 
@@ -82,6 +115,127 @@ def test_v2_requires_rankwidth_backend(exe: pathlib.Path) -> None:
     )
 
 
+def test_v2_labelled_path_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as v1 on labelled path graphs."""
+    for nvars in range(3, 11):
+        for r in [8, 16]:
+            qsop_text = make_labelled_path_qsop(nvars, r)
+            r1 = run_rankwidth(exe, qsop_text, "v1")
+            r2 = run_rankwidth(exe, qsop_text, "v2")
+            assert r1.returncode == 0, f"v1 failed on labelled path-{nvars} r={r}: {r1.stderr}"
+            assert r2.returncode == 0, f"v2 failed on labelled path-{nvars} r={r}: {r2.stderr}"
+            assert r1.stdout == r2.stdout, (
+                f"v1/v2 mismatch on labelled path-{nvars} r={r}:\n"
+                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            )
+
+
+def test_v2_labelled_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 labelled CRT path (nvars >= 64) must agree with v1 on a large path graph."""
+    for nvars in [70, 100]:
+        qsop_text = make_labelled_path_qsop(nvars, r=8)
+        r1 = run_rankwidth(exe, qsop_text, "v1",
+                           extra_args=["--max-vars", "256"])
+        r2 = run_rankwidth(exe, qsop_text, "v2",
+                           extra_args=["--max-vars", "256"])
+        assert r1.returncode == 0, f"v1 failed on labelled path-{nvars}: {r1.stderr}"
+        assert r2.returncode == 0, f"v2 failed on labelled path-{nvars}: {r2.stderr}"
+        assert r1.stdout == r2.stdout, (
+            f"v1/v2 mismatch on labelled path-{nvars}:\n"
+            f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+        )
+
+
+def test_v2_labelled_star_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as v1 on labelled star graphs."""
+    for nvars in range(3, 9):
+        for r in [8]:
+            qsop_text = make_labelled_star_qsop(nvars, r)
+            r1 = run_rankwidth(exe, qsop_text, "v1")
+            r2 = run_rankwidth(exe, qsop_text, "v2")
+            assert r1.returncode == 0, f"v1 failed on labelled star-{nvars} r={r}: {r1.stderr}"
+            assert r2.returncode == 0, f"v2 failed on labelled star-{nvars} r={r}: {r2.stderr}"
+            assert r1.stdout == r2.stdout, (
+                f"v1/v2 mismatch on labelled star-{nvars} r={r}:\n"
+                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            )
+
+
+def test_v2_sign_edge_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
+    """v2 sign-edge CRT path (nvars >= 64) must agree with v1 on large sign-edge path graphs."""
+    for nvars in [70, 100]:
+        for r in [4, 8]:
+            qsop_text = make_sign_edge_path_qsop(nvars, r=r)
+            r1 = run_rankwidth(exe, qsop_text, "v1",
+                               extra_args=["--max-vars", "256"])
+            r2 = run_rankwidth(exe, qsop_text, "v2",
+                               extra_args=["--max-vars", "256"])
+            assert r1.returncode == 0, f"v1 failed on sign-edge path-{nvars} r={r}: {r1.stderr}"
+            assert r2.returncode == 0, f"v2 failed on sign-edge path-{nvars} r={r}: {r2.stderr}"
+            assert r1.stdout == r2.stdout, (
+                f"v1/v2 mismatch on sign-edge path-{nvars} r={r}:\n"
+                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            )
+
+
+def test_fourier_count_table_agree_sign_edge(exe: pathlib.Path) -> None:
+    """--solve-mode fourier and --solve-mode count-table must agree on sign-edge SOPs."""
+    for nvars in range(3, 10):
+        for r in [2, 4, 8]:
+            qsop_text = make_sign_edge_path_qsop(nvars, r)
+            with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+                f.write(qsop_text)
+                qsop_path = f.name
+            r_ct = subprocess.run(
+                [str(exe), "--backend", "rankwidth", "--max-vars", "64",
+                 "--solve-mode", "count-table", qsop_path],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            r_ft = subprocess.run(
+                [str(exe), "--backend", "rankwidth", "--max-vars", "64",
+                 "--solve-mode", "fourier", qsop_path],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            assert r_ct.returncode == 0, (
+                f"count-table failed on path-{nvars} r={r}: {r_ct.stderr}"
+            )
+            assert r_ft.returncode == 0, (
+                f"fourier failed on path-{nvars} r={r}: {r_ft.stderr}"
+            )
+            assert r_ct.stdout == r_ft.stdout, (
+                f"fourier/count-table mismatch on path-{nvars} r={r}:\n"
+                f"  count-table: {r_ct.stdout!r}\n  fourier: {r_ft.stdout!r}"
+            )
+
+
+def test_validate_mode_passes_sign_edge(exe: pathlib.Path) -> None:
+    """--rankwidth-table validate must succeed and produce the same output as v1."""
+    for nvars in range(3, 9):
+        qsop_text = make_path_qsop(nvars, 8)
+        r_v1 = run_rankwidth(exe, qsop_text, "v1")
+        r_val = run_rankwidth(exe, qsop_text, "validate")
+        assert r_v1.returncode == 0, f"v1 failed on path-{nvars}: {r_v1.stderr}"
+        assert r_val.returncode == 0, f"validate failed on path-{nvars}: {r_val.stderr}"
+        assert r_v1.stdout == r_val.stdout, (
+            f"validate output differs from v1 on path-{nvars}:\n"
+            f"  v1:       {r_v1.stdout!r}\n  validate: {r_val.stdout!r}"
+        )
+
+
+def test_validate_mode_passes_labelled(exe: pathlib.Path) -> None:
+    """--rankwidth-table validate must succeed on labelled instances."""
+    for nvars in range(3, 9):
+        qsop_text = make_labelled_path_qsop(nvars, 8)
+        r_v1 = run_rankwidth(exe, qsop_text, "v1")
+        r_val = run_rankwidth(exe, qsop_text, "validate")
+        assert r_v1.returncode == 0, f"v1 failed on labelled path-{nvars}: {r_v1.stderr}"
+        assert r_val.returncode == 0, f"validate failed on labelled path-{nvars}: {r_val.stderr}"
+        assert r_v1.stdout == r_val.stdout, (
+            f"validate output differs from v1 on labelled path-{nvars}:\n"
+            f"  v1:       {r_v1.stdout!r}\n  validate: {r_val.stdout!r}"
+        )
+
+
 def test_v1_explicit_matches_default(exe: pathlib.Path) -> None:
     """Explicitly passing --rankwidth-table v1 must produce the same result as omitting it."""
     qsop_text = make_path_qsop(8, 8)
@@ -106,6 +260,13 @@ def main(argv: list[str]) -> None:
 
     test_v2_path_agrees_with_v1(exe)
     test_v2_cycle_agrees_with_v1(exe)
+    test_v2_sign_edge_large_crt_agrees_with_v1(exe)
+    test_fourier_count_table_agree_sign_edge(exe)
+    test_v2_labelled_path_agrees_with_v1(exe)
+    test_v2_labelled_large_crt_agrees_with_v1(exe)
+    test_v2_labelled_star_agrees_with_v1(exe)
+    test_validate_mode_passes_sign_edge(exe)
+    test_validate_mode_passes_labelled(exe)
     test_v2_requires_rankwidth_backend(exe)
     test_v1_explicit_matches_default(exe)
 

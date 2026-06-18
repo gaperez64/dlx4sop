@@ -36,9 +36,10 @@ static void print_usage(FILE *file) {
   fputs("usage: sop-solve [--format residue-vector|stats] "
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
-        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|min-fill-search|best] "
+        "[--branch-rw-source native|from-treewidth|both|auto] "
+        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--rankwidth-table v1|v2] "
+        "[--rankwidth-table v1|v2|validate] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -97,6 +98,8 @@ static const char *rankwidth_generator_name(qsop_rankwidth_generator_t generator
     return "min-fill";
   case QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT:
     return "min-fill-cut";
+  case QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH:
+    return "from-treewidth";
   case QSOP_RANKWIDTH_GENERATOR_BEST:
     return "best";
   case QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH:
@@ -442,13 +445,17 @@ int main(int argc, char **argv) {
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
+  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
   bool branch_heuristic_set = false;
+  bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_v2 = false;
+  bool rankwidth_table_v2 = true; /* v2 is the default performance path */
+  bool rankwidth_table_validate = false;
+  bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
@@ -540,6 +547,29 @@ int main(int argc, char **argv) {
       branch_heuristic_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--branch-rw-source") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-rw-source requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "native") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
+      } else if (strcmp(value, "from-treewidth") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH;
+      } else if (strcmp(value, "both") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_BOTH;
+      } else if (strcmp(value, "auto") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
+      } else if (strcmp(value, "none") == 0) {
+        branch_rw_source = QSOP_BRANCH_RW_SOURCE_NONE;
+      } else {
+        fprintf(stderr, "error: unsupported --branch-rw-source '%s'\n", value);
+        return 2;
+      }
+      branch_rw_source_set = true;
+      continue;
+    }
     if (strcmp(argv[i], "--backend") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --backend requires a value\n", stderr);
@@ -593,6 +623,8 @@ int main(int argc, char **argv) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_MIN_FILL;
       } else if (strcmp(value, "min-fill-cut") == 0) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT;
+      } else if (strcmp(value, "from-treewidth") == 0) {
+        rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
       } else if (strcmp(value, "best") == 0) {
         rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_BEST;
       } else if (strcmp(value, "min-fill-search") == 0) {
@@ -630,12 +662,18 @@ int main(int argc, char **argv) {
       const char *value = argv[++i];
       if (strcmp(value, "v1") == 0) {
         rankwidth_table_v2 = false;
+        rankwidth_table_validate = false;
       } else if (strcmp(value, "v2") == 0) {
         rankwidth_table_v2 = true;
+        rankwidth_table_validate = false;
+      } else if (strcmp(value, "validate") == 0) {
+        rankwidth_table_v2 = false;
+        rankwidth_table_validate = true;
       } else {
         fprintf(stderr, "error: unsupported rankwidth table version '%s'\n", value);
         return 2;
       }
+      rankwidth_table_set = true;
       continue;
     }
     if (strcmp(argv[i], "--solve-mode") == 0) {
@@ -694,6 +732,10 @@ int main(int argc, char **argv) {
     fputs("error: --branch-heuristic requires --backend branch\n", stderr);
     return 2;
   }
+  if (branch_rw_source_set && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --branch-rw-source requires --backend branch\n", stderr);
+    return 2;
+  }
   if (calibrate_backends && backend != SOLVE_BACKEND_BRANCH) {
     fputs("error: --branch-calibrate-backends requires --backend branch\n", stderr);
     return 2;
@@ -718,7 +760,7 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
     return 2;
   }
-  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_v2) {
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_set) {
     fputs("error: --rankwidth-table requires --backend rankwidth\n", stderr);
     return 2;
   }
@@ -815,9 +857,15 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
-        qsop, max_vars, branch_heuristic, solve_mode, sink_ptr, &result, &solve_stats, trace_ptr,
-        &error);
+    if (branch_rw_source != QSOP_BRANCH_RW_SOURCE_NATIVE) {
+      ok = qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
+          qsop, max_vars, branch_heuristic, branch_rw_source, solve_mode, &result, &solve_stats,
+          trace_ptr, &error);
+    } else {
+      ok = qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
+          qsop, max_vars, branch_heuristic, solve_mode, sink_ptr, &result, &solve_stats, trace_ptr,
+          &error);
+    }
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
@@ -856,13 +904,65 @@ int main(int argc, char **argv) {
       }
     }
     if (ok) {
-      ok = rankwidth_table_v2
-               ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                          rankwidth_mode, &result, &solve_stats,
-                                                          trace_ptr, &error)
-               : qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                       rankwidth_mode, &result, &solve_stats,
-                                                       trace_ptr, &error);
+      if (rankwidth_table_validate) {
+        qsop_result_t *result_v1 = NULL;
+        qsop_result_t *result_v2 = NULL;
+        qsop_solve_stats_t stats_v1 = {0};
+        qsop_solve_stats_t stats_v2 = {0};
+        const bool ok_v1 = qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition,
+                                                                  max_vars, rankwidth_mode,
+                                                                  &result_v1, &stats_v1, NULL,
+                                                                  &error);
+        if (!ok_v1) {
+          qsop_result_free(result_v1);
+          ok = false;
+        } else {
+          const bool ok_v2 =
+              qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
+                                                       rankwidth_mode, &result_v2, &stats_v2,
+                                                       NULL, &error);
+          if (!ok_v2) {
+            qsop_result_free(result_v1);
+            qsop_result_free(result_v2);
+            ok = false;
+          } else {
+            bool mismatch = false;
+            if (result_v1->r != result_v2->r) {
+              mismatch = true;
+            } else {
+              for (uint32_t res = 0; res < result_v1->r && !mismatch; res++) {
+                if (result_v1->count_strings != NULL && result_v2->count_strings != NULL) {
+                  if (strcmp(result_v1->count_strings[res], result_v2->count_strings[res]) != 0) {
+                    mismatch = true;
+                  }
+                } else if (result_v1->counts != NULL && result_v2->counts != NULL) {
+                  if (result_v1->counts[res] != result_v2->counts[res]) {
+                    mismatch = true;
+                  }
+                }
+              }
+            }
+            if (mismatch) {
+              fprintf(stderr, "error: rankwidth v1/v2 validation mismatch\n");
+              qsop_result_free(result_v1);
+              qsop_result_free(result_v2);
+              ok = false;
+            } else {
+              result = result_v1;
+              solve_stats = stats_v1;
+              qsop_result_free(result_v2);
+            }
+          }
+        }
+      } else {
+        ok = rankwidth_table_v2
+                 ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
+                                                            rankwidth_mode, &result, &solve_stats,
+                                                            trace_ptr, &error)
+                 : qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
+                                                         rankwidth_mode, &result, &solve_stats,
+                                                         trace_ptr, &error);
+      }
     }
   } else {
     ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,

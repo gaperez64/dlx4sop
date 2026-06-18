@@ -129,9 +129,8 @@ def solver_config(record: dict) -> str:
     )
     if backend == "wmc":
         enc = record.get("wmc_encoding", "amplitude")
-        if enc == "amplitude":
-            return "sop2wmc --encoding amplitude + ganak --mode 6"
-        return f"sop2wmc --encoding {enc} + ganak --mode 0"
+        mode = 0 if enc == "residue" else 6
+        return f"sop2wmc --encoding {enc} + ganak --mode {mode}"
     if backend == "branch":
         return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
     if backend == "rankwidth":

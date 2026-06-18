@@ -9,7 +9,10 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop2wmc [--encoding residue|amplitude] [--residue K|all] "
+  fputs("usage: sop2wmc [--encoding amp-and|amp-soft|amp-block|residue-fourier|residue-accumulator] "
+        "[--wmc-fourier-inner amp-and|amp-soft] "
+        "[--wmc-preprocess none|peel1|peel2-safe] [--residue K|all] "
+        "[--wmc-block-min-side N] [--wmc-block-min-savings N] "
         "[-o PATH] [--no-metadata] [PATH|-]\n",
         file);
 }
@@ -42,12 +45,20 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *enc = argv[++i];
-      if (strcmp(enc, "residue") == 0) {
+      if (strcmp(enc, "residue-accumulator") == 0 || strcmp(enc, "residue") == 0) {
         options.encoding = QSOP_WMC_ENCODING_RESIDUE;
-      } else if (strcmp(enc, "amplitude") == 0) {
+      } else if (strcmp(enc, "amp-and") == 0 || strcmp(enc, "amplitude") == 0) {
         options.encoding = QSOP_WMC_ENCODING_AMPLITUDE;
+      } else if (strcmp(enc, "amp-soft") == 0) {
+        options.encoding = QSOP_WMC_ENCODING_AMP_SOFT;
+      } else if (strcmp(enc, "residue-fourier") == 0) {
+        options.encoding = QSOP_WMC_ENCODING_RESIDUE_FOURIER;
+      } else if (strcmp(enc, "amp-block") == 0) {
+        options.encoding = QSOP_WMC_ENCODING_AMP_BLOCK;
       } else {
-        fputs("error: --encoding must be 'residue' or 'amplitude'\n", stderr);
+        fputs("error: --encoding must be 'amp-and', 'amp-soft', 'amp-block', 'residue-fourier', "
+              "or 'residue-accumulator'\n",
+              stderr);
         return 2;
       }
       continue;
@@ -79,6 +90,70 @@ int main(int argc, char **argv) {
         return 2;
       }
       output_path = argv[++i];
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-fourier-inner") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-fourier-inner requires a value\n", stderr);
+        return 2;
+      }
+      const char *inner = argv[++i];
+      if (strcmp(inner, "amp-and") == 0 || strcmp(inner, "amplitude") == 0) {
+        options.fourier_inner = QSOP_WMC_ENCODING_AMPLITUDE;
+      } else if (strcmp(inner, "amp-soft") == 0) {
+        options.fourier_inner = QSOP_WMC_ENCODING_AMP_SOFT;
+      } else {
+        fputs("error: --wmc-fourier-inner must be 'amp-and' or 'amp-soft'\n", stderr);
+        return 2;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-preprocess") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-preprocess requires a value\n", stderr);
+        return 2;
+      }
+      const char *pp = argv[++i];
+      if (strcmp(pp, "none") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_NONE;
+      } else if (strcmp(pp, "peel1") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_PEEL1;
+      } else if (strcmp(pp, "peel2-safe") == 0) {
+        options.preprocess = QSOP_WMC_PREPROCESS_PEEL2_SAFE;
+      } else {
+        fputs("error: --wmc-preprocess must be 'none', 'peel1', or 'peel2-safe'\n", stderr);
+        return 2;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-block-min-side") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-block-min-side requires a value\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const unsigned long parsed = strtoul(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0' || parsed > UINT32_MAX) {
+        fputs("error: --wmc-block-min-side must be a non-negative integer\n", stderr);
+        return 2;
+      }
+      options.block_min_side = (uint32_t)parsed;
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-block-min-savings") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-block-min-savings requires a value\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const long long parsed = strtoll(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --wmc-block-min-savings must be an integer\n", stderr);
+        return 2;
+      }
+      options.block_min_savings = (int64_t)parsed;
       continue;
     }
     if (strcmp(argv[i], "--no-metadata") == 0) {

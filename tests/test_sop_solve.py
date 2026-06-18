@@ -90,6 +90,24 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{branch_fourier.stdout}\n"
         )
 
+    for rw_source in ("native", "from-treewidth", "both", "auto"):
+        branch_rw = subprocess.run(
+            [str(exe), "--backend", "branch", "--branch-rw-source", rw_source, str(qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if branch_rw.returncode != 0:
+            raise AssertionError(
+                f"{name}: branch --branch-rw-source {rw_source} failed\n{branch_rw.stderr}"
+            )
+        if branch_rw.stdout != expected_text:
+            raise AssertionError(
+                f"{name}: branch --branch-rw-source {rw_source} mismatch\n"
+                f"expected:\n{expected_text}\nactual:\n{branch_rw.stdout}\n"
+            )
+
     components_fourier = subprocess.run(
         [str(exe), "--backend", "components", "--solve-mode", "fourier", str(qsop)],
         check=False,
@@ -1121,6 +1139,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "balanced")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill-cut")
+    assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "from-treewidth")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
     assert_rankwidth_matches(
         exe,
@@ -1288,11 +1307,13 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
+    # v2 is the default; trace events are rankwidth.v2_leaf / rankwidth.v2_join_map / rankwidth.v2_join.
+    # Accept either v1 or v2 names so the test works with both --rankwidth-table v1 and v2.
     if (
         traced.returncode != 0
-        or "rankwidth.leaf" not in traced.stderr
-        or "rankwidth.join_map" not in traced.stderr
-        or "rankwidth.join" not in traced.stderr
+        or ("rankwidth.leaf" not in traced.stderr and "rankwidth.v2_leaf" not in traced.stderr)
+        or ("rankwidth.join_map" not in traced.stderr and "rankwidth.v2_join_map" not in traced.stderr)
+        or ("rankwidth.join" not in traced.stderr and "rankwidth.v2_join" not in traced.stderr)
     ):
         raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
 
@@ -1594,9 +1615,12 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if (
         labelled_trace.returncode != 0
-        or "rankwidth.labelled_leaf" not in labelled_trace.stderr
-        or "rankwidth.labelled_join_map" not in labelled_trace.stderr
-        or "rankwidth.labelled_join" not in labelled_trace.stderr
+        or ("rankwidth.labelled_leaf" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_leaf" not in labelled_trace.stderr)
+        or ("rankwidth.labelled_join_map" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_join_map" not in labelled_trace.stderr)
+        or ("rankwidth.labelled_join" not in labelled_trace.stderr
+            and "rankwidth.labelled_v2_join" not in labelled_trace.stderr)
     ):
         raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
 

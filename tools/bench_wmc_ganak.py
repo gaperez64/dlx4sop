@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Benchmark sop2wmc + Ganak against sop-solve.
 
-Two encodings are benchmarked:
-  residue  -- one DIMACS CNF per residue, plain #SAT (Ganak --mode 0)
-  amplitude -- single WPCNF with complex literal weights (Ganak --mode 6)
+Five encodings are supported:
+  residue          -- one DIMACS CNF per residue, plain #SAT (Ganak --mode 0)
+  amplitude/amp-and -- single WPCNF, Tseitin AND auxiliaries (Ganak --mode 6)
+  amp-soft         -- single WPCNF, implication-only auxiliaries (Ganak --mode 6)
+  amp-block        -- single WPCNF, bipartite block counter + selectors (Ganak --mode 6)
+  residue-fourier  -- r WPCNF blocks via iDFT (Ganak --mode 6 per block)
+  all              -- run all five encodings
 
 For each QSOP instance the script cross-checks Ganak's output against the
 reference from `sop-solve --format residue-vector`. A non-zero mismatch count
@@ -173,16 +177,17 @@ def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path
     return counts, export_s, count_s, "ok"
 
 
-def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, timeout: float | None):
-    """Run amplitude encoding: single WPCNF, complex WMC (Ganak --mode 6)."""
+def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, timeout: float | None,
+                    enc: str = "amplitude"):
+    """Run a single-WPCNF amplitude encoding (amp-and, amp-soft, amp-block): Ganak --mode 6."""
     with tempfile.TemporaryDirectory() as tmp:
         cnf_path = pathlib.Path(tmp) / "amp.cnf"
         start = time.perf_counter()
-        exported = run([str(sop2wmc), "--encoding", "amplitude",
+        exported = run([str(sop2wmc), "--encoding", enc,
                         "-o", str(cnf_path), str(qsop)])
         export_s = time.perf_counter() - start
         if exported.returncode != 0:
-            raise RuntimeError(f"sop2wmc --encoding amplitude failed:\n{exported.stderr}")
+            raise RuntimeError(f"sop2wmc --encoding {enc} failed:\n{exported.stderr}")
 
         cnf_text = cnf_path.read_text()
         factor = parse_amplitude_factor(cnf_text)
@@ -205,6 +210,79 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
         raw = parse_ganak_complex(counted.stdout)
         amplitude = raw * factor
         return amplitude, export_s, count_s, "ok"
+
+
+def _split_fourier_blocks(text: str) -> list[tuple[int, str]]:
+    """Split multi-document residue-fourier output into (t, cnf_text) pairs."""
+    blocks: list[tuple[int, str]] = []
+    current_t: int | None = None
+    current_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        m = re.match(r"c --- fourier t=(\d+) r=\d+ ---", line)
+        if m:
+            if current_t is not None:
+                blocks.append((current_t, "".join(current_lines)))
+            current_t = int(m.group(1))
+            current_lines = []
+        elif current_t is not None:
+            current_lines.append(line)
+    if current_t is not None:
+        blocks.append((current_t, "".join(current_lines)))
+    return blocks
+
+
+def _parse_z0_log2(cnf_text: str) -> int | None:
+    for line in cnf_text.splitlines():
+        m = re.search(r"z0_log2=(\d+)", line)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path,
+                          r: int, timeout: float | None):
+    """Run residue-fourier encoding: r WPCNF blocks via Ganak --mode 6, iDFT to recover amplitude."""
+    export_s, count_s = 0.0, 0.0
+    with tempfile.TemporaryDirectory() as tmp:
+        # Emit all r blocks in one sop2wmc call.
+        start = time.perf_counter()
+        exported = run([str(sop2wmc), "--encoding", "residue-fourier",
+                        "--residue", "all", str(qsop)])
+        export_s = time.perf_counter() - start
+        if exported.returncode != 0:
+            raise RuntimeError(f"sop2wmc --encoding residue-fourier failed:\n{exported.stderr}")
+
+        blocks = _split_fourier_blocks(exported.stdout)
+        if len(blocks) != r:
+            raise RuntimeError(f"residue-fourier: expected {r} blocks, got {len(blocks)}")
+
+        F: list[complex] = []
+        for t, cnf_text in blocks:
+            factor = parse_amplitude_factor(cnf_text)
+            if t == 0:
+                # F[0] = 2^nvars — trivial, no Ganak call needed.
+                z0_log2 = _parse_z0_log2(cnf_text)
+                F.append(complex(2 ** z0_log2) * factor if z0_log2 is not None else complex(0))
+                continue
+            cnf_path = pathlib.Path(tmp) / f"t{t}.cnf"
+            cnf_path.write_text(cnf_text)
+            start = time.perf_counter()
+            try:
+                counted = subprocess.run(
+                    [str(ganak), "--mode", "6", "--verb", "0", str(cnf_path)],
+                    check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                count_s += (timeout or 0.0)
+                return None, export_s, count_s, "timeout"
+            count_s += time.perf_counter() - start
+            raw = parse_ganak_complex(counted.stdout)
+            F.append(raw * factor)
+
+    # amplitude = F[1] = sum_k counts[k] * omega^k directly.
+    amplitude = F[1] if len(F) > 1 else F[0]
+    return amplitude, export_s, count_s, "ok"
 
 
 def counts_to_amplitude(counts: list, r: int) -> complex:
@@ -259,7 +337,23 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
         **provenance,
     }
 
-    if encoding == "residue":
+    if encoding == "residue-fourier":
+        amplitude, export_s, count_s, status = ganak_residue_fourier(sop2wmc, ganak, qsop, r, timeout)
+        export_ns = int(export_s * 1e9)
+        ganak_ns = int(count_s * 1e9)
+        solve_ns = export_ns + ganak_ns
+        if status == "timeout" or amplitude is None:
+            return {**base, "status": "timeout", "solve_elapsed_ns": solve_ns,
+                    "wmc_export_elapsed_ns": export_ns, "wmc_ganak_elapsed_ns": ganak_ns,
+                    "export_ms": round(export_s * 1e3, 3), "ganak_ms": round(count_s * 1e3, 3),
+                    "ganak_total_ms": round((export_s + count_s) * 1e3, 3), "mismatches": 0}
+        mismatches = (0 if check_amplitude(amplitude, ref_amplitude) else 1) if ref_amplitude is not None else -1
+        return {**base, "status": "ok", "solve_elapsed_ns": solve_ns,
+                "wmc_export_elapsed_ns": export_ns, "wmc_ganak_elapsed_ns": ganak_ns,
+                "export_ms": round(export_s * 1e3, 3), "ganak_ms": round(count_s * 1e3, 3),
+                "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
+                "mismatches": mismatches, "amplitude_real": amplitude.real, "amplitude_imag": amplitude.imag}
+    elif encoding == "residue":
         result, export_s, count_s, status = ganak_residue(sop2wmc, ganak, qsop, r, timeout)
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
@@ -296,7 +390,7 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
         }
         return row
     else:
-        amplitude, export_s, count_s, status = ganak_amplitude(sop2wmc, ganak, qsop, timeout)
+        amplitude, export_s, count_s, status = ganak_amplitude(sop2wmc, ganak, qsop, timeout, enc=encoding)
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
         solve_ns = export_ns + ganak_ns
@@ -370,7 +464,9 @@ def main() -> int:
     parser.add_argument("--sop-solve", default="build/sop-solve")
     parser.add_argument("--qasm2sop", default="build/qasm2sop")
     parser.add_argument("--ganak", default="ganak")
-    parser.add_argument("--encoding", choices=["residue", "amplitude", "both"],
+    parser.add_argument("--encoding",
+                        choices=["residue", "amplitude", "amp-and", "amp-soft",
+                                 "amp-block", "residue-fourier", "both", "all"],
                         default="residue", help="WMC encoding to benchmark")
     parser.add_argument("--manifest", type=pathlib.Path, help="QASM corpus manifest to expand into QSOP instances")
     parser.add_argument("--format", choices=["markdown", "jsonl"], default="markdown")
@@ -391,7 +487,13 @@ def main() -> int:
     timeout = args.ganak_timeout if args.ganak_timeout > 0 else None
     sop_solve_timeout = args.sop_solve_timeout if args.sop_solve_timeout and args.sop_solve_timeout > 0 else None
 
-    encodings = ["residue", "amplitude"] if args.encoding == "both" else [args.encoding]
+    _all_encodings = ["residue", "amplitude", "amp-soft", "amp-block", "residue-fourier"]
+    if args.encoding in ("both", "all"):
+        encodings = _all_encodings
+    elif args.encoding == "amp-and":
+        encodings = ["amplitude"]
+    else:
+        encodings = [args.encoding]
 
     sop_solve_extra = []
     if args.sop_solve_backend:

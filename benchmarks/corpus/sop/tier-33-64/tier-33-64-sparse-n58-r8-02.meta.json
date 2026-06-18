@@ -1,0 +1,12 @@
+{
+  "name": "tier-33-64-sparse-n58-r8-02",
+  "generator": "build_sop_corpus.py:v1",
+  "r": 8,
+  "nvars": 58,
+  "nedges": 249,
+  "description": "Synthetic sparse graph, 58 vars, r=8, seed=3042+2",
+  "solvable_without_external_tools": false,
+  "known_hard": true,
+  "skip_backends": ["treewidth", "rankwidth", "branch"],
+  "skip_reason": "58 vars, 249 edges, treewidth~25 (8^25≈10^22 entries); rankwidth times out; branch hits max-vars cap; outside default local tuning budget"
+}

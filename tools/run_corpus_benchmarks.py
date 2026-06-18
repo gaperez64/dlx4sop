@@ -31,24 +31,24 @@ WMC_RESIDUE_TIERS = ("0-32", "33-64")
 
 SOLVER_TIMEOUT = {
     "0-32": 30,
-    "33-64": 60,
-    "65-128": 300,
-    "129-256": 750,
+    "33-64": 30,
+    "65-128": 30,
+    "129-256": 30,
     "257-512 sample": 30,
 }
 WMC_TIMEOUT = {
     "0-32": 30,
-    "33-64": 60,
-    "65-128": 120,
-    "129-256": 300,
-    "257-512 sample": 60,
+    "33-64": 30,
+    "65-128": 30,
+    "129-256": 30,
+    "257-512 sample": 30,
 }
 WMC_SOP_SOLVE_TIMEOUT = {
     "0-32": 30,
-    "33-64": 60,
-    "65-128": 120,
-    "129-256": 300,
-    "257-512 sample": 60,
+    "33-64": 30,
+    "65-128": 30,
+    "129-256": 30,
+    "257-512 sample": 30,
 }
 TIER_MAX_VARS = {
     "0-32": 32,
@@ -160,7 +160,7 @@ def run_solver_jobs(
         if not mf.exists():
             print(f"warning: manifest missing for {tier}: {mf}", file=sys.stderr)
             continue
-        timeout = str(SOLVER_TIMEOUT.get(tier, 60))
+        timeout = str(args.timeout if args.timeout is not None else SOLVER_TIMEOUT.get(tier, 60))
         max_vars = str(TIER_MAX_VARS.get(tier, 512))
         for stem, extra_args in SOLVER_JOBS.get(tier, []):
             output = artifact_dir / f"{stem}.jsonl"
@@ -192,8 +192,8 @@ def run_wmc_jobs(
             print(f"warning: manifest missing for {tier}: {mf}", file=sys.stderr)
             continue
         slug = tier_slug(tier)
-        timeout = str(WMC_TIMEOUT.get(tier, 30))
-        sop_timeout = str(WMC_SOP_SOLVE_TIMEOUT.get(tier, 30))
+        timeout = str(args.timeout if args.timeout is not None else WMC_TIMEOUT.get(tier, 30))
+        sop_timeout = str(args.timeout if args.timeout is not None else WMC_SOP_SOLVE_TIMEOUT.get(tier, 30))
         max_vars = TIER_MAX_VARS.get(tier, 512)
         base_cmd = [
             sys.executable, str(bench),
@@ -208,12 +208,28 @@ def run_wmc_jobs(
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
         ]
-        # Amplitude: all tiers
+        # amp-and (amplitude): all tiers
         amp_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amplitude-current.jsonl"
-        print(f"\n--- WMC amplitude: {tier} ---", file=sys.stderr)
+        print(f"\n--- WMC amp-and: {tier} ---", file=sys.stderr)
         run_to_jsonl([*base_cmd, "--encoding", "amplitude"], amp_output, args.verbose)
 
-        # Residue: only small tiers
+        # amp-soft: all tiers
+        amp_soft_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-soft-current.jsonl"
+        print(f"\n--- WMC amp-soft: {tier} ---", file=sys.stderr)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-soft"], amp_soft_output, args.verbose)
+
+        # amp-block: all tiers
+        amp_block_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-block-current.jsonl"
+        print(f"\n--- WMC amp-block: {tier} ---", file=sys.stderr)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-block"], amp_block_output, args.verbose)
+
+        # residue-fourier: small tiers only (r calls per instance, expensive)
+        if tier in WMC_RESIDUE_TIERS:
+            res_fourier_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-fourier-current.jsonl"
+            print(f"\n--- WMC residue-fourier: {tier} ---", file=sys.stderr)
+            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier"], res_fourier_output, args.verbose)
+
+        # residue (plain #SAT): small tiers only
         if tier in WMC_RESIDUE_TIERS:
             res_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-current.jsonl"
             print(f"\n--- WMC residue: {tier} ---", file=sys.stderr)
@@ -240,7 +256,7 @@ def run_native_jobs(
             "--engine", "all",
             "--max-qubits", str(args.native_max_qubits),
             "--engine-qubit-cap", f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
-            "--timeout", str(args.native_timeout),
+            "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
             "--memory-limit-mib", str(args.memory_limit_mib),
             "--skip-unsupported",
             "--format", "jsonl",
@@ -276,6 +292,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--skip-wmc", action="store_true", help="skip WMC jobs")
     parser.add_argument("--skip-native", action="store_true", help="skip native simulator jobs")
     parser.add_argument("--skip-scoreboard", action="store_true", help="skip scoreboard refresh")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="override all per-tier timeouts (solver, WMC, native) with this value")
     parser.add_argument("--native-max-qubits", type=int, default=16)
     parser.add_argument("--pyzx-matrix-max-qubits", type=int, default=10)
     parser.add_argument("--native-timeout", type=float, default=10.0)

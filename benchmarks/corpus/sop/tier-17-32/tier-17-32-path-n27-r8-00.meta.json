@@ -1,0 +1,9 @@
+{
+  "name": "tier-17-32-path-n27-r8-00",
+  "generator": "build_sop_corpus.py:v1",
+  "r": 8,
+  "nvars": 27,
+  "nedges": 26,
+  "description": "Synthetic path graph, 27 vars, r=8, seed=2042+0",
+  "solvable_without_external_tools": true
+}

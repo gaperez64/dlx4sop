@@ -69,6 +69,8 @@ typedef enum qsop_rankwidth_generator {
   QSOP_RANKWIDTH_GENERATOR_BALANCED,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+  /* Derive rank decomposition from min-fill treewidth elimination tree. */
+  QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH,
   QSOP_RANKWIDTH_GENERATOR_BEST,
   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
 } qsop_rankwidth_generator_t;
@@ -89,6 +91,16 @@ typedef enum qsop_branch_heuristic {
   QSOP_BRANCH_HEURISTIC_TREEWIDTH,
   QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY,
 } qsop_branch_heuristic_t;
+
+/* Policy for how the branch solver sources a rank decomposition when considering
+ * rankwidth delegation. */
+typedef enum qsop_branch_rw_source {
+  QSOP_BRANCH_RW_SOURCE_NATIVE,         /* use min-fill-cut (original behavior) */
+  QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
+  QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
+  QSOP_BRANCH_RW_SOURCE_AUTO,           /* from-treewidth by default (alias) */
+  QSOP_BRANCH_RW_SOURCE_NONE,           /* never attempt rankwidth delegation */
+} qsop_branch_rw_source_t;
 
 typedef struct qsop_solve_trace_event {
   const char *phase;
@@ -209,6 +221,11 @@ bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
     qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_branch_rw_source_t rw_source, qsop_solve_mode_t mode, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint32_t nvars,
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);
@@ -218,12 +235,19 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_decomposition_t **out,
                                            qsop_error_t *error);
 
+/* Build a from-treewidth rankwidth decomposition from a precomputed elimination order,
+ * avoiding a second min-fill run when the caller already holds a treewidth order. */
+bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
+                                             const uint32_t *order,
+                                             qsop_rankwidth_decomposition_t **out,
+                                             qsop_error_t *error);
+
 bool qsop_rankwidth_decomposition_support_width(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_widths(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_forecast(

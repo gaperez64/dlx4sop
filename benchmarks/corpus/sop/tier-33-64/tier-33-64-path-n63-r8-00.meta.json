@@ -1,0 +1,9 @@
+{
+  "name": "tier-33-64-path-n63-r8-00",
+  "generator": "build_sop_corpus.py:v1",
+  "r": 8,
+  "nvars": 63,
+  "nedges": 62,
+  "description": "Synthetic path graph, 63 vars, r=8, seed=3042+0",
+  "solvable_without_external_tools": true
+}

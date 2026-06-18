@@ -34,6 +34,11 @@ typedef struct qsop_stats_options {
 
 bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error);
 
+/* Like qsop_compute_stats but also writes the min-fill elimination order to order[0..nvars-1].
+ * order must point to a caller-allocated array of size qsop->nvars (ignored when NULL). */
+bool qsop_compute_stats_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
+                                   uint32_t *order, qsop_error_t *error);
+
 bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
                                      const qsop_stats_options_t *options,
                                      qsop_stats_t *stats, qsop_error_t *error);

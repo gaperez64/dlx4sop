@@ -234,8 +234,8 @@ static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_st
   return true;
 }
 
-static bool compute_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t *stats,
-                                      qsop_error_t *error) {
+static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
+                                                  uint32_t *order, qsop_error_t *error) {
   if (qsop->nvars > 63U) {
     return compute_large_width_diagnostics(qsop, stats, error);
   }
@@ -272,6 +272,7 @@ static bool compute_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t 
 
   memcpy(work, adj, (qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*work));
   uint64_t active = all;
+  uint32_t step = 0;
   while (active != 0) {
     bool found = false;
     uint32_t best = 0;
@@ -297,6 +298,10 @@ static bool compute_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t 
       stats->min_fill_width = best_degree;
     }
     stats->min_fill_edges += best_fill;
+    if (order != NULL && step < qsop->nvars) {
+      order[step] = best;
+    }
+    step++;
 
     uint64_t neighbors = work[best] & active;
     for (uint32_t u = 0; u < qsop->nvars; u++) {
@@ -515,9 +520,10 @@ static bool compute_exact_widths(const qsop_instance_t *qsop, const qsop_stats_o
   return true;
 }
 
-bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
-                                     const qsop_stats_options_t *options,
-                                     qsop_stats_t *stats, qsop_error_t *error) {
+static bool compute_stats_internal(const qsop_instance_t *qsop,
+                                    const qsop_stats_options_t *options,
+                                    qsop_stats_t *stats, uint32_t *order,
+                                    qsop_error_t *error) {
   if (qsop == NULL || stats == NULL) {
     set_error(error, "internal error: null stats argument");
     return false;
@@ -601,14 +607,25 @@ bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
   free(colind);
   free(visited);
   free(queue);
-  if (!compute_width_diagnostics(qsop, stats, error)) {
+  if (!compute_width_diagnostics_with_order(qsop, stats, order, error)) {
     return false;
   }
   return compute_exact_widths(qsop, options, stats, error);
 }
 
+bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
+                                     const qsop_stats_options_t *options,
+                                     qsop_stats_t *stats, qsop_error_t *error) {
+  return compute_stats_internal(qsop, options, stats, NULL, error);
+}
+
 bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error) {
-  return qsop_compute_stats_with_options(qsop, NULL, stats, error);
+  return compute_stats_internal(qsop, NULL, stats, NULL, error);
+}
+
+bool qsop_compute_stats_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
+                                   uint32_t *order, qsop_error_t *error) {
+  return compute_stats_internal(qsop, NULL, stats, order, error);
 }
 
 bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *error) {
