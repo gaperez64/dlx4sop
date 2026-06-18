@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 """Tests for branch policy CLI options (A3/A4/A5).
 
-Verifies:
-  - --branch-rw-min-treewidth-width suppresses rw probe on cheap residuals
-  - --branch-rw-min-treewidth-forecast suppresses probe when tw table is small
-  - --branch-rw-min-speedup controls the cost-model gate
-  - branch:no-rankwidth is faster than branch:auto on cheap tiers (A5 structural guard)
-
-Runs sop-solve directly against small fixtures in tests/qasm_solver_corpus.json.
+Usage: python3 tests/test_branch_policy.py <sop-solve>
 """
 
-import json
 import pathlib
 import subprocess
 import sys
+import tempfile
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-SOP_SOLVE = REPO_ROOT / "build" / "sop-solve"
-CORPUS_JSON = REPO_ROOT / "tests" / "qasm_solver_corpus.json"
 BENCHMARKS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
 
 
-def _find_small_qsop() -> pathlib.Path | None:
+def _find_small_qsop():
     """Return a small QSOP file from the corpus for policy testing."""
     for tier_dir in sorted(BENCHMARKS_DIR.iterdir()):
         if not tier_dir.is_dir():
@@ -31,9 +24,9 @@ def _find_small_qsop() -> pathlib.Path | None:
     return None
 
 
-def _run_sop_solve(qsop: pathlib.Path, extra_args: list[str], timeout: float = 10.0) -> dict:
+def _run_sop_solve(sop_solve, qsop, extra_args, timeout=10.0):
     cmd = [
-        str(SOP_SOLVE),
+        str(sop_solve),
         "--backend", "branch",
         "--branch-heuristic", "split",
         "--branch-rw-source", "auto",
@@ -49,88 +42,55 @@ def _run_sop_solve(qsop: pathlib.Path, extra_args: list[str], timeout: float = 1
         return {"status": "timeout"}
 
 
-def _parse_stat(stdout: str, key: str) -> int | None:
-    for line in stdout.splitlines():
-        if line.strip().startswith(key + ":") or f" {key}=" in line or f"; {key}=" in line:
-            # Try to extract after the key
-            after = line.split(key + "=")[-1].split(";")[0].split(",")[0].strip()
-            try:
-                return int(after)
-            except ValueError:
-                pass
-    return None
+def test_binary_exists(sop_solve, tmp):
+    if not sop_solve.exists():
+        raise AssertionError(f"sop-solve not found at {sop_solve}")
 
 
-def test_sop_solve_binary_exists():
-    assert SOP_SOLVE.exists(), f"sop-solve not found at {SOP_SOLVE}"
-
-
-def test_branch_rw_min_treewidth_width_veto(tmp_path):
-    """With a high --branch-rw-min-treewidth-width, all rw probes should be vetoed."""
+def test_branch_rw_min_treewidth_width_veto(sop_solve, tmp):
     qsop = _find_small_qsop()
     if qsop is None:
-        return  # skip if no corpus
+        print("  SKIP: no corpus found")
+        return
+    r1 = _run_sop_solve(sop_solve, qsop, [])
+    r2 = _run_sop_solve(sop_solve, qsop, ["--branch-rw-min-treewidth-width", "100"])
+    if r1["status"] != "ok":
+        raise AssertionError(f"default run failed: {r1}")
+    if r2["status"] != "ok":
+        raise AssertionError(f"high-veto run failed: {r2}")
 
-    result_default = _run_sop_solve(qsop, [])
-    result_high_veto = _run_sop_solve(qsop, ["--branch-rw-min-treewidth-width", "100"])
 
-    assert result_default["status"] in ("ok",)
-    assert result_high_veto["status"] in ("ok",)
-
-
-def test_branch_rw_min_speedup_high_veto(tmp_path):
-    """With a very high --branch-rw-min-speedup, rw should always be rejected."""
+def test_branch_rw_min_speedup_high_veto(sop_solve, tmp):
     qsop = _find_small_qsop()
     if qsop is None:
         return
+    result = _run_sop_solve(sop_solve, qsop, ["--branch-rw-min-speedup", "1000.0"])
+    if result["status"] != "ok":
+        raise AssertionError(f"high-speedup run failed: {result}")
 
-    result = _run_sop_solve(qsop, ["--branch-rw-min-speedup", "1000.0"])
-    assert result["status"] == "ok"
 
-
-def test_branch_no_rankwidth_not_slower_than_branch_auto(tmp_path):
-    """A5: structural guard — branch:no-rankwidth should not be much slower than branch:auto
-    on cheap tiers where rw_delegations == 0.
-
-    This is a soft check because timing is non-deterministic; we just verify both complete.
-    """
+def test_branch_no_rankwidth_completes(sop_solve, tmp):
     qsop = _find_small_qsop()
     if qsop is None:
         return
-
-    def _run_backend(rw_source: str) -> dict:
-        cmd = [
-            str(SOP_SOLVE),
-            "--backend", "branch",
-            "--branch-heuristic", "split",
-            "--branch-rw-source", rw_source,
-            "--max-vars", "64",
-            "--format", "stats",
-            str(qsop),
-        ]
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=30.0)
-            return {
-                "status": "ok" if result.returncode == 0 else "error",
-                "stdout": result.stdout.decode(),
-                "elapsed_ns": 0,
-            }
-        except subprocess.TimeoutExpired:
-            return {"status": "timeout", "stdout": "", "elapsed_ns": 0}
-
-    auto_result = _run_backend("auto")
-    none_result = _run_backend("none")
-
-    assert auto_result["status"] == "ok", f"branch:auto failed: {auto_result}"
-    assert none_result["status"] == "ok", f"branch:no-rankwidth failed: {none_result}"
+    cmd = [
+        str(sop_solve),
+        "--backend", "branch",
+        "--branch-heuristic", "split",
+        "--branch-rw-source", "none",
+        "--max-vars", "64",
+        "--format", "stats",
+        str(qsop),
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=30.0)
+    if result.returncode != 0:
+        raise AssertionError(f"branch:no-rankwidth failed: {result.stderr.decode()[:200]}")
 
 
-def test_new_policy_options_parse():
-    """All new policy CLI options should be accepted without error."""
+def test_new_policy_options_parse(sop_solve, tmp):
     qsop = _find_small_qsop()
     if qsop is None:
         return
-
     policy_args = [
         "--branch-rw-min-treewidth-width", "4",
         "--branch-rw-min-treewidth-forecast", "4096",
@@ -141,27 +101,57 @@ def test_new_policy_options_parse():
         "--branch-tw-fixed-overhead-ns", "10000",
         "--branch-rw-memory-penalty-ns", "0",
     ]
-    result = _run_sop_solve(qsop, policy_args)
-    assert result["status"] == "ok", f"Failed with policy args: {result}"
+    result = _run_sop_solve(sop_solve, qsop, policy_args)
+    if result["status"] != "ok":
+        raise AssertionError(f"policy args parse failed: {result}")
 
 
-def test_branch_policy_args_rejected_for_non_branch_backend():
-    """Policy args should cause an error if backend is not branch."""
+def test_non_branch_backend_rejects_rw_source(sop_solve, tmp):
     qsop = _find_small_qsop()
     if qsop is None:
         return
-
     cmd = [
-        str(SOP_SOLVE),
+        str(sop_solve),
         "--backend", "treewidth",
         "--max-vars", "64",
-        "--branch-rw-source", "auto",  # This should cause an error for non-branch backend
+        "--branch-rw-source", "auto",
         str(qsop),
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=10.0)
-    assert result.returncode != 0, "Expected error when --branch-rw-source used with non-branch backend"
+    if result.returncode == 0:
+        raise AssertionError("expected error when --branch-rw-source used with non-branch backend")
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: test_branch_policy.py <sop-solve>", file=sys.stderr)
+        return 2
+
+    sop_solve = pathlib.Path(sys.argv[1])
+    tests = [
+        ("binary_exists", test_binary_exists),
+        ("branch_rw_min_treewidth_width_veto", test_branch_rw_min_treewidth_width_veto),
+        ("branch_rw_min_speedup_high_veto", test_branch_rw_min_speedup_high_veto),
+        ("branch_no_rankwidth_completes", test_branch_no_rankwidth_completes),
+        ("new_policy_options_parse", test_new_policy_options_parse),
+        ("non_branch_backend_rejects_rw_source", test_non_branch_backend_rejects_rw_source),
+    ]
+    failed = []
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        for name, fn in tests:
+            try:
+                fn(sop_solve, tmp)
+                print(f"  PASS {name}")
+            except Exception as exc:
+                print(f"  FAIL {name}: {exc}")
+                failed.append(name)
+    if failed:
+        print(f"\n{len(failed)} test(s) failed: {failed}", file=sys.stderr)
+        return 1
+    print(f"\n{len(tests)} test(s) passed")
+    return 0
 
 
 if __name__ == "__main__":
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+    raise SystemExit(main())

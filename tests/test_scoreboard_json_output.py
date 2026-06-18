@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for _write_scoreboard_json in tools/refresh_scoreboard.py (C1)."""
+"""Smoke tests for _write_scoreboard_json in tools/refresh_scoreboard.py (C1)."""
 
 import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
 
@@ -14,15 +15,15 @@ def _load_tool():
         sys.path.insert(0, str(TOOLS_DIR))
     path = TOOLS_DIR / "refresh_scoreboard.py"
     spec = importlib.util.spec_from_file_location("refresh_scoreboard", path)
-    assert spec and spec.loader
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules["refresh_scoreboard"] = module
     spec.loader.exec_module(module)
     return module
 
 
-def _make_solver_record(backend: str, elapsed_ns: int, source: str = "Synthetic",
-                         status: str = "ok") -> dict:
+def _make_solver_record(backend, elapsed_ns, source="Synthetic", status="ok"):
     return {
         "backend": backend,
         "treewidth_order": "min-fill",
@@ -50,31 +51,26 @@ def _make_solver_record(backend: str, elapsed_ns: int, source: str = "Synthetic"
     }
 
 
-def test_write_scoreboard_json_creates_file(tmp_path):
-    tool = _load_tool()
-
-    tier_label = "0-32"
-    records = [
-        _make_solver_record("treewidth", 1_000_000),
-        _make_solver_record("branch", 2_000_000),
+def test_write_scoreboard_json_creates_file(tool, tmp):
+    solver_records = [
+        ("0-32", [
+            _make_solver_record("treewidth", 1_000_000),
+            _make_solver_record("branch", 2_000_000),
+        ])
     ]
-    solver_records = [(tier_label, records)]
-    native_records = []
-
-    out_path = tmp_path / "scoreboard.json"
-    tool._write_scoreboard_json(solver_records, native_records, out_path)
-
-    assert out_path.exists()
+    out_path = tmp / "scoreboard.json"
+    tool._write_scoreboard_json(solver_records, [], out_path)
+    if not out_path.exists():
+        raise AssertionError("scoreboard.json not created")
     data = json.loads(out_path.read_text(encoding="utf-8"))
-    assert "generated_at" in data
-    assert "tiers" in data
-    assert "solver_summary" in data
-    assert isinstance(data["solver_summary"], list)
+    for key in ("generated_at", "tiers", "solver_summary"):
+        if key not in data:
+            raise AssertionError(f"missing key {key!r} in output")
+    if not isinstance(data["solver_summary"], list):
+        raise AssertionError("solver_summary should be a list")
 
 
-def test_write_scoreboard_json_multi_tier(tmp_path):
-    tool = _load_tool()
-
+def test_write_scoreboard_json_multi_tier(tool, tmp):
     solver_records = [
         ("0-32", [_make_solver_record("treewidth", 500_000)]),
         ("33-64", [
@@ -82,37 +78,57 @@ def test_write_scoreboard_json_multi_tier(tmp_path):
             _make_solver_record("branch", 7_000_000),
         ]),
     ]
-    native_records = []
-
-    out_path = tmp_path / "sb.json"
-    tool._write_scoreboard_json(solver_records, native_records, out_path)
-
+    out_path = tmp / "sb.json"
+    tool._write_scoreboard_json(solver_records, [], out_path)
     data = json.loads(out_path.read_text(encoding="utf-8"))
     tiers = {e["tier"] for e in data["solver_summary"]}
-    assert "0-32" in tiers
-    assert "33-64" in tiers
+    if "0-32" not in tiers:
+        raise AssertionError("missing tier 0-32 in output")
+    if "33-64" not in tiers:
+        raise AssertionError("missing tier 33-64 in output")
 
 
-def test_write_scoreboard_json_empty(tmp_path):
-    tool = _load_tool()
-
-    out_path = tmp_path / "empty.json"
+def test_write_scoreboard_json_empty(tool, tmp):
+    out_path = tmp / "empty.json"
     tool._write_scoreboard_json([], [], out_path)
-
-    assert out_path.exists()
+    if not out_path.exists():
+        raise AssertionError("json not created for empty input")
     data = json.loads(out_path.read_text(encoding="utf-8"))
-    assert data["solver_summary"] == []
+    if data["solver_summary"] != []:
+        raise AssertionError(f"expected empty solver_summary, got {data['solver_summary']}")
 
 
-def test_write_scoreboard_json_creates_parent_dir(tmp_path):
-    tool = _load_tool()
-
-    out_path = tmp_path / "subdir" / "deeper" / "scoreboard.json"
+def test_write_scoreboard_json_creates_parent_dir(tool, tmp):
+    out_path = tmp / "subdir" / "deeper" / "scoreboard.json"
     tool._write_scoreboard_json([], [], out_path)
+    if not out_path.exists():
+        raise AssertionError("json not created with nested parent dirs")
 
-    assert out_path.exists()
+
+def main() -> int:
+    tool = _load_tool()
+    tests = [
+        ("write_scoreboard_json_creates_file", test_write_scoreboard_json_creates_file),
+        ("write_scoreboard_json_multi_tier", test_write_scoreboard_json_multi_tier),
+        ("write_scoreboard_json_empty", test_write_scoreboard_json_empty),
+        ("write_scoreboard_json_creates_parent_dir", test_write_scoreboard_json_creates_parent_dir),
+    ]
+    failed = []
+    for name, fn in tests:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            try:
+                fn(tool, tmp)
+                print(f"  PASS {name}")
+            except Exception as exc:
+                print(f"  FAIL {name}: {exc}")
+                failed.append(name)
+    if failed:
+        print(f"\n{len(failed)} test(s) failed: {failed}", file=sys.stderr)
+        return 1
+    print(f"\n{len(tests)} test(s) passed")
+    return 0
 
 
 if __name__ == "__main__":
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+    raise SystemExit(main())
