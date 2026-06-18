@@ -1393,9 +1393,36 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   if (!build_active_residual_subinstance(residual, &sub, error)) {
     return false;
   }
+  /* D2+D3: precompute the elimination order once; share between rankwidth and treewidth paths.
+   * D3: check the adjacency-keyed order cache first — sibling residuals (x=0 vs x=1) have
+   * identical adjacency and can reuse the same min-fill order without recomputing it.
+   *
+   * When min_fill_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH, treewidth will never be used,
+   * so we capture the order from within the stats pass (no extra min-fill needed later).
+   * When min_fill_width <= cap, we still want MIN_FILL_MAX_DEGREE order for treewidth quality,
+   * so we use qsop_treewidth_order_alloc as before.
+   * For nvars > 63, compute_width_diagnostics uses the large path and cannot capture the order. */
+  const bool rw_uses_from_treewidth =
+      (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
+       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH);
+  /* Allocate a buffer for the stats order before calling compute_stats_with_order.
+   * Only useful for wide instances (treewidth won't be tried) with nvars <= 63. */
+  uint32_t *order_from_stats = NULL;
+  const bool want_stats_order =
+      rw_uses_from_treewidth && sub.nvars > 0 && sub.nvars <= 63U;
+  if (want_stats_order) {
+    order_from_stats = calloc(sub.nvars, sizeof(*order_from_stats));
+    if (order_from_stats == NULL) {
+      free_subinstance(&sub);
+      set_error(error, "out of memory for stats order buffer");
+      return false;
+    }
+  }
   const uint64_t probe_start_ns = recording ? qsop_trace_now_ns() : 0;
   const uint64_t stats_start = qsop_trace_begin(stats->trace);
-  if (!qsop_compute_stats(&sub, &sub_stats, error)) {
+  if (!qsop_compute_stats_with_order(&sub, &sub_stats, order_from_stats, error)) {
+    free(order_from_stats);
     free_subinstance(&sub);
     return false;
   }
@@ -1404,25 +1431,40 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                           sub_stats.min_fill_width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
 
-  /* D2+D3: precompute the elimination order once; share between rankwidth and treewidth paths.
-   * D3: check the adjacency-keyed order cache first — sibling residuals (x=0 vs x=1) have
-   * identical adjacency and can reuse the same min-fill order without recomputing it. */
-  const bool rw_uses_from_treewidth =
-      (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
-       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
-       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH);
+  /* Decide whether to use the stats-captured order or the MIN_FILL_MAX_DEGREE order.
+   * Use stats order only when treewidth won't be attempted (width > cap): this avoids
+   * an extra min-fill inside make_from_treewidth_decomposition while preserving the
+   * higher-quality MAX_DEGREE tiebreaker for narrow instances that DO use treewidth. */
+  const bool use_stats_order_for_rankwidth =
+      order_from_stats != NULL && sub_stats.width_diagnostics_available &&
+      sub_stats.min_fill_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
+
   uint32_t *shared_order = NULL;
   uint32_t shared_order_width = 0;
   double shared_order_probe_ms = 0.0;
   uint64_t shared_order_adj_fp = 0;
   if (rw_uses_from_treewidth && sub_stats.width_diagnostics_available &&
-      sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+      (use_stats_order_for_rankwidth ||
+       sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH)) {
     const uint64_t order_start_ns_pre = recording ? qsop_trace_now_ns() : 0;
     const uint64_t order_start_pre = qsop_trace_begin(stats->trace);
     shared_order_adj_fp = branch_order_adj_fp(&sub);
     shared_order = branch_order_cache_lookup(&stats->order_cache, &sub,
                                              shared_order_adj_fp, &shared_order_width);
-    if (shared_order == NULL) {
+    if (shared_order != NULL) {
+      free(order_from_stats);
+      order_from_stats = NULL;
+    } else if (use_stats_order_for_rankwidth) {
+      /* Wide instance: use order captured during stats (same heuristic as make_from_treewidth). */
+      shared_order = order_from_stats;
+      order_from_stats = NULL;
+      shared_order_width = sub_stats.min_fill_width;
+      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp,
+                                shared_order, shared_order_width);
+    } else {
+      /* Narrow instance: use MIN_FILL_MAX_DEGREE for best treewidth bag quality. */
+      free(order_from_stats);
+      order_from_stats = NULL;
       if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
                                       &shared_order, &shared_order_width, error)) {
         free_subinstance(&sub);
@@ -1435,6 +1477,9 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                             shared_order_width, order_start_pre);
     shared_order_probe_ms =
         recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(order_start_ns_pre)) : 0.0;
+  } else {
+    free(order_from_stats);
+    order_from_stats = NULL;
   }
 
   bool delegated = false;
@@ -2287,20 +2332,6 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
     return true;
   }
 
-  /* D5: when prefix_cut_rank is very small but treewidth is non-trivial, rankwidth
-   * will win massively (e.g. K_{a,b} uniform: tw = a, cut rank = 1).  Bypass the
-   * fast path so the main branch recursion can evaluate rankwidth instead.
-   * Gate on min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH to avoid
-   * bypassing on genuinely cheap graphs (paths/stars with tw = 1-2). */
-  qsop_stats_t root_stats = {0};
-  qsop_error_t stats_err = {0};
-  if (qsop_compute_stats(qsop, &root_stats, &stats_err) &&
-      root_stats.width_diagnostics_available &&
-      root_stats.prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
-      root_stats.min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH) {
-    return true;  /* not handled: let main recursion try rankwidth */
-  }
-
   uint32_t *order = NULL;
   uint32_t width = 0;
   const bool recording = (sink != NULL && sink->file != NULL);
@@ -2315,6 +2346,18 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   if (width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     free(order);
     return true;
+  }
+  /* D5: treewidth is within delegation range but prefix_cut_rank signals rankwidth
+   * may win massively (e.g. K_{a,b} uniform with tw = a >> cut_rank = 1).  Check
+   * after the width gate so wide instances (tw > 14) skip this stats call entirely. */
+  qsop_stats_t root_stats = {0};
+  qsop_error_t stats_err = {0};
+  if (qsop_compute_stats(qsop, &root_stats, &stats_err) &&
+      root_stats.width_diagnostics_available &&
+      root_stats.prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
+      root_stats.min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH) {
+    free(order);
+    return true;  /* not handled: let main recursion try rankwidth */
   }
   qsop_trace_emit(trace, "branch.treewidth_table_forecast", 0,
                   treewidth_table_forecast(width, qsop->r), 0);
