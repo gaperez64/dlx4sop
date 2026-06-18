@@ -8,6 +8,7 @@ Subcommands:
   native    Run native simulator comparison from QASM manifests.
   render    Render scoreboard from existing artifacts.
   full      Full pipeline: local + WMC + native + render.
+  tune-mqt  Run MQT materialized corpus through sop-solve backends.
 
 Examples:
 
@@ -31,6 +32,12 @@ Examples:
       --artifact-dir artifacts/full \\
       --ganak /tmp/ganak/ganak \\
       --output scoreboard.md
+
+  # MQT tuning (no external tools needed after materialization):
+  python3 tools/bench.py tune-mqt \\
+      --corpus benchmarks/corpus/sop/materialized-external/mqt-bench \\
+      --artifact-dir artifacts/mqt-tune \\
+      --timeout 30
 """
 
 from __future__ import annotations
@@ -123,6 +130,98 @@ def cmd_native(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: tune-mqt
+# ---------------------------------------------------------------------------
+
+MQT_DEFAULT_BACKENDS = [
+    "treewidth",
+    "branch:auto",
+    "branch:no-rankwidth",
+    "branch:from-treewidth",
+    "rankwidth:from-treewidth",
+    "rankwidth:best",
+]
+
+
+def cmd_tune_mqt(args: argparse.Namespace) -> int:
+    """Run MQT materialized QSOP corpus through sop-solve backends."""
+    corpus = args.corpus or (REPO_ROOT / "benchmarks" / "corpus" / "sop" /
+                              "materialized-external" / "mqt-bench")
+    if not corpus.exists():
+        print(f"error: MQT corpus directory not found: {corpus}", file=sys.stderr)
+        print("  Run tools/materialize_mqt_qsop_corpus.py first.", file=sys.stderr)
+        return 1
+
+    artifact_dir = args.artifact_dir
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    out_jsonl = artifact_dir / "mqt-tuning.jsonl"
+    backends = args.backends or MQT_DEFAULT_BACKENDS
+
+    cmd = [
+        sys.executable,
+        str(TOOLS_DIR / "bench_sop_local.py"),
+        "--sop-solve", str(args.sop_solve),
+        "--corpus-dir", str(corpus),
+        "--timeout", str(args.timeout),
+        "--out", str(out_jsonl),
+    ]
+    for b in backends:
+        cmd += ["--backend", b]
+
+    rc = _run(cmd)
+    if rc != 0:
+        return rc
+
+    # Render a compact MQT summary
+    summary_path = artifact_dir / "mqt-tuning-summary.md"
+    _render_mqt_summary(out_jsonl, summary_path)
+    return 0
+
+
+def _render_mqt_summary(jsonl_path: pathlib.Path, output: pathlib.Path) -> None:
+    """Render a simple Markdown summary from MQT tuning results."""
+    import json
+    import collections
+
+    if not jsonl_path.exists():
+        return
+
+    records: list[dict] = []
+    with open(jsonl_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    if not records:
+        output.write_text("No MQT tuning records found.\n", encoding="utf-8")
+        return
+
+    # Group by backend
+    by_backend: dict[str, list[dict]] = collections.defaultdict(list)
+    for r in records:
+        by_backend[r.get("backend", "unknown")].append(r)
+
+    lines = ["# MQT Tuning Summary\n"]
+    lines.append(f"Total records: {len(records)}\n")
+    lines.append("## Backend performance\n")
+    lines.append("| Backend | Solved | Total | Total time |")
+    lines.append("|---|---:|---:|---:|")
+
+    for backend, recs in sorted(by_backend.items()):
+        solved = sum(1 for r in recs if r.get("status") == "ok")
+        total_ns = sum(r.get("elapsed_ns", 0) for r in recs if r.get("status") == "ok")
+        ms = total_ns / 1_000_000
+        lines.append(f"| {backend} | {solved} | {len(recs)} | {ms:.1f} ms |")
+
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: render
 # ---------------------------------------------------------------------------
 
@@ -211,6 +310,7 @@ def _render_full(args: argparse.Namespace) -> int:
     """Render full scoreboard using tools/refresh_scoreboard.py."""
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts"
     output = args.output or REPO_ROOT / "scoreboard.md"
+    json_out = getattr(args, "json_out", None)
     cmd = [
         sys.executable,
         str(TOOLS_DIR / "refresh_scoreboard.py"),
@@ -218,6 +318,8 @@ def _render_full(args: argparse.Namespace) -> int:
         "--allow-missing",
         "--output", str(output),
     ]
+    if json_out:
+        cmd += ["--json", str(json_out)]
     return _run(cmd)
 
 
@@ -280,10 +382,12 @@ def cmd_full(args: argparse.Namespace) -> int:
 
     # Render
     output = args.output or REPO_ROOT / "scoreboard.md"
+    json_out = getattr(args, "json_out", None)
     render_args = argparse.Namespace(
         artifact_dir=artifact_dir,
         view="full",
         output=output,
+        json_out=json_out,
     )
     rc = rc or cmd_render(render_args)
 
@@ -350,6 +454,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="'local' renders local-only bar chart; 'full' renders full scoreboard",
     )
     p_render.add_argument("--output", type=pathlib.Path, default=None)
+    p_render.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
+                          help="Write normalized scoreboard intermediate JSON")
     p_render.set_defaults(func=cmd_render)
 
     # ---- full ----
@@ -362,11 +468,24 @@ def build_parser() -> argparse.ArgumentParser:
                         dest="manifests_dir")
     p_full.add_argument("--artifact-dir", type=pathlib.Path, default=None)
     p_full.add_argument("--output", type=pathlib.Path, default=None)
+    p_full.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
+                        help="Write normalized scoreboard intermediate JSON")
     p_full.add_argument("--timeout", type=float, default=30.0)
     p_full.add_argument("--skip-solver", action="store_true")
     p_full.add_argument("--skip-wmc", action="store_true")
     p_full.add_argument("--skip-native", action="store_true")
     p_full.set_defaults(func=cmd_full)
+
+    # ---- tune-mqt ----
+    p_mqt = subs.add_parser("tune-mqt", help="Run MQT materialized corpus through sop-solve")
+    p_mqt.add_argument("--corpus", type=pathlib.Path, default=None,
+                       help="MQT materialized QSOP corpus directory")
+    p_mqt.add_argument("--artifact-dir", type=pathlib.Path,
+                       default=REPO_ROOT / "artifacts" / "mqt-tune")
+    p_mqt.add_argument("--sop-solve", type=pathlib.Path, default=_sop_solve)
+    p_mqt.add_argument("--backend", action="append", dest="backends", metavar="BACKEND")
+    p_mqt.add_argument("--timeout", type=float, default=30.0)
+    p_mqt.set_defaults(func=cmd_tune_mqt)
 
     return parser
 

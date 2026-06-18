@@ -37,6 +37,14 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--branch-rw-source native|from-treewidth|both|auto] "
+        "[--branch-rw-min-treewidth-width N] "
+        "[--branch-rw-min-treewidth-forecast N] "
+        "[--branch-rw-min-residual-vars N] "
+        "[--branch-rw-low-rank-bypass N] "
+        "[--branch-rw-min-speedup FLOAT] "
+        "[--branch-rw-fixed-overhead-ns N] "
+        "[--branch-tw-fixed-overhead-ns N] "
+        "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
         "[--rankwidth-table v1|v2|validate] "
@@ -446,6 +454,7 @@ int main(int argc, char **argv) {
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
+  qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
@@ -568,6 +577,46 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_rw_source_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-treewidth-width") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-width requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_treewidth_width = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-treewidth-forecast") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-forecast requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_treewidth_forecast = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-residual-vars") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-residual-vars requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_residual_vars = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-low-rank-bypass") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-low-rank-bypass requires a value\n", stderr); return 2; }
+      branch_policy.rw_low_rank_bypass = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-speedup requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_speedup = strtod(argv[++i], NULL);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-fixed-overhead-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-fixed-overhead-ns requires a value\n", stderr); return 2; }
+      branch_policy.rw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-tw-fixed-overhead-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-tw-fixed-overhead-ns requires a value\n", stderr); return 2; }
+      branch_policy.tw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-memory-penalty-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-memory-penalty-ns requires a value\n", stderr); return 2; }
+      branch_policy.rw_memory_penalty_ns = strtoull(argv[++i], NULL, 10);
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -857,15 +906,9 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    if (branch_rw_source != QSOP_BRANCH_RW_SOURCE_NATIVE) {
-      ok = qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
-          qsop, max_vars, branch_heuristic, branch_rw_source, solve_mode, &result, &solve_stats,
-          trace_ptr, &error);
-    } else {
-      ok = qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
-          qsop, max_vars, branch_heuristic, solve_mode, sink_ptr, &result, &solve_stats, trace_ptr,
-          &error);
-    }
+    ok = qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
+        qsop, max_vars, branch_heuristic, branch_rw_source, &branch_policy, solve_mode,
+        sink_ptr, &result, &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");

@@ -529,6 +529,50 @@ if python3.found()
     ],
   )
   test(
+    'analyze branch regressions smoke',
+    python3,
+    args: [
+      files('tests/test_analyze_branch_regressions.py'),
+    ],
+  )
+  test(
+    'scoreboard json output smoke',
+    python3,
+    args: [
+      files('tests/test_scoreboard_json_output.py'),
+    ],
+  )
+  test(
+    'bench tune-mqt smoke',
+    python3,
+    args: [
+      files('tests/test_bench_tune_mqt.py'),
+    ],
+  )
+  test(
+    'plot scoreboard smoke',
+    python3,
+    args: [
+      files('tests/test_plot_scoreboard.py'),
+    ],
+  )
+  test(
+    'harvest mqt bench smoke',
+    python3,
+    args: [
+      files('tests/test_harvest_mqt_bench.py'),
+    ],
+  )
+  test(
+    'branch policy smoke',
+    python3,
+    args: [
+      files('tests/test_branch_policy.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [

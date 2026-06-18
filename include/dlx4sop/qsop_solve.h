@@ -298,8 +298,50 @@ typedef struct qsop_backend_stats_sink {
   bool calibrate_backends;  /* if true, run the losing backend too for timing data */
 } qsop_backend_stats_sink_t;
 
+/* Tuning policy for the branch solver's rankwidth delegation decision.
+ * Pass NULL to use built-in defaults.  All zero fields take their defaults. */
+typedef struct qsop_branch_policy {
+  /* Early cheap-treewidth veto: skip rankwidth probe when treewidth is obviously cheap. */
+  uint32_t rw_min_treewidth_width;    /* veto when tw_width <= this (default 4) */
+  uint64_t rw_min_treewidth_forecast; /* veto when tw_table_forecast <= this (default 4096) */
+  uint32_t rw_min_residual_vars;      /* veto small-residual when tw_width <= 5 (default 32) */
+  uint32_t rw_low_rank_bypass;        /* bypass cheap-tw veto when prefix_cut_rank <= this (default 3) */
+
+  /* Cost-model coefficients for choosing rw vs tw. */
+  uint64_t rw_fixed_overhead_ns;  /* fixed rw overhead (default 50000) */
+  uint64_t tw_fixed_overhead_ns;  /* fixed tw overhead (default 10000) */
+  uint64_t C_rw_table;            /* ns per rw table entry (default 80) */
+  uint64_t C_rw_join;             /* ns per rw join pair (default 40) */
+  uint64_t C_rw_sig;              /* ns per rw signature (default 2000) */
+  uint64_t C_tw_table;            /* ns per tw table entry (default 20) */
+  uint64_t C_tw_join;             /* ns per tw join pair (default 10) */
+  double   rw_min_speedup;        /* select rw only when rw_est * speedup < tw_est (default 1.4) */
+  uint64_t rw_memory_penalty_ns;  /* extra cost added to rw estimate for memory risk (default 0) */
+} qsop_branch_policy_t;
+
+/* Default policy values — used when a field is zero or policy ptr is NULL. */
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH       4U
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST    4096UL
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS  32U
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS    3U
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS  50000UL
+#define QSOP_BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS  10000UL
+#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_TABLE             80UL
+#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_JOIN              40UL
+#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_SIG             2000UL
+#define QSOP_BRANCH_POLICY_DEFAULT_C_TW_TABLE             20UL
+#define QSOP_BRANCH_POLICY_DEFAULT_C_TW_JOIN              10UL
+#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.4
+
 bool qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
+/* Branch solver with full policy control (rw_source + tuning policy + sink). */
+bool qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
+    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+    qsop_branch_rw_source_t rw_source, const qsop_branch_policy_t *policy,
     qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 

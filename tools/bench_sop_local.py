@@ -144,6 +144,7 @@ DEFAULT_BACKENDS = [
     "rankwidth:best",
     "branch:from-treewidth",
     "branch:auto",
+    "branch:no-rankwidth",
 ]
 
 
