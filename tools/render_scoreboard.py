@@ -852,20 +852,35 @@ def write_mqt_scaling_table(scaling_table_path: pathlib.Path | None, file: TextI
         return
     print("\n## MQT Bench Scaling by Family\n", file=file)
     print(
-        "| Family | Rows | Qubits p50 | Qubits max | Vars p50 | Vars max | TW p50 | TW max |",
+        "| Family | Mode | Rows | Qubits p50 | Qubits max "
+        "| Vars p50 | Vars max | TW p50 | TW max | Cut-rank p50 | Cut-rank max |",
         file=file,
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in scaling:
+        mode = row.get("qsop_mode", "")
+        labelled = row.get("labelled_count", 0)
+        sign = row.get("sign_count", 0)
+        if labelled > 0 and sign > 0:
+            mode_str = f"mixed ({labelled}L/{sign}S)"
+        elif labelled > 0:
+            mode_str = "labelled"
+        elif sign > 0:
+            mode_str = "sign"
+        else:
+            mode_str = mode or "unknown"
         print(
             f"| {markdown_escape(row.get('family', ''))} "
+            f"| {markdown_escape(mode_str)} "
             f"| {row.get('rows', 0)} "
             f"| {int(row.get('qubits_p50', 0))} "
             f"| {int(row.get('qubits_max', 0))} "
             f"| {int(row.get('nvars_p50', 0))} "
             f"| {int(row.get('nvars_max', 0))} "
             f"| {int(row.get('treewidth_p50', 0))} "
-            f"| {int(row.get('treewidth_max', 0))} |",
+            f"| {int(row.get('treewidth_max', 0))} "
+            f"| {int(row.get('cut_rank_p50', 0))} "
+            f"| {int(row.get('cut_rank_max', 0))} |",
             file=file,
         )
 

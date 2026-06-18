@@ -12,9 +12,14 @@ Usage: python3 tests/test_rankwidth_join_strategy.py <sop-solve>
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
+
+# Synthetic sign-edge 4-cycle QSOP: 4 variables in a ring, r=8 (sign coeff = 4).
+# Produces 3 join nodes when rankwidth-generated, which will use the CSR path.
+_SIGN_EDGE_4CYCLE = b"p qsop-sign 8 4 4\nn 1\ne 0 1\ne 1 2\ne 2 3\ne 0 3\n"
 
 
 def _find_rankwidth_instances(max_count=4):
@@ -42,6 +47,19 @@ def _run_rankwidth(sop_solve, qsop, extra_args, format_stats=False):
     return subprocess.run(cmd, capture_output=True, timeout=30)
 
 
+def _run_rankwidth_stdin(sop_solve, qsop_bytes, extra_args, format_stats=False):
+    cmd = [
+        str(sop_solve),
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "min-fill-cut",
+        "--max-vars", "64",
+    ]
+    if format_stats:
+        cmd += ["--format", "stats"]
+    cmd += extra_args + ["-"]
+    return subprocess.run(cmd, input=qsop_bytes, capture_output=True, timeout=30)
+
+
 def _residue_vector(result):
     return result.stdout.decode(errors="replace").strip()
 
@@ -56,24 +74,30 @@ def run_tests(sop_solve):
 
     # 1. materialized and streaming produce identical counts.
     print("  test: materialized and streaming produce identical counts")
-    for f in files[:2]:
-        r_mat  = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "materialized"])
-        r_str  = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "streaming"])
+    sign_edge_instances = [("sign-4cycle (stdin)", None, _SIGN_EDGE_4CYCLE)]
+    file_instances = [(f.name, f, None) for f in files[:2]]
+    for label, f, raw in file_instances + sign_edge_instances:
+        if raw is not None:
+            r_mat = _run_rankwidth_stdin(sop_solve, raw, ["--rankwidth-join-strategy", "materialized"])
+            r_str = _run_rankwidth_stdin(sop_solve, raw, ["--rankwidth-join-strategy", "streaming"])
+        else:
+            r_mat = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "materialized"])
+            r_str = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "streaming"])
         if r_mat.returncode != 0:
-            print(f"    FAIL: materialized failed on {f.name}: {r_mat.stderr.decode()[:80]}")
+            print(f"    FAIL: materialized failed on {label}: {r_mat.stderr.decode()[:80]}")
             all_passed = False
             continue
         if r_str.returncode != 0:
-            print(f"    FAIL: streaming failed on {f.name}: {r_str.stderr.decode()[:80]}")
+            print(f"    FAIL: streaming failed on {label}: {r_str.stderr.decode()[:80]}")
             all_passed = False
             continue
         if _residue_vector(r_mat) != _residue_vector(r_str):
-            print(f"    FAIL: mismatch on {f.name}")
+            print(f"    FAIL: mismatch on {label}")
             print(f"      materialized: {_residue_vector(r_mat)[:60]}")
             print(f"      streaming:    {_residue_vector(r_str)[:60]}")
             all_passed = False
         else:
-            print(f"    OK: {f.name} counts match")
+            print(f"    OK: {label} counts match")
 
     # 2. auto with max-pairs=0 forces streaming; counts still match default.
     print("  test: auto with max-pairs=0 forces streaming")
@@ -136,23 +160,36 @@ def run_tests(sop_solve):
                     print(f"    OK: {f.name} join_assignment_bytes=0")
                 break
 
-    # 5. U16 layout events > 0 for small-width local corpus.
-    print("  test: D4.1 U16 layout used on small-width instances")
-    for f in files[:2]:
-        r = _run_rankwidth(sop_solve, f,
-                           ["--rankwidth-join-strategy", "materialized"],
-                           format_stats=True)
-        if r.returncode != 0:
-            continue
+    # 5. D4.1 U16 layout events > 0 on synthetic sign-edge instance.
+    print("  test: D4.1 U16 layout used for sign-edge instance with small signature IDs")
+    r = subprocess.run(
+        [str(sop_solve), "--backend", "rankwidth",
+         "--rankwidth-generate", "min-fill-cut",
+         "--rankwidth-join-strategy", "materialized",
+         "--format", "stats", "--max-vars", "64", "-"],
+        input=_SIGN_EDGE_4CYCLE,
+        capture_output=True, timeout=30,
+    )
+    if r.returncode != 0:
+        print(f"    FAIL: sign-edge instance failed: {r.stderr.decode()[:80]}")
+        all_passed = False
+    else:
         text = r.stdout.decode(errors="replace")
+        u16 = 0
+        mat = 0
         for line in text.splitlines():
             if line.startswith("rankwidth_transition_layout_u16_events:"):
-                val = int(line.split(":")[1].strip())
-                if val > 0:
-                    print(f"    OK: {f.name} u16_events={val}")
-                else:
-                    print(f"    NOTE: {f.name} used u32 layout (may be ok for large instances)")
-                break
+                u16 = int(line.split(":")[1].strip())
+            elif line.startswith("rankwidth_materialized_join_events:"):
+                mat = int(line.split(":")[1].strip())
+        if mat == 0:
+            print(f"    FAIL: no materialized join events (instance may not have joins)")
+            all_passed = False
+        elif u16 == 0:
+            print(f"    FAIL: u16_events=0 despite mat_events={mat} (u32 chosen unexpectedly)")
+            all_passed = False
+        else:
+            print(f"    OK: u16_events={u16} (materialized_events={mat})")
 
     # 6. Invalid strategy rejected.
     print("  test: invalid strategy rejected")

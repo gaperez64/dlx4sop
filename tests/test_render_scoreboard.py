@@ -186,28 +186,20 @@ def test_mqt_scaling_table(tool: pathlib.Path) -> None:
         {
             "family": "qft",
             "rows": 12,
-            "qubits_p50": 8.0,
-            "qubits_p90": 14.0,
-            "qubits_max": 20,
-            "nvars_p50": 64.0,
-            "nvars_p90": 112.0,
-            "nvars_max": 160,
-            "treewidth_p50": 4.0,
-            "treewidth_p90": 7.0,
-            "treewidth_max": 10,
+            "qubits_p50": 8.0, "qubits_p90": 14.0, "qubits_max": 20,
+            "nvars_p50": 64.0, "nvars_p90": 112.0, "nvars_max": 160,
+            "treewidth_p50": 4.0, "treewidth_p90": 7.0, "treewidth_max": 10,
+            "cut_rank_p50": 3.0, "cut_rank_max": 6,
+            "qsop_mode": "labelled", "labelled_count": 12, "sign_count": 0,
         },
         {
             "family": "grover",
             "rows": 6,
-            "qubits_p50": 5.0,
-            "qubits_p90": 9.0,
-            "qubits_max": 12,
-            "nvars_p50": 40.0,
-            "nvars_p90": 72.0,
-            "nvars_max": 96,
-            "treewidth_p50": 3.0,
-            "treewidth_p90": 5.0,
-            "treewidth_max": 8,
+            "qubits_p50": 5.0, "qubits_p90": 9.0, "qubits_max": 12,
+            "nvars_p50": 40.0, "nvars_p90": 72.0, "nvars_max": 96,
+            "treewidth_p50": 3.0, "treewidth_p90": 5.0, "treewidth_max": 8,
+            "cut_rank_p50": 2.0, "cut_rank_max": 4,
+            "qsop_mode": "labelled", "labelled_count": 6, "sign_count": 0,
         },
     ]
     with tempfile.TemporaryDirectory() as tmp:
@@ -227,9 +219,10 @@ def test_mqt_scaling_table(tool: pathlib.Path) -> None:
         out = completed.stdout
         expected_snippets = [
             "## MQT Bench Scaling by Family",
-            "| Family | Rows |",
-            "| qft | 12 |",
-            "| grover | 6 |",
+            "| Family | Mode |",
+            "Cut-rank p50",
+            "| qft | labelled | 12 |",
+            "| grover | labelled | 6 |",
         ]
         for s in expected_snippets:
             if s not in out:
