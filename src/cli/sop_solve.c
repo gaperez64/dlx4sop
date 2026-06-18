@@ -60,6 +60,8 @@ static void print_usage(FILE *file) {
         "[--stats-jsonl PATH] [--branch-calibrate-backends] "
         "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
         "[--rankwidth-memory-policy skip|fallback|hard-error] "
+        "[--rankwidth-join-strategy auto|materialized|streaming] "
+        "[--rankwidth-materialize-join-max-pairs N] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -310,6 +312,24 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_labelled_proxy_cuts);
     fprintf(file, "rankwidth_labelled_exact_assignments: %" PRIu64 "\n",
             stats->rankwidth_labelled_exact_assignments);
+    fprintf(file, "rankwidth_transition_bytes: %" PRIu64 "\n",
+            stats->rankwidth_transition_bytes);
+    fprintf(file, "rankwidth_transition_layout_u16_events: %" PRIu64 "\n",
+            stats->rankwidth_transition_layout_u16_events);
+    fprintf(file, "rankwidth_transition_layout_u32_events: %" PRIu64 "\n",
+            stats->rankwidth_transition_layout_u32_events);
+    fprintf(file, "rankwidth_materialized_join_events: %" PRIu64 "\n",
+            stats->rankwidth_materialized_join_events);
+    fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_events);
+    fprintf(file, "rankwidth_streaming_join_candidate_pairs: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_candidate_pairs);
+    fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_emitted_pairs);
+    fprintf(file, "rankwidth_join_assignment_bytes: %" PRIu64 "\n",
+            stats->rankwidth_join_assignment_bytes);
+    fprintf(file, "rankwidth_table_assignment_bytes: %" PRIu64 "\n",
+            stats->rankwidth_table_assignment_bytes);
   } else {
     fprintf(file, "treewidth_order: %s\n", treewidth_order_name(treewidth_order));
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
@@ -481,6 +501,8 @@ int main(int argc, char **argv) {
   bool calibrate_backends = false;
   uint64_t rw_memory_budget_bytes = 0; /* 0 = no limit */
   rankwidth_memory_policy_t rw_memory_policy = RW_MEMORY_POLICY_SKIP;
+  qsop_rankwidth_join_strategy_t rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+  uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -594,6 +616,41 @@ int main(int argc, char **argv) {
                 pol);
         return 2;
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-join-strategy") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-join-strategy requires auto|materialized|streaming\n", stderr);
+        return 2;
+      }
+      const char *val = argv[++i];
+      if (strcmp(val, "auto") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+      } else if (strcmp(val, "materialized") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_MATERIALIZED;
+      } else if (strcmp(val, "streaming") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_STREAMING;
+      } else {
+        fprintf(stderr, "error: unknown join strategy '%s' (expected auto|materialized|streaming)\n",
+                val);
+        return 2;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-materialize-join-max-pairs") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-materialize-join-max-pairs requires an integer value\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const unsigned long long mp = strtoull(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-materialize-join-max-pairs requires a non-negative integer\n",
+              stderr);
+        return 2;
+      }
+      rw_materialize_join_max_pairs = (uint64_t)mp;
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -1106,9 +1163,13 @@ int main(int argc, char **argv) {
                  ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
                                                             rankwidth_mode, &result, &solve_stats,
                                                             trace_ptr, &error)
-                 : qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                         rankwidth_mode, &result, &solve_stats,
-                                                         trace_ptr, &error);
+                 : qsop_solve_rankwidth_options_mode_trace_stats(
+                       qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+                       &(qsop_rankwidth_solve_options_t){
+                           .join_strategy = rw_join_strategy,
+                           .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+                       },
+                       &result, &solve_stats, trace_ptr, &error);
       }
     }
 rankwidth_done:;

@@ -40,6 +40,15 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_labelled_exact_cuts;
   uint64_t rankwidth_labelled_proxy_cuts;
   uint64_t rankwidth_labelled_exact_assignments;
+  uint64_t rankwidth_transition_bytes;
+  uint64_t rankwidth_transition_layout_u16_events;
+  uint64_t rankwidth_transition_layout_u32_events;
+  uint64_t rankwidth_materialized_join_events;
+  uint64_t rankwidth_streaming_join_events;
+  uint64_t rankwidth_streaming_join_candidate_pairs;
+  uint64_t rankwidth_streaming_join_emitted_pairs;
+  uint64_t rankwidth_join_assignment_bytes;
+  uint64_t rankwidth_table_assignment_bytes;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;
@@ -91,6 +100,18 @@ typedef enum qsop_branch_heuristic {
   QSOP_BRANCH_HEURISTIC_TREEWIDTH,
   QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY,
 } qsop_branch_heuristic_t;
+
+typedef enum qsop_rankwidth_join_strategy {
+  QSOP_RANKWIDTH_JOIN_AUTO,         /* use streaming when forecast exceeds threshold */
+  QSOP_RANKWIDTH_JOIN_MATERIALIZED, /* always build full CSR transition table */
+  QSOP_RANKWIDTH_JOIN_STREAMING,    /* always use streaming (no transition table) */
+} qsop_rankwidth_join_strategy_t;
+
+/* Per-solve options for the rankwidth solver.  Zero-initialize for defaults. */
+typedef struct qsop_rankwidth_solve_options {
+  qsop_rankwidth_join_strategy_t join_strategy; /* default AUTO */
+  uint64_t materialize_join_max_pairs;           /* 0 = use built-in default */
+} qsop_rankwidth_solve_options_t;
 
 /* Policy for how the branch solver sources a rank decomposition when considering
  * rankwidth delegation. */
@@ -265,6 +286,13 @@ bool qsop_solve_rankwidth_mode_trace_stats(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_rankwidth_options_mode_trace_stats(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode,
+    const qsop_rankwidth_solve_options_t *options,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
 
 bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       const qsop_rankwidth_decomposition_t *decomposition,

@@ -601,6 +601,16 @@ if python3.found()
     timeout: 60,
   )
   test(
+    'rankwidth join strategy smoke',
+    python3,
+    args: [
+      files('tests/test_rankwidth_join_strategy.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 120,
+  )
+  test(
     'qasm native compatibility smoke',
     python3,
     args: [

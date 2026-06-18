@@ -94,25 +94,44 @@ def _sha256(data: bytes) -> str:
 # QASM import probe via qasm2sop binary
 # ---------------------------------------------------------------------------
 
-def _probe_import(qasm_bytes: bytes, qasm2sop: pathlib.Path, timeout: float = 30.0) -> dict:
+def _probe_import(
+    qasm_bytes: bytes,
+    qasm2sop: pathlib.Path,
+    sop_stats: pathlib.Path | None = None,
+    timeout: float = 30.0,
+) -> dict:
     """Return {'status': 'ok'|'error', 'nvars': N, 'nedges': N, 'reason': '...'}."""
     try:
-        result = subprocess.run(
-            [str(qasm2sop), "--format", "stats", "-"],
+        # Step 1: convert QASM → QSOP text (piped to stdout)
+        p_import = subprocess.run(
+            [str(qasm2sop), "-"],
             input=qasm_bytes,
             capture_output=True,
             timeout=timeout,
         )
-        if result.returncode != 0:
-            reason = result.stderr.decode(errors="replace").strip()[:200]
+        if p_import.returncode != 0:
+            reason = p_import.stderr.decode(errors="replace").strip()[:200]
             return {"status": "error", "reason": reason, "nvars": 0, "nedges": 0}
-        stdout = result.stdout.decode(errors="replace")
+
+        # Step 2: pipe QSOP text into sop-stats to get variable/edge counts
+        sop_stats_bin = sop_stats or (qasm2sop.parent / "sop-stats")
+        p_stats = subprocess.run(
+            [str(sop_stats_bin), "-"],
+            input=p_import.stdout,
+            capture_output=True,
+            timeout=timeout,
+        )
+        if p_stats.returncode != 0:
+            reason = p_stats.stderr.decode(errors="replace").strip()[:200]
+            return {"status": "error", "reason": reason, "nvars": 0, "nedges": 0}
+
+        stdout = p_stats.stdout.decode(errors="replace")
         nvars = 0
         nedges = 0
         for line in stdout.splitlines():
-            if line.startswith("nvars:"):
+            if line.startswith("variables:"):
                 nvars = int(line.split(":")[1].strip())
-            elif line.startswith("nedges:"):
+            elif line.startswith("quadratic_terms:"):
                 nedges = int(line.split(":")[1].strip())
         return {"status": "ok", "nvars": nvars, "nedges": nedges}
     except subprocess.TimeoutExpired:
@@ -152,6 +171,7 @@ def harvest(
     target_tiers: set[str],
     max_per_family: int,
     qasm2sop: pathlib.Path | None,
+    sop_stats: pathlib.Path | None,
     seed: int,
     verbose: bool,
 ) -> tuple[dict[str, list[dict]], list[dict]]:
@@ -220,7 +240,7 @@ def harvest(
 
                 import_result: dict = {"status": "error", "reason": "no-qasm2sop", "nvars": 0, "nedges": 0}
                 if qasm2sop is not None and qasm2sop.exists():
-                    import_result = _probe_import(qasm_bytes, qasm2sop)
+                    import_result = _probe_import(qasm_bytes, qasm2sop, sop_stats=sop_stats)
                 else:
                     # Estimate nvars from qubit count (rough: 1–4x expansion factor)
                     import_result = {"status": "estimated", "nvars": nqubits * 2, "nedges": nqubits * 4}
@@ -305,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--qasm2sop", type=pathlib.Path,
                         default=REPO_ROOT / "build" / "qasm2sop",
                         help="Path to qasm2sop binary for import probing")
+    parser.add_argument("--sop-stats", type=pathlib.Path, default=None,
+                        help="Path to sop-stats binary (default: <qasm2sop-dir>/sop-stats)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -325,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         target_tiers=target_tiers,
         max_per_family=args.max_per_family,
         qasm2sop=args.qasm2sop,
+        sop_stats=args.sop_stats,
         seed=args.seed,
         verbose=args.verbose,
     )
