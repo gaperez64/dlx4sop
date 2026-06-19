@@ -12,10 +12,10 @@ Counts are fixed-boundary QSOP rows currently used in solver comparisons. The 25
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Internal corpus | tests/qasm_solver_corpus.json | 32 | 32 | 0 | 0 | 0 | 0 |
 | FeynmanDD | https://github.com/cqs-thu/feynman-decision-diagram | 520 | 104 | 34 | 184 | 136 | 62 / 100 |
-| MQT Bench | https://github.com/munich-quantum-toolkit/bench | 60 | 56 | 0 | 2 | 0 | 2 |
+| MQT Bench | https://github.com/munich-quantum-toolkit/bench | 114 | 0 | 72 | 42 | 0 | 0 |
 | PyZX | https://github.com/zxcalc/pyzx | 330 | 46 | 32 | 68 | 86 | 98 / 100 |
 
-Total current solved coverage: **942 fixed-boundary benchmark rows**.
+Total current solved coverage: **996 fixed-boundary benchmark rows**.
 The 257-512 exploratory sample contributes 162 solved rows out of 202 attempted under the current timeout cap.
 
 ## Survival Curves
@@ -95,6 +95,15 @@ Best-performing native simulator per source and tier. See [scoreboard-details.md
 | 33-64 | 11.8 ms | `pyzx-matrix` | 9.69 s | **822.57x** |
 | 65-128 | 285.7 ms | `pyzx-matrix` | 48.68 s | **378.50x** |
 | 129-256 | 617.1 ms | `pyzx-matrix` | 22.43 s | **278.22x** |
+
+### MQT Bench
+
+GHZ and BV circuits (34–104 qubits). Native baseline: `qiskit-clifford` stabilizer simulation (O(n²) memory, exact amplitudes for Clifford circuits).
+
+| Tier | QSOP time | Best native | Native time | Best speedup |
+| --- | ---: | --- | ---: | ---: |
+| 33-64 | 33.9 ms | `qiskit-clifford` | 44.80 s | **1323x** |
+| 65-128 | 19.5 ms | `qiskit-clifford` | 249.58 s | **12794x** |
 
 ### PyZX
 

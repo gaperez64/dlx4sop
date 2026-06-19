@@ -65,12 +65,12 @@ These compare the best current QSOP configuration for each tier against native Q
 
 ### MQT Bench
 
+GHZ and BV circuits (34–104 qubits, opt\_level=1). Native baseline uses the `qiskit-clifford` stabilizer engine (O(n²) memory) rather than statevector (O(2ⁿ)), enabling comparison at circuit sizes where statevector simulators run out of memory.
+
 | Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | `aer-statevector` | 2 / 2 | 9.3 ms | 5.8 ms | 0.62x | 2 | 0.354 | 0.707 | 3 | 16 | 30.0 | 4096 |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | `mqt-ddsim-statevector` | 2 / 2 | 9.3 ms | 6.4 ms | 0.69x | 2 | 0 | 0 | 3 | 16 | 30.0 | 4096 |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | `pyzx-matrix` | 2 / 2 | 9.3 ms | 12.2 ms | 1.31x | 2 | 1.08e-16 | 1.3e-16 | 3 | 10 | 30.0 | 4096 |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | `qiskit-statevector` | 2 / 2 | 9.3 ms | 1.9 ms | 0.21x | 2 | 0 | 0 | 3 | 16 | 30.0 | 4096 |
+| 33-64 | `branch --branch-heuristic split` | `qiskit-clifford` | 72 / 72 | 33.9 ms | 44.80 s | 1323.36x | 72 | 0 | 0 | 104 | 130 | 30.0 | none |
+| 65-128 | `branch --branch-heuristic split` | `qiskit-clifford` | 42 / 42 | 19.5 ms | 249.58 s | 12793.92x | 42 | 0 | 0 | 130 | 130 | 30.0 | none |
 
 ### PyZX
 
