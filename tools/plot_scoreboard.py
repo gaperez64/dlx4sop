@@ -4,7 +4,8 @@
 Reads scoreboard.json (the normalized intermediate) and emits SVG plots:
 
   scoreboard-assets/survival-feynmandd.svg
-  scoreboard-assets/survival-mqt-bench.svg
+  scoreboard-assets/survival-mqt-bench.svg        (0-32 tier, pre-expansion set)
+  scoreboard-assets/survival-mqt-bench-large.svg  (33-64 + 65-128 tiers, GHZ/BV)
   scoreboard-assets/survival-pyzx.svg
   scoreboard-assets/solver-time-by-tier.svg
   scoreboard-assets/solver-speedup-vs-treewidth.svg
@@ -214,6 +215,7 @@ def _records_from_summary(summary: list[dict]) -> list[dict]:
 def _best_native_curves(
     records: list[dict],
     source: str,
+    tiers: set[str] | None = None,
 ) -> dict[str, tuple[list[int], list[float]]]:
     """Build a single 'best native' survival curve taking the fastest native engine per instance."""
     # key: (case, boundary) → minimum elapsed_ns across all native engines
@@ -224,6 +226,10 @@ def _best_native_curves(
         rec_source = r.get("provenance", {}).get("source", r.get("source", ""))
         if rec_source != source:
             continue
+        if tiers is not None:
+            rec_tier = r.get("tier", "").removeprefix("tier-")
+            if rec_tier not in tiers:
+                continue
         engine = r.get("engine", "")
         if not engine or r.get("backend"):
             continue
@@ -251,21 +257,30 @@ def _survival_curves(
     records: list[dict],
     source: str,
     backends: list[str],
+    tiers: set[str] | None = None,
 ) -> dict[str, tuple[list[int], list[float]]]:
-    """Return {backend: (budgets_ns, fraction_solved)} for a given source."""
+    """Return {backend: (budgets_ns, fraction_solved)} for a given source.
+
+    If ``tiers`` is given, only records whose ``tier`` field is in that set
+    are included.  Pass ``None`` (the default) to include all tiers.
+    """
     by_backend: dict[str, list[dict]] = collections.defaultdict(list)
     for r in records:
         prov = r.get("provenance", {})
         rec_source = prov.get("source", r.get("source", ""))
         if rec_source != source:
             continue
+        if tiers is not None:
+            rec_tier = r.get("tier", "").removeprefix("tier-")
+            if rec_tier not in tiers:
+                continue
         b = _canonical_backend(r)
         if b in backends:
             by_backend[b].append(r)
 
     curves: dict[str, tuple[list[int], list[float]]] = {}
     if "best native" in backends:
-        curves.update(_best_native_curves(records, source))
+        curves.update(_best_native_curves(records, source, tiers=tiers))
 
     for backend, recs in by_backend.items():
         total = len(recs)
@@ -293,12 +308,31 @@ def plot_survival_svg(
     source: str,
     output_path: pathlib.Path,
     backends: list[str] | None = None,
+    tiers: set[str] | None = None,
 ) -> None:
     if backends is None:
         backends = ["treewidth", "branch:auto", "rankwidth:best", "best native"]
 
-    curves = _survival_curves(records, source, backends)
+    curves = _survival_curves(records, source, backends, tiers=tiers)
     if not curves:
+        # Write a placeholder only when no prior plot exists, so committed SVGs
+        # with real data are not clobbered when artifacts are absent.
+        if not output_path.exists():
+            tier_note = f" ({', '.join(sorted(tiers))})" if tiers else ""
+            placeholder = (
+                f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="120">'
+                f'<rect width="720" height="120" fill="#f8f8f8"/>'
+                f'<text x="360" y="50" text-anchor="middle" font-family="sans-serif" '
+                f'font-size="14" fill="#555">Survival curves — {_svg_text_escape(source)}'
+                f'{_svg_text_escape(tier_note)}</text>'
+                f'<text x="360" y="80" text-anchor="middle" font-family="sans-serif" '
+                f'font-size="11" fill="#888">No benchmark records available. '
+                f'Regenerate after running the full scoreboard refresh.</text>'
+                f'</svg>'
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(placeholder, encoding="utf-8")
+            print(f"  Wrote placeholder {output_path}", file=sys.stderr)
         return
 
     W, H = 720, 420
@@ -346,7 +380,8 @@ def plot_survival_svg(
         legend_y += 18
 
     # Title
-    svg.text(W // 2, 20, f"Solved fraction by time budget — {source}",
+    tier_suffix = f" ({', '.join(sorted(tiers))})" if tiers else ""
+    svg.text(W // 2, 20, f"Solved fraction by time budget — {source}{tier_suffix}",
              anchor="middle", fill="#222", size=13)
     svg.text(W // 2, H - 8, "Time budget (log scale)", anchor="middle", fill="#555", size=10)
 
@@ -761,6 +796,16 @@ def main(argv: list[str] | None = None) -> int:
     for source in sources:
         slug = SOURCE_SLUGS.get(source, source.lower().replace(" ", "-"))
         plot_survival_svg(records, source, out / f"survival-{slug}.svg")
+
+    # Second MQT Bench survival plot: larger GHZ/BV circuits (33-64 and 65-128 tiers).
+    # The native baseline here is qiskit-clifford (stabilizer simulation, O(n²) memory)
+    # because statevector engines ran out of memory at 34+ qubits (~272 GB for 34q).
+    plot_survival_svg(
+        records,
+        "MQT Bench",
+        out / "survival-mqt-bench-large.svg",
+        tiers={"33-64", "65-128"},
+    )
 
     # Solver time by tier — uses summary-derived records if raw JSONL unavailable
     plot_solver_time_by_tier_svg(tier_records, out / "solver-time-by-tier.svg")

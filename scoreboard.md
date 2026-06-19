@@ -26,9 +26,17 @@ Fraction of instances solved within a given wall-clock budget per backend. Highe
 
 ![Survival curves — FeynmanDD](scoreboard-assets/survival-feynmandd.svg)
 
-### MQT Bench
+### MQT Bench (small, ≤32 qubits)
 
-![Survival curves — MQT Bench](scoreboard-assets/survival-mqt-bench.svg)
+Pre-expansion set: circuits with at most 32 qubits, compared against native statevector simulators. QSOP is not faster on this set — dense statevectors win at low qubit counts.
+
+![Survival curves — MQT Bench (0-32 tier)](scoreboard-assets/survival-mqt-bench.svg)
+
+### MQT Bench (large, 34–128 qubits)
+
+Expanded set: GHZ and BV circuits at 34–128 qubits. The native baseline is `qiskit-clifford` (stabilizer formalism, O(n²) memory) because statevector engines were killed or timed out at 34+ qubits (34-qubit statevector ≈ 272 GB). This plot is regenerated with the rest of the scoreboard when new QSOP and native artifacts are available.
+
+![Survival curves — MQT Bench (33-64 and 65-128 tiers)](scoreboard-assets/survival-mqt-bench-large.svg)
 
 ### PyZX
 
@@ -99,7 +107,9 @@ Best-performing native simulator per source and tier. See [scoreboard-details.md
 
 ### MQT Bench
 
-GHZ and BV circuits (34–104 qubits). Native baseline: `qiskit-clifford` stabilizer simulation (O(n²) memory, exact amplitudes for Clifford circuits). Statevector engines (`mqt-ddsim-statevector`, `aer-statevector`, `qiskit-statevector`) were all killed or timed out — a 34-qubit statevector needs ~272 GB — so `qiskit-clifford` is the only viable native comparison.
+**Small set (0-32 tier, ≤32 qubits):** The pre-expansion set of short MQT Bench circuits. Native statevector engines (`qiskit-statevector`, `aer-statevector`, `mqt-ddsim-statevector`) are fast at this qubit count and QSOP is not faster — no speedup to report.
+
+**Large set (34–104 qubits):** GHZ and BV circuits from the expanded corpus. Native baseline: `qiskit-clifford` stabilizer simulation (O(n²) memory, exact amplitudes for Clifford circuits). Statevector engines were all killed or timed out at 34+ qubits — a 34-qubit statevector needs ~272 GB — so `qiskit-clifford` is the only viable native comparison.
 
 | Tier | QSOP time | Best native | Native time | Best speedup |
 | --- | ---: | --- | ---: | ---: |
