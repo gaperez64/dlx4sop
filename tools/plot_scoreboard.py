@@ -70,14 +70,6 @@ NS_LABELS = [
 ]
 
 
-def _try_import_matplotlib() -> bool:
-    try:
-        import matplotlib  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def _svg_text_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 

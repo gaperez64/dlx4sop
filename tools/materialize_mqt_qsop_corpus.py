@@ -120,7 +120,7 @@ def materialize_row(
 
     qasm_bytes = "\n".join(qasm_lines).encode()
     if _sha256(qasm_bytes) != qasm_sha256:
-        qasm_bytes = qasm_bytes  # hash mismatch; proceed anyway
+        print(f"warning: QASM SHA256 mismatch for {family}-{nqubits}q-opt{opt_level}; proceeding", file=sys.stderr)
 
     output_tier_dir.mkdir(parents=True, exist_ok=True)
 

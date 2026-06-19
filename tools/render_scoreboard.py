@@ -919,6 +919,15 @@ def write_mqt_manifest_notice(manifest_dir: pathlib.Path | None, file: TextIO) -
     print("```", file=file)
 
 
+def write_mqt_tuning_summary(records: list[dict], file: TextIO) -> None:
+    """Render a compact MQT tuning summary from sop_bench_result_v2 records."""
+    print("# MQT Tuning Summary\n", file=file)
+    if not records:
+        print("No MQT tuning records found.\n", file=file)
+        return
+    write_local_backend_summary(records, file)
+
+
 def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
     """Render a compact local backend summary from sop_bench_result_v2 records."""
     by_tier_backend: dict[tuple[str, str], dict] = {}
@@ -992,6 +1001,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
     parser.add_argument("--local-jsonl", action="append", type=pathlib.Path, default=[], metavar="PATH",
                         help="Local sop_bench_result_v2 JSONL file(s) for local backend summary")
+    parser.add_argument("--mqt-tuning-jsonl", type=pathlib.Path, default=None, metavar="PATH",
+                        help="MQT tuning JSONL file for MQT tuning summary")
     parser.add_argument("--mqt-manifest-dir", type=pathlib.Path, default=None,
                         help="MQT manifest directory; if empty/missing, an MQT notice is emitted")
     parser.add_argument("--mqt-scaling-table", type=pathlib.Path, default=None,
@@ -1012,6 +1023,9 @@ def main(argv: list[str]) -> int:
 
         solver_records = [(label, read_jsonl(path)) for label, path in args.solver_jsonl]
         native_records = [(label, read_jsonl(path)) for label, path in args.native_jsonl]
+        if args.mqt_tuning_jsonl:
+            mqt_records = read_jsonl(args.mqt_tuning_jsonl)
+            write_mqt_tuning_summary(mqt_records, out)
         if args.local_jsonl:
             local_records: list[dict] = []
             for path in args.local_jsonl:
@@ -1024,7 +1038,7 @@ def main(argv: list[str]) -> int:
         write_native_comparison_tables(solver_records, native_records, out)
         write_mqt_scaling_table(args.mqt_scaling_table, out)
         write_mqt_manifest_notice(args.mqt_manifest_dir, out)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -176,52 +176,13 @@ def cmd_tune_mqt(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
-    # Render a compact MQT summary
     summary_path = artifact_dir / "mqt-tuning-summary.md"
-    _render_mqt_summary(out_jsonl, summary_path)
+    _run([
+        sys.executable, str(TOOLS_DIR / "render_scoreboard.py"),
+        "--mqt-tuning-jsonl", str(out_jsonl),
+        "--output", str(summary_path),
+    ])
     return 0
-
-
-def _render_mqt_summary(jsonl_path: pathlib.Path, output: pathlib.Path) -> None:
-    """Render a simple Markdown summary from MQT tuning results."""
-    import json
-    import collections
-
-    if not jsonl_path.exists():
-        return
-
-    records: list[dict] = []
-    with open(jsonl_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-
-    if not records:
-        output.write_text("No MQT tuning records found.\n", encoding="utf-8")
-        return
-
-    # Group by backend
-    by_backend: dict[str, list[dict]] = collections.defaultdict(list)
-    for r in records:
-        by_backend[r.get("backend", "unknown")].append(r)
-
-    lines = ["# MQT Tuning Summary\n"]
-    lines.append(f"Total records: {len(records)}\n")
-    lines.append("## Backend performance\n")
-    lines.append("| Backend | Solved | Total | Total time |")
-    lines.append("|---|---:|---:|---:|")
-
-    for backend, recs in sorted(by_backend.items()):
-        solved = sum(1 for r in recs if r.get("status") == "ok")
-        total_ns = sum(r.get("elapsed_ns", 0) for r in recs if r.get("status") == "ok")
-        ms = total_ns / 1_000_000
-        lines.append(f"| {backend} | {solved} | {len(recs)} | {ms:.1f} ms |")
-
-    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

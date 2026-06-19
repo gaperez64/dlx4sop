@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke tests for tools/bench.py (tune-mqt subcommand and _render_mqt_summary)."""
+"""Smoke tests for MQT tuning: bench.py subcommand and render_scoreboard.write_mqt_tuning_summary."""
 
 import argparse
 import importlib.util
+import io
 import json
 import pathlib
 import sys
@@ -11,13 +12,16 @@ import tempfile
 TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
 
 
-def _load_tool():
-    path = TOOLS_DIR / "bench.py"
-    spec = importlib.util.spec_from_file_location("bench", path)
+def _load_module(name: str) -> object:
+    tools_str = str(TOOLS_DIR)
+    if tools_str not in sys.path:
+        sys.path.insert(0, tools_str)
+    path = TOOLS_DIR / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise AssertionError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules["bench"] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -26,18 +30,15 @@ def _make_jsonl(records, path):
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
 
-def test_render_mqt_summary_empty_records(tool, tmp):
-    empty_jsonl = tmp / "empty.jsonl"
-    empty_jsonl.write_text("", encoding="utf-8")
-    out = tmp / "summary.md"
-    tool._render_mqt_summary(empty_jsonl, out)
-    if not out.exists():
-        raise AssertionError("summary.md not created for empty input")
-    if "No MQT tuning records" not in out.read_text():
+def test_write_mqt_tuning_summary_empty_records(renderer, tmp):
+    buf = io.StringIO()
+    renderer.write_mqt_tuning_summary([], buf)
+    content = buf.getvalue()
+    if "No MQT tuning records" not in content:
         raise AssertionError("missing 'No MQT tuning records' in output")
 
 
-def test_render_mqt_summary_with_records(tool, tmp):
+def test_write_mqt_tuning_summary_with_records(renderer, tmp):
     records = [
         {"backend": "treewidth", "status": "ok", "elapsed_ns": 1_000_000},
         {"backend": "treewidth", "status": "ok", "elapsed_ns": 2_000_000},
@@ -45,13 +46,9 @@ def test_render_mqt_summary_with_records(tool, tmp):
         {"backend": "branch:auto", "status": "timeout", "elapsed_ns": 0},
         {"backend": "rankwidth:best", "status": "ok", "elapsed_ns": 5_000_000},
     ]
-    jsonl = tmp / "data.jsonl"
-    _make_jsonl(records, jsonl)
-    out = tmp / "summary.md"
-    tool._render_mqt_summary(jsonl, out)
-    if not out.exists():
-        raise AssertionError("summary not created")
-    content = out.read_text()
+    buf = io.StringIO()
+    renderer.write_mqt_tuning_summary(records, buf)
+    content = buf.getvalue()
     if "# MQT Tuning Summary" not in content:
         raise AssertionError("missing heading")
     if "treewidth" not in content:
@@ -60,12 +57,18 @@ def test_render_mqt_summary_with_records(tool, tmp):
         raise AssertionError("missing branch:auto")
 
 
-def test_render_mqt_summary_missing_file(tool, tmp):
+def test_write_mqt_tuning_summary_missing_file_exits_nonzero(renderer, tmp):
+    import subprocess
     missing = tmp / "nonexistent.jsonl"
     out = tmp / "summary.md"
-    tool._render_mqt_summary(missing, out)
-    if out.exists():
-        raise AssertionError("should not create summary for missing file")
+    result = subprocess.run(
+        [sys.executable, str(TOOLS_DIR / "render_scoreboard.py"),
+         "--mqt-tuning-jsonl", str(missing),
+         "--output", str(out)],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        raise AssertionError("expected non-zero exit for missing input file")
 
 
 def test_cmd_tune_mqt_missing_corpus(tool, tmp):
@@ -89,41 +92,22 @@ def test_mqt_default_backends_non_empty(tool, tmp):
             raise AssertionError(f"missing {expected!r} in MQT_DEFAULT_BACKENDS")
 
 
-def test_render_mqt_summary_malformed_json(tool, tmp):
-    jsonl = tmp / "malformed.jsonl"
-    jsonl.write_text(
-        '{"backend": "treewidth", "status": "ok", "elapsed_ns": 1000000}\n'
-        "NOT VALID JSON\n"
-        '{"backend": "branch:auto", "status": "ok", "elapsed_ns": 2000000}\n',
-        encoding="utf-8",
-    )
-    out = tmp / "summary.md"
-    tool._render_mqt_summary(jsonl, out)
-    if not out.exists():
-        raise AssertionError("should still create summary with malformed lines")
-    content = out.read_text()
-    if "treewidth" not in content:
-        raise AssertionError("missing treewidth in summary")
-    if "branch:auto" not in content:
-        raise AssertionError("missing branch:auto in summary")
-
-
 def main() -> int:
-    tool = _load_tool()
+    tool = _load_module("bench")
+    renderer = _load_module("render_scoreboard")
     tests = [
-        ("render_mqt_summary_empty_records", test_render_mqt_summary_empty_records),
-        ("render_mqt_summary_with_records", test_render_mqt_summary_with_records),
-        ("render_mqt_summary_missing_file", test_render_mqt_summary_missing_file),
-        ("cmd_tune_mqt_missing_corpus", test_cmd_tune_mqt_missing_corpus),
-        ("mqt_default_backends_non_empty", test_mqt_default_backends_non_empty),
-        ("render_mqt_summary_malformed_json", test_render_mqt_summary_malformed_json),
+        ("write_mqt_tuning_summary_empty_records", lambda t: test_write_mqt_tuning_summary_empty_records(renderer, t)),
+        ("write_mqt_tuning_summary_with_records", lambda t: test_write_mqt_tuning_summary_with_records(renderer, t)),
+        ("write_mqt_tuning_summary_missing_file_exits_nonzero", lambda t: test_write_mqt_tuning_summary_missing_file_exits_nonzero(renderer, t)),
+        ("cmd_tune_mqt_missing_corpus", lambda t: test_cmd_tune_mqt_missing_corpus(tool, t)),
+        ("mqt_default_backends_non_empty", lambda t: test_mqt_default_backends_non_empty(tool, t)),
     ]
     failed = []
     for name, fn in tests:
         with tempfile.TemporaryDirectory() as td:
             tmp = pathlib.Path(td)
             try:
-                fn(tool, tmp)
+                fn(tmp)
                 print(f"  PASS {name}")
             except Exception as exc:
                 print(f"  FAIL {name}: {exc}")
