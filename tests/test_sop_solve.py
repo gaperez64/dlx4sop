@@ -1307,12 +1307,11 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    # v2 is the only solve path; trace events are rankwidth.v2_leaf / rankwidth.v2_join_map / rankwidth.v2_join.
     if (
         traced.returncode != 0
-        or ("rankwidth.leaf" not in traced.stderr and "rankwidth.v2_leaf" not in traced.stderr)
-        or ("rankwidth.join_map" not in traced.stderr and "rankwidth.v2_join_map" not in traced.stderr)
-        or ("rankwidth.join" not in traced.stderr and "rankwidth.v2_join" not in traced.stderr)
+        or "rankwidth.leaf" not in traced.stderr
+        or "rankwidth.join_map" not in traced.stderr
+        or "rankwidth.join" not in traced.stderr
     ):
         raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
 
@@ -1614,12 +1613,9 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if (
         labelled_trace.returncode != 0
-        or ("rankwidth.labelled_leaf" not in labelled_trace.stderr
-            and "rankwidth.labelled_v2_leaf" not in labelled_trace.stderr)
-        or ("rankwidth.labelled_join_map" not in labelled_trace.stderr
-            and "rankwidth.labelled_v2_join_map" not in labelled_trace.stderr)
-        or ("rankwidth.labelled_join" not in labelled_trace.stderr
-            and "rankwidth.labelled_v2_join" not in labelled_trace.stderr)
+        or "rankwidth.labelled_leaf" not in labelled_trace.stderr
+        or "rankwidth.labelled_join_map" not in labelled_trace.stderr
+        or "rankwidth.labelled_join" not in labelled_trace.stderr
     ):
         raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
 
@@ -2179,6 +2175,54 @@ def run_rankwidth_memory_budget(exe: pathlib.Path) -> None:
         )
 
 
+def run_branch_policy_arg_validation(exe: pathlib.Path) -> None:
+    """Phase 4C: branch policy numeric flags must reject invalid values (exit 2)."""
+    p5 = _path_qsop(5, 8)
+
+    invalid_cases = [
+        ("--branch-rw-min-treewidth-width", "notanint"),
+        ("--branch-rw-min-treewidth-forecast", "notanint"),
+        ("--branch-rw-min-residual-vars", "notanint"),
+        ("--branch-rw-low-rank-bypass", "notanint"),
+        ("--branch-rw-min-speedup", "notadouble"),
+        ("--branch-rw-fixed-overhead-ns", "notanint"),
+        ("--branch-tw-fixed-overhead-ns", "notanint"),
+        ("--branch-rw-memory-penalty-ns", "notanint"),
+        ("--rankwidth-memory-budget-bytes", "notanint"),
+        ("--rankwidth-materialize-join-max-pairs", "notanint"),
+    ]
+    for flag, bad_value in invalid_cases:
+        result = subprocess.run(
+            [str(exe), "--backend", "branch", flag, bad_value, "-"],
+            input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 2:
+            raise AssertionError(
+                f"expected exit 2 for {flag} {bad_value!r}, got {result.returncode}"
+            )
+        if "error:" not in result.stderr:
+            raise AssertionError(
+                f"{flag}: expected error message on stderr, got: {result.stderr!r}"
+            )
+
+    # Negative values for uint flags must also be rejected.
+    neg_cases = [
+        "--branch-rw-min-treewidth-width",
+        "--branch-rw-min-residual-vars",
+        "--branch-rw-fixed-overhead-ns",
+        "--branch-tw-fixed-overhead-ns",
+    ]
+    for flag in neg_cases:
+        result = subprocess.run(
+            [str(exe), "--backend", "branch", flag, "-1", "-"],
+            input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 2:
+            raise AssertionError(
+                f"expected exit 2 for {flag} -1, got {result.returncode}"
+            )
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -2207,6 +2251,7 @@ def main() -> int:
     run_branch_large_fourier(exe)
     run_branch_stats_sink(exe)
     run_rankwidth_memory_budget(exe)
+    run_branch_policy_arg_validation(exe)
     return 0
 
 

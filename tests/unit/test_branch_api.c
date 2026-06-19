@@ -26,52 +26,55 @@ static qsop_instance_t make_tiny(void) {
   };
 }
 
-/* qsop_solve_residual_branch — the simplest public wrapper; chains through the
- * entire _stats / _trace_stats / _heuristic_* family. */
-static int test_simple_wrapper(void) {
+/* qsop_solve_branch with NULL options — zero-init defaults (split, native, count-table). */
+static int test_null_options(void) {
   qsop_instance_t inst = make_tiny();
   qsop_result_t  *res  = NULL;
   qsop_error_t    err  = {0};
-  if (!qsop_solve_residual_branch(&inst, 64, &res, &err)) {
-    fprintf(stderr, "FAIL simple_wrapper: %s\n",
+  if (!qsop_solve_branch(&inst, 64, NULL, &res, NULL, &err)) {
+    fprintf(stderr, "FAIL null_options: %s\n",
             err.message ? err.message : "(no message)");
     return 1;
   }
   qsop_result_free(res);
-  fprintf(stderr, "PASS simple_wrapper\n");
+  fprintf(stderr, "PASS null_options\n");
   return 0;
 }
 
-/* qsop_solve_residual_branch_stats — explicit stats variant. */
-static int test_stats_wrapper(void) {
-  qsop_instance_t   inst  = make_tiny();
-  qsop_result_t    *res   = NULL;
+/* qsop_solve_branch with explicit stats. */
+static int test_with_stats(void) {
+  qsop_instance_t    inst  = make_tiny();
+  qsop_result_t     *res   = NULL;
   qsop_solve_stats_t stats = {0};
-  qsop_error_t      err   = {0};
-  if (!qsop_solve_residual_branch_stats(&inst, 64, &res, &stats, &err)) {
-    fprintf(stderr, "FAIL stats_wrapper: %s\n",
+  qsop_error_t       err   = {0};
+  if (!qsop_solve_branch(&inst, 64, NULL, &res, &stats, &err)) {
+    fprintf(stderr, "FAIL with_stats: %s\n",
             err.message ? err.message : "(no message)");
     return 1;
   }
   qsop_result_free(res);
-  fprintf(stderr, "PASS stats_wrapper\n");
+  fprintf(stderr, "PASS with_stats\n");
   return 0;
 }
 
-/* qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats — the rw_source variant. */
-static int test_rw_source_variant(void) {
+/* qsop_solve_branch with rw_source=none (no rankwidth delegation). */
+static int test_rw_source_none(void) {
   qsop_instance_t inst = make_tiny();
   qsop_result_t  *res  = NULL;
   qsop_error_t    err  = {0};
-  if (!qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
-          &inst, 64, QSOP_BRANCH_HEURISTIC_SPLIT, QSOP_BRANCH_RW_SOURCE_NONE,
-          QSOP_SOLVE_MODE_COUNT_TABLE, &res, NULL, NULL, &err)) {
-    fprintf(stderr, "FAIL rw_source_variant: %s\n",
+  if (!qsop_solve_branch(&inst, 64,
+                         &(qsop_branch_solve_options_t){
+                             .heuristic = QSOP_BRANCH_HEURISTIC_SPLIT,
+                             .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+                             .mode      = QSOP_SOLVE_MODE_COUNT_TABLE,
+                         },
+                         &res, NULL, &err)) {
+    fprintf(stderr, "FAIL rw_source_none: %s\n",
             err.message ? err.message : "(no message)");
     return 1;
   }
   qsop_result_free(res);
-  fprintf(stderr, "PASS rw_source_variant\n");
+  fprintf(stderr, "PASS rw_source_none\n");
   return 0;
 }
 
@@ -79,7 +82,7 @@ static int test_rw_source_variant(void) {
 static int test_null_out_rejected(void) {
   qsop_instance_t inst = make_tiny();
   qsop_error_t    err  = {0};
-  if (qsop_solve_residual_branch(&inst, 64, NULL, &err)) {
+  if (qsop_solve_branch(&inst, 64, NULL, NULL, NULL, &err)) {
     fprintf(stderr, "FAIL null_out_rejected: expected false\n");
     return 1;
   }
@@ -92,7 +95,7 @@ static int test_nvars_exceeds_max(void) {
   qsop_instance_t inst = make_tiny(); /* nvars = 3 */
   qsop_result_t  *res  = NULL;
   qsop_error_t    err  = {0};
-  if (qsop_solve_residual_branch(&inst, 2, &res, &err)) {
+  if (qsop_solve_branch(&inst, 2, NULL, &res, NULL, &err)) {
     fprintf(stderr, "FAIL nvars_exceeds_max: expected false\n");
     return 1;
   }
@@ -100,28 +103,30 @@ static int test_nvars_exceeds_max(void) {
   return 0;
 }
 
-/* Error path: rw_source variant with null out. */
-static int test_rw_source_null_out(void) {
+/* Error path: null out with explicit options. */
+static int test_null_out_with_options(void) {
   qsop_instance_t inst = make_tiny();
   qsop_error_t    err  = {0};
-  if (qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
-          &inst, 64, QSOP_BRANCH_HEURISTIC_SPLIT, QSOP_BRANCH_RW_SOURCE_NONE,
-          QSOP_SOLVE_MODE_COUNT_TABLE, NULL, NULL, NULL, &err)) {
-    fprintf(stderr, "FAIL rw_source_null_out: expected false\n");
+  if (qsop_solve_branch(&inst, 64,
+                        &(qsop_branch_solve_options_t){
+                            .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+                        },
+                        NULL, NULL, &err)) {
+    fprintf(stderr, "FAIL null_out_with_options: expected false\n");
     return 1;
   }
-  fprintf(stderr, "PASS rw_source_null_out\n");
+  fprintf(stderr, "PASS null_out_with_options\n");
   return 0;
 }
 
 int main(void) {
   int failures = 0;
-  failures += test_simple_wrapper();
-  failures += test_stats_wrapper();
-  failures += test_rw_source_variant();
+  failures += test_null_options();
+  failures += test_with_stats();
+  failures += test_rw_source_none();
   failures += test_null_out_rejected();
   failures += test_nvars_exceeds_max();
-  failures += test_rw_source_null_out();
+  failures += test_null_out_with_options();
   if (failures > 0) {
     fprintf(stderr, "\n%d test(s) FAILED\n", failures);
     return 1;

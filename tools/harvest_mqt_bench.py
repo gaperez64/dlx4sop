@@ -26,6 +26,7 @@ Optional (faster / dependency-free import probing):
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import pathlib
@@ -203,10 +204,7 @@ def harvest(
 
     tiered: dict[str, list[dict]] = {tier: [] for tier in TIER_BOUNDS}
     unsupported: list[dict] = []
-    family_tier_counts: dict[tuple[str, str], int] = collections.Counter() if False else {}
-
-    import collections
-    family_tier_counts = collections.Counter()
+    family_tier_counts: dict[tuple[str, str], int] = collections.Counter()
 
     for family in families:
         for nqubits in sizes:

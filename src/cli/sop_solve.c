@@ -53,7 +53,6 @@ static void print_usage(FILE *file) {
         "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--rankwidth-table v2|validate] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -326,8 +325,6 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_streaming_join_candidate_pairs);
     fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_emitted_pairs);
-    fprintf(file, "rankwidth_join_assignment_bytes: %" PRIu64 "\n",
-            stats->rankwidth_join_assignment_bytes);
     fprintf(file, "rankwidth_table_assignment_bytes: %" PRIu64 "\n",
             stats->rankwidth_table_assignment_bytes);
   } else {
@@ -472,6 +469,54 @@ static bool parse_max_vars(const char *text, uint32_t *out) {
   return true;
 }
 
+static bool parse_u32_arg(const char *flag, const char *text, uint32_t *out) {
+  if (text == NULL || text[0] == '-' || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  unsigned long v = strtoul(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0' || v > UINT32_MAX) {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = (uint32_t)v;
+  return true;
+}
+
+static bool parse_u64_arg(const char *flag, const char *text, uint64_t *out) {
+  if (text == NULL || text[0] == '-' || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  unsigned long long v = strtoull(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0') {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = (uint64_t)v;
+  return true;
+}
+
+static bool parse_double_arg(const char *flag, const char *text, double *out) {
+  if (text == NULL || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a numeric value\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  double v = strtod(text, &end);
+  if (errno != 0 || end == text || *end != '\0') {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = v;
+  return true;
+}
+
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   const char *rankwidth_decomposition_path = NULL;
@@ -490,8 +535,6 @@ int main(int argc, char **argv) {
   bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_validate = false;
-  bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
@@ -573,14 +616,9 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-memory-budget-mib requires an integer value\n", stderr);
         return 2;
       }
-      errno = 0;
-      char *end = NULL;
-      unsigned long mib = strtoul(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-memory-budget-mib requires a non-negative integer\n", stderr);
-        return 2;
-      }
-      rw_memory_budget_bytes = (uint64_t)mib * 1024ULL * 1024ULL;
+      uint64_t mib;
+      if (!parse_u64_arg("--rankwidth-memory-budget-mib", argv[++i], &mib)) return 2;
+      rw_memory_budget_bytes = mib * 1024ULL * 1024ULL;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-memory-budget-bytes") == 0) {
@@ -588,14 +626,7 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-memory-budget-bytes requires an integer value\n", stderr);
         return 2;
       }
-      errno = 0;
-      char *end = NULL;
-      unsigned long long b = strtoull(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-memory-budget-bytes requires a non-negative integer\n", stderr);
-        return 2;
-      }
-      rw_memory_budget_bytes = (uint64_t)b;
+      if (!parse_u64_arg("--rankwidth-memory-budget-bytes", argv[++i], &rw_memory_budget_bytes)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-memory-policy") == 0) {
@@ -641,15 +672,8 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-materialize-join-max-pairs requires an integer value\n", stderr);
         return 2;
       }
-      char *end = NULL;
-      errno = 0;
-      const unsigned long long mp = strtoull(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-materialize-join-max-pairs requires a non-negative integer\n",
-              stderr);
-        return 2;
-      }
-      rw_materialize_join_max_pairs = (uint64_t)mp;
+      if (!parse_u64_arg("--rankwidth-materialize-join-max-pairs", argv[++i],
+                         &rw_materialize_join_max_pairs)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -696,42 +720,50 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--branch-rw-min-treewidth-width") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-width requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_treewidth_width = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-min-treewidth-width", argv[++i],
+                         &branch_policy.rw_min_treewidth_width)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-treewidth-forecast") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-forecast requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_treewidth_forecast = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-min-treewidth-forecast", argv[++i],
+                         &branch_policy.rw_min_treewidth_forecast)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-residual-vars") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-residual-vars requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_residual_vars = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-min-residual-vars", argv[++i],
+                         &branch_policy.rw_min_residual_vars)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-low-rank-bypass") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-low-rank-bypass requires a value\n", stderr); return 2; }
-      branch_policy.rw_low_rank_bypass = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-low-rank-bypass", argv[++i],
+                         &branch_policy.rw_low_rank_bypass)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-speedup requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_speedup = strtod(argv[++i], NULL);
+      if (!parse_double_arg("--branch-rw-min-speedup", argv[++i],
+                            &branch_policy.rw_min_speedup)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-fixed-overhead-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-fixed-overhead-ns requires a value\n", stderr); return 2; }
-      branch_policy.rw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-fixed-overhead-ns", argv[++i],
+                         &branch_policy.rw_fixed_overhead_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-tw-fixed-overhead-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-tw-fixed-overhead-ns requires a value\n", stderr); return 2; }
-      branch_policy.tw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-tw-fixed-overhead-ns", argv[++i],
+                         &branch_policy.tw_fixed_overhead_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-memory-penalty-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-memory-penalty-ns requires a value\n", stderr); return 2; }
-      branch_policy.rw_memory_penalty_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-memory-penalty-ns", argv[++i],
+                         &branch_policy.rw_memory_penalty_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -818,24 +850,6 @@ int main(int argc, char **argv) {
       rankwidth_mode_set = true;
       continue;
     }
-    if (strcmp(argv[i], "--rankwidth-table") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --rankwidth-table requires a value\n", stderr);
-        return 2;
-      }
-      const char *value = argv[++i];
-      if (strcmp(value, "v2") == 0) {
-        rankwidth_table_validate = false;
-      } else if (strcmp(value, "validate") == 0) {
-        rankwidth_table_validate = true;
-      } else {
-        fprintf(stderr, "error: unsupported rankwidth table version '%s' (expected v2|validate)\n",
-                value);
-        return 2;
-      }
-      rankwidth_table_set = true;
-      continue;
-    }
     if (strcmp(argv[i], "--solve-mode") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --solve-mode requires a value\n", stderr);
@@ -918,10 +932,6 @@ int main(int argc, char **argv) {
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_mode_set) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
-    return 2;
-  }
-  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_set) {
-    fputs("error: --rankwidth-table requires --backend rankwidth\n", stderr);
     return 2;
   }
   if (rankwidth_mode_set && solve_mode_set &&
@@ -1017,9 +1027,16 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
-        qsop, max_vars, branch_heuristic, branch_rw_source, &branch_policy, solve_mode,
-        sink_ptr, &result, &solve_stats, trace_ptr, &error);
+    ok = qsop_solve_branch(qsop, max_vars,
+                           &(qsop_branch_solve_options_t){
+                               .heuristic = branch_heuristic,
+                               .rw_source = branch_rw_source,
+                               .mode      = solve_mode,
+                               .policy    = branch_policy,
+                               .sink      = sink_ptr,
+                               .trace     = trace_ptr,
+                           },
+                           &result, &solve_stats, &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
@@ -1105,65 +1122,13 @@ int main(int argc, char **argv) {
       }
     }
     if (ok) {
-      if (rankwidth_table_validate) {
-        qsop_result_t *result_v1 = NULL;
-        qsop_result_t *result_v2 = NULL;
-        qsop_solve_stats_t stats_v1 = {0};
-        qsop_solve_stats_t stats_v2 = {0};
-        const bool ok_v1 = qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition,
-                                                                  max_vars, rankwidth_mode,
-                                                                  &result_v1, &stats_v1, NULL,
-                                                                  &error);
-        if (!ok_v1) {
-          qsop_result_free(result_v1);
-          ok = false;
-        } else {
-          const bool ok_v2 =
-              qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                       rankwidth_mode, &result_v2, &stats_v2,
-                                                       NULL, &error);
-          if (!ok_v2) {
-            qsop_result_free(result_v1);
-            qsop_result_free(result_v2);
-            ok = false;
-          } else {
-            bool mismatch = false;
-            if (result_v1->r != result_v2->r) {
-              mismatch = true;
-            } else {
-              for (uint32_t res = 0; res < result_v1->r && !mismatch; res++) {
-                if (result_v1->count_strings != NULL && result_v2->count_strings != NULL) {
-                  if (strcmp(result_v1->count_strings[res], result_v2->count_strings[res]) != 0) {
-                    mismatch = true;
-                  }
-                } else if (result_v1->counts != NULL && result_v2->counts != NULL) {
-                  if (result_v1->counts[res] != result_v2->counts[res]) {
-                    mismatch = true;
-                  }
-                }
-              }
-            }
-            if (mismatch) {
-              fprintf(stderr, "error: rankwidth v1/v2 validation mismatch\n");
-              qsop_result_free(result_v1);
-              qsop_result_free(result_v2);
-              ok = false;
-            } else {
-              result = result_v1;
-              solve_stats = stats_v1;
-              qsop_result_free(result_v2);
-            }
-          }
-        }
-      } else {
-        ok = qsop_solve_rankwidth_options_mode_trace_stats(
-            qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
-            &(qsop_rankwidth_solve_options_t){
-                .join_strategy = rw_join_strategy,
-                .materialize_join_max_pairs = rw_materialize_join_max_pairs,
-            },
-            &result, &solve_stats, trace_ptr, &error);
-      }
+      ok = qsop_solve_rankwidth_options_mode_trace_stats(
+          qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+          &(qsop_rankwidth_solve_options_t){
+              .join_strategy = rw_join_strategy,
+              .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+          },
+          &result, &solve_stats, trace_ptr, &error);
     }
 rankwidth_done:;
   } else {

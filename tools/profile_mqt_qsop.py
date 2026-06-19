@@ -21,7 +21,6 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-BACKENDS = ["treewidth", "branch:auto", "branch:no-rankwidth"]
 BRANCH_CONFIGS = {
     "branch:auto": ["--backend", "branch", "--branch-heuristic", "split",
                     "--branch-rw-source", "auto", "--max-vars", "256"],

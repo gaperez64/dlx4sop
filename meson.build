@@ -184,10 +184,10 @@ if python3.found()
     timeout: 300,
   )
   test(
-    'rankwidth v2',
+    'rankwidth table',
     python3,
     args: [
-      files('tests/test_rankwidth_v2.py'),
+      files('tests/test_rankwidth_table.py'),
       sop_solve.full_path(),
       meson.current_source_dir(),
     ],
@@ -562,6 +562,13 @@ if python3.found()
     python3,
     args: [
       files('tests/test_plot_scoreboard.py'),
+    ],
+  )
+  test(
+    'check generated scoreboard smoke',
+    python3,
+    args: [
+      files('tests/test_check_generated_scoreboard.py'),
     ],
   )
   test(

@@ -130,7 +130,6 @@ def run_tests(sop_solve):
             "rankwidth_transition_layout_u32_events:",
             "rankwidth_materialized_join_events:",
             "rankwidth_streaming_join_events:",
-            "rankwidth_join_assignment_bytes:",
             "rankwidth_table_assignment_bytes:",
         ]
         for field in required:
@@ -139,26 +138,9 @@ def run_tests(sop_solve):
                 all_passed = False
             else:
                 print(f"    OK: '{field}' present")
-
-    # 4. D3.1: rankwidth_join_assignment_bytes must be 0 in default path.
-    print("  test: D3.1 join_assignment_bytes == 0 in default (materialized CSR) path")
-    for f in files[:2]:
-        r = _run_rankwidth(sop_solve, f,
-                           ["--rankwidth-join-strategy", "materialized"],
-                           format_stats=True)
-        if r.returncode != 0:
-            print(f"    SKIP: {f.name}")
-            continue
-        text = r.stdout.decode(errors="replace")
-        for line in text.splitlines():
-            if line.startswith("rankwidth_join_assignment_bytes:"):
-                val = int(line.split(":")[1].strip())
-                if val != 0:
-                    print(f"    FAIL: {f.name} join_assignment_bytes={val} (expected 0)")
-                    all_passed = False
-                else:
-                    print(f"    OK: {f.name} join_assignment_bytes=0")
-                break
+        if "rankwidth_join_assignment_bytes:" in text:
+            print("    FAIL: removed field 'rankwidth_join_assignment_bytes' still present")
+            all_passed = False
 
     # 5. D4.1 U16 layout events > 0 on synthetic sign-edge instance.
     print("  test: D4.1 U16 layout used for sign-edge instance with small signature IDs")

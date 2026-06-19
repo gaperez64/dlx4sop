@@ -10,15 +10,15 @@ Usage:
         --corpus-dir benchmarks/corpus/sop \\
         --tier tier-17-32 \\
         --backend treewidth \\
-        --backend rankwidth \\
-        --backend branch \\
+        --backend rankwidth:from-treewidth \\
+        --backend branch:auto \\
         --timeout 5 \\
         --out artifacts/local.jsonl
 
 Backend variants:
-    components, brute-force, treewidth, rankwidth
+    components, brute-force, treewidth
     rankwidth:from-treewidth, rankwidth:best, rankwidth:validate
-    branch, branch:native, branch:from-treewidth, branch:auto, branch:no-rankwidth
+    branch:auto, branch:native, branch:from-treewidth, branch:no-rankwidth
 """
 
 from __future__ import annotations
@@ -59,35 +59,15 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
         "--treewidth-order", "min-fill-max-degree",
         "--max-vars", "256",
     ],
-    "rankwidth": [
-        "--backend", "rankwidth",
-        "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "v2",
-        "--max-vars", "256",
-    ],
     "rankwidth:from-treewidth": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "v2",
         "--max-vars", "256",
     ],
     "rankwidth:best": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "best",
-        "--rankwidth-table", "v2",
         "--max-vars", "256",
-    ],
-    "rankwidth:validate": [
-        "--backend", "rankwidth",
-        "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "validate",
-        "--max-vars", "256",
-    ],
-    "branch": [
-        "--backend", "branch",
-        "--branch-heuristic", "split",
-        "--branch-rw-source", "auto",
-        "--max-vars", "64",
     ],
     "branch:auto": [
         "--backend", "branch",
@@ -116,15 +96,17 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
 }
 
 # Hard var limits per backend family (gate before invoking sop-solve).
+# The bare "rankwidth" and "branch" keys serve as family-prefix fallbacks in
+# _backend_max_vars() for unknown variants (e.g. "rankwidth:new-mode" → 256).
 BACKEND_MAX_VARS: dict[str, int] = {
     "components":         22,
     "brute-force":        22,
     "treewidth":         256,
-    "rankwidth":         256,
+    "rankwidth":         256,  # family fallback
     "rankwidth:from-treewidth": 256,
     "rankwidth:best":    256,
     "rankwidth:validate": 256,
-    "branch":             64,
+    "branch":             64,  # family fallback
     "branch:auto":        64,
     "branch:native":      64,
     "branch:from-treewidth": 64,
@@ -250,11 +232,12 @@ def _make_record(
     skip_reason: str = "",
 ) -> dict:
     meta = case.meta
+    meta_source = meta.get("source", "local-synthetic")
     provenance = meta.get("provenance", {
         "kind": "generated",
         "generator": meta.get("generator", "build_sop_corpus.py:v1"),
-        "source": "local-synthetic",
-        "source_url": None,
+        "source": meta_source,
+        "source_url": meta.get("source_url"),
         "source_relative_path": None,
         "case": None,
         "boundary": None,
@@ -265,7 +248,7 @@ def _make_record(
     rec: dict = {
         "schema": "sop_bench_result_v2",
         "suite": "local-sop",
-        "source": "local-synthetic",
+        "source": meta_source,
         "tier": case.tier,
         "instance_id": case.instance_id,
         "qsop_path": str(case.qsop_path),
