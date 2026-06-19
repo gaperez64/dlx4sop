@@ -10,15 +10,15 @@ Usage:
         --corpus-dir benchmarks/corpus/sop \\
         --tier tier-17-32 \\
         --backend treewidth \\
-        --backend rankwidth \\
-        --backend branch \\
+        --backend rankwidth:from-treewidth \\
+        --backend branch:auto \\
         --timeout 5 \\
         --out artifacts/local.jsonl
 
 Backend variants:
-    components, brute-force, treewidth, rankwidth
+    components, brute-force, treewidth
     rankwidth:from-treewidth, rankwidth:best, rankwidth:validate
-    branch, branch:native, branch:from-treewidth, branch:auto, branch:no-rankwidth
+    branch:auto, branch:native, branch:from-treewidth, branch:no-rankwidth
 """
 
 from __future__ import annotations
@@ -59,11 +59,6 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
         "--treewidth-order", "min-fill-max-degree",
         "--max-vars", "256",
     ],
-    "rankwidth": [
-        "--backend", "rankwidth",
-        "--rankwidth-generate", "from-treewidth",
-        "--max-vars", "256",
-    ],
     "rankwidth:from-treewidth": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "from-treewidth",
@@ -73,12 +68,6 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
         "--backend", "rankwidth",
         "--rankwidth-generate", "best",
         "--max-vars", "256",
-    ],
-    "branch": [
-        "--backend", "branch",
-        "--branch-heuristic", "split",
-        "--branch-rw-source", "auto",
-        "--max-vars", "64",
     ],
     "branch:auto": [
         "--backend", "branch",
@@ -107,15 +96,17 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
 }
 
 # Hard var limits per backend family (gate before invoking sop-solve).
+# The bare "rankwidth" and "branch" keys serve as family-prefix fallbacks in
+# _backend_max_vars() for unknown variants (e.g. "rankwidth:new-mode" → 256).
 BACKEND_MAX_VARS: dict[str, int] = {
     "components":         22,
     "brute-force":        22,
     "treewidth":         256,
-    "rankwidth":         256,
+    "rankwidth":         256,  # family fallback
     "rankwidth:from-treewidth": 256,
     "rankwidth:best":    256,
     "rankwidth:validate": 256,
-    "branch":             64,
+    "branch":             64,  # family fallback
     "branch:auto":        64,
     "branch:native":      64,
     "branch:from-treewidth": 64,
