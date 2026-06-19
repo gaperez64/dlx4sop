@@ -5112,7 +5112,6 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     stats->rankwidth_streaming_join_events      += streaming_join_events;
     stats->rankwidth_streaming_join_candidate_pairs += streaming_candidate_pairs;
     stats->rankwidth_streaming_join_emitted_pairs   += streaming_emitted_pairs;
-    stats->rankwidth_join_assignment_bytes  = 0; /* D3.1: never allocated in this path */
     stats->rankwidth_table_assignment_bytes =
         (uint64_t)signature_entries * decomposition->words * sizeof(uint64_t);
     stats->decomposition_width = decomposition_width(decomposition, adj, error);

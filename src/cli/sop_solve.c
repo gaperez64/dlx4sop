@@ -325,8 +325,6 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_streaming_join_candidate_pairs);
     fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_emitted_pairs);
-    fprintf(file, "rankwidth_join_assignment_bytes: %" PRIu64 "\n",
-            stats->rankwidth_join_assignment_bytes);
     fprintf(file, "rankwidth_table_assignment_bytes: %" PRIu64 "\n",
             stats->rankwidth_table_assignment_bytes);
   } else {

@@ -15,8 +15,11 @@ typedef struct qsop_result {
 } qsop_result_t;
 
 typedef struct qsop_solve_stats {
+  /* Branch / brute-force search */
   uint64_t search_nodes;
   uint64_t leaf_assignments;
+
+  /* Branch residue cache */
   uint64_t cache_hits;
   uint64_t cache_misses;
   uint64_t cache_avoided_nodes;
@@ -29,12 +32,16 @@ typedef struct qsop_solve_stats {
   uint64_t cache_key_bytes;
   uint64_t cache_count_bytes;
   uint64_t cache_estimated_bytes;
+
+  /* DP table (shared by treewidth, rankwidth, branch-delegate) */
   uint64_t table_entries;
   uint64_t max_table_entries;
   uint64_t signature_entries;
   uint64_t max_signature_entries;
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
+
+  /* Rankwidth-specific */
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
   uint64_t rankwidth_labelled_exact_cuts;
@@ -47,19 +54,24 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_streaming_join_events;
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
-  uint64_t rankwidth_join_assignment_bytes;
   uint64_t rankwidth_table_assignment_bytes;
+
+  /* Branch dispatch counters */
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;
   uint64_t branch_treewidth_skips;
   uint64_t branch_rankwidth_skips;
+
+  /* Branch residual sizing */
   uint32_t max_residual_vars;
   uint32_t max_residual_edges;
   uint32_t max_residual_components;
   uint32_t max_residual_largest_component;
   uint32_t max_residual_min_fill_width;
   uint32_t max_residual_prefix_cut_rank;
+
+  /* Decomposition */
   uint32_t components;
   uint32_t decomposition_width;
   uint32_t rankwidth_support_width;
