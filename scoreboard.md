@@ -1,6 +1,6 @@
 # Scoreboard
 
-Last updated: 2026-06-18.
+Last updated: 2026-06-19.
 
 This tracks progress toward a competitive exact strong simulator based on labelled quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
 
@@ -71,13 +71,14 @@ Best configuration per tier at a glance. See [scoreboard-details.md](scoreboard-
 | 0-32 | `sop2wmc residue + ganak` | 238 / 238 | 571.89 s |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 66 / 66 | 63.3 ms |
 | 33-64 | `branch --branch-heuristic split` | 66 / 66 | 114.4 ms |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut` | 66 / 66 | 357.8 ms |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut` | 66 / 66 | 311 ms |
 | 33-64 | `sop2wmc amp-soft + ganak` | 66 / 66 | 3.12 s |
 | 33-64 | `sop2wmc residue + ganak` | 45 / 66 | 2001.24 s |
 | 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 254 / 254 | 1.32 s |
 | 65-128 | `branch --branch-heuristic split` | 254 / 254 | 2.07 s |
-| 65-128 | `rankwidth --rankwidth-generate min-fill-cut` | 118 / 254 | 4100.45 s |
+| 65-128 | `rankwidth --rankwidth-generate min-fill-cut` | 118 / 254 | 4102 s |
 | 65-128 | `sop2wmc amp-block + ganak` | 254 / 254 | 38.03 s |
+| 129-256 | `rankwidth --rankwidth-generate min-fill-cut` | 92 / 222 | 304 s |
 | 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 222 / 222 | 18.37 s |
 | 129-256 | `branch --branch-heuristic split` | 222 / 222 | 24.08 s |
 | 129-256 | `sop2wmc amp-block + ganak` | 222 / 222 | 109.70 s |
@@ -98,7 +99,7 @@ Best-performing native simulator per source and tier. See [scoreboard-details.md
 
 ### MQT Bench
 
-GHZ and BV circuits (34–104 qubits). Native baseline: `qiskit-clifford` stabilizer simulation (O(n²) memory, exact amplitudes for Clifford circuits).
+GHZ and BV circuits (34–104 qubits). Native baseline: `qiskit-clifford` stabilizer simulation (O(n²) memory, exact amplitudes for Clifford circuits). Statevector engines (`mqt-ddsim-statevector`, `aer-statevector`, `qiskit-statevector`) were all killed or timed out — a 34-qubit statevector needs ~272 GB — so `qiskit-clifford` is the only viable native comparison.
 
 | Tier | QSOP time | Best native | Native time | Best speedup |
 | --- | ---: | --- | ---: | ---: |

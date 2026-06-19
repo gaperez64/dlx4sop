@@ -2,7 +2,7 @@
 
 Full verbose solver tables. See [scoreboard.md](scoreboard.md) for the summary and plots.
 
-Last updated: 2026-06-18.
+Last updated: 2026-06-19.
 
 ## Internal Solver Configurations — Full Stats
 
@@ -20,7 +20,7 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 | 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 238 / 238 | 571.89 s | ganak 570.43 s + export 1.47 s; 0 amplitude mismatches |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 66 / 66 | 63.3 ms | tw width 3; max table 128; 25,484 join pairs |
 | 33-64 | `branch --branch-heuristic split` | 66 / 66 | 114.4 ms | 2,174 nodes; cache hits=712, misses=1,462, hit rate=0.328; cache avoided nodes=666, rate=0.306; cache canonical hits=712; cache canonical lookups=1,742, stores=1,116; cache entries=85, canonical=68, canonical rate=0.800, slots=768; cache bytes key=5,028, counts=6,144, estimated=25,316; cache trace lookup=2,142 events/2.6 ms, store=1,430 events/2.5 ms; canonical cache trace lookup=1,742 events/2.5 ms, store=1,116 events/2.0 ms; rw labelled-cut-signature=3, support=3; max table 128; rw table forecast 64; rw join forecast 408; rw cut estimates exact=0, proxy=0, assignments=0; 20,460 join pairs; delegations tw=60, rw=0; branch dispatch splits=943/372.7 us max components=9, tw delegates=28/5.0 ms max vars=53, root tw delegates=32/10.3 ms max vars=63; branch policy fallthroughs=488, tw skips=0, rw skips=60; branch fallthrough max vars=10; rw skip reasons treewidth-preferred=52, policy=6, table-forecast=2; max residual tw=3, cut-rank=9; branch rw probe labelled-cut-signature=3, support=3; branch table forecast rw=64, tw=128; branch join forecast rw=408, tw=848; branch tw order width=3; branch root tw probe width=2, 32 events/6.9 ms; max residual vars=63, components=9, largest=63 |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 66 / 66 | 357.8 ms | rw width 6; rw labelled-cut-signature=6, support=6; max table 512; rw table forecast 512; rw join forecast 4,506; rw cut estimates exact=1,676, proxy=0, assignments=2,305,843,009,213,694,070; max signatures 64; 283,446 join pairs |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 66 / 66 | 311 ms | rw width 6; rw labelled-cut-signature=6, support=6; max table 512; rw join forecast 4,506; rw cut estimates exact=1,676, proxy=0, assignments=2,305,843,009,213,694,070; max signatures 64; 283,446 join pairs |
 | 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 66 / 66 | 3.12 s | ganak 3.08 s + export 45.2 ms; 0 amplitude mismatches |
 | 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 66 / 66 | 3.18 s | ganak 3.13 s + export 50.3 ms; 0 amplitude mismatches |
 | 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 66 / 66 | 4.10 s | ganak 4.05 s + export 46.2 ms; 0 amplitude mismatches |
@@ -31,7 +31,8 @@ Rows are grouped by imported-variable tier and sorted by total solve time. `Solv
 | 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 254 / 254 | 38.03 s | ganak 37.78 s + export 254.1 ms; 0 amplitude mismatches |
 | 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 254 / 254 | 39.41 s | ganak 39.20 s + export 215.2 ms; 0 amplitude mismatches |
 | 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 254 / 254 | 43.29 s | ganak 43.07 s + export 214.2 ms; 0 amplitude mismatches |
-| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 118 / 254 | 4100.45 s | rw width 12; rw labelled-cut-signature=12, support=12; max table 32,768; rw table forecast 32,768; rw join forecast 239,725; rw cut estimates exact=10,064, proxy=0, assignments=18,446,744,073,709,551,615; max signatures 4,096; 11,622,465 join pairs; 136 timeouts |
+| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 118 / 254 | 4102 s | rw width 12; rw labelled-cut-signature=12, support=12; max table 32,768; rw join forecast 239,725; rw cut estimates exact=10,064, proxy=0, assignments=18,446,744,073,709,551,615; max signatures 4,096; 11,622,465 join pairs; 136 timeouts |
+| 129-256 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 92 / 222 | 304 s | rw width 11; max table 16,384; 13,896,120 join pairs; 130 timeouts (2 s solver cap) |
 | 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 222 / 222 | 18.37 s | tw width 14; max table 262,144; 14,077,088 join pairs |
 | 129-256 | `branch --branch-heuristic split` | 222 / 222 | 24.08 s | 2,036 nodes; cache hits=497, misses=1,539, hit rate=0.244; cache avoided nodes=976, rate=0.479; cache canonical hits=461; cache canonical lookups=1,347, stores=923; cache entries=96, canonical=62, canonical rate=0.646, slots=768; cache bytes key=12,733, counts=6,144, estimated=33,706; cache trace lookup=1,870 events/3.7 ms, store=1,373 events/4.8 ms; canonical cache trace lookup=1,347 events/3.2 ms, store=923 events/2.5 ms; rw labelled-cut-signature=3, support=3; max table 262,144; rw table forecast 64; rw join forecast 1,808; rw cut estimates exact=0, proxy=0, assignments=0; 14,069,576 join pairs; delegations tw=266, rw=0; branch dispatch splits=953/1.0 ms max components=14, tw delegates=100/1.33 s max vars=211, root tw delegates=166/9.01 s max vars=249; branch policy fallthroughs=449, tw skips=0, rw skips=266; branch fallthrough max vars=15; rw skip reasons treewidth-preferred=214, policy=32, table-forecast=20; max residual tw=14, cut-rank=18; branch rw probe labelled-cut-signature=3, support=3; branch table forecast rw=64, tw=262,144; branch join forecast rw=1,808, tw=5,898,240; branch tw order width=14; branch root tw probe width=14, 166 events/1.30 s; max residual vars=256, components=14, largest=249 |
 | 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 222 / 222 | 109.70 s | ganak 109.31 s + export 389.7 ms; 0 amplitude mismatches |
@@ -65,7 +66,9 @@ These compare the best current QSOP configuration for each tier against native Q
 
 ### MQT Bench
 
-GHZ and BV circuits (34–104 qubits, opt\_level=1). Native baseline uses the `qiskit-clifford` stabilizer engine (O(n²) memory) rather than statevector (O(2ⁿ)), enabling comparison at circuit sizes where statevector simulators run out of memory.
+GHZ and BV circuits (34–104 qubits, opt\_level=1). Native baseline uses the `qiskit-clifford` stabilizer engine (O(n²) memory) rather than statevector (O(2ⁿ)), enabling comparison at circuit sizes where statevector simulators are infeasible.
+
+**Statevector engines were not viable here.** `mqt-ddsim-statevector`, `aer-statevector`, and `qiskit-statevector` all timed out or were killed (exit 144, SIGSYS) on GHZ/BV circuits at these qubit counts: a 34-qubit statevector requires 2³⁴ ≈ 17B complex amplitudes (≈ 272 GB). All three statevector engines returned 0 usable rows. `qiskit-clifford` succeeds because GHZ and BV circuits consist entirely of Clifford gates (H, CNOT, X), for which the stabilizer simulator runs in O(n²) time and memory.
 
 | Tier | QSOP configuration | Native engine | Both OK / matched | QSOP time | Native time | QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | Max boundary qubits | Qubit cap | Timeout | Memory cap |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
