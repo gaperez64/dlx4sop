@@ -471,6 +471,54 @@ static bool parse_max_vars(const char *text, uint32_t *out) {
   return true;
 }
 
+static bool parse_u32_arg(const char *flag, const char *text, uint32_t *out) {
+  if (text == NULL || text[0] == '-' || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  unsigned long v = strtoul(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0' || v > UINT32_MAX) {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = (uint32_t)v;
+  return true;
+}
+
+static bool parse_u64_arg(const char *flag, const char *text, uint64_t *out) {
+  if (text == NULL || text[0] == '-' || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  unsigned long long v = strtoull(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0') {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = (uint64_t)v;
+  return true;
+}
+
+static bool parse_double_arg(const char *flag, const char *text, double *out) {
+  if (text == NULL || text[0] == '\0') {
+    fprintf(stderr, "error: %s requires a numeric value\n", flag);
+    return false;
+  }
+  errno = 0;
+  char *end = NULL;
+  double v = strtod(text, &end);
+  if (errno != 0 || end == text || *end != '\0') {
+    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
+    return false;
+  }
+  *out = v;
+  return true;
+}
+
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   const char *rankwidth_decomposition_path = NULL;
@@ -570,14 +618,9 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-memory-budget-mib requires an integer value\n", stderr);
         return 2;
       }
-      errno = 0;
-      char *end = NULL;
-      unsigned long mib = strtoul(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-memory-budget-mib requires a non-negative integer\n", stderr);
-        return 2;
-      }
-      rw_memory_budget_bytes = (uint64_t)mib * 1024ULL * 1024ULL;
+      uint64_t mib;
+      if (!parse_u64_arg("--rankwidth-memory-budget-mib", argv[++i], &mib)) return 2;
+      rw_memory_budget_bytes = mib * 1024ULL * 1024ULL;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-memory-budget-bytes") == 0) {
@@ -585,14 +628,7 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-memory-budget-bytes requires an integer value\n", stderr);
         return 2;
       }
-      errno = 0;
-      char *end = NULL;
-      unsigned long long b = strtoull(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-memory-budget-bytes requires a non-negative integer\n", stderr);
-        return 2;
-      }
-      rw_memory_budget_bytes = (uint64_t)b;
+      if (!parse_u64_arg("--rankwidth-memory-budget-bytes", argv[++i], &rw_memory_budget_bytes)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-memory-policy") == 0) {
@@ -638,15 +674,8 @@ int main(int argc, char **argv) {
         fputs("error: --rankwidth-materialize-join-max-pairs requires an integer value\n", stderr);
         return 2;
       }
-      char *end = NULL;
-      errno = 0;
-      const unsigned long long mp = strtoull(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0') {
-        fputs("error: --rankwidth-materialize-join-max-pairs requires a non-negative integer\n",
-              stderr);
-        return 2;
-      }
-      rw_materialize_join_max_pairs = (uint64_t)mp;
+      if (!parse_u64_arg("--rankwidth-materialize-join-max-pairs", argv[++i],
+                         &rw_materialize_join_max_pairs)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -693,42 +722,50 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--branch-rw-min-treewidth-width") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-width requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_treewidth_width = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-min-treewidth-width", argv[++i],
+                         &branch_policy.rw_min_treewidth_width)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-treewidth-forecast") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-forecast requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_treewidth_forecast = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-min-treewidth-forecast", argv[++i],
+                         &branch_policy.rw_min_treewidth_forecast)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-residual-vars") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-residual-vars requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_residual_vars = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-min-residual-vars", argv[++i],
+                         &branch_policy.rw_min_residual_vars)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-low-rank-bypass") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-low-rank-bypass requires a value\n", stderr); return 2; }
-      branch_policy.rw_low_rank_bypass = (uint32_t)strtoul(argv[++i], NULL, 10);
+      if (!parse_u32_arg("--branch-rw-low-rank-bypass", argv[++i],
+                         &branch_policy.rw_low_rank_bypass)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-min-speedup requires a value\n", stderr); return 2; }
-      branch_policy.rw_min_speedup = strtod(argv[++i], NULL);
+      if (!parse_double_arg("--branch-rw-min-speedup", argv[++i],
+                            &branch_policy.rw_min_speedup)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-fixed-overhead-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-fixed-overhead-ns requires a value\n", stderr); return 2; }
-      branch_policy.rw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-fixed-overhead-ns", argv[++i],
+                         &branch_policy.rw_fixed_overhead_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-tw-fixed-overhead-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-tw-fixed-overhead-ns requires a value\n", stderr); return 2; }
-      branch_policy.tw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-tw-fixed-overhead-ns", argv[++i],
+                         &branch_policy.tw_fixed_overhead_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-memory-penalty-ns") == 0) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-memory-penalty-ns requires a value\n", stderr); return 2; }
-      branch_policy.rw_memory_penalty_ns = strtoull(argv[++i], NULL, 10);
+      if (!parse_u64_arg("--branch-rw-memory-penalty-ns", argv[++i],
+                         &branch_policy.rw_memory_penalty_ns)) return 2;
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {

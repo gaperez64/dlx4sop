@@ -115,10 +115,20 @@ def test_plot_survival_svg_outputs_file(tool, tmp):
 
 
 def test_plot_survival_svg_no_data(tool, tmp):
+    # When no data and the output file doesn't exist, a placeholder is written
+    # so that scoreboard image references are not broken.
     out = tmp / "survival-empty.svg"
     tool.plot_survival_svg([], "FeynmanDD", out)
-    if out.exists():
-        raise AssertionError("should not create SVG with no data")
+    if not out.exists():
+        raise AssertionError("expected placeholder SVG when no data and file absent")
+    content = out.read_text()
+    if "<svg" not in content:
+        raise AssertionError("placeholder must be a valid SVG element")
+    # When the file already exists (e.g. committed with real data), it is not overwritten.
+    original = out.read_text()
+    tool.plot_survival_svg([], "FeynmanDD", out)
+    if out.read_text() != original:
+        raise AssertionError("existing SVG should not be overwritten when no data")
 
 
 def test_plot_solver_time_by_tier(tool, tmp):

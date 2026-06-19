@@ -2175,6 +2175,54 @@ def run_rankwidth_memory_budget(exe: pathlib.Path) -> None:
         )
 
 
+def run_branch_policy_arg_validation(exe: pathlib.Path) -> None:
+    """Phase 4C: branch policy numeric flags must reject invalid values (exit 2)."""
+    p5 = _path_qsop(5, 8)
+
+    invalid_cases = [
+        ("--branch-rw-min-treewidth-width", "notanint"),
+        ("--branch-rw-min-treewidth-forecast", "notanint"),
+        ("--branch-rw-min-residual-vars", "notanint"),
+        ("--branch-rw-low-rank-bypass", "notanint"),
+        ("--branch-rw-min-speedup", "notadouble"),
+        ("--branch-rw-fixed-overhead-ns", "notanint"),
+        ("--branch-tw-fixed-overhead-ns", "notanint"),
+        ("--branch-rw-memory-penalty-ns", "notanint"),
+        ("--rankwidth-memory-budget-bytes", "notanint"),
+        ("--rankwidth-materialize-join-max-pairs", "notanint"),
+    ]
+    for flag, bad_value in invalid_cases:
+        result = subprocess.run(
+            [str(exe), "--backend", "branch", flag, bad_value, "-"],
+            input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 2:
+            raise AssertionError(
+                f"expected exit 2 for {flag} {bad_value!r}, got {result.returncode}"
+            )
+        if "error:" not in result.stderr:
+            raise AssertionError(
+                f"{flag}: expected error message on stderr, got: {result.stderr!r}"
+            )
+
+    # Negative values for uint flags must also be rejected.
+    neg_cases = [
+        "--branch-rw-min-treewidth-width",
+        "--branch-rw-min-residual-vars",
+        "--branch-rw-fixed-overhead-ns",
+        "--branch-tw-fixed-overhead-ns",
+    ]
+    for flag in neg_cases:
+        result = subprocess.run(
+            [str(exe), "--backend", "branch", flag, "-1", "-"],
+            input=p5, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if result.returncode != 2:
+            raise AssertionError(
+                f"expected exit 2 for {flag} -1, got {result.returncode}"
+            )
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -2203,6 +2251,7 @@ def main() -> int:
     run_branch_large_fourier(exe)
     run_branch_stats_sink(exe)
     run_rankwidth_memory_budget(exe)
+    run_branch_policy_arg_validation(exe)
     return 0
 
 
