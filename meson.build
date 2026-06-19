@@ -184,10 +184,10 @@ if python3.found()
     timeout: 300,
   )
   test(
-    'rankwidth v2',
+    'rankwidth table',
     python3,
     args: [
-      files('tests/test_rankwidth_v2.py'),
+      files('tests/test_rankwidth_table.py'),
       sop_solve.full_path(),
       meson.current_source_dir(),
     ],

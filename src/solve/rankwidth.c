@@ -3329,7 +3329,7 @@ static bool rw_transition_csr_build_sign(
 }
 
 /* D4.1: CSR-based accumulator join for sign-edge count-table path.
- * Replaces solve_join_v2_acc for the CSR materialized path.
+ * Replaces solve_join_acc for the CSR materialized path.
  * D3.1: No join-map assignments; parent rep is reconstructed from left|right table reps. */
 static bool rw_execute_csr_join_sign(
     const qsop_instance_t *qsop, const rw_transition_csr_t *csr,
@@ -3880,7 +3880,7 @@ static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map
  * accumulating residue counts per signature into a direct-indexed array, then
  * flushing once per (signature, residue) pair. Reduces table-operation cost from
  * O(left_len * right_len * out_len) to O(map.len * r + n_parent_sigs * r).       */
-static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *map,
+static bool solve_join_acc(const qsop_instance_t *qsop, const rw_join_map_t *map,
                                const rw_table_t *left, const rw_table_t *right, rw_table_t *out,
                                size_t words, uint64_t *join_pairs,
                                rw_join_workspace_t *ws, qsop_error_t *error) {
@@ -3930,7 +3930,7 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
       if (!use_ws) { free(acc); free(sig_map_idx); free(left_starts); free(left_ends);
                      free(right_starts); free(right_ends); }
       if (acc == NULL || sig_map_idx == NULL) {
-        set_error(error, "out of memory while allocating rankwidth v2 join accumulator");
+        set_error(error, "out of memory while allocating rankwidth join accumulator");
       }
       return false;
     }
@@ -4013,7 +4013,7 @@ static bool solve_join_v2_acc(const qsop_instance_t *qsop, const rw_join_map_t *
 }
 
 /* Modular accumulator join for the labelled CRT path (counts are reduced mod modulus). */
-static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t *map,
+static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t *map,
                                    const rw_table_t *left, const rw_table_t *right,
                                    uint64_t modulus, rw_table_t *out,
                                    size_t words, uint64_t *join_pairs, qsop_error_t *error) {
@@ -4042,7 +4042,7 @@ static bool solve_join_v2_acc_mod(const qsop_instance_t *qsop, const rw_join_map
     free(left_starts); free(left_ends);
     free(right_starts); free(right_ends);
     if (acc == NULL || sig_map_idx == NULL) {
-      set_error(error, "out of memory while allocating rankwidth v2 labelled join accumulator");
+      set_error(error, "out of memory while allocating rankwidth labelled join accumulator");
     }
     return false;
   }
@@ -4664,10 +4664,10 @@ static bool solve_rankwidth_count_table_mod_once(
   return true;
 }
 
-/* Sign-edge v2 CRT: build transition cache on the first prime.
- * Runs solve_leaf_mod for leaves and build_join_map_arena + solve_join_v2_acc_mod for joins.
+/* Sign-edge CRT: build transition cache on the first prime.
+ * Runs solve_leaf_mod for leaves and build_join_map_arena + solve_join_acc_mod for joins.
  * Per-node maps are stored in maps[] and kept alive; caller frees them. */
-static bool solve_sign_edge_v2_crt_build_maps(
+static bool solve_sign_edge_crt_build_maps(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t modulus, uint64_t *counts,
@@ -4676,7 +4676,7 @@ static bool solve_sign_edge_v2_crt_build_maps(
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in sign-edge v2 CRT transition build");
+    set_error(error, "out of memory in sign-edge CRT transition build");
     return false;
   }
   uint64_t join_pairs = 0, join_signature_pairs = 0;
@@ -4690,7 +4690,7 @@ static bool solve_sign_edge_v2_crt_build_maps(
     if (node->kind == RW_NODE_LEAF) {
       ok = solve_leaf_mod(qsop, adj, node, decomposition->words, pool, modulus,
                           &tables[node_id], error);
-      qsop_trace_emit_elapsed(trace, "rankwidth.v2_crt_leaf", 0, tables[node_id].len, start);
+      qsop_trace_emit_elapsed(trace, "rankwidth.crt_leaf", 0, tables[node_id].len, start);
     } else {
       maps[node_id].len = 0;
       ok = build_join_map_arena(qsop, decomposition, node_id, adj, pool,
@@ -4698,12 +4698,12 @@ static bool solve_sign_edge_v2_crt_build_maps(
                                 &maps[node_id], scratch, error);
       if (ok) {
         join_signature_pairs += maps[node_id].len;
-        qsop_trace_emit_elapsed(trace, "rankwidth.v2_crt_join_map", 0, maps[node_id].len, start);
+        qsop_trace_emit_elapsed(trace, "rankwidth.crt_join_map", 0, maps[node_id].len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_v2_acc_mod(qsop, &maps[node_id], &tables[node->left],
+        ok = solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left],
                                    &tables[node->right], modulus, &tables[node_id],
                                    decomposition->words, &join_pairs, error);
-        qsop_trace_emit_elapsed(trace, "rankwidth.v2_crt_join", 0, tables[node_id].len,
+        qsop_trace_emit_elapsed(trace, "rankwidth.crt_join", 0, tables[node_id].len,
                                 join_start);
       }
     }
@@ -4754,8 +4754,8 @@ static bool solve_sign_edge_v2_crt_build_maps(
   return true;
 }
 
-/* Sign-edge v2 CRT: subsequent primes reuse maps cached by solve_sign_edge_v2_crt_build_maps. */
-static bool solve_sign_edge_v2_crt_use_maps(
+/* Sign-edge CRT: subsequent primes reuse maps cached by solve_sign_edge_crt_build_maps. */
+static bool solve_sign_edge_crt_use_maps(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t modulus, uint64_t *counts,
@@ -4764,7 +4764,7 @@ static bool solve_sign_edge_v2_crt_use_maps(
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in sign-edge v2 CRT cached pass");
+    set_error(error, "out of memory in sign-edge CRT cached pass");
     return false;
   }
   uint64_t join_pairs = 0;
@@ -4776,7 +4776,7 @@ static bool solve_sign_edge_v2_crt_use_maps(
       ok = solve_leaf_mod(qsop, adj, node, decomposition->words, pool, modulus,
                           &tables[node_id], error);
     } else {
-      ok = solve_join_v2_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
+      ok = solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
                                  modulus, &tables[node_id], decomposition->words, &join_pairs,
                                  error);
     }
@@ -4803,8 +4803,8 @@ static bool solve_sign_edge_v2_crt_use_maps(
   return true;
 }
 
-/* Sign-edge v2 CRT: full solve for nvars >= 64 using accumulator + per-node transition cache. */
-static bool solve_rankwidth_count_table_v2_crt(
+/* Sign-edge CRT: full solve for nvars >= 64 using accumulator + per-node transition cache. */
+static bool solve_rankwidth_count_table_crt(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, qsop_result_t **out,
@@ -4817,7 +4817,7 @@ static bool solve_rankwidth_count_table_v2_crt(
   }
   if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "rankwidth v2 CRT count table is too large");
+    set_error(error, "rankwidth CRT count table is too large");
     return false;
   }
   uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
@@ -4828,7 +4828,7 @@ static bool solve_rankwidth_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth v2 CRT state");
+    set_error(error, "out of memory for rankwidth CRT state");
     return false;
   }
   result->r = qsop->r;
@@ -4839,7 +4839,7 @@ static bool solve_rankwidth_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth v2 CRT result strings");
+    set_error(error, "out of memory for rankwidth CRT result strings");
     return false;
   }
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
@@ -4858,14 +4858,14 @@ static bool solve_rankwidth_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth v2 CRT transition cache");
+    set_error(error, "out of memory for rankwidth CRT transition cache");
     return false;
   }
-  bool ok = solve_sign_edge_v2_crt_build_maps(qsop, decomposition, adj, primes[0],
+  bool ok = solve_sign_edge_crt_build_maps(qsop, decomposition, adj, primes[0],
                                               &all_counts[0], &pool, maps, scratch,
                                               stats, trace, error);
   for (size_t p = 1; p < nprimes && ok; p++) {
-    ok = solve_sign_edge_v2_crt_use_maps(qsop, decomposition, adj, primes[p],
+    ok = solve_sign_edge_crt_use_maps(qsop, decomposition, adj, primes[p],
                                          &all_counts[p * (size_t)qsop->r], &pool, maps, error);
   }
   if (!ok) {
@@ -4913,7 +4913,7 @@ static bool solve_rankwidth_count_table_v2_crt(
   return true;
 }
 
-static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
+static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
                                            const qsop_rankwidth_decomposition_t *decomposition,
                                            const uint64_t *adj,
                                            rw_join_strategy_t join_strategy,
@@ -4922,7 +4922,7 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
                                            qsop_solve_stats_t *stats,
                                            qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (qsop->nvars >= 64U) {
-    return solve_rankwidth_count_table_v2_crt(qsop, decomposition, adj, out, stats, trace, error);
+    return solve_rankwidth_count_table_crt(qsop, decomposition, adj, out, stats, trace, error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -4931,7 +4931,7 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
   if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
     free(tables);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth v2 solve state");
+    set_error(error, "out of memory while allocating rankwidth solve state");
     return false;
   }
   result->r = qsop->r;
@@ -4952,7 +4952,7 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
     free(tables);
     signature_pool_free(&pool);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth v2 scratch");
+    set_error(error, "out of memory while allocating rankwidth scratch");
     return false;
   }
 
@@ -5014,7 +5014,7 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
       memset(scratch, 0, 2U * w * sizeof(*scratch));
       ok = solve_leaf_arena(qsop, adj, node, decomposition->words, &pool, &tables[node_id],
                             scratch, error);
-      qsop_trace_emit_elapsed(trace, "rankwidth.v2_leaf", 0, tables[node_id].len, start);
+      qsop_trace_emit_elapsed(trace, "rankwidth.leaf", 0, tables[node_id].len, start);
     } else {
       /* Build outside bitset for this join node. */
       for (uint32_t v = 0; v < decomposition->nvars; v++) qsop_bitset_set(outside, v);
@@ -5055,13 +5055,13 @@ static bool solve_rankwidth_count_table_v2(const qsop_instance_t *qsop,
           join_signature_pairs += csr.transition_count;
           transition_bytes += rw_transition_csr_bytes(&csr);
           materialized_join_events++;
-          qsop_trace_emit_elapsed(trace, "rankwidth.v2_join_map", 0, csr.transition_count, start);
+          qsop_trace_emit_elapsed(trace, "rankwidth.join_map", 0, csr.transition_count, start);
           const uint64_t join_start = qsop_trace_begin(trace);
           memset(scratch_sig, 0, w * sizeof(*scratch_sig));
           ok = rw_execute_csr_join_sign(qsop, &csr, &tables[node->left], &tables[node->right],
                                         &tables[node_id], decomposition->words, &join_pairs,
                                         join_ws.acc ? &join_ws : NULL, error);
-          qsop_trace_emit_elapsed(trace, "rankwidth.v2_join", 0, tables[node_id].len, join_start);
+          qsop_trace_emit_elapsed(trace, "rankwidth.join", 0, tables[node_id].len, join_start);
         }
         rw_transition_csr_free(&csr);
       }
@@ -5232,9 +5232,9 @@ static bool solve_labelled_count_table_mod_once(
   return true;
 }
 
-/* v2 labelled path: direct big-integer solve for nvars < 64 using shared join map +
+/* Labelled path: direct big-integer solve for nvars < 64 using shared join map +
  * accumulator join (eliminates O(out_len) linear scan from the hot multiply loop). */
-static bool solve_labelled_count_table_v2_direct(
+static bool solve_labelled_count_table_direct(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
@@ -5244,7 +5244,7 @@ static bool solve_labelled_count_table_v2_direct(
   if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
     free(tables);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating labelled rankwidth v2 direct solve state");
+    set_error(error, "out of memory while allocating labelled rankwidth direct solve state");
     return false;
   }
   result->r = qsop->r;
@@ -5294,19 +5294,19 @@ static bool solve_labelled_count_table_v2_direct(
     if (node->kind == RW_NODE_LEAF) {
       ok = solve_labelled_leaf(qsop, coeffs, node, decomposition->words, &pool,
                                &tables[node_id], error);
-      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_leaf", 0, tables[node_id].len, start);
+      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_leaf", 0, tables[node_id].len, start);
     } else {
       shared_map.len = 0;
       ok = build_labelled_join_map(qsop, decomposition, node_id, coeffs, &pool,
                                    &tables[node->left], &tables[node->right], &shared_map, error);
       if (ok) {
         join_signature_pairs += shared_map.len;
-        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join_map", 0, shared_map.len, start);
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_join_map", 0, shared_map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_v2_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
+        ok = solve_join_acc(qsop, &shared_map, &tables[node->left], &tables[node->right],
                                &tables[node_id], decomposition->words, &join_pairs,
                                join_ws.acc ? &join_ws : NULL, error);
-        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_join", 0, tables[node_id].len,
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_join", 0, tables[node_id].len,
                                 join_start);
       }
     }
@@ -5371,10 +5371,10 @@ static bool solve_labelled_count_table_v2_direct(
   return true;
 }
 
-/* Labelled v2 CRT: build transition cache on the first prime.
+/* Labelled CRT: build transition cache on the first prime.
  * Runs solve_labelled_leaf_mod for leaves and build_labelled_join_map +
- * solve_join_v2_acc_mod for joins. Per-node maps stored in maps[]; caller frees. */
-static bool solve_labelled_v2_crt_build_maps(
+ * solve_join_acc_mod for joins. Per-node maps stored in maps[]; caller frees. */
+static bool solve_labelled_crt_build_maps(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint32_t *coeffs, uint64_t modulus, uint64_t *counts,
@@ -5384,7 +5384,7 @@ static bool solve_labelled_v2_crt_build_maps(
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in labelled v2 CRT transition build");
+    set_error(error, "out of memory in labelled CRT transition build");
     return false;
   }
   uint64_t join_pairs = 0, join_sig_pairs = 0;
@@ -5398,7 +5398,7 @@ static bool solve_labelled_v2_crt_build_maps(
     if (node->kind == RW_NODE_LEAF) {
       ok = solve_labelled_leaf_mod(qsop, coeffs, node, decomposition->words, pool, modulus,
                                    &tables[node_id], error);
-      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_leaf", 0, tables[node_id].len,
+      qsop_trace_emit_elapsed(trace, "rankwidth.labelled_crt_leaf", 0, tables[node_id].len,
                               start);
     } else {
       maps[node_id].len = 0;
@@ -5407,13 +5407,13 @@ static bool solve_labelled_v2_crt_build_maps(
                                    &maps[node_id], error);
       if (ok) {
         join_sig_pairs += maps[node_id].len;
-        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_join_map", 0,
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_crt_join_map", 0,
                                 maps[node_id].len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_v2_acc_mod(qsop, &maps[node_id], &tables[node->left],
+        ok = solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left],
                                    &tables[node->right], modulus, &tables[node_id],
                                    decomposition->words, &join_pairs, error);
-        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_v2_crt_join", 0, tables[node_id].len,
+        qsop_trace_emit_elapsed(trace, "rankwidth.labelled_crt_join", 0, tables[node_id].len,
                                 join_start);
       }
     }
@@ -5457,8 +5457,8 @@ static bool solve_labelled_v2_crt_build_maps(
   return true;
 }
 
-/* Labelled v2 CRT: subsequent primes reuse maps cached by solve_labelled_v2_crt_build_maps. */
-static bool solve_labelled_v2_crt_use_maps(
+/* Labelled CRT: subsequent primes reuse maps cached by solve_labelled_crt_build_maps. */
+static bool solve_labelled_crt_use_maps(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint32_t *coeffs, uint64_t modulus, uint64_t *counts,
@@ -5467,7 +5467,7 @@ static bool solve_labelled_v2_crt_use_maps(
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in labelled v2 CRT cached pass");
+    set_error(error, "out of memory in labelled CRT cached pass");
     return false;
   }
   uint64_t join_pairs = 0;
@@ -5479,7 +5479,7 @@ static bool solve_labelled_v2_crt_use_maps(
       ok = solve_labelled_leaf_mod(qsop, coeffs, node, decomposition->words, pool, modulus,
                                    &tables[node_id], error);
     } else {
-      ok = solve_join_v2_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
+      ok = solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
                                  modulus, &tables[node_id], decomposition->words, &join_pairs,
                                  error);
     }
@@ -5506,9 +5506,9 @@ static bool solve_labelled_v2_crt_use_maps(
   return true;
 }
 
-/* v2 CRT with transition cache: builds join maps once (prime 0), reuses for all subsequent
+/* CRT with transition cache: builds join maps once (prime 0), reuses for all subsequent
  * primes — eliminating O(nnodes * nprimes) join-map allocs down to O(nnodes). */
-static bool solve_labelled_count_table_v2_crt(
+static bool solve_labelled_count_table_crt(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint32_t *coeffs, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
@@ -5519,7 +5519,7 @@ static bool solve_labelled_count_table_v2_crt(
   }
   if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "labelled rankwidth v2 CRT count table is too large");
+    set_error(error, "labelled rankwidth CRT count table is too large");
     return false;
   }
   uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
@@ -5530,7 +5530,7 @@ static bool solve_labelled_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for labelled rankwidth v2 CRT state");
+    set_error(error, "out of memory for labelled rankwidth CRT state");
     return false;
   }
   result->r = qsop->r;
@@ -5541,7 +5541,7 @@ static bool solve_labelled_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for labelled rankwidth v2 CRT result strings");
+    set_error(error, "out of memory for labelled rankwidth CRT result strings");
     return false;
   }
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
@@ -5556,13 +5556,13 @@ static bool solve_labelled_count_table_v2_crt(
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for labelled v2 CRT transition cache");
+    set_error(error, "out of memory for labelled CRT transition cache");
     return false;
   }
-  bool ok = solve_labelled_v2_crt_build_maps(qsop, decomposition, coeffs, primes[0],
+  bool ok = solve_labelled_crt_build_maps(qsop, decomposition, coeffs, primes[0],
                                              &all_counts[0], &pool, maps, stats, trace, error);
   for (size_t p = 1; p < nprimes && ok; p++) {
-    ok = solve_labelled_v2_crt_use_maps(qsop, decomposition, coeffs, primes[p],
+    ok = solve_labelled_crt_use_maps(qsop, decomposition, coeffs, primes[p],
                                         &all_counts[p * (size_t)qsop->r], &pool, maps, error);
   }
   if (!ok) {
@@ -5607,16 +5607,16 @@ static bool solve_labelled_count_table_v2_crt(
   return true;
 }
 
-static bool solve_labelled_count_table_v2(const qsop_instance_t *qsop,
+static bool solve_labelled_count_table(const qsop_instance_t *qsop,
                                            const qsop_rankwidth_decomposition_t *decomposition,
                                            const uint32_t *coeffs, qsop_result_t **out,
                                            qsop_solve_stats_t *stats,
                                            qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (qsop->nvars >= 64U) {
-    return solve_labelled_count_table_v2_crt(qsop, decomposition, coeffs, out, stats, trace,
+    return solve_labelled_count_table_crt(qsop, decomposition, coeffs, out, stats, trace,
                                              error);
   }
-  return solve_labelled_count_table_v2_direct(qsop, decomposition, coeffs, out, stats, trace,
+  return solve_labelled_count_table_direct(qsop, decomposition, coeffs, out, stats, trace,
                                               error);
 }
 
@@ -5701,7 +5701,7 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
       if (adj == NULL) {
         return false;
       }
-      ok = solve_rankwidth_count_table_v2(qsop, decomposition, adj,
+      ok = solve_rankwidth_count_table(qsop, decomposition, adj,
                                           RW_JOIN_STRATEGY_AUTO, 0, &result, stats, trace, error);
       free(adj);
     } else {
@@ -5709,7 +5709,7 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
       if (coeffs == NULL) {
         return false;
       }
-      ok = solve_labelled_count_table_v2(qsop, decomposition, coeffs, &result, stats, trace,
+      ok = solve_labelled_count_table(qsop, decomposition, coeffs, &result, stats, trace,
                                          error);
       free(coeffs);
     }
@@ -6207,7 +6207,7 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
     const bool ok =
         mode == QSOP_RANKWIDTH_SOLVE_FOURIER
             ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
-            : solve_rankwidth_count_table_v2(qsop, decomposition, adj, js, mp, out, stats, trace, error);
+            : solve_rankwidth_count_table(qsop, decomposition, adj, js, mp, out, stats, trace, error);
     free(adj);
     return ok;
   }
@@ -6219,7 +6219,7 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   const bool ok =
       mode == QSOP_RANKWIDTH_SOLVE_FOURIER
           ? solve_rankwidth_labelled_fourier(qsop, decomposition, coeffs, out, stats, trace, error)
-          : solve_labelled_count_table_v2(qsop, decomposition, coeffs, out, stats, trace, error);
+          : solve_labelled_count_table(qsop, decomposition, coeffs, out, stats, trace, error);
   free(coeffs);
   return ok;
 }
@@ -6243,61 +6243,3 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                                trace, error);
 }
 
-bool qsop_solve_rankwidth_v2_mode_trace_stats(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
-  if (stats != NULL) {
-    *stats = (qsop_solve_stats_t){0};
-  }
-  if (out == NULL) {
-    set_error(error, "internal error: null result pointer");
-    return false;
-  }
-  *out = NULL;
-  if (qsop == NULL || decomposition == NULL) {
-    set_error(error, "internal error: null rankwidth v2 solve argument");
-    return false;
-  }
-  if (qsop->nvars != decomposition->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
-    return false;
-  }
-  if (qsop->nvars > max_vars) {
-    set_error(error,
-              "rankwidth v2 solver refuses %" PRIu32
-              " variables; pass a larger --max-vars",
-              qsop->nvars);
-    return false;
-  }
-  if (qsop->nvars == 0) {
-    return solve_rankwidth_constant_result(qsop, out, stats, trace, error);
-  }
-  if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
-    return false;
-  }
-  if (qsop_is_sign_edge_instance(qsop)) {
-    uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
-    if (adj == NULL) {
-      return false;
-    }
-    const bool ok =
-        mode == QSOP_RANKWIDTH_SOLVE_FOURIER
-            ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
-            : solve_rankwidth_count_table_v2(qsop, decomposition, adj,
-                                             RW_JOIN_STRATEGY_AUTO, 0, out, stats, trace, error);
-    free(adj);
-    return ok;
-  }
-
-  uint32_t *coeffs = coefficient_matrix(qsop, error);
-  if (coeffs == NULL) {
-    return false;
-  }
-  const bool ok =
-      mode == QSOP_RANKWIDTH_SOLVE_FOURIER
-          ? solve_rankwidth_labelled_fourier(qsop, decomposition, coeffs, out, stats, trace, error)
-          : solve_labelled_count_table_v2(qsop, decomposition, coeffs, out, stats, trace, error);
-  free(coeffs);
-  return ok;
-}

@@ -62,25 +62,16 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
     "rankwidth": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "v2",
         "--max-vars", "256",
     ],
     "rankwidth:from-treewidth": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "v2",
         "--max-vars", "256",
     ],
     "rankwidth:best": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "best",
-        "--rankwidth-table", "v2",
-        "--max-vars", "256",
-    ],
-    "rankwidth:validate": [
-        "--backend", "rankwidth",
-        "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "validate",
         "--max-vars", "256",
     ],
     "branch": [

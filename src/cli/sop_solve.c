@@ -53,7 +53,6 @@ static void print_usage(FILE *file) {
         "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--rankwidth-table v2|validate] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -490,8 +489,6 @@ int main(int argc, char **argv) {
   bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_validate = false;
-  bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
@@ -818,24 +815,6 @@ int main(int argc, char **argv) {
       rankwidth_mode_set = true;
       continue;
     }
-    if (strcmp(argv[i], "--rankwidth-table") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --rankwidth-table requires a value\n", stderr);
-        return 2;
-      }
-      const char *value = argv[++i];
-      if (strcmp(value, "v2") == 0) {
-        rankwidth_table_validate = false;
-      } else if (strcmp(value, "validate") == 0) {
-        rankwidth_table_validate = true;
-      } else {
-        fprintf(stderr, "error: unsupported rankwidth table version '%s' (expected v2|validate)\n",
-                value);
-        return 2;
-      }
-      rankwidth_table_set = true;
-      continue;
-    }
     if (strcmp(argv[i], "--solve-mode") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --solve-mode requires a value\n", stderr);
@@ -918,10 +897,6 @@ int main(int argc, char **argv) {
   }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_mode_set) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
-    return 2;
-  }
-  if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_table_set) {
-    fputs("error: --rankwidth-table requires --backend rankwidth\n", stderr);
     return 2;
   }
   if (rankwidth_mode_set && solve_mode_set &&
@@ -1105,65 +1080,13 @@ int main(int argc, char **argv) {
       }
     }
     if (ok) {
-      if (rankwidth_table_validate) {
-        qsop_result_t *result_v1 = NULL;
-        qsop_result_t *result_v2 = NULL;
-        qsop_solve_stats_t stats_v1 = {0};
-        qsop_solve_stats_t stats_v2 = {0};
-        const bool ok_v1 = qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition,
-                                                                  max_vars, rankwidth_mode,
-                                                                  &result_v1, &stats_v1, NULL,
-                                                                  &error);
-        if (!ok_v1) {
-          qsop_result_free(result_v1);
-          ok = false;
-        } else {
-          const bool ok_v2 =
-              qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                       rankwidth_mode, &result_v2, &stats_v2,
-                                                       NULL, &error);
-          if (!ok_v2) {
-            qsop_result_free(result_v1);
-            qsop_result_free(result_v2);
-            ok = false;
-          } else {
-            bool mismatch = false;
-            if (result_v1->r != result_v2->r) {
-              mismatch = true;
-            } else {
-              for (uint32_t res = 0; res < result_v1->r && !mismatch; res++) {
-                if (result_v1->count_strings != NULL && result_v2->count_strings != NULL) {
-                  if (strcmp(result_v1->count_strings[res], result_v2->count_strings[res]) != 0) {
-                    mismatch = true;
-                  }
-                } else if (result_v1->counts != NULL && result_v2->counts != NULL) {
-                  if (result_v1->counts[res] != result_v2->counts[res]) {
-                    mismatch = true;
-                  }
-                }
-              }
-            }
-            if (mismatch) {
-              fprintf(stderr, "error: rankwidth v1/v2 validation mismatch\n");
-              qsop_result_free(result_v1);
-              qsop_result_free(result_v2);
-              ok = false;
-            } else {
-              result = result_v1;
-              solve_stats = stats_v1;
-              qsop_result_free(result_v2);
-            }
-          }
-        }
-      } else {
-        ok = qsop_solve_rankwidth_options_mode_trace_stats(
-            qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
-            &(qsop_rankwidth_solve_options_t){
-                .join_strategy = rw_join_strategy,
-                .materialize_join_max_pairs = rw_materialize_join_max_pairs,
-            },
-            &result, &solve_stats, trace_ptr, &error);
-      }
+      ok = qsop_solve_rankwidth_options_mode_trace_stats(
+          qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+          &(qsop_rankwidth_solve_options_t){
+              .join_strategy = rw_join_strategy,
+              .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+          },
+          &result, &solve_stats, trace_ptr, &error);
     }
 rankwidth_done:;
   } else {
