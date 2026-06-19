@@ -85,8 +85,8 @@ def _convert_qasm_to_qsop(
         result = subprocess.run(
             [
                 str(qasm2sop),
-                "--boundary-input", boundary_input,
-                "--boundary-output", boundary_output,
+                "--input", boundary_input,
+                "--output", boundary_output,
                 "-",
             ],
             input=qasm_bytes,
