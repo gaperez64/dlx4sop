@@ -70,33 +70,45 @@ def run_rankwidth(exe: pathlib.Path, qsop_text: str,
                           stderr=subprocess.PIPE, text=True)
 
 
-def test_v2_path_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 must produce the same residue vector as v1 on path graphs."""
+def run_treewidth(exe: pathlib.Path, qsop_text: str,
+                  extra_args: list[str] | None = None) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(qsop_text)
+        qsop_path = f.name
+    args = [str(exe), "--backend", "treewidth", "--max-vars", "64", qsop_path]
+    if extra_args:
+        args += extra_args
+    return subprocess.run(args, check=False, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+
+
+def test_v2_path_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as treewidth on path graphs."""
     for nvars in range(3, 13):
         for r in [2, 4, 8]:
             qsop_text = make_path_qsop(nvars, r)
-            r1 = run_rankwidth(exe, qsop_text, "v1")
-            r2 = run_rankwidth(exe, qsop_text, "v2")
-            assert r1.returncode == 0, f"v1 failed on path-{nvars} r={r}: {r1.stderr}"
-            assert r2.returncode == 0, f"v2 failed on path-{nvars} r={r}: {r2.stderr}"
-            assert r1.stdout == r2.stdout, (
-                f"v1/v2 mismatch on path-{nvars} r={r}:\n"
-                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            r_tw = run_treewidth(exe, qsop_text)
+            r_rw = run_rankwidth(exe, qsop_text, "v2")
+            assert r_tw.returncode == 0, f"treewidth failed on path-{nvars} r={r}: {r_tw.stderr}"
+            assert r_rw.returncode == 0, f"v2 failed on path-{nvars} r={r}: {r_rw.stderr}"
+            assert r_tw.stdout == r_rw.stdout, (
+                f"treewidth/v2 mismatch on path-{nvars} r={r}:\n"
+                f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
             )
 
 
-def test_v2_cycle_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 must produce the same residue vector as v1 on cycle graphs."""
+def test_v2_cycle_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as treewidth on cycle graphs."""
     for nvars in range(3, 10):
         for r in [4, 8]:
             qsop_text = make_cycle_qsop(nvars, r)
-            r1 = run_rankwidth(exe, qsop_text, "v1")
-            r2 = run_rankwidth(exe, qsop_text, "v2")
-            assert r1.returncode == 0, f"v1 failed on cycle-{nvars} r={r}: {r1.stderr}"
-            assert r2.returncode == 0, f"v2 failed on cycle-{nvars} r={r}: {r2.stderr}"
-            assert r1.stdout == r2.stdout, (
-                f"v1/v2 mismatch on cycle-{nvars} r={r}:\n"
-                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            r_tw = run_treewidth(exe, qsop_text)
+            r_rw = run_rankwidth(exe, qsop_text, "v2")
+            assert r_tw.returncode == 0, f"treewidth failed on cycle-{nvars} r={r}: {r_tw.stderr}"
+            assert r_rw.returncode == 0, f"v2 failed on cycle-{nvars} r={r}: {r_rw.stderr}"
+            assert r_tw.stdout == r_rw.stdout, (
+                f"treewidth/v2 mismatch on cycle-{nvars} r={r}:\n"
+                f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
             )
 
 
@@ -115,66 +127,89 @@ def test_v2_requires_rankwidth_backend(exe: pathlib.Path) -> None:
     )
 
 
-def test_v2_labelled_path_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 must produce the same residue vector as v1 on labelled path graphs."""
+def test_v1_rejected(exe: pathlib.Path) -> None:
+    """--rankwidth-table v1 must be rejected (v1 was removed)."""
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(make_path_qsop(4))
+        qsop_path = f.name
+    result = subprocess.run(
+        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "--rankwidth-table", "v1",
+         qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode == 2, (
+        f"Expected exit 2 for removed --rankwidth-table v1, got {result.returncode}"
+    )
+
+
+def test_v2_labelled_path_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as treewidth on labelled path graphs."""
     for nvars in range(3, 11):
         for r in [8, 16]:
             qsop_text = make_labelled_path_qsop(nvars, r)
-            r1 = run_rankwidth(exe, qsop_text, "v1")
-            r2 = run_rankwidth(exe, qsop_text, "v2")
-            assert r1.returncode == 0, f"v1 failed on labelled path-{nvars} r={r}: {r1.stderr}"
-            assert r2.returncode == 0, f"v2 failed on labelled path-{nvars} r={r}: {r2.stderr}"
-            assert r1.stdout == r2.stdout, (
-                f"v1/v2 mismatch on labelled path-{nvars} r={r}:\n"
-                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            r_tw = run_treewidth(exe, qsop_text)
+            r_rw = run_rankwidth(exe, qsop_text, "v2")
+            assert r_tw.returncode == 0, (
+                f"treewidth failed on labelled path-{nvars} r={r}: {r_tw.stderr}"
+            )
+            assert r_rw.returncode == 0, (
+                f"v2 failed on labelled path-{nvars} r={r}: {r_rw.stderr}"
+            )
+            assert r_tw.stdout == r_rw.stdout, (
+                f"treewidth/v2 mismatch on labelled path-{nvars} r={r}:\n"
+                f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
             )
 
 
-def test_v2_labelled_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 labelled CRT path (nvars >= 64) must agree with v1 on a large path graph."""
+def test_v2_labelled_large_crt_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 labelled CRT path (nvars >= 64) must agree with treewidth on a large path graph."""
     for nvars in [70, 100]:
         qsop_text = make_labelled_path_qsop(nvars, r=8)
-        r1 = run_rankwidth(exe, qsop_text, "v1",
-                           extra_args=["--max-vars", "256"])
-        r2 = run_rankwidth(exe, qsop_text, "v2",
-                           extra_args=["--max-vars", "256"])
-        assert r1.returncode == 0, f"v1 failed on labelled path-{nvars}: {r1.stderr}"
-        assert r2.returncode == 0, f"v2 failed on labelled path-{nvars}: {r2.stderr}"
-        assert r1.stdout == r2.stdout, (
-            f"v1/v2 mismatch on labelled path-{nvars}:\n"
-            f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+        r_tw = run_treewidth(exe, qsop_text, extra_args=["--max-vars", "256"])
+        r_rw = run_rankwidth(exe, qsop_text, "v2", extra_args=["--max-vars", "256"])
+        assert r_tw.returncode == 0, f"treewidth failed on labelled path-{nvars}: {r_tw.stderr}"
+        assert r_rw.returncode == 0, f"v2 failed on labelled path-{nvars}: {r_rw.stderr}"
+        assert r_tw.stdout == r_rw.stdout, (
+            f"treewidth/v2 mismatch on labelled path-{nvars}:\n"
+            f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
         )
 
 
-def test_v2_labelled_star_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 must produce the same residue vector as v1 on labelled star graphs."""
+def test_v2_labelled_star_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 must produce the same residue vector as treewidth on labelled star graphs."""
     for nvars in range(3, 9):
         for r in [8]:
             qsop_text = make_labelled_star_qsop(nvars, r)
-            r1 = run_rankwidth(exe, qsop_text, "v1")
-            r2 = run_rankwidth(exe, qsop_text, "v2")
-            assert r1.returncode == 0, f"v1 failed on labelled star-{nvars} r={r}: {r1.stderr}"
-            assert r2.returncode == 0, f"v2 failed on labelled star-{nvars} r={r}: {r2.stderr}"
-            assert r1.stdout == r2.stdout, (
-                f"v1/v2 mismatch on labelled star-{nvars} r={r}:\n"
-                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            r_tw = run_treewidth(exe, qsop_text)
+            r_rw = run_rankwidth(exe, qsop_text, "v2")
+            assert r_tw.returncode == 0, (
+                f"treewidth failed on labelled star-{nvars} r={r}: {r_tw.stderr}"
+            )
+            assert r_rw.returncode == 0, (
+                f"v2 failed on labelled star-{nvars} r={r}: {r_rw.stderr}"
+            )
+            assert r_tw.stdout == r_rw.stdout, (
+                f"treewidth/v2 mismatch on labelled star-{nvars} r={r}:\n"
+                f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
             )
 
 
-def test_v2_sign_edge_large_crt_agrees_with_v1(exe: pathlib.Path) -> None:
-    """v2 sign-edge CRT path (nvars >= 64) must agree with v1 on large sign-edge path graphs."""
+def test_v2_sign_edge_large_crt_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """v2 sign-edge CRT path (nvars >= 64) must agree with treewidth on large sign-edge paths."""
     for nvars in [70, 100]:
         for r in [4, 8]:
             qsop_text = make_sign_edge_path_qsop(nvars, r=r)
-            r1 = run_rankwidth(exe, qsop_text, "v1",
-                               extra_args=["--max-vars", "256"])
-            r2 = run_rankwidth(exe, qsop_text, "v2",
-                               extra_args=["--max-vars", "256"])
-            assert r1.returncode == 0, f"v1 failed on sign-edge path-{nvars} r={r}: {r1.stderr}"
-            assert r2.returncode == 0, f"v2 failed on sign-edge path-{nvars} r={r}: {r2.stderr}"
-            assert r1.stdout == r2.stdout, (
-                f"v1/v2 mismatch on sign-edge path-{nvars} r={r}:\n"
-                f"  v1: {r1.stdout!r}\n  v2: {r2.stdout!r}"
+            r_tw = run_treewidth(exe, qsop_text, extra_args=["--max-vars", "256"])
+            r_rw = run_rankwidth(exe, qsop_text, "v2", extra_args=["--max-vars", "256"])
+            assert r_tw.returncode == 0, (
+                f"treewidth failed on sign-edge path-{nvars} r={r}: {r_tw.stderr}"
+            )
+            assert r_rw.returncode == 0, (
+                f"v2 failed on sign-edge path-{nvars} r={r}: {r_rw.stderr}"
+            )
+            assert r_tw.stdout == r_rw.stdout, (
+                f"treewidth/v2 mismatch on sign-edge path-{nvars} r={r}:\n"
+                f"  tw: {r_tw.stdout!r}\n  v2: {r_rw.stdout!r}"
             )
 
 
@@ -209,47 +244,31 @@ def test_fourier_count_table_agree_sign_edge(exe: pathlib.Path) -> None:
 
 
 def test_validate_mode_passes_sign_edge(exe: pathlib.Path) -> None:
-    """--rankwidth-table validate must succeed and produce the same output as v1."""
+    """--rankwidth-table validate must succeed and agree with v2."""
     for nvars in range(3, 9):
         qsop_text = make_path_qsop(nvars, 8)
-        r_v1 = run_rankwidth(exe, qsop_text, "v1")
+        r_v2 = run_rankwidth(exe, qsop_text, "v2")
         r_val = run_rankwidth(exe, qsop_text, "validate")
-        assert r_v1.returncode == 0, f"v1 failed on path-{nvars}: {r_v1.stderr}"
+        assert r_v2.returncode == 0, f"v2 failed on path-{nvars}: {r_v2.stderr}"
         assert r_val.returncode == 0, f"validate failed on path-{nvars}: {r_val.stderr}"
-        assert r_v1.stdout == r_val.stdout, (
-            f"validate output differs from v1 on path-{nvars}:\n"
-            f"  v1:       {r_v1.stdout!r}\n  validate: {r_val.stdout!r}"
+        assert r_v2.stdout == r_val.stdout, (
+            f"validate output differs from v2 on path-{nvars}:\n"
+            f"  v2:       {r_v2.stdout!r}\n  validate: {r_val.stdout!r}"
         )
 
 
 def test_validate_mode_passes_labelled(exe: pathlib.Path) -> None:
-    """--rankwidth-table validate must succeed on labelled instances."""
+    """--rankwidth-table validate must succeed on labelled instances and agree with v2."""
     for nvars in range(3, 9):
         qsop_text = make_labelled_path_qsop(nvars, 8)
-        r_v1 = run_rankwidth(exe, qsop_text, "v1")
+        r_v2 = run_rankwidth(exe, qsop_text, "v2")
         r_val = run_rankwidth(exe, qsop_text, "validate")
-        assert r_v1.returncode == 0, f"v1 failed on labelled path-{nvars}: {r_v1.stderr}"
+        assert r_v2.returncode == 0, f"v2 failed on labelled path-{nvars}: {r_v2.stderr}"
         assert r_val.returncode == 0, f"validate failed on labelled path-{nvars}: {r_val.stderr}"
-        assert r_v1.stdout == r_val.stdout, (
-            f"validate output differs from v1 on labelled path-{nvars}:\n"
-            f"  v1:       {r_v1.stdout!r}\n  validate: {r_val.stdout!r}"
+        assert r_v2.stdout == r_val.stdout, (
+            f"validate output differs from v2 on labelled path-{nvars}:\n"
+            f"  v2:       {r_v2.stdout!r}\n  validate: {r_val.stdout!r}"
         )
-
-
-def test_v1_explicit_matches_default(exe: pathlib.Path) -> None:
-    """Explicitly passing --rankwidth-table v1 must produce the same result as omitting it."""
-    qsop_text = make_path_qsop(8, 8)
-    r1 = run_rankwidth(exe, qsop_text, "v1")
-    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
-        f.write(qsop_text)
-        qsop_path = f.name
-    default_result = subprocess.run(
-        [str(exe), "--backend", "rankwidth", "--max-vars", "64", qsop_path],
-        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
-    assert r1.returncode == 0
-    assert default_result.returncode == 0
-    assert r1.stdout == default_result.stdout, "v1 explicit != v1 default"
 
 
 def main(argv: list[str]) -> None:
@@ -258,17 +277,17 @@ def main(argv: list[str]) -> None:
         sys.exit(2)
     exe = pathlib.Path(argv[1])
 
-    test_v2_path_agrees_with_v1(exe)
-    test_v2_cycle_agrees_with_v1(exe)
-    test_v2_sign_edge_large_crt_agrees_with_v1(exe)
+    test_v2_path_agrees_with_treewidth(exe)
+    test_v2_cycle_agrees_with_treewidth(exe)
+    test_v2_sign_edge_large_crt_agrees_with_treewidth(exe)
     test_fourier_count_table_agree_sign_edge(exe)
-    test_v2_labelled_path_agrees_with_v1(exe)
-    test_v2_labelled_large_crt_agrees_with_v1(exe)
-    test_v2_labelled_star_agrees_with_v1(exe)
+    test_v2_labelled_path_agrees_with_treewidth(exe)
+    test_v2_labelled_large_crt_agrees_with_treewidth(exe)
+    test_v2_labelled_star_agrees_with_treewidth(exe)
     test_validate_mode_passes_sign_edge(exe)
     test_validate_mode_passes_labelled(exe)
     test_v2_requires_rankwidth_backend(exe)
-    test_v1_explicit_matches_default(exe)
+    test_v1_rejected(exe)
 
     print("all rankwidth v2 tests passed")
 

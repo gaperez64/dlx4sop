@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""D2/D4: Rankwidth join strategy regression tests.
+
+Verifies that --rankwidth-join-strategy auto|materialized|streaming all
+produce identical counts, that auto selects streaming when pair forecast
+exceeds --rankwidth-materialize-join-max-pairs 0, and that transition
+layout stats appear in --format stats output.
+
+Usage: python3 tests/test_rankwidth_join_strategy.py <sop-solve>
+"""
+
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+CORPUS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
+
+# Synthetic sign-edge 4-cycle QSOP: 4 variables in a ring, r=8 (sign coeff = 4).
+# Produces 3 join nodes when rankwidth-generated, which will use the CSR path.
+_SIGN_EDGE_4CYCLE = b"p qsop-sign 8 4 4\nn 1\ne 0 1\ne 1 2\ne 2 3\ne 0 3\n"
+
+
+def _find_rankwidth_instances(max_count=4):
+    files = []
+    for tier in sorted(CORPUS_DIR.iterdir()):
+        if not tier.is_dir():
+            continue
+        for f in sorted(tier.glob("*.qsop")):
+            files.append(f)
+            if len(files) >= max_count:
+                return files
+    return files
+
+
+def _run_rankwidth(sop_solve, qsop, extra_args, format_stats=False):
+    cmd = [
+        str(sop_solve),
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "min-fill-cut",
+        "--max-vars", "64",
+    ]
+    if format_stats:
+        cmd += ["--format", "stats"]
+    cmd += extra_args + [str(qsop)]
+    return subprocess.run(cmd, capture_output=True, timeout=30)
+
+
+def _run_rankwidth_stdin(sop_solve, qsop_bytes, extra_args, format_stats=False):
+    cmd = [
+        str(sop_solve),
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "min-fill-cut",
+        "--max-vars", "64",
+    ]
+    if format_stats:
+        cmd += ["--format", "stats"]
+    cmd += extra_args + ["-"]
+    return subprocess.run(cmd, input=qsop_bytes, capture_output=True, timeout=30)
+
+
+def _residue_vector(result):
+    return result.stdout.decode(errors="replace").strip()
+
+
+def run_tests(sop_solve):
+    files = _find_rankwidth_instances()
+    if not files:
+        print("  SKIP: no corpus files found")
+        return True
+
+    all_passed = True
+
+    # 1. materialized and streaming produce identical counts.
+    print("  test: materialized and streaming produce identical counts")
+    sign_edge_instances = [("sign-4cycle (stdin)", None, _SIGN_EDGE_4CYCLE)]
+    file_instances = [(f.name, f, None) for f in files[:2]]
+    for label, f, raw in file_instances + sign_edge_instances:
+        if raw is not None:
+            r_mat = _run_rankwidth_stdin(sop_solve, raw, ["--rankwidth-join-strategy", "materialized"])
+            r_str = _run_rankwidth_stdin(sop_solve, raw, ["--rankwidth-join-strategy", "streaming"])
+        else:
+            r_mat = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "materialized"])
+            r_str = _run_rankwidth(sop_solve, f, ["--rankwidth-join-strategy", "streaming"])
+        if r_mat.returncode != 0:
+            print(f"    FAIL: materialized failed on {label}: {r_mat.stderr.decode()[:80]}")
+            all_passed = False
+            continue
+        if r_str.returncode != 0:
+            print(f"    FAIL: streaming failed on {label}: {r_str.stderr.decode()[:80]}")
+            all_passed = False
+            continue
+        if _residue_vector(r_mat) != _residue_vector(r_str):
+            print(f"    FAIL: mismatch on {label}")
+            print(f"      materialized: {_residue_vector(r_mat)[:60]}")
+            print(f"      streaming:    {_residue_vector(r_str)[:60]}")
+            all_passed = False
+        else:
+            print(f"    OK: {label} counts match")
+
+    # 2. auto with max-pairs=0 forces streaming; counts still match default.
+    print("  test: auto with max-pairs=0 forces streaming")
+    for f in files[:2]:
+        r_default = _run_rankwidth(sop_solve, f, [])
+        r_forced  = _run_rankwidth(sop_solve, f, [
+            "--rankwidth-join-strategy", "auto",
+            "--rankwidth-materialize-join-max-pairs", "0",
+        ])
+        if r_default.returncode != 0 or r_forced.returncode != 0:
+            print(f"    SKIP: {f.name} did not solve")
+            continue
+        if _residue_vector(r_default) != _residue_vector(r_forced):
+            print(f"    FAIL: mismatch on {f.name}")
+            all_passed = False
+        else:
+            print(f"    OK: {f.name} matches default")
+
+    # 3. stats output shows transition layout and join strategy fields.
+    print("  test: stats output contains new transition/join fields")
+    for f in files[:1]:
+        r = _run_rankwidth(sop_solve, f, [], format_stats=True)
+        if r.returncode != 0:
+            print(f"    SKIP: {f.name} stats run failed")
+            continue
+        text = r.stdout.decode(errors="replace")
+        required = [
+            "rankwidth_transition_bytes:",
+            "rankwidth_transition_layout_u16_events:",
+            "rankwidth_transition_layout_u32_events:",
+            "rankwidth_materialized_join_events:",
+            "rankwidth_streaming_join_events:",
+            "rankwidth_join_assignment_bytes:",
+            "rankwidth_table_assignment_bytes:",
+        ]
+        for field in required:
+            if field not in text:
+                print(f"    FAIL: missing field '{field}' in stats output")
+                all_passed = False
+            else:
+                print(f"    OK: '{field}' present")
+
+    # 4. D3.1: rankwidth_join_assignment_bytes must be 0 in default path.
+    print("  test: D3.1 join_assignment_bytes == 0 in default (materialized CSR) path")
+    for f in files[:2]:
+        r = _run_rankwidth(sop_solve, f,
+                           ["--rankwidth-join-strategy", "materialized"],
+                           format_stats=True)
+        if r.returncode != 0:
+            print(f"    SKIP: {f.name}")
+            continue
+        text = r.stdout.decode(errors="replace")
+        for line in text.splitlines():
+            if line.startswith("rankwidth_join_assignment_bytes:"):
+                val = int(line.split(":")[1].strip())
+                if val != 0:
+                    print(f"    FAIL: {f.name} join_assignment_bytes={val} (expected 0)")
+                    all_passed = False
+                else:
+                    print(f"    OK: {f.name} join_assignment_bytes=0")
+                break
+
+    # 5. D4.1 U16 layout events > 0 on synthetic sign-edge instance.
+    print("  test: D4.1 U16 layout used for sign-edge instance with small signature IDs")
+    r = subprocess.run(
+        [str(sop_solve), "--backend", "rankwidth",
+         "--rankwidth-generate", "min-fill-cut",
+         "--rankwidth-join-strategy", "materialized",
+         "--format", "stats", "--max-vars", "64", "-"],
+        input=_SIGN_EDGE_4CYCLE,
+        capture_output=True, timeout=30,
+    )
+    if r.returncode != 0:
+        print(f"    FAIL: sign-edge instance failed: {r.stderr.decode()[:80]}")
+        all_passed = False
+    else:
+        text = r.stdout.decode(errors="replace")
+        u16 = 0
+        mat = 0
+        for line in text.splitlines():
+            if line.startswith("rankwidth_transition_layout_u16_events:"):
+                u16 = int(line.split(":")[1].strip())
+            elif line.startswith("rankwidth_materialized_join_events:"):
+                mat = int(line.split(":")[1].strip())
+        if mat == 0:
+            print(f"    FAIL: no materialized join events (instance may not have joins)")
+            all_passed = False
+        elif u16 == 0:
+            print(f"    FAIL: u16_events=0 despite mat_events={mat} (u32 chosen unexpectedly)")
+            all_passed = False
+        else:
+            print(f"    OK: u16_events={u16} (materialized_events={mat})")
+
+    # 6. Invalid strategy rejected.
+    print("  test: invalid strategy rejected")
+    r = subprocess.run(
+        [str(sop_solve), "--rankwidth-join-strategy", "invalid"],
+        capture_output=True, timeout=10,
+    )
+    if r.returncode != 2:
+        print(f"    FAIL: expected exit 2, got {r.returncode}")
+        all_passed = False
+    else:
+        print("    OK: invalid strategy → exit 2")
+
+    # 7. D3.2: table_assignment_bytes is O(signature_count), not O(table_entries * r).
+    print("  test: D3.2 table_assignment_bytes <= signature_entries * 8 * 64 (per-sig, not per-entry)")
+    for f in files[:2]:
+        r = _run_rankwidth(sop_solve, f,
+                           ["--rankwidth-join-strategy", "materialized"],
+                           format_stats=True)
+        if r.returncode != 0:
+            print(f"    SKIP: {f.name}")
+            continue
+        text = r.stdout.decode(errors="replace")
+        sig_entries = None
+        tab_entries = None
+        tab_assign = None
+        for line in text.splitlines():
+            if line.startswith("signature_entries:"):
+                sig_entries = int(line.split(":")[1].strip())
+            elif line.startswith("table_entries:"):
+                tab_entries = int(line.split(":")[1].strip())
+            elif line.startswith("rankwidth_table_assignment_bytes:"):
+                tab_assign = int(line.split(":")[1].strip())
+        if sig_entries is None or tab_assign is None:
+            print(f"    SKIP: {f.name} missing stats fields")
+            continue
+        # Upper bound: sig_entries * 64 words * 8 bytes (generous for any nvars ≤ 4096)
+        upper = sig_entries * 64 * 8
+        if tab_assign > upper:
+            print(f"    FAIL: {f.name} table_assign={tab_assign} > sig_entries*64*8={upper}")
+            all_passed = False
+        else:
+            ok_msg = f"table_assign={tab_assign}, sig_entries={sig_entries}"
+            if tab_entries:
+                ok_msg += f", table_entries={tab_entries}"
+            print(f"    OK: {f.name} {ok_msg}")
+
+    # 8. D2.3: streaming + Fourier mode falls back without error; counts match default.
+    print("  test: D2.3 streaming + Fourier falls back correctly")
+    for f in files[:2]:
+        r_default = _run_rankwidth(sop_solve, f, ["--rankwidth-mode", "count-table"])
+        r_fourier_stream = _run_rankwidth(sop_solve, f, [
+            "--rankwidth-mode", "fourier",
+            "--rankwidth-join-strategy", "streaming",
+        ])
+        if r_default.returncode != 0:
+            print(f"    SKIP: {f.name} default failed")
+            continue
+        if r_fourier_stream.returncode != 0:
+            print(f"    FAIL: {f.name} fourier+streaming failed: {r_fourier_stream.stderr.decode()[:80]}")
+            all_passed = False
+            continue
+        if _residue_vector(r_default) != _residue_vector(r_fourier_stream):
+            print(f"    FAIL: {f.name} fourier+streaming mismatch with default")
+            all_passed = False
+        else:
+            print(f"    OK: {f.name} fourier+streaming matches count-table")
+
+    # 9. D2.2: streaming join on sign-edge instance records streaming_join_events > 0.
+    print("  test: D2.2 streaming join on sign-edge records streaming_join_events > 0")
+    r = _run_rankwidth_stdin(sop_solve, _SIGN_EDGE_4CYCLE,
+                             ["--rankwidth-join-strategy", "streaming"],
+                             format_stats=True)
+    if r.returncode != 0:
+        print(f"    FAIL: sign-edge streaming failed: {r.stderr.decode()[:80]}")
+        all_passed = False
+    else:
+        text = r.stdout.decode(errors="replace")
+        stream_events = 0
+        mat_events = 0
+        for line in text.splitlines():
+            if line.startswith("rankwidth_streaming_join_events:"):
+                stream_events = int(line.split(":")[1].strip())
+            elif line.startswith("rankwidth_materialized_join_events:"):
+                mat_events = int(line.split(":")[1].strip())
+        if stream_events == 0:
+            print(f"    FAIL: streaming_join_events=0 on sign-edge (mat_events={mat_events})")
+            all_passed = False
+        else:
+            print(f"    OK: streaming_join_events={stream_events}, materialized_join_events={mat_events}")
+
+    return all_passed
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: test_rankwidth_join_strategy.py <sop-solve>", file=sys.stderr)
+        sys.exit(1)
+    sop_solve = pathlib.Path(sys.argv[1])
+    if not sop_solve.exists():
+        print(f"error: {sop_solve} not found", file=sys.stderr)
+        sys.exit(1)
+    ok = run_tests(sop_solve)
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

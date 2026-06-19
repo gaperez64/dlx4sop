@@ -18,6 +18,7 @@ ENGINES = (
     "aer-statevector",
     "pyzx-matrix",
     "mqt-ddsim-statevector",
+    "qiskit-clifford",
 )
 
 CSV_FIELDS = [
@@ -141,6 +142,41 @@ def pyzx_matrix_amplitude(qasm: str, input_bits: str, output_bits: str) -> tuple
     )
 
 
+def qiskit_clifford_amplitude(qasm: str, input_bits: str, output_bits: str) -> tuple[complex, int]:
+    """Compute amplitude for Clifford circuits using stabilizer simulation (O(n²) memory).
+
+    Only valid when the amplitude is real and non-negative (sign-edge boundaries for
+    Clifford circuits such as GHZ and BV). Returns sqrt(probability) as the real part.
+    Fails with RuntimeError for non-Clifford circuits.
+    """
+    try:
+        from qiskit import QuantumCircuit
+        from qiskit.quantum_info import Clifford, StabilizerState
+    except ImportError as exc:
+        raise RuntimeError("qiskit is not installed") from exc
+
+    base = qiskit_circuit_from_qasm(qasm)
+    if len(input_bits) > base.num_qubits:
+        raise RuntimeError(f"input boundary uses {len(input_bits)} bits for {base.num_qubits} qubits")
+
+    prepared = QuantumCircuit(base.num_qubits)
+    for qubit, bit in enumerate(input_bits):
+        if bit == "1":
+            prepared.x(qubit)
+    prepared.compose(base, inplace=True)
+
+    try:
+        clf = Clifford(prepared)
+    except Exception as exc:
+        raise RuntimeError(f"circuit is not a Clifford circuit: {exc}") from exc
+
+    stab = StabilizerState(clf)
+    prob = stab.probabilities_dict().get(output_bits, 0.0)
+    import math
+    amp = math.sqrt(max(prob, 0.0))
+    return complex(amp, 0.0), base.num_qubits
+
+
 def mqt_ddsim_statevector_amplitude(qasm: str, input_bits: str, output_bits: str) -> tuple[complex, int]:
     try:
         from qiskit import QuantumCircuit
@@ -181,6 +217,8 @@ def native_amplitude(engine: str, qasm: str, input_bits: str, output_bits: str) 
         return pyzx_matrix_amplitude(qasm, input_bits, output_bits)
     if engine == "mqt-ddsim-statevector":
         return mqt_ddsim_statevector_amplitude(qasm, input_bits, output_bits)
+    if engine == "qiskit-clifford":
+        return qiskit_clifford_amplitude(qasm, input_bits, output_bits)
     raise AssertionError(f"unhandled engine {engine}")
 
 
@@ -194,6 +232,8 @@ def engine_import_error(engine: str) -> str:
             import pyzx  # noqa: F401
         if engine == "mqt-ddsim-statevector":
             import mqt.ddsim  # noqa: F401
+        if engine == "qiskit-clifford":
+            import qiskit  # noqa: F401
     except ImportError as exc:
         return str(exc)
     return ""

@@ -839,11 +839,94 @@ def write_native_comparison_tables(
             )
 
 
+def write_mqt_scaling_table(scaling_table_path: pathlib.Path | None, file: TextIO) -> None:
+    """Render MQT detailed scaling table from mqt-scaling-table.json."""
+    if scaling_table_path is None or not scaling_table_path.exists():
+        return
+    try:
+        scaling = json.loads(scaling_table_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"> warning: could not read MQT scaling table: {exc}\n", file=file)
+        return
+    if not scaling:
+        return
+    print("\n## MQT Bench Scaling by Family\n", file=file)
+    print(
+        "| Family | Mode | Rows | Qubits p50 | Qubits max "
+        "| Vars p50 | Vars max | TW p50 | TW max | Cut-rank p50 | Cut-rank max |",
+        file=file,
+    )
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    for row in scaling:
+        mode = row.get("qsop_mode", "")
+        labelled = row.get("labelled_count", 0)
+        sign = row.get("sign_count", 0)
+        if labelled > 0 and sign > 0:
+            mode_str = f"mixed ({labelled}L/{sign}S)"
+        elif labelled > 0:
+            mode_str = "labelled"
+        elif sign > 0:
+            mode_str = "sign"
+        else:
+            mode_str = mode or "unknown"
+        print(
+            f"| {markdown_escape(row.get('family', ''))} "
+            f"| {markdown_escape(mode_str)} "
+            f"| {row.get('rows', 0)} "
+            f"| {int(row.get('qubits_p50', 0))} "
+            f"| {int(row.get('qubits_max', 0))} "
+            f"| {int(row.get('nvars_p50', 0))} "
+            f"| {int(row.get('nvars_max', 0))} "
+            f"| {int(row.get('treewidth_p50', 0))} "
+            f"| {int(row.get('treewidth_max', 0))} "
+            f"| {int(row.get('cut_rank_p50', 0))} "
+            f"| {int(row.get('cut_rank_max', 0))} |",
+            file=file,
+        )
+
+
+def write_mqt_manifest_notice(manifest_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Emit a notice when MQT manifests are absent or empty."""
+    if manifest_dir is None:
+        return
+    tier_jsons = list(manifest_dir.glob("tier-*.json")) if manifest_dir.exists() else []
+    if tier_jsons:
+        return
+    print("\n## MQT Bench Data\n", file=file)
+    print("> **MQT Bench manifests not found.** "
+          "No MQT QSOP rows are available for this scoreboard.\n", file=file)
+    print("To populate MQT data, run:\n", file=file)
+    print("```sh", file=file)
+    print("# Step 1 — harvest QASM manifests from MQT Bench (requires mqt-bench + qiskit):", file=file)
+    print("python3 tools/bench.py harvest-mqt \\", file=file)
+    print("    --manifest-dir benchmarks/manifests/mqt \\", file=file)
+    print("    --qasm2sop build/qasm2sop \\", file=file)
+    print("    --sop-stats build/sop-stats", file=file)
+    print("", file=file)
+    print("# Step 2 — materialize QASM manifests to local QSOP corpus:", file=file)
+    print("python3 tools/bench.py materialize-mqt \\", file=file)
+    print("    --manifest-dir benchmarks/manifests/mqt \\", file=file)
+    print("    --corpus-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\", file=file)
+    print("    --qasm2sop build/qasm2sop \\", file=file)
+    print("    --sop-solve build/sop-solve", file=file)
+    print("", file=file)
+    print("# Step 3 — profile corpus structure:", file=file)
+    print("python3 tools/bench.py profile-mqt \\", file=file)
+    print("    --corpus-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\", file=file)
+    print("    --artifact-dir artifacts/mqt \\", file=file)
+    print("    --sop-solve build/sop-solve", file=file)
+    print("```", file=file)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render scoreboard Markdown tables from structured benchmark outputs.")
     parser.add_argument("--import-report", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--solver-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
     parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
+    parser.add_argument("--mqt-manifest-dir", type=pathlib.Path, default=None,
+                        help="MQT manifest directory; if empty/missing, an MQT notice is emitted")
+    parser.add_argument("--mqt-scaling-table", type=pathlib.Path, default=None,
+                        help="Path to mqt-scaling-table.json from profile-mqt")
     return parser.parse_args(argv)
 
 
@@ -857,6 +940,8 @@ def main(argv: list[str]) -> int:
         write_solver_tables(solver_records, sys.stdout)
         write_native_tables(native_records, sys.stdout)
         write_native_comparison_tables(solver_records, native_records, sys.stdout)
+        write_mqt_scaling_table(args.mqt_scaling_table, sys.stdout)
+        write_mqt_manifest_notice(args.mqt_manifest_dir, sys.stdout)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -111,6 +111,14 @@ test_wmc = executable(
 
 test('wmc unit', test_wmc)
 
+test_branch_api = executable(
+  'test-branch-api',
+  'tests/unit/test_branch_api.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch api unit', test_branch_api)
+
 python3 = find_program('python3', required: false)
 if python3.found()
   test(
@@ -527,6 +535,80 @@ if python3.found()
       files('tests/test_compare_rankwidth_backends.py'),
       files('tools/compare_rankwidth_backends.py'),
     ],
+  )
+  test(
+    'analyze branch regressions smoke',
+    python3,
+    args: [
+      files('tests/test_analyze_branch_regressions.py'),
+    ],
+  )
+  test(
+    'scoreboard json output smoke',
+    python3,
+    args: [
+      files('tests/test_scoreboard_json_output.py'),
+    ],
+  )
+  test(
+    'bench tune-mqt smoke',
+    python3,
+    args: [
+      files('tests/test_bench_tune_mqt.py'),
+    ],
+  )
+  test(
+    'plot scoreboard smoke',
+    python3,
+    args: [
+      files('tests/test_plot_scoreboard.py'),
+    ],
+  )
+  test(
+    'harvest mqt bench smoke',
+    python3,
+    args: [
+      files('tests/test_harvest_mqt_bench.py'),
+    ],
+  )
+  test(
+    'branch policy smoke',
+    python3,
+    args: [
+      files('tests/test_branch_policy.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+  )
+  test(
+    'branch regression guard smoke',
+    python3,
+    args: [
+      files('tests/test_branch_regression_guard.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 90,
+  )
+  test(
+    'rankwidth memory budget smoke',
+    python3,
+    args: [
+      files('tests/test_rankwidth_memory_budget.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
+    'rankwidth join strategy smoke',
+    python3,
+    args: [
+      files('tests/test_rankwidth_join_strategy.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 120,
   )
   test(
     'qasm native compatibility smoke',

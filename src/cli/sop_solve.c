@@ -27,6 +27,12 @@ typedef enum solve_trace_format {
   SOLVE_TRACE_CSV,
 } solve_trace_format_t;
 
+typedef enum rankwidth_memory_policy {
+  RW_MEMORY_POLICY_SKIP,
+  RW_MEMORY_POLICY_FALLBACK,
+  RW_MEMORY_POLICY_HARD_ERROR,
+} rankwidth_memory_policy_t;
+
 typedef struct csv_trace_writer {
   FILE *file;
   bool wrote_header;
@@ -37,13 +43,25 @@ static void print_usage(FILE *file) {
         "[--backend components|brute-force|branch|rankwidth|treewidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--branch-rw-source native|from-treewidth|both|auto] "
+        "[--branch-rw-min-treewidth-width N] "
+        "[--branch-rw-min-treewidth-forecast N] "
+        "[--branch-rw-min-residual-vars N] "
+        "[--branch-rw-low-rank-bypass N] "
+        "[--branch-rw-min-speedup FLOAT] "
+        "[--branch-rw-fixed-overhead-ns N] "
+        "[--branch-tw-fixed-overhead-ns N] "
+        "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--rankwidth-table v1|v2|validate] "
+        "[--rankwidth-table v2|validate] "
         "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
         "[--stats-jsonl PATH] [--branch-calibrate-backends] "
+        "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
+        "[--rankwidth-memory-policy skip|fallback|hard-error] "
+        "[--rankwidth-join-strategy auto|materialized|streaming] "
+        "[--rankwidth-materialize-join-max-pairs N] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
 }
@@ -294,6 +312,24 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_labelled_proxy_cuts);
     fprintf(file, "rankwidth_labelled_exact_assignments: %" PRIu64 "\n",
             stats->rankwidth_labelled_exact_assignments);
+    fprintf(file, "rankwidth_transition_bytes: %" PRIu64 "\n",
+            stats->rankwidth_transition_bytes);
+    fprintf(file, "rankwidth_transition_layout_u16_events: %" PRIu64 "\n",
+            stats->rankwidth_transition_layout_u16_events);
+    fprintf(file, "rankwidth_transition_layout_u32_events: %" PRIu64 "\n",
+            stats->rankwidth_transition_layout_u32_events);
+    fprintf(file, "rankwidth_materialized_join_events: %" PRIu64 "\n",
+            stats->rankwidth_materialized_join_events);
+    fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_events);
+    fprintf(file, "rankwidth_streaming_join_candidate_pairs: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_candidate_pairs);
+    fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
+            stats->rankwidth_streaming_join_emitted_pairs);
+    fprintf(file, "rankwidth_join_assignment_bytes: %" PRIu64 "\n",
+            stats->rankwidth_join_assignment_bytes);
+    fprintf(file, "rankwidth_table_assignment_bytes: %" PRIu64 "\n",
+            stats->rankwidth_table_assignment_bytes);
   } else {
     fprintf(file, "treewidth_order: %s\n", treewidth_order_name(treewidth_order));
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
@@ -446,6 +482,7 @@ int main(int argc, char **argv) {
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
+  qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
@@ -453,7 +490,6 @@ int main(int argc, char **argv) {
   bool branch_rw_source_set = false;
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
-  bool rankwidth_table_v2 = true; /* v2 is the default performance path */
   bool rankwidth_table_validate = false;
   bool rankwidth_table_set = false; /* true when --rankwidth-table was explicitly given */
   bool solve_mode_set = false;
@@ -462,6 +498,10 @@ int main(int argc, char **argv) {
   bool include_probability = false;
   const char *stats_jsonl_path = NULL;
   bool calibrate_backends = false;
+  uint64_t rw_memory_budget_bytes = 0; /* 0 = no limit */
+  rankwidth_memory_policy_t rw_memory_policy = RW_MEMORY_POLICY_SKIP;
+  qsop_rankwidth_join_strategy_t rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+  uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -528,6 +568,90 @@ int main(int argc, char **argv) {
       calibrate_backends = true;
       continue;
     }
+    if (strcmp(argv[i], "--rankwidth-memory-budget-mib") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-budget-mib requires an integer value\n", stderr);
+        return 2;
+      }
+      errno = 0;
+      char *end = NULL;
+      unsigned long mib = strtoul(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-memory-budget-mib requires a non-negative integer\n", stderr);
+        return 2;
+      }
+      rw_memory_budget_bytes = (uint64_t)mib * 1024ULL * 1024ULL;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-memory-budget-bytes") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-budget-bytes requires an integer value\n", stderr);
+        return 2;
+      }
+      errno = 0;
+      char *end = NULL;
+      unsigned long long b = strtoull(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-memory-budget-bytes requires a non-negative integer\n", stderr);
+        return 2;
+      }
+      rw_memory_budget_bytes = (uint64_t)b;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-memory-policy") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-memory-policy requires skip|fallback|hard-error\n", stderr);
+        return 2;
+      }
+      const char *pol = argv[++i];
+      if (strcmp(pol, "skip") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_SKIP;
+      } else if (strcmp(pol, "fallback") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_FALLBACK;
+      } else if (strcmp(pol, "hard-error") == 0) {
+        rw_memory_policy = RW_MEMORY_POLICY_HARD_ERROR;
+      } else {
+        fprintf(stderr, "error: unknown memory policy '%s' (expected skip|fallback|hard-error)\n",
+                pol);
+        return 2;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-join-strategy") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-join-strategy requires auto|materialized|streaming\n", stderr);
+        return 2;
+      }
+      const char *val = argv[++i];
+      if (strcmp(val, "auto") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+      } else if (strcmp(val, "materialized") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_MATERIALIZED;
+      } else if (strcmp(val, "streaming") == 0) {
+        rw_join_strategy = QSOP_RANKWIDTH_JOIN_STREAMING;
+      } else {
+        fprintf(stderr, "error: unknown join strategy '%s' (expected auto|materialized|streaming)\n",
+                val);
+        return 2;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-materialize-join-max-pairs") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-materialize-join-max-pairs requires an integer value\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const unsigned long long mp = strtoull(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0') {
+        fputs("error: --rankwidth-materialize-join-max-pairs requires a non-negative integer\n",
+              stderr);
+        return 2;
+      }
+      rw_materialize_join_max_pairs = (uint64_t)mp;
+      continue;
+    }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --branch-heuristic requires a value\n", stderr);
@@ -568,6 +692,46 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_rw_source_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-treewidth-width") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-width requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_treewidth_width = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-treewidth-forecast") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-treewidth-forecast requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_treewidth_forecast = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-residual-vars") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-residual-vars requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_residual_vars = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-low-rank-bypass") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-low-rank-bypass requires a value\n", stderr); return 2; }
+      branch_policy.rw_low_rank_bypass = (uint32_t)strtoul(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-min-speedup requires a value\n", stderr); return 2; }
+      branch_policy.rw_min_speedup = strtod(argv[++i], NULL);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-fixed-overhead-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-fixed-overhead-ns requires a value\n", stderr); return 2; }
+      branch_policy.rw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-tw-fixed-overhead-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-tw-fixed-overhead-ns requires a value\n", stderr); return 2; }
+      branch_policy.tw_fixed_overhead_ns = strtoull(argv[++i], NULL, 10);
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-rw-memory-penalty-ns") == 0) {
+      if (i + 1 >= argc) { fputs("error: --branch-rw-memory-penalty-ns requires a value\n", stderr); return 2; }
+      branch_policy.rw_memory_penalty_ns = strtoull(argv[++i], NULL, 10);
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -660,17 +824,13 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "v1") == 0) {
-        rankwidth_table_v2 = false;
-        rankwidth_table_validate = false;
-      } else if (strcmp(value, "v2") == 0) {
-        rankwidth_table_v2 = true;
+      if (strcmp(value, "v2") == 0) {
         rankwidth_table_validate = false;
       } else if (strcmp(value, "validate") == 0) {
-        rankwidth_table_v2 = false;
         rankwidth_table_validate = true;
       } else {
-        fprintf(stderr, "error: unsupported rankwidth table version '%s'\n", value);
+        fprintf(stderr, "error: unsupported rankwidth table version '%s' (expected v2|validate)\n",
+                value);
         return 2;
       }
       rankwidth_table_set = true;
@@ -857,15 +1017,9 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    if (branch_rw_source != QSOP_BRANCH_RW_SOURCE_NATIVE) {
-      ok = qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
-          qsop, max_vars, branch_heuristic, branch_rw_source, solve_mode, &result, &solve_stats,
-          trace_ptr, &error);
-    } else {
-      ok = qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
-          qsop, max_vars, branch_heuristic, solve_mode, sink_ptr, &result, &solve_stats, trace_ptr,
-          &error);
-    }
+    ok = qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
+        qsop, max_vars, branch_heuristic, branch_rw_source, &branch_policy, solve_mode,
+        sink_ptr, &result, &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
@@ -901,6 +1055,53 @@ int main(int argc, char **argv) {
         qsop_rankwidth_decomposition_free(rankwidth_decomposition);
         qsop_free(qsop);
         return 1;
+      }
+    }
+    /* D1: memory budget gate — check forecast before allocating solve state. */
+    if (ok && rw_memory_budget_bytes > 0) {
+      uint64_t fe = 0;
+      uint64_t jp = 0;
+      qsop_error_t fe_err = {0};
+      if (qsop_rankwidth_decomposition_forecast(qsop, rankwidth_decomposition, &fe, &jp,
+                                                &fe_err)) {
+        const uint64_t forecast_bytes = fe * (uint64_t)qsop->r * sizeof(uint64_t);
+        if (forecast_bytes > rw_memory_budget_bytes) {
+          if (rw_memory_policy == RW_MEMORY_POLICY_HARD_ERROR) {
+            fprintf(stderr,
+                    "error: rankwidth memory forecast %" PRIu64 " MiB exceeds budget %" PRIu64
+                    " MiB\n",
+                    (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
+                    (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            qsop_free(qsop);
+            return 1;
+          } else if (rw_memory_policy == RW_MEMORY_POLICY_SKIP) {
+            if (format == SOLVE_FORMAT_STATS) {
+              fprintf(stdout, "backend: %s\n", backend_name(backend));
+              fprintf(stdout, "status: memory-skip\n");
+              fprintf(stdout, "rankwidth_memory_forecast_bytes: %" PRIu64 "\n", forecast_bytes);
+              fprintf(stdout, "rankwidth_memory_budget_bytes: %" PRIu64 "\n",
+                      rw_memory_budget_bytes);
+            } else {
+              fprintf(stderr,
+                      "rankwidth: memory-skip (forecast %" PRIu64 " MiB > budget %" PRIu64
+                      " MiB)\n",
+                      (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
+                      (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+            }
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            qsop_free(qsop);
+            return 0;
+          } else {
+            /* RW_MEMORY_POLICY_FALLBACK: fall through to treewidth below. */
+            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+            rankwidth_decomposition = NULL;
+            ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order,
+                                                             solve_mode, &result, &solve_stats,
+                                                             trace_ptr, &error);
+            goto rankwidth_done;
+          }
+        }
       }
     }
     if (ok) {
@@ -955,15 +1156,16 @@ int main(int argc, char **argv) {
           }
         }
       } else {
-        ok = rankwidth_table_v2
-                 ? qsop_solve_rankwidth_v2_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                            rankwidth_mode, &result, &solve_stats,
-                                                            trace_ptr, &error)
-                 : qsop_solve_rankwidth_mode_trace_stats(qsop, rankwidth_decomposition, max_vars,
-                                                         rankwidth_mode, &result, &solve_stats,
-                                                         trace_ptr, &error);
+        ok = qsop_solve_rankwidth_options_mode_trace_stats(
+            qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+            &(qsop_rankwidth_solve_options_t){
+                .join_strategy = rw_join_strategy,
+                .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+            },
+            &result, &solve_stats, trace_ptr, &error);
       }
     }
+rankwidth_done:;
   } else {
     ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,
                                                      &result, &solve_stats, trace_ptr, &error);

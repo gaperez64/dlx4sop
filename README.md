@@ -147,9 +147,9 @@ Available backend variants for `--backend`:
 
 ```text
 treewidth
-rankwidth  (alias: rankwidth:from-treewidth, rankwidth:v2)
+rankwidth  (alias: rankwidth:from-treewidth)
 rankwidth:best        (best decomposition strategy)
-rankwidth:validate    (cross-check v1 vs v2)
+rankwidth:validate    (cross-check two solve paths for consistency)
 branch                (alias: branch:auto)
 branch:from-treewidth
 branch:native
@@ -182,7 +182,7 @@ python3 tools/bench.py render \
 - `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
 - `tools/render_scoreboard.py`: render ad hoc reports from JSONL artifact inputs.
-- `tools/run_corpus_benchmarks.py`: legacy full-pipeline orchestrator.
+- `tools/run_corpus_benchmarks.py`: full-pipeline orchestrator (alternative to `bench.py full`).
 
 ## Current Status
 

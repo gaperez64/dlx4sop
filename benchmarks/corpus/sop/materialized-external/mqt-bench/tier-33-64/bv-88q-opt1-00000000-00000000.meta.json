@@ -1,0 +1,25 @@
+{
+  "source": "MQT Bench",
+  "source_url": "https://github.com/munich-quantum-toolkit/bench",
+  "mqt_family": "bv",
+  "mqt_algorithm": "bv",
+  "mqt_qubits": 88,
+  "mqt_optimization_level": 1,
+  "boundary_input": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "boundary_output": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "qasm_sha256": "eadbd833dec72137f768eb569eded072df8055d4324aaf2372f071552660e97a",
+  "qsop_sha256": "5454731fe2acc740ce6140c952b3155a8d09d6a713ed49018b9bcd0ff7687a9b",
+  "r": 8,
+  "nvars": 44,
+  "nedges": 0,
+  "qsop_mode": "sign",
+  "treewidth_probe": 0,
+  "prefix_cut_rank": 0,
+  "component_count": 1,
+  "largest_component": 44,
+  "benchmark_roles": [
+    "mqt-tuning",
+    "external-refresh"
+  ],
+  "solvable_without_external_tools": true
+}

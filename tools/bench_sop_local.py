@@ -17,7 +17,7 @@ Usage:
 
 Backend variants:
     components, brute-force, treewidth, rankwidth
-    rankwidth:from-treewidth, rankwidth:best, rankwidth:v2, rankwidth:validate
+    rankwidth:from-treewidth, rankwidth:best, rankwidth:validate
     branch, branch:native, branch:from-treewidth, branch:auto, branch:no-rankwidth
 """
 
@@ -77,12 +77,6 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
         "--rankwidth-table", "v2",
         "--max-vars", "256",
     ],
-    "rankwidth:v2": [
-        "--backend", "rankwidth",
-        "--rankwidth-generate", "from-treewidth",
-        "--rankwidth-table", "v2",
-        "--max-vars", "256",
-    ],
     "rankwidth:validate": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "from-treewidth",
@@ -129,7 +123,6 @@ BACKEND_MAX_VARS: dict[str, int] = {
     "rankwidth":         256,
     "rankwidth:from-treewidth": 256,
     "rankwidth:best":    256,
-    "rankwidth:v2":      256,
     "rankwidth:validate": 256,
     "branch":             64,
     "branch:auto":        64,
@@ -144,6 +137,7 @@ DEFAULT_BACKENDS = [
     "rankwidth:best",
     "branch:from-treewidth",
     "branch:auto",
+    "branch:no-rankwidth",
 ]
 
 

@@ -723,6 +723,43 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
         run_to_jsonl(command, output)
 
 
+def _write_scoreboard_json(
+    solver_records: list[tuple[str, list[dict]]],
+    native_records: list[tuple[str, list[dict]]],
+    path: pathlib.Path,
+) -> None:
+    """Write normalized scoreboard intermediate JSON for plot generation."""
+    import json as _json
+    import datetime as _dt
+
+    tiers = list(SOLVER_TIERS)
+    solver_summary = []
+    # summarize_solver_records expects Iterable[(tier, records_list)]
+    summarized = summarize_solver_records(solver_records)
+    for entry in summarized:
+        config = entry.get("config", "")
+        backend_field = entry.get("config", "").split(" ")[0] if config else ""
+        solver_summary.append({
+            "tier": entry.get("tier", ""),
+            "config": config,
+            "backend": backend_field,
+            "solved": entry.get("ok", 0),
+            "attempted": entry.get("records", 0),
+            "elapsed_ns": entry.get("elapsed_ns", 0),
+            "sources": dict(entry.get("sources", {})),
+            "stats": entry.get("stats", {}),
+        })
+
+    out = {
+        "generated_at": _dt.datetime.now().isoformat(),
+        "tiers": tiers,
+        "solver_summary": solver_summary,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps(out, indent=2), encoding="utf-8")
+    print(f"scoreboard JSON written to {path}", file=sys.stderr)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh the public benchmark scoreboard.")
     parser.add_argument("--artifact-dir", type=pathlib.Path, default=pathlib.Path("/tmp"))
@@ -739,6 +776,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-default-artifacts", action="store_true")
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("scoreboard.md"))
+    parser.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
+                        help="Write normalized scoreboard intermediate JSON to this path")
     parser.add_argument(
         "--rankwidth-comparison-output",
         type=pathlib.Path,
@@ -793,6 +832,8 @@ def main(argv: list[str]) -> int:
                 rankwidth_comparison_records=rankwidth_records,
                 rankwidth_comparison_top=args.rankwidth_comparison_top,
             )
+        if args.json_out is not None:
+            _write_scoreboard_json(solver_records, native_records, args.json_out)
         if args.rankwidth_comparison_output is not None:
             with args.rankwidth_comparison_output.open("w", encoding="utf-8") as output:
                 compare_rankwidth_backends.write_markdown(
