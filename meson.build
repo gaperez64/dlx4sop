@@ -565,6 +565,13 @@ if python3.found()
     ],
   )
   test(
+    'check generated scoreboard smoke',
+    python3,
+    args: [
+      files('tests/test_check_generated_scoreboard.py'),
+    ],
+  )
+  test(
     'harvest mqt bench smoke',
     python3,
     args: [
