@@ -133,8 +133,8 @@ meson compile -C build
 python3 tools/bench.py local \
     --tier tier-17-32 \
     --backend treewidth \
-    --backend rankwidth \
-    --backend branch \
+    --backend rankwidth:from-treewidth \
+    --backend branch:auto \
     --timeout 5 \
     --out artifacts/local/tier-17-32.jsonl
 python3 tools/bench.py render \
@@ -147,10 +147,10 @@ Available backend variants for `--backend`:
 
 ```text
 treewidth
-rankwidth  (alias: rankwidth:from-treewidth)
+rankwidth:from-treewidth
 rankwidth:best        (best decomposition strategy)
 rankwidth:validate    (cross-check two solve paths for consistency)
-branch                (alias: branch:auto)
+branch:auto
 branch:from-treewidth
 branch:native
 branch:no-rankwidth   (control: branch without rankwidth delegation)
