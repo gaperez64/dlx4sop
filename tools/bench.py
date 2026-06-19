@@ -19,8 +19,8 @@ Examples:
   python3 tools/bench.py local \\
       --tier tier-17-32 \\
       --backend treewidth \\
-      --backend rankwidth \\
-      --backend branch \\
+      --backend rankwidth:from-treewidth \\
+      --backend branch:auto \\
       --timeout 5 \\
       --out artifacts/local/tier-17-32.jsonl
 
@@ -236,74 +236,21 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 def _render_local(args: argparse.Namespace) -> int:
-    """Render local-only scoreboard using scripts/render_scoreboard.py."""
+    """Render local-only scoreboard via tools/render_scoreboard.py --local-jsonl."""
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts"
     output = args.output or REPO_ROOT / "scoreboard-local.md"
 
-    # Collect all JSONL files in the artifact dir.
     jsonl_files = sorted(artifact_dir.glob("**/*.jsonl")) if artifact_dir.exists() else []
     if not jsonl_files:
         print(f"warning: no .jsonl files found in {artifact_dir}", file=sys.stderr)
 
-    # Use scripts/render_scoreboard.py for local-format artifacts.
-    import json
-    import tempfile
-    import os
+    cmd = [sys.executable, str(TOOLS_DIR / "render_scoreboard.py")]
+    for path in jsonl_files:
+        cmd += ["--local-jsonl", str(path)]
+    cmd += ["--output", str(output)]
 
-    # Merge all JSONL from artifact_dir into one file for scripts/ renderer.
-    records = []
-    for jf in jsonl_files:
-        try:
-            with open(jf, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        records.append(json.loads(line))
-        except Exception as e:
-            print(f"warning: could not read {jf}: {e}", file=sys.stderr)
-
-    if not records:
-        print("no records to render", file=sys.stderr)
-        return 1
-
-    # Normalize to scripts/ render format (name, tier, backend, solve_elapsed_ns, status).
-    from bench_common import normalize_record
-
-    normalized = []
-    for r in records:
-        n = normalize_record(r)
-        # scripts/render_scoreboard.py expects "name" key
-        row = {
-            "name": n.get("instance_id", n.get("name", "")),
-            "tier": n.get("tier", ""),
-            "backend": n.get("backend", ""),
-            "solve_elapsed_ns": n.get("elapsed_ns", n.get("solve_elapsed_ns", 0)),
-            "status": n.get("status", ""),
-            "nvars": n.get("nvars", 0),
-            "nedges": n.get("nedges", 0),
-            "r": n.get("r", 0),
-            "counts_hash": n.get("counts_hash", ""),
-        }
-        normalized.append(row)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".jsonl", delete=False, encoding="utf-8"
-    ) as tmp:
-        for row in normalized:
-            tmp.write(json.dumps(row) + "\n")
-        tmp_path = tmp.name
-
-    try:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        rc = _run([
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "render_scoreboard.py"),
-            "--local", tmp_path,
-            "--out", str(output),
-        ])
-    finally:
-        os.unlink(tmp_path)
-
+    output.parent.mkdir(parents=True, exist_ok=True)
+    rc = _run(cmd)
     if rc == 0:
         print(f"scoreboard written to {output}", file=sys.stderr)
     return rc

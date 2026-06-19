@@ -3,6 +3,7 @@
 import argparse
 import collections
 import json
+import math
 import pathlib
 import sys
 from typing import Iterable, TextIO
@@ -918,33 +919,117 @@ def write_mqt_manifest_notice(manifest_dir: pathlib.Path | None, file: TextIO) -
     print("```", file=file)
 
 
+def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
+    """Render a compact local backend summary from sop_bench_result_v2 records."""
+    by_tier_backend: dict[tuple[str, str], dict] = {}
+    for r in records:
+        tier = r.get("tier", "")
+        backend = r.get("backend", "")
+        key = (tier, backend)
+        entry = by_tier_backend.setdefault(key, {
+            "tier": tier,
+            "backend": backend,
+            "solved": 0,
+            "skipped": 0,
+            "timeout": 0,
+            "error": 0,
+            "total_ns": 0,
+            "elapsed_values": [],
+        })
+        status = r.get("status", "")
+        if status == "ok":
+            entry["solved"] += 1
+            ns = int(r.get("elapsed_ns") or r.get("solve_elapsed_ns") or 0)
+            entry["total_ns"] += ns
+            if ns > 0:
+                entry["elapsed_values"].append(ns)
+        elif status == "skipped":
+            entry["skipped"] += 1
+        elif status == "timeout":
+            entry["timeout"] += 1
+        else:
+            entry["error"] += 1
+
+    if not by_tier_backend:
+        return
+
+    print("## Local sop-solve backends\n", file=file)
+
+    for tier in sorted({k[0] for k in by_tier_backend}, key=tier_sort_key):
+        tier_entries = {k[1]: v for k, v in by_tier_backend.items() if k[0] == tier}
+        ok_ns = [v["total_ns"] for v in tier_entries.values() if v["solved"] > 0 and v["total_ns"] > 0]
+        fastest_ns = min(ok_ns) if ok_ns else 0
+
+        print(f"### {tier}\n", file=file)
+        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio |", file=file)
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+
+        for backend in sorted(tier_entries):
+            v = tier_entries[backend]
+            vals = v["elapsed_values"]
+            geomean_ns = (
+                int(math.exp(sum(math.log(x) for x in vals) / len(vals))) if vals else None
+            )
+            ratio_str = (
+                f"{v['total_ns'] / fastest_ns:.2f}x"
+                if fastest_ns > 0 and v["total_ns"] > 0
+                else "—"
+            )
+            print(
+                f"| `{backend}` | {v['solved']} | {v['skipped']} | {v['timeout']} | {v['error']}"
+                f" | {format_ns(v['total_ns'])}"
+                f" | {format_ns(geomean_ns) if geomean_ns is not None else '—'}"
+                f" | {ratio_str} |",
+                file=file,
+            )
+        print("", file=file)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render scoreboard Markdown tables from structured benchmark outputs.")
     parser.add_argument("--import-report", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--solver-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
     parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
+    parser.add_argument("--local-jsonl", action="append", type=pathlib.Path, default=[], metavar="PATH",
+                        help="Local sop_bench_result_v2 JSONL file(s) for local backend summary")
     parser.add_argument("--mqt-manifest-dir", type=pathlib.Path, default=None,
                         help="MQT manifest directory; if empty/missing, an MQT notice is emitted")
     parser.add_argument("--mqt-scaling-table", type=pathlib.Path, default=None,
                         help="Path to mqt-scaling-table.json from profile-mqt")
+    parser.add_argument("--output", type=pathlib.Path, default=None,
+                        help="Write output to this file instead of stdout")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    out_file = None
     try:
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            out_file = open(args.output, "w", encoding="utf-8")
+        out = out_file if out_file is not None else sys.stdout
+
         solver_records = [(label, read_jsonl(path)) for label, path in args.solver_jsonl]
         native_records = [(label, read_jsonl(path)) for label, path in args.native_jsonl]
+        if args.local_jsonl:
+            local_records: list[dict] = []
+            for path in args.local_jsonl:
+                local_records.extend(read_jsonl(path))
+            write_local_backend_summary(local_records, out)
         if args.import_report:
-            write_import_tables(args.import_report, sys.stdout)
-        write_solver_tables(solver_records, sys.stdout)
-        write_native_tables(native_records, sys.stdout)
-        write_native_comparison_tables(solver_records, native_records, sys.stdout)
-        write_mqt_scaling_table(args.mqt_scaling_table, sys.stdout)
-        write_mqt_manifest_notice(args.mqt_manifest_dir, sys.stdout)
+            write_import_tables(args.import_report, out)
+        write_solver_tables(solver_records, out)
+        write_native_tables(native_records, out)
+        write_native_comparison_tables(solver_records, native_records, out)
+        write_mqt_scaling_table(args.mqt_scaling_table, out)
+        write_mqt_manifest_notice(args.mqt_manifest_dir, out)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if out_file is not None:
+            out_file.close()
     return 0
 
 

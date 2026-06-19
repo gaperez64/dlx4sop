@@ -180,30 +180,3 @@ def counts_hash(output: str) -> str:
     return hashlib.sha1(counts_line.encode()).hexdigest()[:12]
 
 
-_V2_SCHEMA = "sop_bench_result_v2"
-
-
-def normalize_record(record: dict) -> dict:
-    """Upgrade older schema records to sop_bench_result_v2 shape."""
-    schema = record.get("schema", "")
-    if schema == _V2_SCHEMA:
-        return record
-
-    out = dict(record)
-    out["schema"] = _V2_SCHEMA
-
-    # scripts/bench_sop.py used "name" not "instance_id"
-    if "name" in out and "instance_id" not in out:
-        out["instance_id"] = out.pop("name")
-
-    # scripts/ schema used solve_elapsed_ns only; v2 uses elapsed_ns
-    if "elapsed_ns" not in out and "solve_elapsed_ns" in out:
-        out["elapsed_ns"] = out["solve_elapsed_ns"]
-
-    # Ensure runner fields exist
-    out.setdefault("runner_kind", "local")
-    out.setdefault("runner_name", "sop-solve")
-    out.setdefault("suite", "local-sop")
-    out.setdefault("source", "local-synthetic")
-
-    return out
