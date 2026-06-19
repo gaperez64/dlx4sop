@@ -221,31 +221,6 @@ bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     uint32_t order_width, uint64_t count_modulus, uint64_t *counts,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
-bool qsop_solve_residual_branch(const qsop_instance_t *qsop, uint32_t max_vars, qsop_result_t **out,
-                                qsop_error_t *error);
-
-bool qsop_solve_residual_branch_stats(const qsop_instance_t *qsop, uint32_t max_vars,
-                                      qsop_result_t **out, qsop_solve_stats_t *stats,
-                                      qsop_error_t *error);
-
-bool qsop_solve_residual_branch_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
-                                            qsop_result_t **out, qsop_solve_stats_t *stats,
-                                            qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_residual_branch_heuristic_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
-    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
-
-bool qsop_solve_residual_branch_heuristic_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
-    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_residual_branch_heuristic_rw_source_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
-    qsop_branch_rw_source_t rw_source, qsop_solve_mode_t mode, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint32_t nvars,
                                              qsop_rankwidth_decomposition_t **out,
@@ -342,30 +317,21 @@ typedef struct qsop_branch_policy {
   uint64_t rw_memory_penalty_ns;  /* extra cost added to rw estimate for memory risk (default 0) */
 } qsop_branch_policy_t;
 
-/* Default policy values — used when a field is zero or policy ptr is NULL. */
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH       4U
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST    4096UL
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS  32U
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS    3U
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS  50000UL
-#define QSOP_BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS  10000UL
-#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_TABLE             80UL
-#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_JOIN              40UL
-#define QSOP_BRANCH_POLICY_DEFAULT_C_RW_SIG             2000UL
-#define QSOP_BRANCH_POLICY_DEFAULT_C_TW_TABLE             20UL
-#define QSOP_BRANCH_POLICY_DEFAULT_C_TW_JOIN              10UL
-#define QSOP_BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.4
+/* Per-solve options for the branch solver.  Zero-initialize for defaults:
+ * heuristic=split, rw_source=native, mode=count-table, zero policy (all defaults),
+ * no sink, no trace. */
+typedef struct qsop_branch_solve_options {
+  qsop_branch_heuristic_t heuristic;    /* default SPLIT (0) */
+  qsop_branch_rw_source_t rw_source;   /* default NATIVE (0) */
+  qsop_solve_mode_t mode;              /* default COUNT_TABLE (0) */
+  qsop_branch_policy_t policy;         /* all-zero fields take built-in defaults */
+  qsop_backend_stats_sink_t *sink;     /* NULL to disable JSONL sink */
+  qsop_solve_trace_t *trace;           /* NULL to disable tracing */
+} qsop_branch_solve_options_t;
 
-bool qsop_solve_residual_branch_heuristic_mode_sink_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
-    qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
-
-/* Branch solver with full policy control (rw_source + tuning policy + sink). */
-bool qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_branch_heuristic_t heuristic,
-    qsop_branch_rw_source_t rw_source, const qsop_branch_policy_t *policy,
-    qsop_solve_mode_t mode, qsop_backend_stats_sink_t *sink, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
+                       const qsop_branch_solve_options_t *options,
+                       qsop_result_t **out, qsop_solve_stats_t *stats,
+                       qsop_error_t *error);
 
 #endif

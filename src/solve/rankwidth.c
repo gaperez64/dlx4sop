@@ -130,12 +130,6 @@ typedef struct rw_transition_csr {
   } items;
 } rw_transition_csr_t;
 
-typedef enum rw_join_strategy {
-  RW_JOIN_STRATEGY_AUTO,
-  RW_JOIN_STRATEGY_MATERIALIZED,
-  RW_JOIN_STRATEGY_STREAMING,
-} rw_join_strategy_t;
-
 typedef struct rw_fourier_table {
   uint32_t *signatures;
   uint64_t *assignments;
@@ -4916,7 +4910,7 @@ static bool solve_rankwidth_count_table_crt(
 static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
                                            const qsop_rankwidth_decomposition_t *decomposition,
                                            const uint64_t *adj,
-                                           rw_join_strategy_t join_strategy,
+                                           qsop_rankwidth_join_strategy_t join_strategy,
                                            uint64_t materialize_join_max_pairs,
                                            qsop_result_t **out,
                                            qsop_solve_stats_t *stats,
@@ -5027,8 +5021,8 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
           ? UINT64_MAX : (uint64_t)lreps * rreps;
 
       /* Select strategy for this node. */
-      const bool do_streaming = (join_strategy == RW_JOIN_STRATEGY_STREAMING) ||
-          (join_strategy == RW_JOIN_STRATEGY_AUTO && pair_forecast > max_pairs);
+      const bool do_streaming = (join_strategy == QSOP_RANKWIDTH_JOIN_STREAMING) ||
+          (join_strategy == QSOP_RANKWIDTH_JOIN_AUTO && pair_forecast > max_pairs);
 
       if (do_streaming) {
         streaming_join_events++;
@@ -5702,7 +5696,7 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
         return false;
       }
       ok = solve_rankwidth_count_table(qsop, decomposition, adj,
-                                          RW_JOIN_STRATEGY_AUTO, 0, &result, stats, trace, error);
+                                          QSOP_RANKWIDTH_JOIN_AUTO, 0, &result, stats, trace, error);
       free(adj);
     } else {
       uint32_t *coeffs = coefficient_matrix(qsop, error);
@@ -6194,8 +6188,8 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
     return false;
   }
-  const rw_join_strategy_t js = (options != NULL)
-      ? (rw_join_strategy_t)options->join_strategy : RW_JOIN_STRATEGY_AUTO;
+  const qsop_rankwidth_join_strategy_t js = (options != NULL)
+      ? options->join_strategy : QSOP_RANKWIDTH_JOIN_AUTO;
   const uint64_t mp = (options != NULL) ? options->materialize_join_max_pairs : 0;
 
   if (qsop_is_sign_edge_instance(qsop)) {

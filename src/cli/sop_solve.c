@@ -992,9 +992,16 @@ int main(int argc, char **argv) {
     ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
                                                 &solve_stats, trace_ptr, &error);
   } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_residual_branch_heuristic_rw_source_policy_mode_sink_trace_stats(
-        qsop, max_vars, branch_heuristic, branch_rw_source, &branch_policy, solve_mode,
-        sink_ptr, &result, &solve_stats, trace_ptr, &error);
+    ok = qsop_solve_branch(qsop, max_vars,
+                           &(qsop_branch_solve_options_t){
+                               .heuristic = branch_heuristic,
+                               .rw_source = branch_rw_source,
+                               .mode      = solve_mode,
+                               .policy    = branch_policy,
+                               .sink      = sink_ptr,
+                               .trace     = trace_ptr,
+                           },
+                           &result, &solve_stats, &error);
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     if (rankwidth_decomposition_path != NULL) {
       FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
