@@ -232,11 +232,12 @@ def _make_record(
     skip_reason: str = "",
 ) -> dict:
     meta = case.meta
+    meta_source = meta.get("source", "local-synthetic")
     provenance = meta.get("provenance", {
         "kind": "generated",
         "generator": meta.get("generator", "build_sop_corpus.py:v1"),
-        "source": "local-synthetic",
-        "source_url": None,
+        "source": meta_source,
+        "source_url": meta.get("source_url"),
         "source_relative_path": None,
         "case": None,
         "boundary": None,
@@ -247,7 +248,7 @@ def _make_record(
     rec: dict = {
         "schema": "sop_bench_result_v2",
         "suite": "local-sop",
-        "source": "local-synthetic",
+        "source": meta_source,
         "tier": case.tier,
         "instance_id": case.instance_id,
         "qsop_path": str(case.qsop_path),
