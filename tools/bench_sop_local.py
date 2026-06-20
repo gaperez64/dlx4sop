@@ -218,6 +218,19 @@ def bench_case(
     return records
 
 
+def _qsop_mode(case: CorpusCase) -> str:
+    mode = case.meta.get("qsop_mode")
+    if mode is not None:
+        return mode
+    try:
+        for ln in case.qsop_path.read_text().splitlines():
+            if ln.split()[:1] == ["q"]:
+                return "labelled"
+        return "sign"
+    except OSError:
+        return "unknown"
+
+
 def _make_record(
     case: CorpusCase,
     backend: str,
@@ -258,6 +271,7 @@ def _make_record(
         "runner_name": "sop-solve",
         "backend": backend,
         "backend_config": _backend_config_dict(backend),
+        "qsop_mode": _qsop_mode(case),
         "status": status,
         "elapsed_ns": elapsed_ns,
         "solve_elapsed_ns": elapsed_ns,

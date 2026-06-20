@@ -944,6 +944,8 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
             "error": 0,
             "total_ns": 0,
             "elapsed_values": [],
+            "sign": 0,
+            "labelled": 0,
         })
         status = r.get("status", "")
         if status == "ok":
@@ -958,6 +960,11 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
             entry["timeout"] += 1
         else:
             entry["error"] += 1
+        qsop_mode = r.get("qsop_mode", "")
+        if qsop_mode == "sign":
+            entry["sign"] += 1
+        elif qsop_mode == "labelled":
+            entry["labelled"] += 1
 
     if not by_tier_backend:
         return
@@ -970,8 +977,8 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
         fastest_ns = min(ok_ns) if ok_ns else 0
 
         print(f"### {tier}\n", file=file)
-        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio |", file=file)
-        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio | Sign / Labelled |", file=file)
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
 
         for backend in sorted(tier_entries):
             v = tier_entries[backend]
@@ -984,11 +991,12 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
                 if fastest_ns > 0 and v["total_ns"] > 0
                 else "—"
             )
+            mode_str = f"{v['sign']} / {v['labelled']}"
             print(
                 f"| `{backend}` | {v['solved']} | {v['skipped']} | {v['timeout']} | {v['error']}"
                 f" | {format_ns(v['total_ns'])}"
                 f" | {format_ns(geomean_ns) if geomean_ns is not None else '—'}"
-                f" | {ratio_str} |",
+                f" | {ratio_str} | {mode_str} |",
                 file=file,
             )
         print("", file=file)
