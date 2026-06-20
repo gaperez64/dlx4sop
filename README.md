@@ -17,6 +17,18 @@ meson compile -C build
 meson test -C build --print-errorlogs
 ```
 
+The default `build` directory is a debug build (`-O0`, assertions on) — correct for
+development and the test suite. **For benchmarking, use an optimized build** (roughly
+3x faster on solver hot paths):
+
+```sh
+meson setup build-bench --buildtype=release -Db_lto=true
+meson compile -C build-bench
+```
+
+Point the benchmark tooling at the optimized binaries (e.g.
+`--sop-solve build-bench/sop-solve`); see the [Benchmarks](#benchmarks) section.
+
 CI enforces at least 75% line coverage over production `src` files:
 
 ```sh

@@ -9,6 +9,8 @@ import sys
 import time
 from typing import TextIO
 
+from bench_common import case_qasm
+
 
 def run_command(cmd: list[str], *, input_text: str | None = None) -> tuple[str, int]:
     start = time.perf_counter_ns()
@@ -24,10 +26,6 @@ def run_command(cmd: list[str], *, input_text: str | None = None) -> tuple[str, 
     if completed.returncode != 0:
         raise RuntimeError(f"command failed: {cmd}\n{completed.stderr}")
     return completed.stdout, elapsed
-
-
-def case_qasm(case: dict) -> str:
-    return "\n".join(case["qasm_lines"]) + "\n"
 
 
 def iter_case_boundaries(cases: list[dict], limit: int | None):

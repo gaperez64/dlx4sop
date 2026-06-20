@@ -2831,12 +2831,6 @@ static bool decomposition_score(const qsop_instance_t *qsop,
   return true;
 }
 
-bool qsop_rankwidth_decomposition_support_width(
-    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t *out, qsop_error_t *error) {
-  return qsop_rankwidth_decomposition_widths(qsop, decomposition, out, NULL, error);
-}
-
 bool qsop_rankwidth_decomposition_widths(
     const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
     uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error) {

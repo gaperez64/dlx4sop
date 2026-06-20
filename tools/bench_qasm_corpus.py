@@ -12,6 +12,10 @@ import sys
 import time
 from typing import TextIO
 
+# Allow sibling-module imports when loaded by path (tests load this via spec_from_file_location).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from bench_common import case_qasm  # noqa: E402
+
 
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
@@ -361,10 +365,6 @@ def is_skippable_rankwidth_error(error: Exception) -> bool:
 
 def load_cases(path: pathlib.Path) -> list[dict]:
     return json.loads(path.read_text())
-
-
-def case_qasm(case: dict) -> str:
-    return "\n".join(case["qasm_lines"]) + "\n"
 
 
 def qsop_header(qsop: str) -> dict[str, int | str]:

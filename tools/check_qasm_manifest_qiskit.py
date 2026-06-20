@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 
+from bench_common import case_qasm
 from qasm_native_compat import qasm_with_native_compat_definitions
 
 try:
@@ -20,10 +21,6 @@ except ImportError:
 
 def state_index(bits: str) -> int:
     return sum((1 << i) for i, bit in enumerate(bits) if bit == "1")
-
-
-def case_qasm(case: dict) -> str:
-    return "\n".join(case["qasm_lines"]) + "\n"
 
 
 def parse_solver_amplitude(output: str) -> complex:

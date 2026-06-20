@@ -46,19 +46,29 @@ class CorpusCase:
 # JSONL I/O
 # ---------------------------------------------------------------------------
 
-def read_jsonl(path: pathlib.Path) -> list[dict]:
+def read_jsonl(path: pathlib.Path, strict: bool = False) -> list[dict]:
+    """Read JSONL records. With strict=True, wrap a bad row in RuntimeError with the file:line."""
     records: list[dict] = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            if strict:
+                raise RuntimeError(f"{path}:{line_number}: invalid JSONL row") from exc
+            raise
     return records
 
 
 def write_jsonl_record(stream: IO[str], record: dict) -> None:
     stream.write(json.dumps(record) + "\n")
     stream.flush()
+
+
+def case_qasm(case: dict) -> str:
+    """Join a manifest case's qasm_lines into a QASM source string."""
+    return "\n".join(case["qasm_lines"]) + "\n"
 
 
 # ---------------------------------------------------------------------------

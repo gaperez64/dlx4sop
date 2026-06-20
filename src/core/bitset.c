@@ -15,12 +15,16 @@ const uint64_t *qsop_bitset_const_row(const uint64_t *matrix, size_t words, uint
 }
 
 uint32_t qsop_popcount_u64(uint64_t value) {
+#if defined(__GNUC__) || defined(__clang__)
+  return (uint32_t)__builtin_popcountll(value);
+#else
   uint32_t count = 0;
   while (value != 0) {
     value &= value - 1U;
     count++;
   }
   return count;
+#endif
 }
 
 void qsop_bitset_set(uint64_t *bits, uint32_t bit) {

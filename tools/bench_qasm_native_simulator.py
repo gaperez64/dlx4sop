@@ -10,6 +10,7 @@ import sys
 import time
 from typing import TextIO
 
+from bench_common import case_qasm
 from qasm_native_compat import pyzx_state_index, qasm_with_native_compat_definitions
 
 
@@ -79,10 +80,6 @@ def apply_memory_limit(memory_limit_mib: int | None) -> None:
             f"--memory-limit-mib {memory_limit_mib} exceeds existing hard RLIMIT_AS"
         )
     resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
-
-
-def case_qasm(case: dict) -> str:
-    return "\n".join(case["qasm_lines"]) + "\n"
 
 
 def state_index(bits: str) -> int:

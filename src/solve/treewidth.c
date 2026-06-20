@@ -222,12 +222,17 @@ static bool map_scope_positions(const uint32_t *superset, uint32_t superset_arit
 }
 
 static uint32_t trailing_zero_size(size_t value) {
+  /* Callers pass a single set bit (a power of two), so value != 0. */
+#if defined(__GNUC__) || defined(__clang__)
+  return (uint32_t)__builtin_ctzll((unsigned long long)value);
+#else
   uint32_t index = 0;
   while ((value & 1U) == 0) {
     value >>= 1U;
     index++;
   }
   return index;
+#endif
 }
 
 static bool projection_map_alloc(size_t assignments, uint32_t superset_arity,
@@ -259,24 +264,61 @@ static bool projection_map_alloc(size_t assignments, uint32_t superset_arity,
   return true;
 }
 
-static bool convolve_counts_to(uint64_t *dst, const uint64_t *left, const uint64_t *right,
-                               const tw_context_t *ctx, qsop_error_t *error) {
-  for (uint32_t a = 0; a < ctx->r; a++) {
-    if (left[a] == 0) {
+static bool convolve_counts_to(uint64_t *restrict dst, const uint64_t *restrict left,
+                               const uint64_t *restrict right, const tw_context_t *ctx,
+                               qsop_error_t *error) {
+  const uint32_t r = ctx->r;
+  const uint64_t modulus = ctx->count_modulus;
+  if (modulus != 0) {
+    /* Modular counting: reduction is loop-invariant in `modulus`. */
+    for (uint32_t a = 0; a < r; a++) {
+      const uint64_t la = left[a];
+      if (la == 0) {
+        continue;
+      }
+      for (uint32_t b = 0; b < r; b++) {
+        const uint64_t rb = right[b];
+        if (rb == 0) {
+          continue;
+        }
+        uint32_t residue = a + b;
+        if (residue >= r) {
+          residue -= r;
+        }
+        const uint64_t product = qsop_mod_mul_u64(la, rb % modulus, modulus);
+        dst[residue] = qsop_mod_add_u64(dst[residue], product, modulus);
+      }
+    }
+    return true;
+  }
+  /* Exact counting: use the hardware overflow flag instead of a per-element division;
+     fall back to tw_count_* only on the rare overflow to reuse its error message. */
+  for (uint32_t a = 0; a < r; a++) {
+    const uint64_t la = left[a];
+    if (la == 0) {
       continue;
     }
-    for (uint32_t b = 0; b < ctx->r; b++) {
-      if (right[b] == 0) {
+    for (uint32_t b = 0; b < r; b++) {
+      const uint64_t rb = right[b];
+      if (rb == 0) {
         continue;
       }
       uint32_t residue = a + b;
-      if (residue >= ctx->r) {
-        residue -= ctx->r;
+      if (residue >= r) {
+        residue -= r;
       }
-      uint64_t product = 0;
-      if (!tw_count_mul(ctx, left[a], right[b], &product, error) ||
-          !tw_count_add(ctx, &dst[residue], product, error)) {
-        return false;
+      uint64_t product;
+      uint64_t sum;
+      if (__builtin_mul_overflow(la, rb, &product) ||
+          __builtin_add_overflow(dst[residue], product, &sum)) {
+        /* Genuine overflow: defer to the checked helpers for the canonical error. */
+        uint64_t checked = 0;
+        if (!tw_count_mul(ctx, la, rb, &checked, error) ||
+            !tw_count_add(ctx, &dst[residue], checked, error)) {
+          return false;
+        }
+      } else {
+        dst[residue] = sum;
       }
     }
   }
@@ -1685,18 +1727,6 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
   }
   *out = result;
   return true;
-}
-
-bool qsop_solve_treewidth_order_count_mod_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
-    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error) {
-  if (qsop == NULL || counts == NULL) {
-    set_error(error, "internal error: null treewidth modular solve argument");
-    return false;
-  }
-  return solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, count_modulus,
-                                           counts, stats, trace, error);
 }
 
 bool qsop_solve_treewidth_precomputed_order_count_mod_stats(

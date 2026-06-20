@@ -25,6 +25,12 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_DIR = REPO_ROOT / "tools"
 
+def _default_binary(name: str) -> pathlib.Path:
+    """Prefer the optimized build-bench binary for benchmarking; fall back to the debug build."""
+    optimized = REPO_ROOT / "build-bench" / name
+    return optimized if optimized.exists() else REPO_ROOT / "build" / name
+
+
 SOLVER_TIERS = ("0-32", "33-64", "65-128", "129-256", "257-512 sample")
 NATIVE_TIERS = ("0-32", "33-64", "65-128", "129-256")
 WMC_RESIDUE_TIERS = ("0-32", "33-64")
@@ -413,9 +419,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--artifact-dir", type=pathlib.Path, default=pathlib.Path("/tmp/dlx4sop-artifacts"))
     parser.add_argument("--manifests", type=pathlib.Path, default=REPO_ROOT / "benchmarks" / "manifests")
     parser.add_argument("--ganak", type=pathlib.Path, default=pathlib.Path("/tmp/ganak/ganak"))
-    parser.add_argument("--qasm2sop", type=pathlib.Path, default=REPO_ROOT / "build" / "qasm2sop")
-    parser.add_argument("--sop2wmc", type=pathlib.Path, default=REPO_ROOT / "build" / "sop2wmc")
-    parser.add_argument("--sop-solve", type=pathlib.Path, default=REPO_ROOT / "build" / "sop-solve")
+    parser.add_argument("--qasm2sop", type=pathlib.Path, default=_default_binary("qasm2sop"))
+    parser.add_argument("--sop2wmc", type=pathlib.Path, default=_default_binary("sop2wmc"))
+    parser.add_argument("--sop-solve", type=pathlib.Path, default=_default_binary("sop-solve"))
     parser.add_argument("--output", type=pathlib.Path, default=REPO_ROOT / "scoreboard.md")
     parser.add_argument("--skip-solver", action="store_true", help="skip solver backend jobs")
     parser.add_argument("--skip-wmc", action="store_true", help="skip WMC jobs")
@@ -444,6 +450,11 @@ def main(argv: list[str]) -> int:
     artifact_dir = args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir = args.manifests
+
+    if "build-bench" not in str(args.sop_solve):
+        print("warning: sop-solve is not from an optimized build (build-bench/); timings will "
+              "be slow. Build it with: meson setup build-bench --buildtype=release -Db_lto=true",
+              file=sys.stderr)
 
     if not args.skip_solver:
         run_solver_jobs(args, manifests_dir, artifact_dir)

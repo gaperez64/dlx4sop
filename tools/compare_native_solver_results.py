@@ -7,23 +7,11 @@ import pathlib
 import sys
 from typing import Iterable, TextIO
 
-from render_scoreboard import format_ns
+from render_scoreboard import format_ns, read_jsonl
 from summarize_qasm_report import markdown_escape
 
 
 AMPLITUDE_ABS_TOL = 1e-6
-
-
-def read_jsonl(path: pathlib.Path) -> list[dict]:
-    records = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"{path}:{line_number}: invalid JSONL row") from exc
-    return records
 
 
 def labelled_path(text: str) -> tuple[str, pathlib.Path]:

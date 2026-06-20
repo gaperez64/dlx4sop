@@ -8,6 +8,7 @@ import pathlib
 import sys
 from typing import Iterable, TextIO
 
+from bench_common import read_jsonl as _read_jsonl_common
 from summarize_qasm_report import DEFAULT_TIERS, markdown_escape, summarize_reports
 
 
@@ -82,15 +83,7 @@ LEGACY_STAT_ALIASES = {
 
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
-    records = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"{path}:{line_number}: invalid JSONL row") from exc
-    return records
+    return _read_jsonl_common(path, strict=True)
 
 
 def labelled_path(text: str) -> tuple[str, pathlib.Path]:

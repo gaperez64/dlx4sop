@@ -223,11 +223,6 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     uint32_t order_width, qsop_solve_mode_t mode, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
-bool qsop_solve_treewidth_order_count_mod_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
-    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error);
-
 bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
     uint32_t order_width, uint64_t count_modulus, uint64_t *counts,
@@ -249,10 +244,6 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
                                              const uint32_t *order,
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);
-
-bool qsop_rankwidth_decomposition_support_width(
-    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t *out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_widths(
     const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
