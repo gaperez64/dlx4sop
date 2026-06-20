@@ -94,18 +94,27 @@ def cmd_local(args: argparse.Namespace) -> int:
 def cmd_ganak(args: argparse.Namespace) -> int:
     """Run sop2wmc + Ganak WMC benchmarks."""
     ganak = args.ganak or "ganak"
+    corpus_root = REPO_ROOT / "benchmarks" / "corpus" / "sop"
+    instances = sorted(corpus_root.glob("**/*.qsop"))
+    if not instances:
+        print("info: no QSOP instances found in corpus; skipping WMC benchmarks", file=sys.stderr)
+        return 0
     cmd = [
         sys.executable,
         str(TOOLS_DIR / "bench_wmc_ganak.py"),
         "--ganak", str(ganak),
         "--sop2wmc", str(args.sop2wmc),
-        "--timeout", str(args.timeout),
+        "--ganak-timeout", str(args.timeout),
+        "--format", "jsonl",
     ]
     for enc in (args.encodings or ["amp-soft"]):
         cmd += ["--encoding", enc]
+    cmd += [str(p) for p in instances]
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        cmd += ["--output", str(args.out)]
+        with open(args.out, "w") as fout:
+            result = subprocess.run(cmd, stdout=fout)
+        return result.returncode
     return _run(cmd)
 
 
@@ -121,14 +130,15 @@ def cmd_native(args: argparse.Namespace) -> int:
     cmd = [
         sys.executable,
         str(TOOLS_DIR / "bench_qasm_native_simulator.py"),
-        "--manifest", str(args.manifest),
-        "--qasm2sop", str(args.qasm2sop),
-        "--sop-solve", str(args.sop_solve),
+        "--format", "jsonl",
         "--timeout", str(args.timeout),
+        str(args.manifest),
     ]
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        cmd += ["--output", str(args.out)]
+        with open(args.out, "w") as fout:
+            result = subprocess.run(cmd, stdout=fout)
+        return result.returncode
     return _run(cmd)
 
 
@@ -218,20 +228,71 @@ def _render_local(args: argparse.Namespace) -> int:
 
 
 def _render_full(args: argparse.Namespace) -> int:
-    """Render full scoreboard using tools/refresh_scoreboard.py."""
+    """Render full per-mode scoreboards and index using refresh_scoreboard.py + plot_scoreboard.py."""
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts"
-    output = args.output or REPO_ROOT / "scoreboard.md"
-    json_out = getattr(args, "json_out", None)
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "refresh_scoreboard.py"),
+    refresh = str(TOOLS_DIR / "refresh_scoreboard.py")
+    plot = str(TOOLS_DIR / "plot_scoreboard.py")
+    timeout_note = getattr(args, "timeout_note", "") or ""
+    rc = 0
+
+    # 1. sign scoreboard + JSON
+    sign_cmd = [
+        sys.executable, refresh,
         "--artifact-dir", str(artifact_dir),
         "--allow-missing",
-        "--output", str(output),
+        "--qsop-mode", "sign",
+        "--assets-subdir", "scoreboard-assets/sign",
+        "--output", str(REPO_ROOT / "scoreboard-sign.md"),
+        "--json", str(REPO_ROOT / "scoreboard-sign.json"),
     ]
-    if json_out:
-        cmd += ["--json", str(json_out)]
-    return _run(cmd)
+    if timeout_note:
+        sign_cmd += ["--timeout-note", timeout_note]
+    rc = rc or _run(sign_cmd)
+
+    # 2. labelled scoreboard + JSON
+    labelled_cmd = [
+        sys.executable, refresh,
+        "--artifact-dir", str(artifact_dir),
+        "--allow-missing",
+        "--qsop-mode", "labelled",
+        "--assets-subdir", "scoreboard-assets/labelled",
+        "--output", str(REPO_ROOT / "scoreboard-labelled.md"),
+        "--json", str(REPO_ROOT / "scoreboard-labelled.json"),
+    ]
+    if timeout_note:
+        labelled_cmd += ["--timeout-note", timeout_note]
+    rc = rc or _run(labelled_cmd)
+
+    # 3. sign SVGs
+    sign_assets = REPO_ROOT / "scoreboard-assets" / "sign"
+    rc = rc or _run([
+        sys.executable, plot,
+        "--scoreboard-json", str(REPO_ROOT / "scoreboard-sign.json"),
+        "--artifact-dir", str(artifact_dir),
+        "--qsop-mode", "sign",
+        "--output-dir", str(sign_assets),
+    ])
+
+    # 4. labelled SVGs
+    labelled_assets = REPO_ROOT / "scoreboard-assets" / "labelled"
+    rc = rc or _run([
+        sys.executable, plot,
+        "--scoreboard-json", str(REPO_ROOT / "scoreboard-labelled.json"),
+        "--artifact-dir", str(artifact_dir),
+        "--qsop-mode", "labelled",
+        "--output-dir", str(labelled_assets),
+    ])
+
+    # 5. index
+    rc = rc or _run([
+        sys.executable, refresh,
+        "--artifact-dir", str(artifact_dir),
+        "--allow-missing",
+        "--index",
+        "--output", str(REPO_ROOT / "scoreboard.md"),
+    ])
+
+    return rc
 
 
 # ---------------------------------------------------------------------------
@@ -294,11 +355,13 @@ def cmd_full(args: argparse.Namespace) -> int:
     # Render
     output = args.output or REPO_ROOT / "scoreboard.md"
     json_out = getattr(args, "json_out", None)
+    timeout_note = f"{int(args.timeout)} s" if getattr(args, "timeout", None) else ""
     render_args = argparse.Namespace(
         artifact_dir=artifact_dir,
         view="full",
         output=output,
         json_out=json_out,
+        timeout_note=timeout_note,
     )
     rc = rc or cmd_render(render_args)
 
@@ -433,6 +496,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("--output", type=pathlib.Path, default=None)
     p_render.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
                           help="Write normalized scoreboard intermediate JSON")
+    p_render.add_argument("--timeout-note", default="", metavar="TEXT", dest="timeout_note",
+                          help="Note the per-instance timeout in the mode scoreboard header (e.g. '30 s')")
     p_render.set_defaults(func=cmd_render)
 
     # ---- full ----

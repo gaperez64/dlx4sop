@@ -32,6 +32,9 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from render_scoreboard import record_qsop_mode as _record_qsop_mode
+
 # Solver colors
 SOLVER_COLORS: dict[str, str] = {
     "treewidth":         "#1f77b4",
@@ -73,6 +76,24 @@ NS_LABELS = [
 
 def _svg_text_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _write_placeholder_svg(output_path: pathlib.Path, title: str) -> None:
+    if output_path.exists():
+        return
+    placeholder = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="120">'
+        f'<rect width="720" height="120" fill="#f8f8f8"/>'
+        f'<text x="360" y="50" text-anchor="middle" font-family="sans-serif" '
+        f'font-size="14" fill="#555">{_svg_text_escape(title)}</text>'
+        f'<text x="360" y="80" text-anchor="middle" font-family="sans-serif" '
+        f'font-size="11" fill="#888">No benchmark records available. '
+        f'Regenerate after running the full scoreboard refresh.</text>'
+        f'</svg>'
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(placeholder, encoding="utf-8")
+    print(f"  Wrote placeholder {output_path}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +448,7 @@ def plot_solver_time_by_tier_svg(
 
     tiers = sorted(tier_backend_ns.keys(), key=_tier_key)
     if not tiers:
+        _write_placeholder_svg(output_path, "Solver time by tier")
         return
 
     W, H = 720, max(300, 80 * len(tiers) + 60)
@@ -516,6 +538,7 @@ def plot_speedup_vs_treewidth_svg(
 
     tiers = sorted(tier_ns.keys(), key=_tier_key)
     if not tiers:
+        _write_placeholder_svg(output_path, "Speedup relative to treewidth")
         return
 
     W, H = 640, 380
@@ -621,6 +644,7 @@ def plot_branch_dispatch_svg(
 
     tiers = sorted(tier_dispatch.keys(), key=_tier_key)
     if not tiers:
+        _write_placeholder_svg(output_path, "Branch dispatch by tier")
         return
 
     W, H = 560, 380
@@ -683,6 +707,7 @@ def plot_wmc_time_svg(
                    or "sop2wmc" in str(r.get("backend_config", "")).lower()]
 
     if not wmc_records:
+        _write_placeholder_svg(output_path, "WMC time breakdown by tier")
         return
 
     tier_data: dict[str, dict[str, int]] = collections.defaultdict(lambda: {"ganak_ns": 0, "export_ns": 0})
@@ -702,6 +727,7 @@ def plot_wmc_time_svg(
 
     tiers = sorted(tier_data.keys(), key=_tier_key)
     if not tiers:
+        _write_placeholder_svg(output_path, "WMC time breakdown by tier")
         return
 
     W, H = 520, 360
@@ -765,6 +791,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sources", action="append", dest="sources",
                         default=None, metavar="SOURCE",
                         help="Sources to plot survival curves for (default: all known)")
+    parser.add_argument("--qsop-mode", choices=("all", "sign", "labelled"), default="all",
+                        help="Filter records to this QSOP mode before plotting")
     args = parser.parse_args(argv)
 
     # Load records: prefer raw JSONL (richest), then summary-derived (tier plots only)
@@ -780,6 +808,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not records and args.artifact_dir.exists():
         records = load_records_from_artifacts(args.artifact_dir)
+
+    if args.qsop_mode != "all":
+        records = [r for r in records if _record_qsop_mode(r) == args.qsop_mode]
+        summary_records = [r for r in summary_records if _record_qsop_mode(r) == args.qsop_mode]
 
     # survival plots need individual records (raw JSONL); other plots work from summary
     tier_records = records if records else summary_records

@@ -21,31 +21,39 @@ def _load_tool():
     return module
 
 
+_VALID_JSON = {
+    "generated_at": "2026-01-01T00:00:00",
+    "tiers": ["0-32"],
+    "solver_summary": [
+        {
+            "tier": "0-32",
+            "config": "treewidth",
+            "backend": "treewidth",
+            "solved": 10,
+            "attempted": 10,
+        },
+    ],
+}
+
+_VALID_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><text>ok</text></svg>'
+
+
 def _make_valid_root(tmp: pathlib.Path) -> pathlib.Path:
-    """Create a minimal valid scoreboard directory tree under tmp."""
-    (tmp / "scoreboard-assets").mkdir()
-    (tmp / "scoreboard-assets" / "survival-test.svg").write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg"><text>ok</text></svg>',
-        encoding="utf-8",
-    )
+    """Create a minimal valid two-mode scoreboard directory tree under tmp."""
+    for mode in ("sign", "labelled"):
+        assets = tmp / "scoreboard-assets" / mode
+        assets.mkdir(parents=True, exist_ok=True)
+        (assets / "survival-feynmandd.svg").write_text(_VALID_SVG, encoding="utf-8")
+        md = (
+            f"# Scoreboard — {mode} QSOPs\n\n"
+            f"![Survival curves — FeynmanDD](scoreboard-assets/{mode}/survival-feynmandd.svg)\n"
+        )
+        (tmp / f"scoreboard-{mode}.md").write_text(md, encoding="utf-8")
+        (tmp / f"scoreboard-{mode}.json").write_text(json.dumps(_VALID_JSON), encoding="utf-8")
     (tmp / "scoreboard.md").write_text(
-        "# Scoreboard\n\n![Test](scoreboard-assets/survival-test.svg)\n",
-        encoding="utf-8",
-    )
-    (tmp / "scoreboard.json").write_text(
-        json.dumps({
-            "generated_at": "2026-01-01T00:00:00",
-            "tiers": ["0-32"],
-            "solver_summary": [
-                {
-                    "tier": "0-32",
-                    "config": "treewidth",
-                    "backend": "treewidth",
-                    "solved": 10,
-                    "attempted": 10,
-                },
-            ],
-        }),
+        "# Scoreboard\n\n"
+        "- [Sign QSOP scoreboard](scoreboard-sign.md)\n"
+        "- [Labelled QSOP scoreboard](scoreboard-labelled.md)\n",
         encoding="utf-8",
     )
     return tmp
@@ -62,17 +70,17 @@ def test_valid_tree_passes(tool):
 def test_missing_scoreboard_json(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard.json").unlink()
-        errors = tool.check_scoreboard_json(root)
+        (root / "scoreboard-sign.json").unlink()
+        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
         if not errors:
-            raise AssertionError("expected error for missing scoreboard.json")
+            raise AssertionError("expected error for missing scoreboard-sign.json")
 
 
 def test_invalid_json(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard.json").write_text("not json", encoding="utf-8")
-        errors = tool.check_scoreboard_json(root)
+        (root / "scoreboard-sign.json").write_text("not json", encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
         if not errors:
             raise AssertionError("expected error for invalid JSON")
 
@@ -80,10 +88,10 @@ def test_invalid_json(tool):
 def test_missing_required_key(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        data = json.loads((root / "scoreboard.json").read_text())
+        data = json.loads((root / "scoreboard-sign.json").read_text())
         del data["solver_summary"]
-        (root / "scoreboard.json").write_text(json.dumps(data), encoding="utf-8")
-        errors = tool.check_scoreboard_json(root)
+        (root / "scoreboard-sign.json").write_text(json.dumps(data), encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
         if not any("solver_summary" in e for e in errors):
             raise AssertionError("expected error about missing solver_summary")
 
@@ -91,11 +99,11 @@ def test_missing_required_key(tool):
 def test_solved_exceeds_attempted(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        data = json.loads((root / "scoreboard.json").read_text())
+        data = json.loads((root / "scoreboard-sign.json").read_text())
         data["solver_summary"][0]["solved"] = 99
         data["solver_summary"][0]["attempted"] = 10
-        (root / "scoreboard.json").write_text(json.dumps(data), encoding="utf-8")
-        errors = tool.check_scoreboard_json(root)
+        (root / "scoreboard-sign.json").write_text(json.dumps(data), encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
         if not any("solved" in e and "attempted" in e for e in errors):
             raise AssertionError("expected error when solved > attempted")
 
@@ -103,10 +111,10 @@ def test_solved_exceeds_attempted(tool):
 def test_missing_referenced_svg(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard.md").write_text(
-            "![X](scoreboard-assets/nonexistent.svg)\n", encoding="utf-8"
+        (root / "scoreboard-sign.md").write_text(
+            "![X](scoreboard-assets/sign/nonexistent.svg)\n", encoding="utf-8"
         )
-        errors = tool.check_scoreboard_assets(root)
+        errors = tool.check_mode_scoreboard_assets(root, "sign")
         if not any("nonexistent.svg" in e for e in errors):
             raise AssertionError("expected error for missing referenced SVG")
 
@@ -114,12 +122,21 @@ def test_missing_referenced_svg(tool):
 def test_non_svg_content(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard-assets" / "bad.svg").write_text(
+        (root / "scoreboard-assets" / "sign" / "bad.svg").write_text(
             "not an svg file", encoding="utf-8"
         )
-        errors = tool.check_scoreboard_assets(root)
+        errors = tool.check_all_svg_files(root)
         if not any("bad.svg" in e for e in errors):
             raise AssertionError("expected error for SVG without <svg tag")
+
+
+def test_missing_index_links(tool):
+    with tempfile.TemporaryDirectory() as td:
+        root = _make_valid_root(pathlib.Path(td))
+        (root / "scoreboard.md").write_text("# Scoreboard\n\nNo links here.\n", encoding="utf-8")
+        errors = tool.check_index_links(root)
+        if not errors:
+            raise AssertionError("expected error when index lacks mode links")
 
 
 def test_real_repo_artifacts(tool):
@@ -142,6 +159,7 @@ def main() -> int:
         ("solved_exceeds_attempted", test_solved_exceeds_attempted),
         ("missing_referenced_svg", test_missing_referenced_svg),
         ("non_svg_content", test_non_svg_content),
+        ("missing_index_links", test_missing_index_links),
         ("real_repo_artifacts", test_real_repo_artifacts),
     ]
     failed = []

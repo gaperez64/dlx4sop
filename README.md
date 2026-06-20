@@ -6,7 +6,8 @@ labelled quadratic SOPs with fixed-boundary circuit amplitudes as the current
 benchmark contract.
 
 Current corpus coverage, solver timings, and native simulator comparisons live
-in [scoreboard.md](scoreboard.md).
+in [scoreboard.md](scoreboard.md) (index), [scoreboard-sign.md](scoreboard-sign.md),
+and [scoreboard-labelled.md](scoreboard-labelled.md).
 
 ## Build
 
@@ -120,7 +121,12 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-The public performance summary is [scoreboard.md](scoreboard.md).
+The public performance summary is split into two mode-specific scoreboards plus
+an index:
+
+- [scoreboard.md](scoreboard.md) — index with combined totals and links
+- [scoreboard-sign.md](scoreboard-sign.md) — sign QSOP benchmarks
+- [scoreboard-labelled.md](scoreboard-labelled.md) — labelled QSOP benchmarks
 
 `tools/bench.py` is the unified benchmark entry point. It requires only the
 built binaries and the committed QSOP corpus for local runs; external tools
@@ -161,9 +167,14 @@ branch:no-rankwidth   (control: branch without rankwidth delegation)
 ```sh
 python3 tools/bench.py full \
     --artifact-dir artifacts/full \
-    --ganak /tmp/ganak/ganak \
-    --output scoreboard.md
+    --ganak /tmp/ganak/ganak
 ```
+
+This runs one benchmark pass (tagging each record with `qsop_mode`), then calls
+`bench.py render --view full` which produces:
+1. `scoreboard-sign.md` + `scoreboard-assets/sign/` SVGs (sign QSOPs only)
+2. `scoreboard-labelled.md` + `scoreboard-assets/labelled/` SVGs (labelled QSOPs only)
+3. `scoreboard.md` — combined index linking to both mode scoreboards
 
 Pass `--skip-wmc`, `--skip-native`, or `--skip-solver` to run a subset.
 
@@ -172,20 +183,24 @@ Pass `--skip-wmc`, `--skip-native`, or `--skip-solver` to run a subset.
 ```sh
 python3 tools/bench.py render \
     --artifact-dir /tmp/dlx4sop-artifacts \
-    --view full \
-    --output scoreboard.md
+    --view full
 ```
+
+This regenerates both mode scoreboards, their SVG plots, and the index from
+existing JSONL artifacts without re-running any experiments.
 
 ### Other benchmark tools
 
 - `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
 - `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
-- `tools/render_scoreboard.py`: render ad hoc reports from JSONL artifact inputs.
+- `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
 - `tools/run_corpus_benchmarks.py`: full-pipeline orchestrator (alternative to `bench.py full`).
 
 ## Current Status
 
-[scoreboard.md](scoreboard.md) tracks corpus coverage, solver timings, native
-simulator comparisons, and the current recommended solver configuration for
-each benchmark tier.
+[scoreboard.md](scoreboard.md) is the index: combined coverage totals and links
+to the per-mode scoreboards. [scoreboard-sign.md](scoreboard-sign.md) and
+[scoreboard-labelled.md](scoreboard-labelled.md) track corpus coverage, solver
+timings, native simulator comparisons, and the current recommended solver
+configuration for each benchmark tier.

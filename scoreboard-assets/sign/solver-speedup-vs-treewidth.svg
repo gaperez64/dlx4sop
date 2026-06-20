@@ -16,18 +16,12 @@
 <line x1="60.0" y1="136.7" x2="480.0" y2="136.7" stroke="#eee" stroke-width="1.0"/>
 <text x="55.0" y="44.0" text-anchor="end" fill="#666" font-size="9">2.00×</text>
 <line x1="60.0" y1="40.0" x2="480.0" y2="40.0" stroke="#eee" stroke-width="1.0"/>
-<text x="102.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">0-32</text>
-<rect x="64.0" y="233.3" width="26.0" height="44.5" fill="#ff7f0e" opacity="0.40"/>
-<rect x="92.0" y="233.3" width="26.0" height="96.7" fill="#8c564b" opacity="0.40"/>
-<text x="186.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">33-64</text>
-<rect x="148.0" y="233.3" width="26.0" height="86.3" fill="#ff7f0e" opacity="0.40"/>
-<rect x="176.0" y="233.3" width="26.0" height="96.7" fill="#8c564b" opacity="0.40"/>
-<text x="270.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">65-128</text>
-<rect x="232.0" y="233.3" width="26.0" height="70.1" fill="#ff7f0e" opacity="0.40"/>
-<rect x="260.0" y="233.3" width="26.0" height="96.7" fill="#8c564b" opacity="0.40"/>
-<text x="354.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">129-256</text>
-<rect x="316.0" y="233.3" width="26.0" height="45.9" fill="#ff7f0e" opacity="0.40"/>
-<text x="438.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">257-512 sample</text>
+<text x="130.0" y="345.0" text-anchor="middle" fill="#444" font-size="10"></text>
+<rect x="64.0" y="40.0" width="44.7" height="193.3" fill="#ff7f0e" opacity="0.80"/>
+<rect x="110.7" y="40.0" width="44.7" height="193.3" fill="#8c564b" opacity="0.80"/>
+<text x="270.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">tier-33-64</text>
+<rect x="204.0" y="150.6" width="44.7" height="82.8" fill="#ff7f0e" opacity="0.80"/>
+<text x="410.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">tier-65-128</text>
 <rect x="490.0" y="41.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
 <text x="505.0" y="50.0" text-anchor="start" fill="#333" font-size="10">branch:auto</text>
 <rect x="490.0" y="57.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>

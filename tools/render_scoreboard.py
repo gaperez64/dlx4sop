@@ -103,6 +103,19 @@ def labelled_path(text: str) -> tuple[str, pathlib.Path]:
     return path.stem, path
 
 
+def record_qsop_mode(record: dict) -> str:
+    mode = record.get("qsop_mode")
+    if isinstance(mode, str) and mode:
+        return mode
+    inp, outp = record.get("input"), record.get("output")
+    if inp is not None and outp is not None:
+        return "labelled" if inp != outp else "sign"
+    legacy = record.get("mode")
+    if isinstance(legacy, str) and legacy:
+        return legacy
+    return "unknown"
+
+
 def format_ns(ns: int) -> str:
     if ns >= 1_000_000_000:
         return f"{ns / 1_000_000_000:.2f} s"
@@ -416,220 +429,11 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
     return [grouped[key] for key in sorted(grouped)]
 
 
-def key_stats(stats: dict[str, int]) -> str:
-    parts = []
-    if "wmc_export_elapsed_ns" in stats or "wmc_ganak_elapsed_ns" in stats:
-        parts.append(
-            f"export {format_ns(stats.get('wmc_export_elapsed_ns', 0))}, "
-            f"ganak {format_ns(stats.get('wmc_ganak_elapsed_ns', 0))}, "
-            f"mismatches {stats.get('wmc_mismatches', 0)}"
-        )
-        return "; ".join(parts)
-    if "search_nodes" in stats:
-        parts.append(f"{stats['search_nodes']} nodes")
-    if "leaf_assignments" in stats:
-        parts.append(f"{stats['leaf_assignments']} leaves")
-    if "cache_hits" in stats or "cache_misses" in stats:
-        cache = (
-            f"cache hits={stats.get('cache_hits', 0)}, "
-            f"misses={stats.get('cache_misses', 0)}, hit rate={cache_hit_rate(stats)}"
-        )
-        if stats.get("cache_avoided_nodes", 0):
-            cache += (
-                f", avoided nodes {stats['cache_avoided_nodes']}, "
-                f"avoided node rate {cache_avoided_node_rate(stats)}"
-            )
-        if stats.get("cache_canonical_hits", 0):
-            cache += f", canonical hits {stats['cache_canonical_hits']}"
-        if stats.get("cache_canonical_lookups", 0) or stats.get("cache_canonical_stores", 0):
-            cache += (
-                f", canonical lookups {stats.get('cache_canonical_lookups', 0)}, "
-                f"canonical stores {stats.get('cache_canonical_stores', 0)}"
-            )
-        if "cache_entries" in stats:
-            cache += (
-                f", entries {stats['cache_entries']}, "
-                f"canonical entries {stats.get('cache_canonical_entries', 0)}, "
-                f"canonical entry rate {cache_canonical_entry_rate(stats)}, "
-                f"slots {stats.get('cache_stored_residue_slots', 0)}"
-            )
-        if stats.get("cache_estimated_bytes", 0):
-            cache += (
-                f", key bytes {stats.get('cache_key_bytes', 0)}, "
-                f"count bytes {stats.get('cache_count_bytes', 0)}, "
-                f"estimated bytes {stats['cache_estimated_bytes']}"
-            )
-        parts.append(cache)
-    if "cache_lookup_elapsed_ns" in stats or "cache_store_elapsed_ns" in stats:
-        parts.append(
-            f"cache trace lookup={stats.get('cache_lookup_events', 0)} events/"
-            f"{format_ns(stats.get('cache_lookup_elapsed_ns', 0))}, "
-            f"store={stats.get('cache_store_events', 0)} events/"
-            f"{format_ns(stats.get('cache_store_elapsed_ns', 0))}"
-        )
-    if "cache_canonical_lookup_elapsed_ns" in stats or "cache_canonical_store_elapsed_ns" in stats:
-        parts.append(
-            f"canonical cache trace lookup={stats.get('cache_canonical_lookup_events', 0)} events/"
-            f"{format_ns(stats.get('cache_canonical_lookup_elapsed_ns', 0))}, "
-            f"store={stats.get('cache_canonical_store_events', 0)} events/"
-            f"{format_ns(stats.get('cache_canonical_store_elapsed_ns', 0))}"
-        )
-    if "components" in stats:
-        parts.append(f"{stats['components']} components")
-    component_kernel = component_kernel_text(stats)
-    if component_kernel:
-        parts.append(f"component kernels {component_kernel}")
-    if "rankwidth_width" in stats:
-        parts.append(f"rw width {stats['rankwidth_width']}")
-    if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
-        parts.append(
-            f"rw labelled-cut-signature={stats.get('rankwidth_labelled_width', 0)}, "
-            f"support={stats.get('rankwidth_support_width', 0)}"
-        )
-    if "treewidth_width" in stats:
-        parts.append(f"tw width {stats['treewidth_width']}")
-    table = max(
-        stats.get("rankwidth_max_table_entries", 0),
-        stats.get("treewidth_max_table_entries", 0),
-        stats.get("max_table_entries", 0),
-    )
-    if table:
-        parts.append(f"max table {table}")
-    if "rankwidth_table_forecast" in stats:
-        parts.append(f"rw table forecast {stats['rankwidth_table_forecast']}")
-    if "rankwidth_join_pair_forecast" in stats:
-        parts.append(f"rw join forecast {stats['rankwidth_join_pair_forecast']}")
-    if "rankwidth_labelled_exact_cuts" in stats or "rankwidth_labelled_proxy_cuts" in stats:
-        parts.append(
-            f"rw cut estimates exact={stats.get('rankwidth_labelled_exact_cuts', 0)}, "
-            f"proxy={stats.get('rankwidth_labelled_proxy_cuts', 0)}, "
-            f"assignments={stats.get('rankwidth_labelled_exact_assignments', 0)}"
-        )
-    if "rankwidth_max_signature_entries" in stats or "max_signature_entries" in stats:
-        parts.append(f"max signatures {max(stats.get('rankwidth_max_signature_entries', 0), stats.get('max_signature_entries', 0))}")
-    if "join_pairs" in stats:
-        parts.append(f"{stats['join_pairs']} join pairs")
-    kernel_text = rankwidth_kernel_text(stats)
-    if kernel_text:
-        parts.append(f"rankwidth kernels {kernel_text}")
-    if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
-        parts.append(
-            f"delegations tw={stats.get('treewidth_delegations', 0)}, "
-            f"rw={stats.get('rankwidth_delegations', 0)}"
-        )
-    dispatch = branch_dispatch_text(stats)
-    if dispatch:
-        parts.append(f"branch dispatch {dispatch}")
-    if (
-        "branch_fallthroughs" in stats
-        or "branch_treewidth_skips" in stats
-        or "branch_rankwidth_skips" in stats
-    ):
-        parts.append(
-            f"branch policy fallthroughs={stats.get('branch_fallthroughs', 0)}, "
-            f"tw skips={stats.get('branch_treewidth_skips', 0)}, "
-            f"rw skips={stats.get('branch_rankwidth_skips', 0)}"
-        )
-        if "branch_fallthrough_max_vars" in stats:
-            parts.append(
-                f"branch fallthrough max vars={stats['branch_fallthrough_max_vars']}"
-            )
-        treewidth_skip_reasons = branch_skip_reason_text(stats, BRANCH_TREEWIDTH_SKIP_REASON_FIELDS)
-        if treewidth_skip_reasons:
-            parts.append(f"tw skip reasons {treewidth_skip_reasons}")
-        rankwidth_skip_reasons = branch_skip_reason_text(stats, BRANCH_RANKWIDTH_SKIP_REASON_FIELDS)
-        if rankwidth_skip_reasons:
-            parts.append(f"rw skip reasons {rankwidth_skip_reasons}")
-    if "max_residual_min_fill_width" in stats or "max_residual_prefix_cut_rank" in stats:
-        parts.append(
-            f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
-            f"cut-rank={stats.get('max_residual_prefix_cut_rank', 0)}"
-        )
-    if "branch_rankwidth_labelled_width" in stats or "branch_rankwidth_support_width" in stats:
-        parts.append(
-            f"branch rw probe labelled-cut-signature={stats.get('branch_rankwidth_labelled_width', 0)}, "
-            f"support={stats.get('branch_rankwidth_support_width', 0)}"
-        )
-    if "branch_rankwidth_table_forecast" in stats or "branch_treewidth_table_forecast" in stats:
-        parts.append(
-            f"branch table forecast rw={stats.get('branch_rankwidth_table_forecast', 0)}, "
-            f"tw={stats.get('branch_treewidth_table_forecast', 0)}"
-        )
-    if "branch_rankwidth_join_pair_forecast" in stats or "branch_treewidth_join_pair_forecast" in stats:
-        parts.append(
-            f"branch join forecast rw={stats.get('branch_rankwidth_join_pair_forecast', 0)}, "
-            f"tw={stats.get('branch_treewidth_join_pair_forecast', 0)}"
-        )
-    if "branch_treewidth_order_width" in stats:
-        parts.append(f"branch tw order width={stats['branch_treewidth_order_width']}")
-    if "branch_root_width_probe_width" in stats:
-        parts.append(
-            f"branch root tw probe width={stats['branch_root_width_probe_width']}, "
-            f"{stats.get('branch_root_width_probe_events', 0)} events/"
-            f"{format_ns(stats.get('branch_root_width_probe_elapsed_ns', 0))}"
-        )
-    if "max_residual_vars" in stats or "max_residual_components" in stats:
-        parts.append(
-            f"max residual vars={stats.get('max_residual_vars', 0)}, "
-            f"components={stats.get('max_residual_components', 0)}, "
-            f"largest={stats.get('max_residual_largest_component', 0)}"
-        )
-    return "; ".join(parts) if parts else ""
-
-
-def solver_status_stats(row: dict) -> str:
-    parts = [key_stats(row["stats"])]
-    if row.get("timeouts"):
-        parts.append(f"{row['timeouts']} timeouts")
-    if row.get("errors"):
-        parts.append(f"{row['errors']} errors")
-    return "; ".join(part for part in parts if part)
-
-
 def cap_value(record: dict, key: str) -> str:
     if key not in record:
         return "not recorded"
     value = record.get(key)
     return "none" if value is None else str(value)
-
-
-def summarize_native_records(named_records: Iterable[tuple[str, list[dict]]]) -> list[dict]:
-    grouped: dict[tuple[str, str], dict] = {}
-
-    for tier, records in named_records:
-        for record in records:
-            key = (tier, record.get("engine") or "unknown")
-            entry = grouped.setdefault(
-                key,
-                {
-                    "tier": tier,
-                    "engine": key[1],
-                    "records": 0,
-                    "ok": 0,
-                    "skipped": 0,
-                    "elapsed_ns": 0,
-                    "max_qubits": 0,
-                    "qubit_caps": collections.Counter(),
-                    "timeouts": collections.Counter(),
-                    "memory_caps": collections.Counter(),
-                    "errors": collections.Counter(),
-                },
-            )
-            entry["records"] += 1
-            entry["qubit_caps"][cap_value(record, "qubit_cap")] += 1
-            entry["timeouts"][cap_value(record, "timeout_seconds")] += 1
-            entry["memory_caps"][cap_value(record, "memory_limit_mib")] += 1
-            if record.get("status") == "ok":
-                entry["ok"] += 1
-                entry["elapsed_ns"] += int(record.get("elapsed_ns") or 0)
-                if isinstance(record.get("qubits"), int):
-                    entry["max_qubits"] = max(entry["max_qubits"], int(record["qubits"]))
-            else:
-                entry["skipped"] += 1
-                error = str(record.get("error") or "")
-                if error:
-                    entry["errors"][error] += 1
-    return [grouped[key] for key in sorted(grouped)]
 
 
 def has_comparison_identity(record: dict) -> bool:
@@ -749,95 +553,6 @@ def write_import_tables(report_paths: list[pathlib.Path], file: TextIO) -> None:
             f"{row['sign']} | {row['labelled']} |",
             file=file,
         )
-
-
-def write_solver_tables(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
-    rows = summarize_solver_records(named_records)
-    if not rows:
-        return
-    print("\n## Solver Results\n", file=file)
-    print("| Tier | Backend/configuration | Solved / records | Total solve time | Key stats |", file=file)
-    print("| --- | --- | ---: | ---: | --- |", file=file)
-    for row in sorted(rows, key=lambda item: (tier_sort_key(item["tier"]), item["elapsed_ns"], item["config"])):
-        print(
-            f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
-            f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} | "
-            f"{markdown_escape(solver_status_stats(row))} |",
-            file=file,
-        )
-
-
-def write_native_tables(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
-    rows = summarize_native_records(named_records)
-    if not rows:
-        return
-    print("\n## Native Simulator Results\n", file=file)
-    print(
-        "| Tier | Engine | OK / records | Total elapsed | Max qubits | Qubit cap | Timeout | Memory cap | Main skip reason |",
-        file=file,
-    )
-    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
-    for row in rows:
-        reason = row["errors"].most_common(1)[0][0] if row["errors"] else ""
-        qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
-        timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
-        memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
-        print(
-            f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['engine'])}` | "
-            f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} | {row['max_qubits']} | "
-            f"{markdown_escape(qubit_cap)} | {markdown_escape(timeout)} | {markdown_escape(memory_cap)} | "
-            f"{markdown_escape(reason)} |",
-            file=file,
-        )
-
-
-def write_native_comparison_tables(
-    solver_records: list[tuple[str, list[dict]]],
-    native_records: list[tuple[str, list[dict]]],
-    file: TextIO,
-) -> None:
-    rows = summarize_native_comparison_records(solver_records, native_records)
-    if not rows:
-        return
-    print("\n## Native Common-Row Comparison\n", file=file)
-    print(
-        "Rows join solver and native simulator JSONL on source, relative path, case, input, and output. "
-        "Times and speedups use rows where both completed. Amplitude error columns use rows "
-        "where both sides recorded amplitudes.",
-        file=file,
-    )
-    for source in sorted({row["source"] for row in rows}):
-        print(f"\n### {markdown_escape(source)}\n", file=file)
-        print(
-            "| Tier | QSOP solver | Native engine | Both OK / matched | QSOP solve time | Native time | "
-            "QSOP speedup | Amplitude checked | Mean amplitude error | Max amplitude error | "
-            "Max boundary qubits | Qubit cap | Timeout | Memory cap | Main native skip reason |",
-            file=file,
-        )
-        print(
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
-            file=file,
-        )
-        for row in [candidate for candidate in rows if candidate["source"] == source]:
-            qubit_cap = row["qubit_caps"].most_common(1)[0][0] if row["qubit_caps"] else "not recorded"
-            timeout = row["timeouts"].most_common(1)[0][0] if row["timeouts"] else "not recorded"
-            memory_cap = row["memory_caps"].most_common(1)[0][0] if row["memory_caps"] else "not recorded"
-            reason = row["errors"].most_common(1)[0][0] if row["errors"] else ""
-            mean_error = (
-                row["amplitude_abs_error_sum"] / row["amplitude_checked"]
-                if row["amplitude_checked"]
-                else 0.0
-            )
-            print(
-                f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
-                f"`{markdown_escape(row['engine'])}` | {row['both_ok']} / {row['matched']} | "
-                f"{format_ns(row['solver_elapsed_ns'])} | {format_ns(row['native_elapsed_ns'])} | "
-                f"{comparison_speedup(row['native_elapsed_ns'], row['solver_elapsed_ns'])} | "
-                f"{row['amplitude_checked']} | {mean_error:.3g} | {row['amplitude_max_abs_error']:.3g} | "
-                f"{row['max_boundary_qubits']} | {markdown_escape(qubit_cap)} | "
-                f"{markdown_escape(timeout)} | {markdown_escape(memory_cap)} | {markdown_escape(reason)} |",
-                file=file,
-            )
 
 
 def write_mqt_scaling_table(scaling_table_path: pathlib.Path | None, file: TextIO) -> None:
@@ -1005,8 +720,6 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render scoreboard Markdown tables from structured benchmark outputs.")
     parser.add_argument("--import-report", action="append", type=pathlib.Path, default=[])
-    parser.add_argument("--solver-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
-    parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="LABEL=PATH")
     parser.add_argument("--local-jsonl", action="append", type=pathlib.Path, default=[], metavar="PATH",
                         help="Local sop_bench_result_v2 JSONL file(s) for local backend summary")
     parser.add_argument("--mqt-tuning-jsonl", type=pathlib.Path, default=None, metavar="PATH",
@@ -1029,8 +742,6 @@ def main(argv: list[str]) -> int:
             out_file = open(args.output, "w", encoding="utf-8")
         out = out_file if out_file is not None else sys.stdout
 
-        solver_records = [(label, read_jsonl(path)) for label, path in args.solver_jsonl]
-        native_records = [(label, read_jsonl(path)) for label, path in args.native_jsonl]
         if args.mqt_tuning_jsonl:
             mqt_records = read_jsonl(args.mqt_tuning_jsonl)
             write_mqt_tuning_summary(mqt_records, out)
@@ -1041,9 +752,6 @@ def main(argv: list[str]) -> int:
             write_local_backend_summary(local_records, out)
         if args.import_report:
             write_import_tables(args.import_report, out)
-        write_solver_tables(solver_records, out)
-        write_native_tables(native_records, out)
-        write_native_comparison_tables(solver_records, native_records, out)
         write_mqt_scaling_table(args.mqt_scaling_table, out)
         write_mqt_manifest_notice(args.mqt_manifest_dir, out)
     except (RuntimeError, OSError) as exc:

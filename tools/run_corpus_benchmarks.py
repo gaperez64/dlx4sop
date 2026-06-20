@@ -28,6 +28,7 @@ TOOLS_DIR = REPO_ROOT / "tools"
 SOLVER_TIERS = ("0-32", "33-64", "65-128", "129-256", "257-512 sample")
 NATIVE_TIERS = ("33-64", "65-128", "129-256")
 WMC_RESIDUE_TIERS = ("0-32", "33-64")
+MQT_SOLVER_TIERS = ("33-64", "65-128")
 
 SOLVER_TIMEOUT = {
     "0-32": 30,
@@ -265,18 +266,93 @@ def run_native_jobs(
         run_to_jsonl(cmd, output, args.verbose)
 
 
-def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
-    refresh = TOOLS_DIR / "refresh_scoreboard.py"
-    cmd = [
-        sys.executable, str(refresh),
-        "--artifact-dir", str(artifact_dir),
-        "--allow-missing",
-        "--output", str(args.output),
+def run_mqt_solver_jobs(
+    args: argparse.Namespace,
+    artifact_dir: pathlib.Path,
+) -> None:
+    """Run sop-solve on the MQT materialized QSOP corpus (bench_sop_local.py per tier)."""
+    bench = TOOLS_DIR / "bench_sop_local.py"
+    sop_solve = args.sop_solve
+    mqt_root = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "materialized-external" / "mqt-bench"
+    mqt_jobs = [
+        ("treewidth", ["--backend", "treewidth"]),
+        ("branch-hybrid", ["--backend", "branch:auto"]),
     ]
-    print(f"\n--- refresh scoreboard → {args.output} ---", file=sys.stderr)
+    if not mqt_root.exists():
+        print(f"warning: MQT corpus root missing: {mqt_root}", file=sys.stderr)
+        return
+    for tier in MQT_SOLVER_TIERS:
+        tier_dir = mqt_root / f"tier-{tier}"
+        if not tier_dir.exists():
+            print(f"warning: MQT corpus tier dir missing: {tier_dir}", file=sys.stderr)
+            continue
+        timeout = str(args.timeout if args.timeout is not None else SOLVER_TIMEOUT.get(tier, 30))
+        max_vars = str(TIER_MAX_VARS.get(tier, 128))
+        for backend_name, extra_args in mqt_jobs:
+            slug = tier.replace(" ", "-")
+            stem = f"mqt-bench-tier-{slug}-{backend_name}-current"
+            output = artifact_dir / f"{stem}.jsonl"
+            cmd = [
+                sys.executable, str(bench),
+                "--sop-solve", str(sop_solve),
+                "--corpus-dir", str(mqt_root),
+                "--tier", f"tier-{tier}",
+                "--timeout", timeout,
+                "--max-vars", max_vars,
+                "--out", str(output),
+                *extra_args,
+            ]
+            print(f"\n--- MQT solver: {tier} / {backend_name} ---", file=sys.stderr)
+            result = subprocess.run([str(a) for a in cmd])
+            if result.returncode not in (0, 1):
+                print(f"warning: MQT solver job exited {result.returncode}", file=sys.stderr)
+
+
+def run_mqt_native_jobs(
+    args: argparse.Namespace,
+    manifests_dir: pathlib.Path,
+    artifact_dir: pathlib.Path,
+) -> None:
+    """Run native simulators on MQT QASM manifests."""
+    bench = TOOLS_DIR / "bench_qasm_native_simulator.py"
+    mqt_manifests = manifests_dir / "mqt"
+
+    for tier in MQT_SOLVER_TIERS:
+        slug = tier.replace(" ", "-")
+        mf = mqt_manifests / f"tier-{slug}.json"
+        if not mf.exists():
+            print(f"warning: MQT native manifest missing: {mf}", file=sys.stderr)
+            continue
+        output = artifact_dir / f"mqt-bench-tier-{slug}-native-current.jsonl"
+        cmd = [
+            sys.executable, str(bench),
+            str(mf),
+            "--engine", "all",
+            "--max-qubits", str(args.native_max_qubits),
+            "--engine-qubit-cap", f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
+            "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
+            "--memory-limit-mib", str(args.memory_limit_mib),
+            "--skip-unsupported",
+            "--format", "jsonl",
+        ]
+        print(f"\n--- MQT native: {tier} ---", file=sys.stderr)
+        run_to_jsonl(cmd, output, args.verbose)
+
+
+def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    bench = TOOLS_DIR / "bench.py"
+    timeout_s = int(args.timeout) if args.timeout else 30
+    cmd = [
+        sys.executable, str(bench),
+        "render",
+        "--artifact-dir", str(artifact_dir),
+        "--view", "full",
+        "--timeout-note", f"{timeout_s} s",
+    ]
+    print("\n--- render full scoreboards (sign + labelled + index) ---", file=sys.stderr)
     result = subprocess.run([str(a) for a in cmd])
     if result.returncode != 0:
-        print("warning: refresh_scoreboard.py exited non-zero", file=sys.stderr)
+        print("warning: bench.py render exited non-zero", file=sys.stderr)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -310,10 +386,12 @@ def main(argv: list[str]) -> int:
 
     if not args.skip_solver:
         run_solver_jobs(args, manifests_dir, artifact_dir)
+        run_mqt_solver_jobs(args, artifact_dir)
     if not args.skip_wmc:
         run_wmc_jobs(args, manifests_dir, artifact_dir)
     if not args.skip_native:
         run_native_jobs(args, manifests_dir, artifact_dir)
+        run_mqt_native_jobs(args, manifests_dir, artifact_dir)
     if not args.skip_scoreboard:
         run_scoreboard(args, artifact_dir)
     return 0

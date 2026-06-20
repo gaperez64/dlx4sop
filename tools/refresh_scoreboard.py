@@ -25,6 +25,7 @@ from render_scoreboard import (
     markdown_escape,
     read_jsonl,
     rankwidth_kernel_text,
+    record_qsop_mode,
     solver_config,
     summarize_native_comparison_records,
     summarize_solver_records,
@@ -75,10 +76,19 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amplitude-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amp-soft-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amp-block-current.jsonl"),
+    # MQT Bench materialized corpus (tiers 33-64 and 65-128, GHZ/BV/QFT families)
+    ("33-64", "mqt-bench-tier-33-64-treewidth-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-branch-hybrid-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-treewidth-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-branch-hybrid-current.jsonl"),
 )
 
 DEFAULT_NATIVE_ARTIFACTS = tuple(
-    (tier, f"dlx4sop-tier-{tier}-native-all-current.jsonl") for tier in NATIVE_TIERS
+    (tier, f"dlx4sop-tier-{tier.replace(' ', '-')}-native-all-current.jsonl") for tier in NATIVE_TIERS
+) + (
+    # MQT Bench native simulator comparisons
+    ("33-64", "mqt-bench-tier-33-64-native-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-native-current.jsonl"),
 )
 
 
@@ -109,7 +119,7 @@ def record_identity(tier: str, record: dict) -> tuple:
 
 
 def mode_name(record: dict) -> str:
-    return str(record.get("qsop_mode") or record.get("mode") or "unknown")
+    return record_qsop_mode(record)
 
 
 def default_solver_jsonl(artifact_dir: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
@@ -603,6 +613,236 @@ def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) ->
     )
 
 
+def write_condensed_solver_table(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
+    rows = summarize_solver_records(named_records)
+    print("## Internal Solver Configurations\n", file=file)
+    print("Best configuration per tier at a glance.\n", file=file)
+    print("| Tier | Configuration | Solved | Total solve time |", file=file)
+    print("| --- | --- | ---: | ---: |", file=file)
+    for row in sorted(rows, key=lambda item: (tier_sort_key(item["tier"]), item["elapsed_ns"], item["config"])):
+        print(
+            f"| {markdown_escape(row['tier'])} | `{markdown_escape(row['config'])}` | "
+            f"{row['ok']} / {row['records']} | {format_ns(row['elapsed_ns'])} |",
+            file=file,
+        )
+
+
+def write_condensed_competitor_table(
+    solver_records: list[tuple[str, list[dict]]],
+    native_records: list[tuple[str, list[dict]]],
+    file: TextIO,
+) -> None:
+    best_records = filter_records_by_config(solver_records, best_solver_configs(solver_records))
+    rows = summarize_native_comparison_records(best_records, native_records)
+    print("\n## Competitor Comparisons\n", file=file)
+    print("Best-performing native simulator per source and tier.\n", file=file)
+    for source in sorted({row["source"] for row in rows}, key=source_sort_key):
+        print(f"### {markdown_escape(source)}\n", file=file)
+        print("| Tier | QSOP time | Best native | Native time | Best speedup |", file=file)
+        print("| --- | ---: | --- | ---: | ---: |", file=file)
+        source_rows = [row for row in rows if row["source"] == source and row["both_ok"] > 0]
+        by_tier: dict[str, dict] = {}
+        for row in source_rows:
+            if row["solver_elapsed_ns"] <= 0:
+                continue
+            tier = row["tier"]
+            speedup_val = row["native_elapsed_ns"] / row["solver_elapsed_ns"]
+            if tier not in by_tier or speedup_val > by_tier[tier]["_speedup"]:
+                by_tier[tier] = {**row, "_speedup": speedup_val}
+        for tier in sorted(by_tier, key=tier_sort_key):
+            row = by_tier[tier]
+            sp = row["_speedup"]
+            speedup_str = f"**{sp:.2f}x**" if sp >= 1 else f"{sp:.2f}x"
+            print(
+                f"| {markdown_escape(tier)} | {format_ns(row['solver_elapsed_ns'])} | "
+                f"`{markdown_escape(row['engine'])}` | {format_ns(row['native_elapsed_ns'])} | "
+                f"{speedup_str} |",
+                file=file,
+            )
+        print("", file=file)
+
+
+def write_mode_scoreboard(
+    solver_records: list[tuple[str, list[dict]]],
+    native_records: list[tuple[str, list[dict]]],
+    *,
+    mode: str,
+    assets_subdir: str,
+    file: TextIO,
+    timeout_note: str = "",
+) -> None:
+    filtered_solver = [
+        (tier, [r for r in records if record_qsop_mode(r) == mode])
+        for tier, records in solver_records
+    ]
+    filtered_solver = [(t, rs) for t, rs in filtered_solver if rs]
+    filtered_native = [
+        (tier, [r for r in records if record_qsop_mode(r) == mode])
+        for tier, records in native_records
+    ]
+    filtered_native = [(t, rs) for t, rs in filtered_native if rs]
+
+    today = _datetime.date.today().isoformat()
+    print(f"# Scoreboard — {mode} QSOPs\n", file=file)
+    updated_line = f"Last updated: {today}."
+    if timeout_note:
+        updated_line += f" Per-instance timeout: {timeout_note}."
+    print(updated_line + "\n", file=file)
+    print(
+        "This tracks progress toward a competitive exact strong simulator based on "
+        "labelled quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "strong simulation: import a static circuit into QSOP, solve the exact "
+        "residue-count histogram, and compare with native simulators where possible.\n",
+        file=file,
+    )
+
+    non_wmc = [(t, [r for r in rs if r.get("backend") != "wmc"]) for t, rs in filtered_solver]
+    non_wmc = [(t, rs) for t, rs in non_wmc if rs]
+    rows = coverage_by_source(non_wmc)
+    print("## Benchmarks\n", file=file)
+    print(
+        "Counts are fixed-boundary QSOP rows currently used in solver comparisons. "
+        "The 257-512 column is an exploratory stratified sample and is shown as "
+        "solved / attempted when timeouts remain.\n",
+        file=file,
+    )
+    print(
+        "| Source | Upstream | Total solved | 0-32 | 33-64 | 65-128 | 129-256 | 257-512 sample |",
+        file=file,
+    )
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    total_solved = 0
+    total_attempted_large = 0
+    total_solved_large = 0
+    for source in sorted(rows, key=source_sort_key):
+        entry = rows[source]
+        solved = len(set().union(*entry["solved"].values())) if entry["solved"] else 0
+        total_solved += solved
+        total_attempted_large += len(entry["attempted"].get("257-512 sample", ()))
+        total_solved_large += len(entry["solved"].get("257-512 sample", ()))
+        print(
+            f"| {markdown_escape(source)} | {markdown_escape(entry['url'] or SOURCE_URLS.get(source, ''))} | "
+            f"{solved} | "
+            f"{tier_cell(entry, '0-32')} | {tier_cell(entry, '33-64')} | "
+            f"{tier_cell(entry, '65-128')} | {tier_cell(entry, '129-256')} | "
+            f"{tier_cell(entry, '257-512 sample')} |",
+            file=file,
+        )
+    print(
+        f"\nTotal current solved coverage: **{total_solved} fixed-boundary benchmark rows**.",
+        file=file,
+    )
+    if total_attempted_large:
+        print(
+            f"The 257-512 exploratory sample contributes {total_solved_large} solved rows "
+            f"out of {total_attempted_large} attempted under the current timeout cap.",
+            file=file,
+        )
+
+    print("\n## Survival Curves\n", file=file)
+    print(
+        "Fraction of instances solved within a given wall-clock budget per backend. "
+        "Higher and further left is better.\n",
+        file=file,
+    )
+    print("### FeynmanDD\n", file=file)
+    print(f"![Survival curves — FeynmanDD]({assets_subdir}/survival-feynmandd.svg)\n", file=file)
+    print("### MQT Bench (small, ≤32 qubits)\n", file=file)
+    print(
+        "Pre-expansion set: circuits with at most 32 qubits, compared against native "
+        "statevector simulators. QSOP is not faster on this set — dense statevectors win "
+        "at low qubit counts.\n",
+        file=file,
+    )
+    print(f"![Survival curves — MQT Bench (0-32 tier)]({assets_subdir}/survival-mqt-bench.svg)\n", file=file)
+    print("### MQT Bench (large, 34–128 qubits)\n", file=file)
+    print(
+        "Expanded set: GHZ and BV circuits at 34–128 qubits. The native baseline is "
+        "`qiskit-clifford` (stabilizer formalism, O(n²) memory) because statevector engines "
+        "were killed or timed out at 34+ qubits (34-qubit statevector ≈ 272 GB). This plot "
+        "is regenerated with the rest of the scoreboard when new QSOP and native artifacts "
+        "are available.\n",
+        file=file,
+    )
+    print(
+        f"![Survival curves — MQT Bench (33-64 and 65-128 tiers)]"
+        f"({assets_subdir}/survival-mqt-bench-large.svg)\n",
+        file=file,
+    )
+    print("### PyZX\n", file=file)
+    print(f"![Survival curves — PyZX]({assets_subdir}/survival-pyzx.svg)\n", file=file)
+
+    print("## Solver Time by Tier\n", file=file)
+    print("Median solve time per tier, log scale. Only `ok` rows counted.\n", file=file)
+    print(f"![Solver time by tier]({assets_subdir}/solver-time-by-tier.svg)\n", file=file)
+
+    print("## Speedup vs Treewidth Baseline\n", file=file)
+    print(
+        "Speedup of each backend relative to treewidth on matched pairs. "
+        "Bars above 1.0x mean the backend is faster.\n",
+        file=file,
+    )
+    print(f"![Speedup vs treewidth]({assets_subdir}/solver-speedup-vs-treewidth.svg)\n", file=file)
+
+    print("## Branch Dispatch\n", file=file)
+    print(
+        "Fraction of branch-solver calls dispatched to treewidth sub-solver, rankwidth "
+        "sub-solver, or pure-branch fallthrough per tier.\n",
+        file=file,
+    )
+    print(f"![Branch dispatch by tier]({assets_subdir}/branch-dispatch-by-tier.svg)\n", file=file)
+
+    print("## WMC Solve Time Breakdown\n", file=file)
+    print("Export time vs Ganak time per WMC encoding and tier.\n", file=file)
+    print(f"![WMC time breakdown]({assets_subdir}/wmc-time-breakdown.svg)\n", file=file)
+
+    write_condensed_solver_table(filtered_solver, file)
+    write_condensed_competitor_table(filtered_solver, filtered_native, file)
+    write_takeaway(filtered_solver, file)
+
+
+def write_index(solver_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
+    today = _datetime.date.today().isoformat()
+    print("# Scoreboard\n", file=file)
+    print(f"Last updated: {today}.\n", file=file)
+    print(
+        "This tracks progress toward a competitive exact strong simulator based on "
+        "labelled quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "strong simulation: import a static circuit into QSOP, solve the exact "
+        "residue-count histogram, and compare with native simulators where possible.\n",
+        file=file,
+    )
+
+    non_wmc = [
+        (tier, [r for r in records if r.get("backend") != "wmc"])
+        for tier, records in solver_records
+    ]
+    non_wmc = [(t, rs) for t, rs in non_wmc if rs]
+    rows = coverage_by_source(non_wmc)
+
+    total_solved = sum(
+        len(set().union(*entry["solved"].values())) if entry["solved"] else 0
+        for entry in rows.values()
+    )
+    print(f"Total current solved coverage: **{total_solved} fixed-boundary benchmark rows**.\n", file=file)
+
+    print("| Source | Total solved | Sign | Labelled |", file=file)
+    print("| --- | ---: | ---: | ---: |", file=file)
+    for source in sorted(rows, key=source_sort_key):
+        entry = rows[source]
+        solved = len(set().union(*entry["solved"].values())) if entry["solved"] else 0
+        sign_count = len(entry["modes"].get("sign", set()))
+        labelled_count = len(entry["modes"].get("labelled", set()))
+        print(
+            f"| {markdown_escape(source)} | {solved} | {sign_count} | {labelled_count} |",
+            file=file,
+        )
+
+    print("", file=file)
+    print("- [Sign QSOP scoreboard](scoreboard-sign.md)", file=file)
+    print("- [Labelled QSOP scoreboard](scoreboard-labelled.md)", file=file)
+
+
 def write_scoreboard(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
@@ -727,14 +967,22 @@ def _write_scoreboard_json(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
     path: pathlib.Path,
+    *,
+    mode: str = "all",
 ) -> None:
     """Write normalized scoreboard intermediate JSON for plot generation."""
     import json as _json
     import datetime as _dt
 
+    if mode != "all":
+        solver_records = [
+            (tier, [r for r in records if record_qsop_mode(r) == mode])
+            for tier, records in solver_records
+        ]
+        solver_records = [(t, rs) for t, rs in solver_records if rs]
+
     tiers = list(SOLVER_TIERS)
     solver_summary = []
-    # summarize_solver_records expects Iterable[(tier, records_list)]
     summarized = summarize_solver_records(solver_records)
     for entry in summarized:
         config = entry.get("config", "")
@@ -779,6 +1027,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
                         help="Write normalized scoreboard intermediate JSON to this path")
     parser.add_argument(
+        "--qsop-mode",
+        choices=("sign", "labelled"),
+        default=None,
+        help="Filter records to this QSOP mode and emit a mode scoreboard",
+    )
+    parser.add_argument(
+        "--assets-subdir",
+        type=str,
+        default=None,
+        help="Subdirectory prefix for SVG image paths (e.g. scoreboard-assets/sign)",
+    )
+    parser.add_argument(
+        "--index",
+        action="store_true",
+        help="Emit the combined index scoreboard instead of a mode scoreboard",
+    )
+    parser.add_argument(
         "--rankwidth-comparison-output",
         type=pathlib.Path,
         help="Optional markdown report comparing rankwidth against treewidth and branch.",
@@ -798,6 +1063,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--memory-limit-mib", type=int, default=4096)
     parser.add_argument("--large-sample-timeout", type=float, default=3.0)
+    parser.add_argument("--timeout-note", default="", metavar="TEXT",
+                        help="note the per-instance timeout in the mode scoreboard header (e.g. '120 s')")
     return parser.parse_args(argv)
 
 
@@ -814,6 +1081,31 @@ def main(argv: list[str]) -> int:
         native_paths.extend(args.native_jsonl)
         solver_records = read_named_jsonl(solver_paths, args.allow_missing)
         native_records = read_named_jsonl(native_paths, args.allow_missing)
+
+        if args.index:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            with args.output.open("w", encoding="utf-8") as output:
+                write_index(solver_records, output)
+            return 0
+
+        if args.qsop_mode is not None:
+            assets_subdir = args.assets_subdir or f"scoreboard-assets/{args.qsop_mode}"
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            with args.output.open("w", encoding="utf-8") as output:
+                write_mode_scoreboard(
+                    solver_records,
+                    native_records,
+                    mode=args.qsop_mode,
+                    assets_subdir=assets_subdir,
+                    file=output,
+                    timeout_note=getattr(args, "timeout_note", ""),
+                )
+            if args.json_out is not None:
+                _write_scoreboard_json(
+                    solver_records, native_records, args.json_out, mode=args.qsop_mode
+                )
+            return 0
+
         rankwidth_records = read_rankwidth_comparison_records(
             args.rankwidth_comparison_jsonl,
             args.allow_missing,

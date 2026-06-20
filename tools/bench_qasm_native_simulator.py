@@ -262,7 +262,11 @@ def record_case(
     error: str | None = None,
 ) -> dict:
     return {
-        "case": case["name"],
+        "case": case.get("name") or (
+            f"{case.get('mqt_algorithm', 'unknown')}-"
+            f"{case.get('mqt_qubits', '?')}q-"
+            f"opt{case.get('mqt_optimization_level', '?')}"
+        ),
         "source": case.get("source", "internal"),
         "source_url": case.get("source_url", ""),
         "source_relative_path": case.get("source_relative_path", ""),

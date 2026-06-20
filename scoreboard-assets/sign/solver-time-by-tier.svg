@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300">
+<style>text{font-family:sans-serif;font-size:11px;}</style>
+<rect x="100.0" y="40.0" width="460.0" height="220.0" fill="#f8f8f8" opacity="1.00"/>
+<text x="360.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Solver time by tier (total, log scale)</text>
+<text x="95.0" y="76.7" text-anchor="end" fill="#333" font-size="10"></text>
+<line x1="100.0" y1="40.0" x2="560.0" y2="40.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="42.0" width="460.0" height="16.3" fill="#1f77b4" opacity="0.80"/>
+<text x="563.0" y="57.3" text-anchor="start" fill="#333" font-size="9">85271ms</text>
+<rect x="100.0" y="60.3" width="406.2" height="16.3" fill="#ff7f0e" opacity="0.80"/>
+<text x="509.2" y="75.7" text-anchor="start" fill="#333" font-size="9">4480ms</text>
+<rect x="100.0" y="78.7" width="416.3" height="16.3" fill="#8c564b" opacity="0.80"/>
+<text x="519.3" y="94.0" text-anchor="start" fill="#333" font-size="9">7815ms</text>
+<text x="95.0" y="150.0" text-anchor="end" fill="#333" font-size="10">tier-33-64</text>
+<line x1="100.0" y1="113.3" x2="560.0" y2="113.3" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="115.3" width="320.8" height="16.3" fill="#1f77b4" opacity="0.80"/>
+<text x="423.8" y="130.7" text-anchor="start" fill="#333" font-size="9">42ms</text>
+<rect x="100.0" y="133.7" width="314.3" height="16.3" fill="#ff7f0e" opacity="0.80"/>
+<text x="417.3" y="149.0" text-anchor="start" fill="#333" font-size="9">29ms</text>
+<text x="95.0" y="223.3" text-anchor="end" fill="#333" font-size="10">tier-65-128</text>
+<line x1="100.0" y1="186.7" x2="560.0" y2="186.7" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="188.7" width="334.3" height="16.3" fill="#1f77b4" opacity="0.80"/>
+<text x="437.3" y="204.0" text-anchor="start" fill="#333" font-size="9">88ms</text>
+<rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
+<text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
+<rect x="570.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
+<text x="585.0" y="66.0" text-anchor="start" fill="#333" font-size="10">branch:auto</text>
+<rect x="570.0" y="73.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>
+<text x="585.0" y="82.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best</text>
+</svg>

@@ -572,6 +572,13 @@ if python3.found()
     ],
   )
   test(
+    'record qsop mode smoke',
+    python3,
+    args: [
+      files('tests/test_record_qsop_mode.py'),
+    ],
+  )
+  test(
     'harvest mqt bench smoke',
     python3,
     args: [
