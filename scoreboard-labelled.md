@@ -27,7 +27,7 @@ Fraction of instances solved within a given wall-clock budget per backend. Highe
 
 ### MQT Bench (small, ≤32 qubits)
 
-Pre-expansion set: circuits with at most 32 qubits, compared against native statevector simulators. QSOP is not faster on this set — dense statevectors win at low qubit counts.
+Pre-expansion set: circuits with at most 32 qubits. Native simulator runs are only tracked from tier 33-64 upward; this plot shows QSOP solver survival curves only.
 
 ![Survival curves — MQT Bench (0-32 tier)](scoreboard-assets/labelled/survival-mqt-bench.svg)
 

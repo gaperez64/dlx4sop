@@ -151,9 +151,17 @@ class SVGDoc:
 # Data loading
 # ---------------------------------------------------------------------------
 
+def _tier_from_filename(name: str) -> str | None:
+    """Infer tier slug from artifact filename like dlx4sop-tier-33-64-... or mqt-bench-tier-33-64-..."""
+    import re
+    m = re.search(r"tier-(\d+-\d+(?:-sample)?)", name)
+    return m.group(1) if m else None
+
+
 def load_records_from_artifacts(artifact_dir: pathlib.Path) -> list[dict]:
     records = []
     for jf in sorted(artifact_dir.glob("**/*.jsonl")):
+        inferred_tier = _tier_from_filename(jf.name)
         try:
             with open(jf, encoding="utf-8") as f:
                 for line in f:
@@ -161,7 +169,15 @@ def load_records_from_artifacts(artifact_dir: pathlib.Path) -> list[dict]:
                     if not line:
                         continue
                     try:
-                        records.append(json.loads(line))
+                        rec = json.loads(line)
+                        tier = rec.get("tier")
+                        if tier is None and inferred_tier:
+                            tier = inferred_tier
+                        if isinstance(tier, str) and tier.startswith("tier-"):
+                            tier = tier[len("tier-"):]
+                        if tier is not None:
+                            rec["tier"] = tier
+                        records.append(rec)
                     except json.JSONDecodeError:
                         pass
         except OSError:
@@ -572,6 +588,8 @@ def plot_speedup_vs_treewidth_svg(
 
     bar_group_w = plot_w / n_tiers
     bar_w = bar_group_w / (len(backends) + 1)
+    # Center the bar cluster within each group
+    x_cluster_offset = (bar_group_w - len(backends) * bar_w) / 2
 
     for ti, tier in enumerate(tiers):
         tw_ns = tier_ns[tier].get("treewidth", 0)
@@ -588,7 +606,7 @@ def plot_speedup_vs_treewidth_svg(
                 continue
             ratio = tw_ns / ns  # > 1 means backend is faster
             color = SOLVER_COLORS.get(backend, "#888")
-            x = x_base + bi * bar_w + 4
+            x = x_base + x_cluster_offset + bi * bar_w
             y_top = _y(ratio)
             y_base_ref = _y(1.0)
             if ratio >= 1.0:
@@ -717,9 +735,11 @@ def plot_wmc_time_svg(
         tier = r.get("tier", "")
         stats = r.get("stats", {})
         tier_data[tier]["ganak_ns"] += int(
-            stats.get("ganak_elapsed_ns", stats.get("wmc_ganak_elapsed_ns", 0)))
+            r.get("wmc_ganak_elapsed_ns",
+                  stats.get("ganak_elapsed_ns", stats.get("wmc_ganak_elapsed_ns", 0))))
         tier_data[tier]["export_ns"] += int(
-            stats.get("export_elapsed_ns", stats.get("wmc_export_elapsed_ns", 0)))
+            r.get("wmc_export_elapsed_ns",
+                  stats.get("export_elapsed_ns", stats.get("wmc_export_elapsed_ns", 0))))
 
     def _tier_key(t: str) -> int:
         m = re.match(r"(\d+)", t)

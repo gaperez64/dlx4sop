@@ -1,15 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300">
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="460" viewBox="0 0 720 460">
 <style>text{font-family:sans-serif;font-size:11px;}</style>
-<rect x="100.0" y="40.0" width="460.0" height="220.0" fill="#f8f8f8" opacity="1.00"/>
+<rect x="100.0" y="40.0" width="460.0" height="380.0" fill="#f8f8f8" opacity="1.00"/>
 <text x="360.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Solver time by tier (total, log scale)</text>
-<text x="95.0" y="150.0" text-anchor="end" fill="#333" font-size="10"></text>
+<text x="95.0" y="78.0" text-anchor="end" fill="#333" font-size="10">0-32</text>
 <line x1="100.0" y1="40.0" x2="560.0" y2="40.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="42.0" width="460.0" height="53.0" fill="#1f77b4" opacity="0.80"/>
-<text x="563.0" y="94.0" text-anchor="start" fill="#333" font-size="9">433456ms</text>
-<rect x="100.0" y="97.0" width="405.8" height="53.0" fill="#ff7f0e" opacity="0.80"/>
-<text x="508.8" y="149.0" text-anchor="start" fill="#333" font-size="9">18411ms</text>
-<rect x="100.0" y="152.0" width="396.1" height="53.0" fill="#8c564b" opacity="0.80"/>
-<text x="499.1" y="204.0" text-anchor="start" fill="#333" font-size="9">10480ms</text>
+<rect x="100.0" y="42.0" width="285.6" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="388.6" y="58.0" text-anchor="start" fill="#333" font-size="9">16ms</text>
+<rect x="100.0" y="61.0" width="290.8" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="393.8" y="77.0" text-anchor="start" fill="#333" font-size="9">22ms</text>
+<rect x="100.0" y="80.0" width="292.3" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="395.3" y="96.0" text-anchor="start" fill="#333" font-size="9">24ms</text>
+<text x="95.0" y="154.0" text-anchor="end" fill="#333" font-size="10">33-64</text>
+<line x1="100.0" y1="116.0" x2="560.0" y2="116.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="118.0" width="283.3" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="386.3" y="134.0" text-anchor="start" fill="#333" font-size="9">14ms</text>
+<rect x="100.0" y="137.0" width="289.3" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="392.3" y="153.0" text-anchor="start" fill="#333" font-size="9">20ms</text>
+<rect x="100.0" y="156.0" width="319.6" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="422.6" y="172.0" text-anchor="start" fill="#333" font-size="9">119ms</text>
+<text x="95.0" y="230.0" text-anchor="end" fill="#333" font-size="10">65-128</text>
+<line x1="100.0" y1="192.0" x2="560.0" y2="192.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="194.0" width="329.4" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="432.4" y="210.0" text-anchor="start" fill="#333" font-size="9">210ms</text>
+<rect x="100.0" y="213.0" width="338.7" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="441.7" y="229.0" text-anchor="start" fill="#333" font-size="9">361ms</text>
+<rect x="100.0" y="232.0" width="396.4" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="499.4" y="248.0" text-anchor="start" fill="#333" font-size="9">10337ms</text>
+<text x="95.0" y="306.0" text-anchor="end" fill="#333" font-size="10">129-256</text>
+<line x1="100.0" y1="268.0" x2="560.0" y2="268.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="270.0" width="401.5" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="504.5" y="286.0" text-anchor="start" fill="#333" font-size="9">13916ms</text>
+<rect x="100.0" y="289.0" width="405.9" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="508.9" y="305.0" text-anchor="start" fill="#333" font-size="9">18007ms</text>
+<text x="95.0" y="382.0" text-anchor="end" fill="#333" font-size="10">257-512-sample</text>
+<line x1="100.0" y1="344.0" x2="560.0" y2="344.0" stroke="#ddd" stroke-width="1.0"/>
+<rect x="100.0" y="346.0" width="460.0" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="563.0" y="362.0" text-anchor="start" fill="#333" font-size="9">419299ms</text>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
 <rect x="570.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>

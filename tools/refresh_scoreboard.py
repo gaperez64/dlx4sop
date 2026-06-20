@@ -749,9 +749,9 @@ def write_mode_scoreboard(
     print(f"![Survival curves — FeynmanDD]({assets_subdir}/survival-feynmandd.svg)\n", file=file)
     print("### MQT Bench (small, ≤32 qubits)\n", file=file)
     print(
-        "Pre-expansion set: circuits with at most 32 qubits, compared against native "
-        "statevector simulators. QSOP is not faster on this set — dense statevectors win "
-        "at low qubit counts.\n",
+        "Pre-expansion set: circuits with at most 32 qubits. "
+        "Native simulator runs are only tracked from tier 33-64 upward; "
+        "this plot shows QSOP solver survival curves only.\n",
         file=file,
     )
     print(f"![Survival curves — MQT Bench (0-32 tier)]({assets_subdir}/survival-mqt-bench.svg)\n", file=file)
