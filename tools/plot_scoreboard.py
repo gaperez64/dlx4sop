@@ -803,6 +803,139 @@ def plot_wmc_time_svg(
 
 
 # ---------------------------------------------------------------------------
+# WMC-vs-solver scaling study
+# ---------------------------------------------------------------------------
+
+def _scaling_qubits(record: dict) -> int | None:
+    import re
+    name = str(record.get("instance_id") or record.get("instance") or record.get("case") or "")
+    m = re.search(r"n0*(\d+)", name)
+    return int(m.group(1)) if m else None
+
+
+def _scaling_series(path: pathlib.Path, time_key_ns: str, time_key_ms: str) -> dict[int, dict]:
+    """Per-qubit aggregate: median ok time (ms) and whether the size hit the wall."""
+    import statistics
+    per_q: dict[int, list[float]] = collections.defaultdict(list)
+    timed_out: dict[int, bool] = collections.defaultdict(bool)
+    for rec in _read_jsonl(path):
+        q = _scaling_qubits(rec)
+        if q is None:
+            continue
+        if rec.get("status") == "ok":
+            if rec.get(time_key_ms) is not None:
+                per_q[q].append(float(rec[time_key_ms]))
+            elif rec.get(time_key_ns) is not None:
+                per_q[q].append(float(rec[time_key_ns]) / 1e6)
+        elif rec.get("status") in ("timeout", "error"):
+            timed_out[q] = True
+    out: dict[int, dict] = {}
+    for q in set(per_q) | set(timed_out):
+        oks = per_q.get(q, [])
+        out[q] = {
+            "median_ms": statistics.median(oks) if oks else None,
+            "timed_out": bool(timed_out.get(q)) and not oks,
+        }
+    return out
+
+
+def _read_jsonl(path: pathlib.Path) -> list[dict]:
+    records = []
+    if not path.exists():
+        return records
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return records
+
+
+def plot_wmc_vs_solver_scaling_svg(
+    artifact_dir: pathlib.Path,
+    output_path: pathlib.Path,
+    timeout_s: float = 30.0,
+) -> None:
+    """Solve time vs circuit size for treewidth, branch, and ganak on the synthetic
+    phase-polynomial family, showing where WMC overtakes the solver backends."""
+    import math
+    series = {
+        "treewidth": ("#1f77b4", _scaling_series(
+            artifact_dir / "scaling-treewidth-current.jsonl", "solve_elapsed_ns", "solve_ms")),
+        "branch": ("#2ca02c", _scaling_series(
+            artifact_dir / "scaling-branch-current.jsonl", "solve_elapsed_ns", "solve_ms")),
+        "ganak (WMC)": ("#d62728", _scaling_series(
+            artifact_dir / "scaling-wmc-current.jsonl", "wmc_ganak_elapsed_ns", "ganak_ms")),
+    }
+    all_q = sorted({q for _, s in series.values() for q in s})
+    if not all_q:
+        _write_placeholder_svg(output_path, "WMC vs solver scaling")
+        return
+
+    cap_ms = timeout_s * 1000.0
+    W, H = 640, 400
+    PAD_L, PAD_R, PAD_T, PAD_B = 60, 150, 40, 50
+    plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
+
+    y_min, y_max = 1.0, cap_ms  # ms, log scale
+    def _x(q: int) -> float:
+        return PAD_L + (q - all_q[0]) / max(1, all_q[-1] - all_q[0]) * plot_w
+    def _y(ms: float) -> float:
+        ms = max(y_min, min(y_max, ms))
+        frac = (math.log10(ms) - math.log10(y_min)) / (math.log10(y_max) - math.log10(y_min))
+        return PAD_T + plot_h * (1.0 - frac)
+
+    svg = SVGDoc(W, H)
+    svg.rect(PAD_L, PAD_T, plot_w, plot_h, fill="#f8f8f8")
+    svg.text(W // 2, 22, "WMC vs solver scaling (synthetic phase-polynomial family)",
+             anchor="middle", fill="#222", size=12)
+    # y gridlines
+    for ms in (1, 10, 100, 1000, 10000, cap_ms):
+        if ms > y_max:
+            continue
+        y = _y(ms)
+        label = "timeout" if abs(ms - cap_ms) < 1e-6 else (f"{ms/1000:.0f}s" if ms >= 1000 else f"{ms:.0f}ms")
+        svg.line(PAD_L, y, PAD_L + plot_w, y, stroke="#eee",
+                 dash="4,2" if label == "timeout" else "")
+        svg.text(PAD_L - 5, y + 4, label, anchor="end", fill="#666", size=9)
+    # x labels
+    for q in all_q:
+        svg.text(_x(q), PAD_T + plot_h + 15, str(q), anchor="middle", fill="#444", size=9)
+    svg.text(PAD_L + plot_w / 2, PAD_T + plot_h + 34, "qubits", anchor="middle", fill="#444", size=10)
+
+    for label, (color, data) in series.items():
+        pts = []
+        for q in all_q:
+            d = data.get(q)
+            if d and d["median_ms"] is not None:
+                pts.append((_x(q), _y(d["median_ms"])))
+        if len(pts) >= 2:
+            svg.polyline(pts, stroke=color, width=2.0)
+        for x, y in pts:
+            svg.rect(x - 2, y - 2, 4, 4, fill=color)
+        # mark first size that hit the wall (all timed out)
+        for q in all_q:
+            d = data.get(q)
+            if d and d["timed_out"]:
+                svg.text(_x(q), _y(cap_ms) - 4, "×", anchor="middle", fill=color, size=13)
+                break
+
+    legend_y = PAD_T + 10
+    for label, (color, _data) in series.items():
+        svg.rect(PAD_L + plot_w + 10, legend_y - 9, 12, 9, fill=color)
+        svg.text(PAD_L + plot_w + 25, legend_y, label, fill="#333", size=10)
+        legend_y += 16
+    svg.text(PAD_L + plot_w + 10, legend_y + 4, "× = first size", fill="#666", size=9)
+    svg.text(PAD_L + plot_w + 10, legend_y + 16, "that times out", fill="#666", size=9)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(svg.close(), encoding="utf-8")
+    print(f"  Wrote {output_path}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -822,6 +955,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Sources to plot survival curves for (default: all known)")
     parser.add_argument("--qsop-mode", choices=("all", "sign", "labelled"), default="all",
                         help="Filter records to this QSOP mode before plotting")
+    parser.add_argument("--scaling-timeout", type=float, default=30.0,
+                        help="per-instance timeout (s) used for the scaling-study artifacts")
     args = parser.parse_args(argv)
 
     # Load records: prefer raw JSONL (richest), then summary-derived (tier plots only)
@@ -879,6 +1014,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # WMC time breakdown
     plot_wmc_time_svg(tier_records, out / "wmc-time-breakdown.svg")
+
+    # WMC-vs-solver scaling study (mode-agnostic synthetic family; emit for sign/all only)
+    if args.qsop_mode in ("all", "sign"):
+        plot_wmc_vs_solver_scaling_svg(
+            args.artifact_dir, out / "wmc-vs-solver-scaling.svg", args.scaling_timeout)
 
     print(f"Plots written to {out}/", file=sys.stderr)
     return 0

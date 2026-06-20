@@ -101,7 +101,31 @@ Best configuration per tier at a glance.
 
 ## Competitor Comparisons
 
-Native simulators evaluate only sign boundaries (input == output), so labelled QSOPs have no native baseline.
+Best native simulator per source and tier. Speedup = native time / QSOP time, so a value above 1 (**bold**) means QSOP is faster. Native runs only on boundaries it can fit under its qubit cap and finish in time; the **Matched / QSOP-solved** column shows on how many of the solver's rows that holds — a high speedup on a small matched set means QSOP also wins on coverage.
+
+### FeynmanDD
+
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 15.2 ms | `mqt-ddsim-statevector` | 212.8 ms | **14.01x** | 24 / 24 |
+| 33-64 | 5.3 ms | `pyzx-matrix` | 8.05 s | **1519.18x** | 6 / 6 |
+| 65-128 | 80.3 ms | `pyzx-matrix` | 15.73 s | **196.06x** | 18 / 18 |
+| 129-256 | 75.4 ms | `pyzx-matrix` | 16.11 s | **213.52x** | 6 / 86 |
+
+### MQT Bench
+
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 65-128 | 7.9 ms | `pyzx-matrix` | 10.4 ms | **1.32x** | 2 / 2 |
+
+### PyZX
+
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 1.2 ms | `mqt-ddsim-statevector` | 17.8 ms | **14.72x** | 2 / 2 |
+| 33-64 | 9.0 ms | `pyzx-matrix` | 114.1 ms | **12.61x** | 12 / 12 |
+| 65-128 | 122.4 ms | `pyzx-matrix` | 23.87 s | **195.03x** | 32 / 32 |
+| 129-256 | 470.8 ms | `pyzx-matrix` | 33.41 s | **70.97x** | 18 / 38 |
 
 ## Current Takeaway
 

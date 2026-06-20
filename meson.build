@@ -674,6 +674,24 @@ if python3.found()
       files('tools/bench_qasm_native_simulator.py'),
     ],
   )
+  # Synthetic scaling family (WMC-vs-solver crossover study): run the committed corpus
+  # through sop-solve with a small timeout cap so CI exercises it without long runs.
+  test(
+    'synthetic scaling smoke',
+    python3,
+    args: [
+      files('tools/bench_sop_local.py'),
+      '--sop-solve', sop_solve.full_path(),
+      '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'scaling',
+      '--tier', 'tier-scaling',
+      '--backend', 'treewidth',
+      '--timeout', '3',
+      '--max-vars', '4096',
+      '--quiet',
+    ],
+    depends: [sop_solve],
+    timeout: 120,
+  )
   if get_option('qiskit_tests')
     test(
       'qasm2sop qiskit',

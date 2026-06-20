@@ -1,0 +1,18 @@
+{
+  "source": "Synthetic",
+  "source_url": "tools/gen_scaling_family.py",
+  "family": "phase-poly",
+  "qubits": 24,
+  "seed": 1,
+  "density": 2.0,
+  "boundary_input": "000000000000000000000000",
+  "boundary_output": "000000000000000000000000",
+  "qasm_sha256": "bb4ec4cd0402c083fe4de6a514833e5afb664aae00f7beb4a840a365478ecda9",
+  "qsop_sha256": "528594753dba033000997850a00e4d098acff0ea8a601477ed859a530b07c861",
+  "nvars": 408,
+  "qsop_mode": "sign",
+  "benchmark_roles": [
+    "scaling-study"
+  ],
+  "solvable_without_external_tools": true
+}

@@ -257,6 +257,9 @@ def run_native_jobs(
             "--engine", "all",
             "--max-qubits", str(args.native_max_qubits),
             "--engine-qubit-cap", f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
+            # qiskit-clifford is stabilizer-based (O(n^2) memory): let it run far beyond the
+            # dense-statevector cap so large Clifford circuits still get a native baseline.
+            "--engine-qubit-cap", f"qiskit-clifford={args.clifford_max_qubits}",
             "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
             "--memory-limit-mib", str(args.memory_limit_mib),
             "--skip-unsupported",
@@ -330,6 +333,9 @@ def run_mqt_native_jobs(
             "--engine", "all",
             "--max-qubits", str(args.native_max_qubits),
             "--engine-qubit-cap", f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
+            # Stabilizer simulation scales to the large (34-128q) MQT circuits the dense
+            # statevector engines cannot reach, so clifford is the native baseline here.
+            "--engine-qubit-cap", f"qiskit-clifford={args.clifford_max_qubits}",
             "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
             "--memory-limit-mib", str(args.memory_limit_mib),
             "--skip-unsupported",
@@ -337,6 +343,53 @@ def run_mqt_native_jobs(
         ]
         print(f"\n--- MQT native: {tier} ---", file=sys.stderr)
         run_to_jsonl(cmd, output, args.verbose)
+
+
+SCALING_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "synthetic" / "scaling"
+
+
+def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    """WMC-vs-solver crossover study on the committed synthetic phase-polynomial corpus.
+
+    Runs treewidth + branch (sop-solve) and ganak (sop2wmc + ganak) over the same
+    high-treewidth instances so the scoreboard can plot where WMC overtakes the solver
+    backends. Uses a high --max-vars so the large instances are attempted (and time out)
+    rather than refused.
+    """
+    if not SCALING_CORPUS.exists():
+        print(f"warning: scaling corpus missing: {SCALING_CORPUS}", file=sys.stderr)
+        return
+    timeout = str(args.scaling_timeout)
+    sop_local = TOOLS_DIR / "bench_sop_local.py"
+    for backend_arg, label in (("treewidth", "treewidth"), ("branch:auto", "branch")):
+        output = artifact_dir / f"scaling-{label}-current.jsonl"
+        cmd = [
+            sys.executable, str(sop_local),
+            "--sop-solve", str(args.sop_solve),
+            "--corpus-dir", str(SCALING_CORPUS),
+            "--tier", "tier-scaling",
+            "--backend", backend_arg,
+            "--timeout", timeout,
+            "--max-vars", "4096",
+            "--out", str(output),
+        ]
+        print(f"\n--- scaling solver: {label} ---", file=sys.stderr)
+        result = subprocess.run([str(a) for a in cmd])
+        if result.returncode not in (0, 1):
+            print(f"warning: scaling solver {label} exited {result.returncode}", file=sys.stderr)
+
+    instances = sorted((SCALING_CORPUS / "tier-scaling").glob("*.qsop"))
+    if instances:
+        wmc_out = artifact_dir / "scaling-wmc-current.jsonl"
+        cmd = [
+            sys.executable, str(TOOLS_DIR / "bench_wmc_ganak.py"),
+            "--ganak", str(args.ganak), "--sop2wmc", str(args.sop2wmc),
+            "--ganak-timeout", timeout, "--format", "jsonl",
+            "--encoding", "amp-soft",
+            *[str(p) for p in instances],
+        ]
+        print("\n--- scaling WMC: ganak ---", file=sys.stderr)
+        run_to_jsonl(cmd, wmc_out, args.verbose)
 
 
 def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
@@ -372,8 +425,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="override all per-tier timeouts (solver, WMC, native) with this value")
     parser.add_argument("--native-max-qubits", type=int, default=16)
     parser.add_argument("--pyzx-matrix-max-qubits", type=int, default=10)
+    parser.add_argument("--clifford-max-qubits", type=int, default=128,
+                        help="qubit cap for the stabilizer (qiskit-clifford) engine; it scales "
+                             "far past the dense-statevector cap")
     parser.add_argument("--native-timeout", type=float, default=10.0)
     parser.add_argument("--memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--skip-scaling", action="store_true",
+                        help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
+    parser.add_argument("--scaling-timeout", type=float, default=30.0,
+                        help="per-instance timeout (s) for the scaling study backends "
+                             "(CI uses a small cap)")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -392,6 +453,8 @@ def main(argv: list[str]) -> int:
     if not args.skip_native:
         run_native_jobs(args, manifests_dir, artifact_dir)
         run_mqt_native_jobs(args, manifests_dir, artifact_dir)
+    if not args.skip_scaling:
+        run_scaling_study(args, artifact_dir)
     if not args.skip_scoreboard:
         run_scoreboard(args, artifact_dir)
     return 0

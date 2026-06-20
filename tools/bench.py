@@ -263,7 +263,12 @@ def _render_full(args: argparse.Namespace) -> int:
         labelled_cmd += ["--timeout-note", timeout_note]
     rc = rc or _run(labelled_cmd)
 
-    # 3. sign SVGs
+    # 3. sign SVGs (includes the WMC-vs-solver scaling plot)
+    scaling_timeout = "30"
+    if timeout_note:
+        digits = "".join(ch for ch in timeout_note if ch.isdigit())
+        if digits:
+            scaling_timeout = digits
     sign_assets = REPO_ROOT / "scoreboard-assets" / "sign"
     rc = rc or _run([
         sys.executable, plot,
@@ -271,6 +276,7 @@ def _render_full(args: argparse.Namespace) -> int:
         "--artifact-dir", str(artifact_dir),
         "--qsop-mode", "sign",
         "--output-dir", str(sign_assets),
+        "--scaling-timeout", scaling_timeout,
     ])
 
     # 4. labelled SVGs

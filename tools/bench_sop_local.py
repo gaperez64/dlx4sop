@@ -178,6 +178,7 @@ def bench_case(
     backends: list[str],
     timeout: float,
     extra_args: list[str],
+    max_vars_override: int | None = None,
 ) -> list[dict]:
     meta = case.meta
     nvars = meta.get("nvars", 0)
@@ -198,8 +199,12 @@ def bench_case(
             ))
             continue
 
-        # Gate: skip if instance is too large for this backend
+        # Gate: skip if instance is too large for this backend. A CLI --max-vars override
+        # raises the gate so large instances are attempted (and may time out) rather than
+        # skipped — required for the scaling study.
         max_vars = _backend_max_vars(backend)
+        if max_vars_override is not None:
+            max_vars = max(max_vars, max_vars_override)
         if nvars > max_vars:
             reason = f"nvars={nvars} > max_vars={max_vars} for {backend}"
             if known_hard:
@@ -258,10 +263,23 @@ def _make_record(
         "output": None,
         "seed": meta.get("seed"),
     })
+    # Boundary identity for native-comparison matching (render_scoreboard.comparison_key).
+    # Materialized corpora (MQT, synthetic) carry the boundary + provenance in the meta sidecar;
+    # construct the same (case, input, output) the native simulator records use.
+    if "case" in meta:
+        case_name = meta["case"]
+    elif "mqt_algorithm" in meta:
+        case_name = f"{meta.get('mqt_algorithm')}-{meta.get('mqt_qubits')}q-opt{meta.get('mqt_optimization_level')}"
+    else:
+        case_name = case.instance_id
     rec: dict = {
         "schema": "sop_bench_result_v2",
         "suite": "local-sop",
         "source": meta_source,
+        "source_relative_path": meta.get("source_relative_path", ""),
+        "case": case_name,
+        "input": meta.get("boundary_input", ""),
+        "output": meta.get("boundary_output", ""),
         "tier": case.tier,
         "instance_id": case.instance_id,
         "qsop_path": str(case.qsop_path),
@@ -455,7 +473,8 @@ def main() -> int:
                 continue
             for case in iter_qsop_corpus(corpus_dir, tiers=tiers_filter):
                 records = bench_case(
-                    args.sop_solve, case, backends, args.timeout, extra_args
+                    args.sop_solve, case, backends, args.timeout, extra_args,
+                    max_vars_override=args.max_vars,
                 )
                 for rec in records:
                     write_jsonl_record(out_stream, rec)

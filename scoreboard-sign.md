@@ -12,10 +12,10 @@ Counts are fixed-boundary QSOP rows currently used in solver comparisons. The 25
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Internal corpus | tests/qasm_solver_corpus.json | 32 | 32 | 0 | 0 | 0 | 0 |
 | FeynmanDD | https://github.com/cqs-thu/feynman-decision-diagram | 338 | 80 | 28 | 166 | 50 | 14 |
-| MQT Bench | https://github.com/munich-quantum-toolkit/bench | 58 | 56 | 1 | 1 | 0 | 0 |
+| MQT Bench | https://github.com/munich-quantum-toolkit/bench | 170 | 56 | 72 | 42 | 0 | 0 |
 | PyZX | https://github.com/zxcalc/pyzx | 204 | 44 | 20 | 36 | 48 | 56 / 58 |
 
-Total current solved coverage: **632 fixed-boundary benchmark rows**.
+Total current solved coverage: **744 fixed-boundary benchmark rows**.
 The 257-512 exploratory sample contributes 70 solved rows out of 72 attempted under the current timeout cap.
 
 ## Survival Curves
@@ -66,6 +66,12 @@ Export time vs Ganak time per WMC encoding and tier.
 
 ![WMC time breakdown](scoreboard-assets/sign/wmc-time-breakdown.svg)
 
+## WMC vs Solver Scaling
+
+Synthetic phase-polynomial circuits (committed under `benchmarks/corpus/sop/synthetic/scaling/`) whose QSOP treewidth grows with the qubit count. Real benchmark families cannot show this: the scalable MQT families use continuous-angle gates the finite-modulus importer rejects, and the importable ones are Clifford with trivial treewidth. As treewidth grows the branch backend collapses first; ganak (WMC) then overtakes the treewidth DP in the crossover region (around 20 qubits) before both reach the timeout wall. Largest size solved under the current cap: branch 16q, treewidth 24q, ganak 20q.
+
+![WMC vs solver scaling](scoreboard-assets/sign/wmc-vs-solver-scaling.svg)
+
 ## Internal Solver Configurations
 
 Best configuration per tier at a glance.
@@ -76,9 +82,9 @@ Best configuration per tier at a glance.
 | 0-32 | `branch --branch-heuristic split` | 212 / 212 | 121.1 ms |
 | 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 212 / 212 | 1.05 s |
 | 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 212 / 212 | 532.76 s |
-| 33-64 | `branch:auto` | 72 / 72 | 29.4 ms |
+| 33-64 | `branch:auto` | 72 / 72 | 29.3 ms |
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 48 / 48 | 41.2 ms |
-| 33-64 | `treewidth --treewidth-order min-fill` | 72 / 72 | 42.0 ms |
+| 33-64 | `treewidth --treewidth-order min-fill` | 72 / 72 | 41.3 ms |
 | 33-64 | `branch --branch-heuristic split` | 48 / 48 | 72.2 ms |
 | 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 48 / 48 | 201.4 ms |
 | 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 48 / 48 | 2.79 s |
@@ -86,8 +92,8 @@ Best configuration per tier at a glance.
 | 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 48 / 48 | 3.84 s |
 | 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 48 / 48 | 14.28 s |
 | 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 27 / 48 | 1760.46 s |
-| 65-128 | `branch:auto` | 0 / 42 | 0 ns |
-| 65-128 | `treewidth --treewidth-order min-fill` | 42 / 42 | 87.7 ms |
+| 65-128 | `branch:auto` | 42 / 42 | 21.2 ms |
+| 65-128 | `treewidth --treewidth-order min-fill` | 42 / 42 | 87.8 ms |
 | 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 202 / 202 | 908.6 ms |
 | 65-128 | `branch --branch-heuristic split` | 202 / 202 | 1.36 s |
 | 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 39.97 s |
@@ -106,37 +112,39 @@ Best configuration per tier at a glance.
 
 ## Competitor Comparisons
 
-Best native simulator per source and tier. Speedup = native time / QSOP time, so a value above 1 (**bold**) means QSOP is faster.
+Best native simulator per source and tier. Speedup = native time / QSOP time, so a value above 1 (**bold**) means QSOP is faster. Native runs only on boundaries it can fit under its qubit cap and finish in time; the **Matched / QSOP-solved** column shows on how many of the solver's rows that holds — a high speedup on a small matched set means QSOP also wins on coverage.
 
 ### Internal corpus
 
-| Tier | QSOP time | Best native | Native time | Best speedup |
-| --- | ---: | --- | ---: | ---: |
-| 0-32 | 6.3 ms | `mqt-ddsim-statevector` | 139.7 ms | **22.18x** |
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 14.0 ms | `mqt-ddsim-statevector` | 298.5 ms | **21.37x** | 32 / 32 |
 
 ### FeynmanDD
 
-| Tier | QSOP time | Best native | Native time | Best speedup |
-| --- | ---: | --- | ---: | ---: |
-| 0-32 | 41.7 ms | `qiskit-statevector` | 766.7 ms | **18.37x** |
-| 33-64 | 4.9 ms | `pyzx-matrix` | 20.9 ms | **4.25x** |
-| 65-128 | 25.1 ms | `pyzx-matrix` | 15.49 s | **617.94x** |
-| 129-256 | 77.1 ms | `aer-statevector` | 15.9 ms | 0.21x |
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 41.7 ms | `qiskit-statevector` | 766.7 ms | **18.37x** | 80 / 80 |
+| 33-64 | 4.9 ms | `pyzx-matrix` | 20.9 ms | **4.25x** | 4 / 28 |
+| 65-128 | 25.1 ms | `pyzx-matrix` | 15.49 s | **617.94x** | 4 / 166 |
+| 129-256 | 77.1 ms | `aer-statevector` | 15.9 ms | 0.21x | 2 / 50 |
 
 ### MQT Bench
 
-| Tier | QSOP time | Best native | Native time | Best speedup |
-| --- | ---: | --- | ---: | ---: |
-| 0-32 | 23.2 ms | `pyzx-matrix` | 556.7 ms | **23.98x** |
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 23.2 ms | `pyzx-matrix` | 556.7 ms | **23.98x** | 56 / 56 |
+| 33-64 | 29.3 ms | `qiskit-clifford` | 47.86 s | **1632.51x** | 72 / 72 |
+| 65-128 | 17.7 ms | `qiskit-clifford` | 206.75 s | **11707.08x** | 35 / 42 |
 
 ### PyZX
 
-| Tier | QSOP time | Best native | Native time | Best speedup |
-| --- | ---: | --- | ---: | ---: |
-| 0-32 | 19.2 ms | `mqt-ddsim-statevector` | 371.1 ms | **19.31x** |
-| 33-64 | 16.3 ms | `pyzx-matrix` | 185.9 ms | **11.40x** |
-| 65-128 | 137.1 ms | `pyzx-matrix` | 27.29 s | **199.01x** |
-| 129-256 | 871.3 ms | `pyzx-matrix` | 43.25 s | **49.64x** |
+| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
+| --- | ---: | --- | ---: | ---: | ---: |
+| 0-32 | 19.2 ms | `mqt-ddsim-statevector` | 371.1 ms | **19.31x** | 44 / 44 |
+| 33-64 | 16.3 ms | `pyzx-matrix` | 185.9 ms | **11.40x** | 20 / 20 |
+| 65-128 | 137.1 ms | `pyzx-matrix` | 27.29 s | **199.01x** | 34 / 36 |
+| 129-256 | 871.3 ms | `pyzx-matrix` | 43.25 s | **49.64x** | 22 / 48 |
 
 ## Current Takeaway
 

@@ -17,6 +17,7 @@ from render_scoreboard import (
     cache_avoided_node_rate,
     cache_canonical_entry_rate,
     cache_hit_rate,
+    comparison_key,
     component_kernel_text,
     comparison_speedup,
     format_ns,
@@ -638,20 +639,30 @@ def write_condensed_competitor_table(
     comparison_rows = [row for row in rows if row["both_ok"] > 0 and row["solver_elapsed_ns"] > 0]
     if not comparison_rows:
         print(
-            "Native simulators evaluate only sign boundaries (input == output), so labelled "
-            "QSOPs have no native baseline.\n",
+            "No native baseline available for this mode under the current qubit caps and "
+            "timeout — no boundary was solved by both a native simulator and the solver.\n",
             file=file,
         )
         return
+    # Distinct solver-solved boundaries per (source, tier) — the denominator for coverage.
+    qsop_solved: dict[tuple[str, str], set] = {}
+    for tier, records in solver_records:
+        for r in records:
+            if r.get("status", "ok") == "ok" and has_comparison_identity(r):
+                key = (str(r.get("source") or "unknown"), tier)
+                qsop_solved.setdefault(key, set()).add(comparison_key(r))
     print(
-        "Best native simulator per source and tier. Speedup = native time / QSOP time, "
-        "so a value above 1 (**bold**) means QSOP is faster.\n",
+        "Best native simulator per source and tier. Speedup = native time / QSOP time, so a "
+        "value above 1 (**bold**) means QSOP is faster. Native runs only on boundaries it can "
+        "fit under its qubit cap and finish in time; the **Matched / QSOP-solved** column shows "
+        "on how many of the solver's rows that holds — a high speedup on a small matched set "
+        "means QSOP also wins on coverage.\n",
         file=file,
     )
     for source in sorted({row["source"] for row in rows}, key=source_sort_key):
         print(f"### {markdown_escape(source)}\n", file=file)
-        print("| Tier | QSOP time | Best native | Native time | Best speedup |", file=file)
-        print("| --- | ---: | --- | ---: | ---: |", file=file)
+        print("| Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |", file=file)
+        print("| --- | ---: | --- | ---: | ---: | ---: |", file=file)
         source_rows = [row for row in rows if row["source"] == source and row["both_ok"] > 0]
         by_tier: dict[str, dict] = {}
         for row in source_rows:
@@ -665,13 +676,69 @@ def write_condensed_competitor_table(
             row = by_tier[tier]
             sp = row["_speedup"]
             speedup_str = f"**{sp:.2f}x**" if sp >= 1 else f"{sp:.2f}x"
+            solved_total = len(qsop_solved.get((source, tier), ()))
+            coverage = f"{row['both_ok']} / {solved_total}" if solved_total else str(row["both_ok"])
             print(
                 f"| {markdown_escape(tier)} | {format_ns(row['solver_elapsed_ns'])} | "
                 f"`{markdown_escape(row['engine'])}` | {format_ns(row['native_elapsed_ns'])} | "
-                f"{speedup_str} |",
+                f"{speedup_str} | {coverage} |",
                 file=file,
             )
         print("", file=file)
+
+
+def _scaling_largest_solved(artifact_dir: pathlib.Path, stem: str, time_ns: str, time_ms: str) -> int | None:
+    """Largest qubit count solved (status ok) for a scaling artifact."""
+    import json
+    import re
+    path = artifact_dir / stem
+    best = None
+    if not path.exists():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get("status") != "ok":
+            continue
+        name = str(r.get("instance_id") or r.get("instance") or r.get("case") or "")
+        m = re.search(r"n0*(\d+)", name)
+        if m:
+            q = int(m.group(1))
+            best = q if best is None else max(best, q)
+    return best
+
+
+def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str, file: TextIO) -> None:
+    """WMC-vs-solver scaling study section (synthetic phase-polynomial family)."""
+    print("## WMC vs Solver Scaling\n", file=file)
+    caption = (
+        "Synthetic phase-polynomial circuits (committed under "
+        "`benchmarks/corpus/sop/synthetic/scaling/`) whose QSOP treewidth grows with the "
+        "qubit count. Real benchmark families cannot show this: the scalable MQT families use "
+        "continuous-angle gates the finite-modulus importer rejects, and the importable ones "
+        "are Clifford with trivial treewidth. As treewidth grows the branch backend collapses "
+        "first; ganak (WMC) then overtakes the treewidth DP in the crossover region (around "
+        "20 qubits) before both reach the timeout wall."
+    )
+    if artifact_dir is not None:
+        tw = _scaling_largest_solved(artifact_dir, "scaling-treewidth-current.jsonl",
+                                     "solve_elapsed_ns", "solve_ms")
+        br = _scaling_largest_solved(artifact_dir, "scaling-branch-current.jsonl",
+                                     "solve_elapsed_ns", "solve_ms")
+        gk = _scaling_largest_solved(artifact_dir, "scaling-wmc-current.jsonl",
+                                     "wmc_ganak_elapsed_ns", "ganak_ms")
+        parts = [f"{lbl} {v}q" for lbl, v in (("branch", br), ("treewidth", tw), ("ganak", gk))
+                 if v is not None]
+        if parts:
+            caption += (" Largest size solved under the current cap: "
+                        + ", ".join(parts) + ".")
+    print(caption + "\n", file=file)
+    print(f"![WMC vs solver scaling]({assets_subdir}/wmc-vs-solver-scaling.svg)\n", file=file)
 
 
 def write_mode_scoreboard(
@@ -682,17 +749,18 @@ def write_mode_scoreboard(
     assets_subdir: str,
     file: TextIO,
     timeout_note: str = "",
+    artifact_dir: pathlib.Path | None = None,
 ) -> None:
     filtered_solver = [
         (tier, [r for r in records if record_qsop_mode(r) == mode])
         for tier, records in solver_records
     ]
     filtered_solver = [(t, rs) for t, rs in filtered_solver if rs]
-    filtered_native = [
-        (tier, [r for r in records if record_qsop_mode(r) == mode])
-        for tier, records in native_records
-    ]
-    filtered_native = [(t, rs) for t, rs in filtered_native if rs]
+    # Native records are NOT mode-filtered: qsop_mode is a structural property of the QSOP
+    # file (it has a `q` line), whereas a native record only knows its boundary, so deriving
+    # mode from input!=output disagrees with the solver's classification. The competitor table
+    # matches native to the mode-filtered solver records by exact boundary identity and inherits
+    # the solver's mode, which is the authoritative one.
 
     today = _datetime.date.today().isoformat()
     print(f"# Scoreboard — {mode} QSOPs\n", file=file)
@@ -808,8 +876,12 @@ def write_mode_scoreboard(
     print("Export time vs Ganak time per WMC encoding and tier.\n", file=file)
     print(f"![WMC time breakdown]({assets_subdir}/wmc-time-breakdown.svg)\n", file=file)
 
+    # Scaling study is mode-agnostic (synthetic sign family); show it on the sign scoreboard.
+    if mode == "sign":
+        write_scaling_section(artifact_dir, assets_subdir, file)
+
     write_condensed_solver_table(filtered_solver, file)
-    write_condensed_competitor_table(filtered_solver, filtered_native, file)
+    write_condensed_competitor_table(filtered_solver, native_records, file)
     write_takeaway(filtered_solver, file)
 
 
@@ -1111,6 +1183,7 @@ def main(argv: list[str]) -> int:
                     assets_subdir=assets_subdir,
                     file=output,
                     timeout_note=getattr(args, "timeout_note", ""),
+                    artifact_dir=args.artifact_dir,
                 )
             if args.json_out is not None:
                 _write_scoreboard_json(

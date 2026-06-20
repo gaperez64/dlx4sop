@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-20T20:47:50.046942",
+  "generated_at": "2026-06-20T22:58:49.074480",
   "tiers": [
     "0-32",
     "33-64",
@@ -481,7 +481,7 @@
       "backend": "branch:auto",
       "solved": 72,
       "attempted": 72,
-      "elapsed_ns": 29392358,
+      "elapsed_ns": 29314078,
       "sources": {
         "MQT Bench": 72
       },
@@ -614,7 +614,7 @@
       "backend": "treewidth",
       "solved": 72,
       "attempted": 72,
-      "elapsed_ns": 41977427,
+      "elapsed_ns": 41271066,
       "sources": {
         "MQT Bench": 72
       },
@@ -726,9 +726,9 @@
       "tier": "65-128",
       "config": "branch:auto",
       "backend": "branch:auto",
-      "solved": 0,
+      "solved": 42,
       "attempted": 42,
-      "elapsed_ns": 0,
+      "elapsed_ns": 21202636,
       "sources": {
         "MQT Bench": 42
       },
@@ -829,7 +829,7 @@
       "backend": "treewidth",
       "solved": 42,
       "attempted": 42,
-      "elapsed_ns": 87744746,
+      "elapsed_ns": 87831442,
       "sources": {
         "MQT Bench": 42
       },

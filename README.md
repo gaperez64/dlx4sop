@@ -171,15 +171,39 @@ python3 tools/run_corpus_benchmarks.py \
 ```
 
 `run_corpus_benchmarks.py` is the single orchestrator. It runs solver, WMC (Ganak),
-and native-simulator jobs for all tiers (including the MQT Bench large tiers), then
-renders:
+and native-simulator jobs for all tiers (including the MQT Bench large tiers) and the
+WMC-vs-solver scaling study, then renders:
 1. `scoreboard-sign.md` + `scoreboard-assets/sign/` SVGs (sign QSOPs only)
 2. `scoreboard-labelled.md` + `scoreboard-assets/labelled/` SVGs (labelled QSOPs only)
 3. `scoreboard.md` — combined index linking to both mode scoreboards
 
 `bench.py full` is a thin alias for the same pipeline. Pass `--skip-wmc`,
-`--skip-native`, `--skip-solver`, or `--skip-scoreboard` to run a subset, and
-`--timeout N` to override the default 30 s per-instance timeout for all jobs.
+`--skip-native`, `--skip-solver`, `--skip-scaling`, or `--skip-scoreboard` to run a
+subset, `--timeout N` to override the default 30 s per-instance timeout, and
+`--scaling-timeout N` / `--clifford-max-qubits N` to tune the scaling study and the
+stabilizer-engine qubit cap.
+
+The native baseline uses dense statevector engines under a qubit cap plus
+`qiskit-clifford` (stabilizer, O(n²) memory) for the large Clifford circuits the
+statevector engines cannot reach. Labelled QSOPs are compared against native runs on
+the same boundaries (native amplitudes are the shared ground truth).
+
+#### Scaling study (synthetic family)
+
+The WMC-vs-solver crossover study runs on a committed synthetic phase-polynomial
+family under `benchmarks/corpus/sop/synthetic/scaling/`, regenerable with:
+
+```sh
+python3 tools/gen_scaling_family.py --qubits 8,12,16,20,24,28 --seeds 1,2,3 \
+    --materialize-dir benchmarks/corpus/sop/synthetic/scaling --qasm2sop build/qasm2sop
+```
+
+Real scalable circuit families do not work here: the importable QSOP gate set is
+finite-modulus (Clifford+T and dyadic phases), so the MQT families that scale
+treewidth (qaoa/qft/vqe) are rejected for their continuous angles, while the
+importable ones (ghz/bv/graphstate) are Clifford with trivial treewidth. The
+synthetic family has treewidth growing with qubit count, exposing the regime where
+ganak (WMC) overtakes the treewidth and branch backends.
 
 ### Render from existing artifacts
 
@@ -197,6 +221,7 @@ existing JSONL artifacts without re-running any experiments.
 - `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
 - `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
+- `tools/gen_scaling_family.py`: generate / materialize the synthetic scaling family.
 - `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
 - `tools/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).
 
