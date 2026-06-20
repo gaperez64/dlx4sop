@@ -165,18 +165,19 @@ branch:no-rankwidth   (control: branch without rankwidth delegation)
 ### Full scoreboard refresh (requires Ganak + native simulators)
 
 ```sh
-python3 tools/bench.py full \
+python3 tools/run_corpus_benchmarks.py \
     --artifact-dir artifacts/full \
-    --ganak /tmp/ganak/ganak
+    --ganak /path/to/ganak
 ```
 
-This runs one benchmark pass (tagging each record with `qsop_mode`), then calls
-`bench.py render --view full` which produces:
+This runs solver, WMC (Ganak), and native simulator jobs for all tiers (including
+MQT Bench large tiers), then calls `bench.py render --view full` which produces:
 1. `scoreboard-sign.md` + `scoreboard-assets/sign/` SVGs (sign QSOPs only)
 2. `scoreboard-labelled.md` + `scoreboard-assets/labelled/` SVGs (labelled QSOPs only)
 3. `scoreboard.md` — combined index linking to both mode scoreboards
 
 Pass `--skip-wmc`, `--skip-native`, or `--skip-solver` to run a subset.
+Pass `--timeout N` to override the default 30 s per-instance timeout for all jobs.
 
 ### Render from existing artifacts
 
@@ -195,7 +196,7 @@ existing JSONL artifacts without re-running any experiments.
 - `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
 - `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
-- `tools/run_corpus_benchmarks.py`: full-pipeline orchestrator (alternative to `bench.py full`).
+- `tools/run_corpus_benchmarks.py`: full-pipeline orchestrator (preferred over `bench.py full` — writes correctly-named per-tier artifacts).
 
 ## Current Status
 
