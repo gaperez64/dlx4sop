@@ -26,7 +26,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_DIR = REPO_ROOT / "tools"
 
 SOLVER_TIERS = ("0-32", "33-64", "65-128", "129-256", "257-512 sample")
-NATIVE_TIERS = ("33-64", "65-128", "129-256")
+NATIVE_TIERS = ("0-32", "33-64", "65-128", "129-256")
 WMC_RESIDUE_TIERS = ("0-32", "33-64")
 MQT_SOLVER_TIERS = ("33-64", "65-128")
 

@@ -170,14 +170,16 @@ python3 tools/run_corpus_benchmarks.py \
     --ganak /path/to/ganak
 ```
 
-This runs solver, WMC (Ganak), and native simulator jobs for all tiers (including
-MQT Bench large tiers), then calls `bench.py render --view full` which produces:
+`run_corpus_benchmarks.py` is the single orchestrator. It runs solver, WMC (Ganak),
+and native-simulator jobs for all tiers (including the MQT Bench large tiers), then
+renders:
 1. `scoreboard-sign.md` + `scoreboard-assets/sign/` SVGs (sign QSOPs only)
 2. `scoreboard-labelled.md` + `scoreboard-assets/labelled/` SVGs (labelled QSOPs only)
 3. `scoreboard.md` — combined index linking to both mode scoreboards
 
-Pass `--skip-wmc`, `--skip-native`, or `--skip-solver` to run a subset.
-Pass `--timeout N` to override the default 30 s per-instance timeout for all jobs.
+`bench.py full` is a thin alias for the same pipeline. Pass `--skip-wmc`,
+`--skip-native`, `--skip-solver`, or `--skip-scoreboard` to run a subset, and
+`--timeout N` to override the default 30 s per-instance timeout for all jobs.
 
 ### Render from existing artifacts
 
@@ -196,12 +198,16 @@ existing JSONL artifacts without re-running any experiments.
 - `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
 - `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
-- `tools/run_corpus_benchmarks.py`: full-pipeline orchestrator (preferred over `bench.py full` — writes correctly-named per-tier artifacts).
+- `tools/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).
 
 ## Current Status
 
-[scoreboard.md](scoreboard.md) is the index: combined coverage totals and links
-to the per-mode scoreboards. [scoreboard-sign.md](scoreboard-sign.md) and
-[scoreboard-labelled.md](scoreboard-labelled.md) track corpus coverage, solver
-timings, native simulator comparisons, and the current recommended solver
-configuration for each benchmark tier.
+[scoreboard.md](scoreboard.md) is the index with combined coverage totals and
+links to the per-mode scoreboards: [scoreboard-sign.md](scoreboard-sign.md) and
+[scoreboard-labelled.md](scoreboard-labelled.md). Each tracks corpus coverage,
+solver timings, and the recommended solver configuration per tier.
+
+Headline finding: on sign QSOPs, the solver beats the `pyzx-matrix` baseline
+across tiers while dense `aer-statevector` still wins some low-width rows.
+Labelled QSOPs have no native baseline — statevector simulators only evaluate
+sign boundaries (input == output).

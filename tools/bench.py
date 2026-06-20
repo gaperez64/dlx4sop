@@ -300,72 +300,35 @@ def _render_full(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_full(args: argparse.Namespace) -> int:
-    """Full benchmark pipeline: local + WMC + native + render."""
+    """Full benchmark pipeline.
+
+    Thin alias for run_corpus_benchmarks.py — the single orchestrator that runs the
+    per-tier solver, WMC, native, and MQT jobs (writing canonically-named artifacts) and
+    then renders the per-mode scoreboards. Keeping one implementation avoids the earlier
+    drift where this command wrote artifact names the renderer could not find.
+    """
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts" / "full"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-
-    rc = 0
-
-    # Local backends
-    if not args.skip_solver:
-        local_out = artifact_dir / "local.jsonl"
-        local_args = argparse.Namespace(
-            sop_solve=args.sop_solve,
-            corpus_dirs=None,
-            tiers=None,
-            backends=None,
-            max_vars=None,
-            timeout=args.timeout,
-            out=local_out,
-            quiet=False,
-        )
-        rc = rc or cmd_local(local_args)
-
-    # WMC / Ganak
-    if not args.skip_wmc and args.ganak:
-        ganak_out = artifact_dir / "ganak.jsonl"
-        ganak_args = argparse.Namespace(
-            ganak=args.ganak,
-            sop2wmc=args.sop2wmc,
-            encodings=["amp-and", "amp-soft", "amp-block", "residue-fourier"],
-            timeout=args.timeout,
-            out=ganak_out,
-        )
-        rc = rc or cmd_ganak(ganak_args)
-    elif not args.skip_wmc and not args.ganak:
-        print("info: --ganak not provided; skipping WMC benchmarks", file=sys.stderr)
-
-    # Native simulators
-    if not args.skip_native:
-        manifests_dir = args.manifests_dir or (REPO_ROOT / "benchmarks" / "manifests")
-        if manifests_dir.exists():
-            for manifest in sorted(manifests_dir.glob("*.json")):
-                native_out = artifact_dir / f"native-{manifest.stem}.jsonl"
-                native_args = argparse.Namespace(
-                    manifest=manifest,
-                    qasm2sop=args.qasm2sop,
-                    sop_solve=args.sop_solve,
-                    timeout=args.timeout,
-                    out=native_out,
-                )
-                rc = rc or cmd_native(native_args)
-        else:
-            print("info: no manifests dir; skipping native benchmarks", file=sys.stderr)
-
-    # Render
-    output = args.output or REPO_ROOT / "scoreboard.md"
-    json_out = getattr(args, "json_out", None)
-    timeout_note = f"{int(args.timeout)} s" if getattr(args, "timeout", None) else ""
-    render_args = argparse.Namespace(
-        artifact_dir=artifact_dir,
-        view="full",
-        output=output,
-        json_out=json_out,
-        timeout_note=timeout_note,
-    )
-    rc = rc or cmd_render(render_args)
-
-    return rc
+    cmd = [
+        sys.executable, str(TOOLS_DIR / "run_corpus_benchmarks.py"),
+        "--artifact-dir", str(artifact_dir),
+        "--sop-solve", str(args.sop_solve),
+        "--sop2wmc", str(args.sop2wmc),
+        "--qasm2sop", str(args.qasm2sop),
+        "--timeout", str(args.timeout),
+    ]
+    if args.ganak:
+        cmd += ["--ganak", str(args.ganak)]
+    if args.manifests_dir:
+        cmd += ["--manifests", str(args.manifests_dir)]
+    if args.skip_solver:
+        cmd += ["--skip-solver"]
+    if args.skip_wmc:
+        cmd += ["--skip-wmc"]
+    if args.skip_native:
+        cmd += ["--skip-native"]
+    if getattr(args, "skip_scoreboard", False):
+        cmd += ["--skip-scoreboard"]
+    return _run(cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +479,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_full.add_argument("--skip-solver", action="store_true")
     p_full.add_argument("--skip-wmc", action="store_true")
     p_full.add_argument("--skip-native", action="store_true")
+    p_full.add_argument("--skip-scoreboard", action="store_true")
     p_full.set_defaults(func=cmd_full)
 
     # ---- tune-mqt ----

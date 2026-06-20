@@ -552,7 +552,16 @@ def plot_speedup_vs_treewidth_svg(
         m = re.match(r"(\d+)", t)
         return int(m.group(1)) if m else 9999
 
-    tiers = sorted(tier_ns.keys(), key=_tier_key)
+    # Keep only tiers with a treewidth baseline and at least one comparable backend bar,
+    # so empty columns / zero-height bars do not clutter the chart.
+    comparison_backends = [b for b in (backends or []) if b != "treewidth"]
+
+    def _has_drawable_bar(tier: str) -> bool:
+        if tier_ns[tier].get("treewidth", 0) <= 0:
+            return False
+        return any(tier_ns[tier].get(b, 0) > 0 for b in comparison_backends)
+
+    tiers = [t for t in sorted(tier_ns.keys(), key=_tier_key) if _has_drawable_bar(t)]
     if not tiers:
         _write_placeholder_svg(output_path, "Speedup relative to treewidth")
         return

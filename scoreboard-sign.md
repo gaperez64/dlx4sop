@@ -106,22 +106,40 @@ Best configuration per tier at a glance.
 
 ## Competitor Comparisons
 
-Best-performing native simulator per source and tier.
+Best native simulator per source and tier. Speedup = native time / QSOP time, so a value above 1 (**bold**) means QSOP is faster.
+
+### Internal corpus
+
+| Tier | QSOP time | Best native | Native time | Best speedup |
+| --- | ---: | --- | ---: | ---: |
+| 0-32 | 6.3 ms | `mqt-ddsim-statevector` | 139.7 ms | **22.18x** |
 
 ### FeynmanDD
 
 | Tier | QSOP time | Best native | Native time | Best speedup |
 | --- | ---: | --- | ---: | ---: |
+| 0-32 | 41.7 ms | `qiskit-statevector` | 766.7 ms | **18.37x** |
+| 33-64 | 4.9 ms | `pyzx-matrix` | 20.9 ms | **4.25x** |
+| 65-128 | 25.1 ms | `pyzx-matrix` | 15.49 s | **617.94x** |
 | 129-256 | 77.1 ms | `aer-statevector` | 15.9 ms | 0.21x |
+
+### MQT Bench
+
+| Tier | QSOP time | Best native | Native time | Best speedup |
+| --- | ---: | --- | ---: | ---: |
+| 0-32 | 23.2 ms | `pyzx-matrix` | 556.7 ms | **23.98x** |
 
 ### PyZX
 
 | Tier | QSOP time | Best native | Native time | Best speedup |
 | --- | ---: | --- | ---: | ---: |
-| 129-256 | 881.2 ms | `pyzx-matrix` | 43.25 s | **49.08x** |
+| 0-32 | 19.2 ms | `mqt-ddsim-statevector` | 371.1 ms | **19.31x** |
+| 33-64 | 16.3 ms | `pyzx-matrix` | 185.9 ms | **11.40x** |
+| 65-128 | 137.1 ms | `pyzx-matrix` | 27.29 s | **199.01x** |
+| 129-256 | 871.3 ms | `pyzx-matrix` | 43.25 s | **49.64x** |
 
 ## Current Takeaway
 
-Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill-max-degree`; 33-64: `branch:auto`; 65-128: `treewidth --treewidth-order min-fill`; 129-256: `branch --branch-heuristic split`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
+Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill-max-degree`; 33-64: `treewidth --treewidth-order min-fill-max-degree`; 65-128: `treewidth --treewidth-order min-fill-max-degree`; 129-256: `branch --branch-heuristic split`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
 The 257-512 stratified sample is not a full tier yet: 70 / 72 rows solve under the current timeout cap.
-Treewidth remains the clean direct-DP baseline. Hybrid branch is the best current widened-tier configuration when component splitting and treewidth handoff trigger. Native comparisons are now capped and source-local; dense statevector tools can still win on low-qubit rows, while QSOP remains strong on many fixed-boundary rows with large imported variable counts.
+Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier configuration once component splitting and treewidth handoff trigger. Against native baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense `aer-statevector` still wins on some low-width FeynmanDD rows. Labelled QSOPs have no native baseline: the simulators only evaluate sign boundaries where input equals output.

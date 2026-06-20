@@ -41,7 +41,7 @@ SOURCE_URLS = {
     "PyZX": "https://github.com/zxcalc/pyzx",
 }
 SOLVER_TIERS = ("0-32", "33-64", "65-128", "129-256", "257-512 sample")
-NATIVE_TIERS = ("33-64", "65-128", "129-256")
+NATIVE_TIERS = ("0-32", "33-64", "65-128", "129-256")
 
 DEFAULT_SOLVER_ARTIFACTS = (
     ("0-32", "dlx4sop-tier-0-32-treewidth-current.jsonl"),
@@ -90,6 +90,9 @@ DEFAULT_NATIVE_ARTIFACTS = tuple(
     ("33-64", "mqt-bench-tier-33-64-native-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-native-current.jsonl"),
 )
+# Note: NATIVE_TIERS now includes "0-32" — the tier-0-32 manifest boundaries are all
+# ≤16 qubits, well within the native --max-qubits cap, so the small tier yields the
+# most meaningful QSOP-vs-statevector comparison and must not be skipped.
 
 
 def display_source(record: dict) -> str:
@@ -431,20 +434,6 @@ def best_solver_configs(named_records: list[tuple[str, list[dict]]]) -> dict[str
     return {tier: config for tier, (_elapsed, config) in best.items()}
 
 
-def filter_records_by_config(
-    named_records: list[tuple[str, list[dict]]], selected: dict[str, str]
-) -> list[tuple[str, list[dict]]]:
-    filtered = []
-    for tier, records in named_records:
-        wanted = selected.get(tier)
-        if wanted is None:
-            continue
-        kept = [record for record in records if solver_config(record) == wanted]
-        if kept:
-            filtered.append((tier, kept))
-    return filtered
-
-
 def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
     non_wmc = [
         (tier, [r for r in records if r.get("backend") != "wmc"])
@@ -536,16 +525,17 @@ def write_competitor_tables(
     native_records: list[tuple[str, list[dict]]],
     file: TextIO,
 ) -> None:
-    best_records = filter_records_by_config(solver_records, best_solver_configs(solver_records))
-    rows = summarize_native_comparison_records(best_records, native_records)
+    # Pass all solver configs (see write_condensed_competitor_table): MQT-bench configs would
+    # otherwise displace the dlx4sop configs that share boundaries with the native runs.
+    rows = summarize_native_comparison_records(solver_records, native_records)
     if not rows:
         return
     print("\n## Competitor Comparisons\n", file=file)
     print(
-        "These compare the best current QSOP configuration for each tier against "
-        "native QASM baselines on common rows. Each native tool is compared only on "
-        "the QASM rows from that source that it can parse and fit under its cap. "
-        "Speedup is native elapsed time divided by QSOP solve time, so values above "
+        "These compare each current QSOP configuration against native QASM baselines on "
+        "common rows, keeping the best speedup per source and tier. Each native tool is "
+        "compared only on the QASM rows from that source that it can parse and fit under "
+        "its cap. Speedup is native elapsed time divided by QSOP solve time, so values above "
         "`1.00x` mean QSOP is faster. Amplitude error columns use completed rows "
         "where both sides recorded amplitudes.\n",
         file=file,
@@ -588,7 +578,14 @@ def write_competitor_tables(
 
 
 def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) -> None:
-    best = best_solver_configs(named_records)
+    # Exclude the external MQT-bench corpus when picking the "best internal configuration":
+    # its tiny GHZ/BV circuits solve in microseconds and would otherwise report a misleading
+    # per-tier winner that does not reflect the dlx4sop corpus.
+    internal_records = [
+        (tier, [r for r in records if r.get("source") != "MQT Bench"])
+        for tier, records in named_records
+    ]
+    best = best_solver_configs(internal_records)
     best_parts = [f"{tier}: `{best[tier]}`" for tier in SOLVER_TIERS if tier in best]
     non_wmc = [(tier, [r for r in records if r.get("backend") != "wmc"]) for tier, records in named_records]
     sample_rows = [record for tier, records in non_wmc for record in records if tier == "257-512 sample"]
@@ -604,11 +601,11 @@ def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) ->
             file=file,
         )
     print(
-        "Treewidth remains the clean direct-DP baseline. Hybrid branch is the best "
-        "current widened-tier configuration when component splitting and treewidth "
-        "handoff trigger. Native comparisons are now capped and source-local; dense "
-        "statevector tools can still win on low-qubit rows, while QSOP remains strong "
-        "on many fixed-boundary rows with large imported variable counts.",
+        "Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier "
+        "configuration once component splitting and treewidth handoff trigger. Against native "
+        "baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense "
+        "`aer-statevector` still wins on some low-width FeynmanDD rows. Labelled QSOPs have no "
+        "native baseline: the simulators only evaluate sign boundaries where input equals output.",
         file=file,
     )
 
@@ -632,10 +629,25 @@ def write_condensed_competitor_table(
     native_records: list[tuple[str, list[dict]]],
     file: TextIO,
 ) -> None:
-    best_records = filter_records_by_config(solver_records, best_solver_configs(solver_records))
-    rows = summarize_native_comparison_records(best_records, native_records)
+    # Pass all solver configs (not a single global best-per-tier): MQT-bench configs solve
+    # tiny circuits in microseconds and would otherwise win the per-tier pick and displace the
+    # dlx4sop configs that actually share boundaries with the native runs. The grouping below
+    # already selects the best speedup per (source, tier).
+    rows = summarize_native_comparison_records(solver_records, native_records)
     print("\n## Competitor Comparisons\n", file=file)
-    print("Best-performing native simulator per source and tier.\n", file=file)
+    comparison_rows = [row for row in rows if row["both_ok"] > 0 and row["solver_elapsed_ns"] > 0]
+    if not comparison_rows:
+        print(
+            "Native simulators evaluate only sign boundaries (input == output), so labelled "
+            "QSOPs have no native baseline.\n",
+            file=file,
+        )
+        return
+    print(
+        "Best native simulator per source and tier. Speedup = native time / QSOP time, "
+        "so a value above 1 (**bold**) means QSOP is faster.\n",
+        file=file,
+    )
     for source in sorted({row["source"] for row in rows}, key=source_sort_key):
         print(f"### {markdown_escape(source)}\n", file=file)
         print("| Tier | QSOP time | Best native | Native time | Best speedup |", file=file)
