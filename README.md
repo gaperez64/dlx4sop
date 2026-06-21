@@ -251,7 +251,6 @@ links to the per-mode scoreboards: [scoreboard-sign.md](scoreboard-sign.md) and
 [scoreboard-labelled.md](scoreboard-labelled.md). Each tracks corpus coverage,
 solver timings, and the recommended solver configuration per tier.
 
-Headline finding: on sign QSOPs, the solver beats the `pyzx-matrix` baseline
-across tiers while dense `aer-statevector` still wins some low-width rows.
-Labelled QSOPs have no native baseline — statevector simulators only evaluate
-sign boundaries (input == output).
+Headline finding: on both sign and labelled QSOPs, the solver beats the
+`pyzx-matrix` baseline across tiers while dense `aer-statevector` still wins some
+low-width rows.
