@@ -586,11 +586,6 @@ def plot_speedup_vs_treewidth_svg(
     svg.text(W // 2, 22, "Speedup relative to treewidth (ratio > 1 = faster than treewidth)",
              anchor="middle", fill="#222", size=12)
 
-    # Reference line at 1.0
-    y_ref = PAD_T + plot_h / 2  # 1.0 in a 0.5–2.0 range
-    svg.line(PAD_L, y_ref, PAD_L + plot_w, y_ref, stroke="#999", dash="4,2")
-    svg.text(PAD_L - 5, y_ref + 4, "1.0×", anchor="end", fill="#666", size=10)
-
     ratio_min, ratio_max = 0.5, 2.0
 
     def _y(ratio: float) -> float:
@@ -603,6 +598,10 @@ def plot_speedup_vs_treewidth_svg(
         y = _y(r_val)
         svg.text(PAD_L - 5, y + 4, f"{r_val:.2f}×", anchor="end", fill="#666", size=9)
         svg.line(PAD_L, y, PAD_L + plot_w, y, stroke="#eee")
+
+    # Dashed emphasis line at the 1.0x baseline, where the bars are anchored. (The scale is
+    # 0.5-2.0, so 1.0 is at fraction 1/3 of the height, not the geometric middle.)
+    svg.line(PAD_L, _y(1.0), PAD_L + plot_w, _y(1.0), stroke="#999", dash="4,2")
 
     bar_group_w = plot_w / n_tiers
     bar_w = bar_group_w / (len(backends) + 1)
