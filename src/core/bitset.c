@@ -113,26 +113,31 @@ uint64_t qsop_bitset_fingerprint(const uint64_t *bits, size_t words) {
 uint32_t qsop_gf2_rank_bitsets(uint64_t *rows, uint32_t nrows, uint32_t ncols, size_t words) {
   uint32_t rank = 0;
   for (uint32_t col = 0; col < ncols && rank < nrows; col++) {
+    /* The column bit is fixed across all rows this iteration: hoist its word + mask out of
+       the per-row loops and index rows directly (rows + r*words) instead of recomputing. */
+    const size_t col_word = (size_t)(col / 64U);
+    const uint64_t col_mask = UINT64_C(1) << (col % 64U);
     uint32_t pivot = rank;
-    while (pivot < nrows && !qsop_bitset_get(qsop_bitset_row(rows, words, pivot), col)) {
+    while (pivot < nrows && (rows[(size_t)pivot * words + col_word] & col_mask) == 0) {
       pivot++;
     }
     if (pivot == nrows) {
       continue;
     }
+    uint64_t *rank_row = rows + (size_t)rank * words;
     if (pivot != rank) {
+      uint64_t *pivot_row = rows + (size_t)pivot * words;
       for (size_t w = 0; w < words; w++) {
-        const uint64_t tmp = qsop_bitset_row(rows, words, rank)[w];
-        qsop_bitset_row(rows, words, rank)[w] = qsop_bitset_row(rows, words, pivot)[w];
-        qsop_bitset_row(rows, words, pivot)[w] = tmp;
+        const uint64_t tmp = rank_row[w];
+        rank_row[w] = pivot_row[w];
+        pivot_row[w] = tmp;
       }
     }
-    const uint64_t *rank_row = qsop_bitset_const_row(rows, words, rank);
     for (uint32_t row = 0; row < nrows; row++) {
-      if (row == rank || !qsop_bitset_get(qsop_bitset_const_row(rows, words, row), col)) {
+      uint64_t *target = rows + (size_t)row * words;
+      if (row == rank || (target[col_word] & col_mask) == 0) {
         continue;
       }
-      uint64_t *target = qsop_bitset_row(rows, words, row);
       qsop_bitset_xor(target, rank_row, words);
     }
     rank++;
