@@ -586,11 +586,15 @@ def plot_speedup_vs_treewidth_svg(
     svg.text(W // 2, 22, "Speedup relative to treewidth (ratio > 1 = faster than treewidth)",
              anchor="middle", fill="#222", size=12)
 
+    import math
+    # Log scale so 1.0x sits at the vertical centre and "2x faster" / "2x slower" are
+    # equidistant (a linear 0.5-2.0 scale pushes the 1.0x baseline into the lower third).
     ratio_min, ratio_max = 0.5, 2.0
+    log_min, log_max = math.log(ratio_min), math.log(ratio_max)
 
     def _y(ratio: float) -> float:
         clamped = max(ratio_min, min(ratio_max, ratio))
-        frac = (clamped - ratio_min) / (ratio_max - ratio_min)
+        frac = (math.log(clamped) - log_min) / (log_max - log_min)
         return PAD_T + plot_h * (1.0 - frac)
 
     # Y-axis labels
