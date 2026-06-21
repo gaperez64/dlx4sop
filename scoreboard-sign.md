@@ -78,37 +78,36 @@ Best configuration per tier at a glance.
 
 | Tier | Configuration | Solved | Total solve time |
 | --- | --- | ---: | ---: |
-| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 212 / 212 | 90.2 ms |
-| 0-32 | `branch --branch-heuristic split` | 212 / 212 | 111.2 ms |
-| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 212 / 212 | 476.0 ms |
-| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 212 / 212 | 496.53 s |
-| 33-64 | `branch:auto` | 72 / 72 | 31.9 ms |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 48 / 48 | 32.6 ms |
-| 33-64 | `treewidth --treewidth-order min-fill` | 72 / 72 | 35.9 ms |
-| 33-64 | `branch --branch-heuristic split` | 48 / 48 | 43.5 ms |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 48 / 48 | 65.3 ms |
-| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 48 / 48 | 2.56 s |
-| 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 48 / 48 | 2.57 s |
-| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 48 / 48 | 3.51 s |
-| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 48 / 48 | 13.75 s |
-| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 27 / 48 | 1680.29 s |
-| 65-128 | `branch:auto` | 42 / 42 | 18.5 ms |
-| 65-128 | `treewidth --treewidth-order min-fill` | 42 / 42 | 40.5 ms |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 202 / 202 | 355.0 ms |
-| 65-128 | `branch --branch-heuristic split` | 202 / 202 | 444.3 ms |
-| 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 202 / 202 | 37.00 s |
-| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 37.24 s |
-| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 202 / 202 | 41.36 s |
-| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 114 / 202 | 3819.26 s |
-| 129-256 | `branch --branch-heuristic split` | 98 / 98 | 725.3 ms |
-| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 98 / 98 | 827.0 ms |
-| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 98 / 98 | 37.03 s |
-| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 98 / 98 | 37.11 s |
-| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 98 / 98 | 42.09 s |
-| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 72 / 72 | 65.57 s |
-| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 68 / 72 | 215.33 s |
-| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 68 / 72 | 215.92 s |
-| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 68 / 72 | 216.87 s |
+| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 212 / 212 | 107.3 ms |
+| 0-32 | `branch --branch-heuristic split` | 212 / 212 | 110.5 ms |
+| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 212 / 212 | 456.6 ms |
+| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 212 / 212 | 492.42 s |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 48 / 48 | 29.1 ms |
+| 33-64 | `branch:auto` | 72 / 72 | 29.4 ms |
+| 33-64 | `treewidth --treewidth-order min-fill` | 72 / 72 | 34.5 ms |
+| 33-64 | `branch --branch-heuristic split` | 48 / 48 | 41.3 ms |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 48 / 48 | 67.1 ms |
+| 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 48 / 48 | 2.53 s |
+| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 48 / 48 | 2.59 s |
+| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 48 / 48 | 3.54 s |
+| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 48 / 48 | 13.79 s |
+| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 27 / 48 | 1673.73 s |
+| 65-128 | `branch:auto` | 42 / 42 | 20.2 ms |
+| 65-128 | `treewidth --treewidth-order min-fill` | 42 / 42 | 35.6 ms |
+| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 202 / 202 | 346.6 ms |
+| 65-128 | `branch --branch-heuristic split` | 202 / 202 | 423.4 ms |
+| 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 202 / 202 | 37.06 s |
+| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 37.17 s |
+| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 202 / 202 | 41.38 s |
+| 129-256 | `branch --branch-heuristic split` | 98 / 98 | 677.0 ms |
+| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 98 / 98 | 753.7 ms |
+| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 98 / 98 | 36.89 s |
+| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 98 / 98 | 37.05 s |
+| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 98 / 98 | 41.81 s |
+| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 72 / 72 | 64.21 s |
+| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 68 / 72 | 215.45 s |
+| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 68 / 72 | 215.71 s |
+| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 68 / 72 | 215.95 s |
 
 ## Competitor Comparisons
 
@@ -118,33 +117,33 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 14.1 ms | `mqt-ddsim-statevector` | 293.4 ms | **20.84x** | 32 / 32 |
+| 0-32 | 14.6 ms | `mqt-ddsim-statevector` | 297.1 ms | **20.42x** | 32 / 32 |
 
 ### FeynmanDD
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 34.0 ms | `mqt-ddsim-statevector` | 738.7 ms | **21.72x** | 80 / 80 |
-| 33-64 | 3.0 ms | `pyzx-matrix` | 22.6 ms | **7.46x** | 4 / 28 |
-| 65-128 | 8.9 ms | `pyzx-matrix` | 18.34 s | **2055.92x** | 4 / 166 |
-| 129-256 | 22.3 ms | `qiskit-clifford` | 527.3 ms | **23.61x** | 2 / 50 |
+| 0-32 | 43.4 ms | `mqt-ddsim-statevector` | 718.3 ms | **16.56x** | 80 / 80 |
+| 33-64 | 2.6 ms | `pyzx-matrix` | 22.0 ms | **8.55x** | 4 / 28 |
+| 65-128 | 6.8 ms | `pyzx-matrix` | 8.67 s | **1276.13x** | 3 / 166 |
+| 129-256 | 20.3 ms | `qiskit-clifford` | 518.9 ms | **25.51x** | 2 / 50 |
 
 ### MQT Bench
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 22.7 ms | `pyzx-matrix` | 471.6 ms | **20.82x** | 56 / 56 |
-| 33-64 | 31.9 ms | `qiskit-clifford` | 48.02 s | **1503.66x** | 72 / 72 |
-| 65-128 | 15.5 ms | `qiskit-clifford` | 214.35 s | **13794.90x** | 36 / 42 |
+| 0-32 | 22.4 ms | `pyzx-matrix` | 607.2 ms | **27.15x** | 56 / 56 |
+| 33-64 | 29.4 ms | `qiskit-clifford` | 48.35 s | **1646.70x** | 72 / 72 |
+| 65-128 | 17.5 ms | `qiskit-clifford` | 212.84 s | **12185.24x** | 36 / 42 |
 
 ### PyZX
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 17.5 ms | `mqt-ddsim-statevector` | 361.8 ms | **20.68x** | 44 / 44 |
-| 33-64 | 13.5 ms | `pyzx-matrix` | 185.9 ms | **13.81x** | 20 / 20 |
-| 65-128 | 54.0 ms | `pyzx-matrix` | 29.53 s | **546.70x** | 34 / 36 |
-| 129-256 | 158.7 ms | `pyzx-matrix` | 4.68 s | **29.46x** | 18 / 48 |
+| 0-32 | 19.8 ms | `mqt-ddsim-statevector` | 345.1 ms | **17.44x** | 44 / 44 |
+| 33-64 | 11.2 ms | `pyzx-matrix` | 185.6 ms | **16.61x** | 20 / 20 |
+| 65-128 | 50.7 ms | `pyzx-matrix` | 28.74 s | **566.80x** | 34 / 36 |
+| 129-256 | 151.9 ms | `pyzx-matrix` | 4.12 s | **27.13x** | 18 / 48 |
 
 ## Current Takeaway
 

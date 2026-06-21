@@ -71,33 +71,32 @@ Best configuration per tier at a glance.
 
 | Tier | Configuration | Solved | Total solve time |
 | --- | --- | ---: | ---: |
-| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 26 / 26 | 12.8 ms |
-| 0-32 | `branch --branch-heuristic split` | 26 / 26 | 17.2 ms |
-| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 26 / 26 | 18.2 ms |
-| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 26 / 26 | 34.36 s |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 18 / 18 | 10.6 ms |
-| 33-64 | `branch --branch-heuristic split` | 18 / 18 | 11.9 ms |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 18 / 18 | 47.4 ms |
-| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 18 / 18 | 1.61 s |
+| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 26 / 26 | 14.1 ms |
+| 0-32 | `branch --branch-heuristic split` | 26 / 26 | 16.9 ms |
+| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 26 / 26 | 23.5 ms |
+| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 26 / 26 | 34.35 s |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 18 / 18 | 10.7 ms |
+| 33-64 | `branch --branch-heuristic split` | 18 / 18 | 11.6 ms |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 18 / 18 | 46.7 ms |
 | 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 18 / 18 | 1.61 s |
-| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 18 / 18 | 1.77 s |
-| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 18 / 18 | 7.00 s |
-| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 18 / 18 | 181.66 s |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 52 / 52 | 83.6 ms |
-| 65-128 | `branch --branch-heuristic split` | 52 / 52 | 118.5 ms |
-| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 52 / 52 | 4.70 s |
-| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 52 / 52 | 9.73 s |
+| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 18 / 18 | 1.61 s |
+| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 18 / 18 | 1.75 s |
+| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 18 / 18 | 7.01 s |
+| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 18 / 18 | 180.93 s |
+| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 52 / 52 | 83.2 ms |
+| 65-128 | `branch --branch-heuristic split` | 52 / 52 | 106.8 ms |
 | 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 52 / 52 | 9.73 s |
-| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 52 / 52 | 10.59 s |
-| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 124 / 124 | 4.05 s |
-| 129-256 | `branch --branch-heuristic split` | 124 / 124 | 4.91 s |
-| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 124 / 124 | 89.29 s |
-| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 124 / 124 | 89.97 s |
-| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 124 / 124 | 98.35 s |
-| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 98 / 130 | 1191.96 s |
-| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 90 / 130 | 1762.81 s |
-| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 91 / 130 | 1763.15 s |
-| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 84 / 130 | 1874.09 s |
+| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 52 / 52 | 9.74 s |
+| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 52 / 52 | 10.61 s |
+| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 124 / 124 | 3.96 s |
+| 129-256 | `branch --branch-heuristic split` | 124 / 124 | 4.75 s |
+| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 124 / 124 | 89.73 s |
+| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 124 / 124 | 89.87 s |
+| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 124 / 124 | 97.95 s |
+| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 98 / 130 | 1190.64 s |
+| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 90 / 130 | 1755.26 s |
+| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 90 / 130 | 1761.97 s |
+| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 84 / 130 | 1872.10 s |
 
 ## Competitor Comparisons
 
@@ -107,25 +106,25 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 11.8 ms | `mqt-ddsim-statevector` | 205.5 ms | **17.42x** | 24 / 24 |
-| 33-64 | 3.8 ms | `pyzx-matrix` | 8.62 s | **2287.93x** | 6 / 6 |
-| 65-128 | 33.3 ms | `pyzx-matrix` | 16.72 s | **501.65x** | 18 / 18 |
-| 129-256 | 22.2 ms | `pyzx-matrix` | 17.76 s | **798.25x** | 6 / 86 |
+| 0-32 | 13.1 ms | `mqt-ddsim-statevector` | 209.4 ms | **15.98x** | 24 / 24 |
+| 33-64 | 3.7 ms | `pyzx-matrix` | 8.43 s | **2256.28x** | 6 / 6 |
+| 65-128 | 31.6 ms | `pyzx-matrix` | 17.29 s | **547.79x** | 18 / 18 |
+| 129-256 | 19.9 ms | `pyzx-matrix` | 17.91 s | **901.81x** | 6 / 86 |
 
 ### MQT Bench
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 65-128 | 3.5 ms | `pyzx-matrix` | 11.0 ms | **3.17x** | 2 / 2 |
+| 65-128 | 2.9 ms | `pyzx-matrix` | 10.7 ms | **3.71x** | 2 / 2 |
 
 ### PyZX
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 948.1 us | `mqt-ddsim-statevector` | 17.6 ms | **18.58x** | 2 / 2 |
-| 33-64 | 6.8 ms | `pyzx-matrix` | 115.1 ms | **16.96x** | 12 / 12 |
-| 65-128 | 46.8 ms | `pyzx-matrix` | 26.41 s | **564.11x** | 32 / 32 |
-| 129-256 | 118.0 ms | `pyzx-matrix` | 36.52 s | **309.58x** | 18 / 38 |
+| 0-32 | 1.0 ms | `mqt-ddsim-statevector` | 16.2 ms | **16.14x** | 2 / 2 |
+| 33-64 | 6.9 ms | `pyzx-matrix` | 117.7 ms | **16.97x** | 12 / 12 |
+| 65-128 | 48.8 ms | `pyzx-matrix` | 26.96 s | **552.69x** | 32 / 32 |
+| 129-256 | 111.2 ms | `pyzx-matrix` | 35.41 s | **318.31x** | 18 / 38 |
 
 ## Current Takeaway
 

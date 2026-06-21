@@ -4,38 +4,36 @@
 <text x="360.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Solver time by tier (total, log scale)</text>
 <text x="95.0" y="78.0" text-anchor="end" fill="#333" font-size="10">0-32</text>
 <line x1="100.0" y1="40.0" x2="560.0" y2="40.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="42.0" width="287.7" height="17.0" fill="#1f77b4" opacity="0.80"/>
-<text x="390.7" y="58.0" text-anchor="start" fill="#333" font-size="9">13ms</text>
-<rect x="100.0" y="61.0" width="292.9" height="17.0" fill="#ff7f0e" opacity="0.80"/>
-<text x="395.9" y="77.0" text-anchor="start" fill="#333" font-size="9">17ms</text>
-<rect x="100.0" y="80.0" width="293.9" height="17.0" fill="#8c564b" opacity="0.80"/>
-<text x="396.9" y="96.0" text-anchor="start" fill="#333" font-size="9">18ms</text>
+<rect x="100.0" y="42.0" width="289.5" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="392.5" y="58.0" text-anchor="start" fill="#333" font-size="9">14ms</text>
+<rect x="100.0" y="61.0" width="292.7" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="395.7" y="77.0" text-anchor="start" fill="#333" font-size="9">17ms</text>
+<rect x="100.0" y="80.0" width="298.5" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="401.5" y="96.0" text-anchor="start" fill="#333" font-size="9">24ms</text>
 <text x="95.0" y="154.0" text-anchor="end" fill="#333" font-size="10">33-64</text>
 <line x1="100.0" y1="116.0" x2="560.0" y2="116.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="118.0" width="284.3" height="17.0" fill="#1f77b4" opacity="0.80"/>
-<text x="387.3" y="134.0" text-anchor="start" fill="#333" font-size="9">11ms</text>
-<rect x="100.0" y="137.0" width="286.5" height="17.0" fill="#ff7f0e" opacity="0.80"/>
-<text x="389.5" y="153.0" text-anchor="start" fill="#333" font-size="9">12ms</text>
-<rect x="100.0" y="156.0" width="310.8" height="17.0" fill="#8c564b" opacity="0.80"/>
-<text x="413.8" y="172.0" text-anchor="start" fill="#333" font-size="9">47ms</text>
+<rect x="100.0" y="118.0" width="284.6" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="387.6" y="134.0" text-anchor="start" fill="#333" font-size="9">11ms</text>
+<rect x="100.0" y="137.0" width="286.1" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="389.1" y="153.0" text-anchor="start" fill="#333" font-size="9">12ms</text>
+<rect x="100.0" y="156.0" width="310.6" height="17.0" fill="#8c564b" opacity="0.80"/>
+<text x="413.6" y="172.0" text-anchor="start" fill="#333" font-size="9">47ms</text>
 <text x="95.0" y="230.0" text-anchor="end" fill="#333" font-size="10">65-128</text>
 <line x1="100.0" y1="192.0" x2="560.0" y2="192.0" stroke="#ddd" stroke-width="1.0"/>
 <rect x="100.0" y="194.0" width="320.7" height="17.0" fill="#1f77b4" opacity="0.80"/>
-<text x="423.7" y="210.0" text-anchor="start" fill="#333" font-size="9">84ms</text>
-<rect x="100.0" y="213.0" width="326.9" height="17.0" fill="#ff7f0e" opacity="0.80"/>
-<text x="429.9" y="229.0" text-anchor="start" fill="#333" font-size="9">118ms</text>
-<rect x="100.0" y="232.0" width="391.6" height="17.0" fill="#8c564b" opacity="0.80"/>
-<text x="494.6" y="248.0" text-anchor="start" fill="#333" font-size="9">4705ms</text>
+<text x="423.7" y="210.0" text-anchor="start" fill="#333" font-size="9">83ms</text>
+<rect x="100.0" y="213.0" width="325.1" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="428.1" y="229.0" text-anchor="start" fill="#333" font-size="9">107ms</text>
 <text x="95.0" y="306.0" text-anchor="end" fill="#333" font-size="10">129-256</text>
 <line x1="100.0" y1="268.0" x2="560.0" y2="268.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="270.0" width="388.9" height="17.0" fill="#1f77b4" opacity="0.80"/>
-<text x="491.9" y="286.0" text-anchor="start" fill="#333" font-size="9">4050ms</text>
-<rect x="100.0" y="289.0" width="392.3" height="17.0" fill="#ff7f0e" opacity="0.80"/>
-<text x="495.3" y="305.0" text-anchor="start" fill="#333" font-size="9">4910ms</text>
+<rect x="100.0" y="270.0" width="388.7" height="17.0" fill="#1f77b4" opacity="0.80"/>
+<text x="491.7" y="286.0" text-anchor="start" fill="#333" font-size="9">3959ms</text>
+<rect x="100.0" y="289.0" width="391.9" height="17.0" fill="#ff7f0e" opacity="0.80"/>
+<text x="494.9" y="305.0" text-anchor="start" fill="#333" font-size="9">4749ms</text>
 <text x="95.0" y="382.0" text-anchor="end" fill="#333" font-size="10">257-512-sample</text>
 <line x1="100.0" y1="344.0" x2="560.0" y2="344.0" stroke="#ddd" stroke-width="1.0"/>
 <rect x="100.0" y="346.0" width="460.0" height="17.0" fill="#1f77b4" opacity="0.80"/>
-<text x="563.0" y="362.0" text-anchor="start" fill="#333" font-size="9">230450ms</text>
+<text x="563.0" y="362.0" text-anchor="start" fill="#333" font-size="9">228649ms</text>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
 <rect x="570.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
