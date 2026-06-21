@@ -33,7 +33,7 @@
 <text x="560.0" y="385.0" text-anchor="middle" fill="#666" font-size="10">30s</text>
 <line x1="60.0" y1="40.0" x2="60.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
 <line x1="60.0" y1="370.0" x2="560.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
-<polyline points="60.0,260.6 115.6,258.7 171.1,258.7 226.7,258.7 282.2,228.0 337.8,182.0 393.3,159.0 448.9,116.7 504.4,51.5 560.0,51.5" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
+<polyline points="60.0,263.2 115.6,261.3 171.1,261.3 226.7,261.3 282.2,230.2 337.8,183.6 393.3,160.4 448.9,117.6 504.4,51.6 560.0,51.6" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#7f7f7f" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 96.5%</text>
 <polyline points="60.0,41.9 115.6,40.0 171.1,40.0 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>

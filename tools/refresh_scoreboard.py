@@ -605,8 +605,7 @@ def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) ->
         "Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier "
         "configuration once component splitting and treewidth handoff trigger. Against native "
         "baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense "
-        "`aer-statevector` still wins on some low-width FeynmanDD rows. Labelled QSOPs have no "
-        "native baseline: the simulators only evaluate sign boundaries where input equals output.",
+        "`aer-statevector` still wins on some low-width FeynmanDD rows.",
         file=file,
     )
 
@@ -874,9 +873,8 @@ def write_mode_scoreboard(
     print(f"![Survival curves — FeynmanDD]({assets_subdir}/survival-feynmandd.svg)\n", file=file)
     print("### MQT Bench (small, ≤32 qubits)\n", file=file)
     print(
-        "Pre-expansion set: circuits with at most 32 qubits. "
-        "Native simulator runs are only tracked from tier 33-64 upward; "
-        "this plot shows QSOP solver survival curves only.\n",
+        "Pre-expansion set: circuits with at most 32 qubits, compared against the best native "
+        "simulator that fits each boundary under its qubit cap.\n",
         file=file,
     )
     print(f"![Survival curves — MQT Bench (0-32 tier)]({assets_subdir}/survival-mqt-bench.svg)\n", file=file)

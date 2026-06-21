@@ -27,7 +27,7 @@ Fraction of instances solved within a given wall-clock budget per backend. Highe
 
 ### MQT Bench (small, ≤32 qubits)
 
-Pre-expansion set: circuits with at most 32 qubits. Native simulator runs are only tracked from tier 33-64 upward; this plot shows QSOP solver survival curves only.
+Pre-expansion set: circuits with at most 32 qubits, compared against the best native simulator that fits each boundary under its qubit cap.
 
 ![Survival curves — MQT Bench (0-32 tier)](scoreboard-assets/labelled/survival-mqt-bench.svg)
 
@@ -130,4 +130,4 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 
 Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill-max-degree`; 33-64: `treewidth --treewidth-order min-fill-max-degree`; 65-128: `treewidth --treewidth-order min-fill-max-degree`; 129-256: `treewidth --treewidth-order min-fill-max-degree`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
 The 257-512 stratified sample is not a full tier yet: 98 / 130 rows solve under the current timeout cap.
-Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier configuration once component splitting and treewidth handoff trigger. Against native baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense `aer-statevector` still wins on some low-width FeynmanDD rows. Labelled QSOPs have no native baseline: the simulators only evaluate sign boundaries where input equals output.
+Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier configuration once component splitting and treewidth handoff trigger. Against native baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense `aer-statevector` still wins on some low-width FeynmanDD rows.

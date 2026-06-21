@@ -33,7 +33,11 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(REPO_ROOT / "tools"))
-from render_scoreboard import record_qsop_mode as _record_qsop_mode
+from render_scoreboard import (
+    comparison_key as _comparison_key,
+    has_comparison_identity as _has_comparison_identity,
+    record_qsop_mode as _record_qsop_mode,
+)
 
 # Solver colors
 SOLVER_COLORS: dict[str, str] = {
@@ -979,7 +983,26 @@ def main(argv: list[str] | None = None) -> int:
         records = load_records_from_artifacts(args.artifact_dir)
 
     if args.qsop_mode != "all":
-        records = [r for r in records if _record_qsop_mode(r) == args.qsop_mode]
+        # Native records carry no qsop_mode and would otherwise be classified by input!=output,
+        # which disagrees with the QSOP file's structural mode. Map each boundary to the mode of
+        # the solver record that shares it, so native baselines land in the right mode's survival
+        # curves (matching how the competitor table classifies them).
+        mode_by_key = {}
+        for r in records:
+            if r.get("qsop_mode") and _has_comparison_identity(r):
+                mode_by_key.setdefault(_comparison_key(r), r["qsop_mode"])
+
+        def _effective_mode(rec: dict) -> str:
+            mode = rec.get("qsop_mode")
+            if mode:
+                return mode
+            if _has_comparison_identity(rec):
+                mapped = mode_by_key.get(_comparison_key(rec))
+                if mapped is not None:
+                    return mapped
+            return _record_qsop_mode(rec)
+
+        records = [r for r in records if _effective_mode(r) == args.qsop_mode]
         summary_records = [r for r in summary_records if _record_qsop_mode(r) == args.qsop_mode]
 
     # survival plots need individual records (raw JSONL); other plots work from summary

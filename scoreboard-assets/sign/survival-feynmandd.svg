@@ -33,9 +33,9 @@
 <text x="560.0" y="385.0" text-anchor="middle" fill="#666" font-size="10">30s</text>
 <line x1="60.0" y1="40.0" x2="60.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
 <line x1="60.0" y1="370.0" x2="560.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
-<polyline points="60.0,297.9 115.6,280.7 171.1,240.3 226.7,217.2 282.2,217.2 337.8,215.8 393.3,208.6 448.9,208.6 504.4,208.6 560.0,208.6" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
+<polyline points="60.0,303.8 115.6,294.6 171.1,262.0 226.7,229.4 282.2,229.4 337.8,227.4 393.3,217.2 448.9,217.2 504.4,217.2 560.0,217.2" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#7f7f7f" opacity="1.00"/>
-<text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 48.9%</text>
+<text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 46.3%</text>
 <polyline points="60.0,258.0 115.6,107.2 171.1,42.0 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="59.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
 <text x="585.0" y="68.0" text-anchor="start" fill="#333" font-size="10">branch:auto — 100.0%</text>
