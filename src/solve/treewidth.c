@@ -841,10 +841,15 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
       width = best_degree;
     }
 
+    /* Eliminate `best`: connect its neighbours (fill edges) and drop `best` from the graph.
+       Adjacency is symmetric, so only `best`'s neighbours hold `best` in their rows — masking
+       every row against `active` (the old approach) was O(nvars * words) of redundant work per
+       elimination. Clear `best` from `active` first so the per-neighbour mask removes it. */
     const uint64_t *best_row = qsop_bitset_const_row(work, words, best);
     for (size_t w = 0; w < words; w++) {
       scratch[w] = best_row[w] & active[w];
     }
+    qsop_bitset_clear(active, best);
     for (uint32_t u = 0; u < qsop->nvars; u++) {
       if (!qsop_bitset_get(scratch, u)) {
         continue;
@@ -855,10 +860,6 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
         u_row[w] &= active[w];
       }
       qsop_bitset_clear(u_row, u);
-    }
-    qsop_bitset_clear(active, best);
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      qsop_bitset_and(qsop_bitset_row(work, words, v), active, words);
     }
   }
 

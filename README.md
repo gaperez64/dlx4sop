@@ -22,9 +22,14 @@ development and the test suite. **For benchmarking, use an optimized build** (ro
 3x faster on solver hot paths):
 
 ```sh
-meson setup build-bench --buildtype=release -Db_lto=true
+meson setup build-bench --buildtype=release -Db_lto=true -Dc_args=-march=x86-64-v2
 meson compile -C build-bench
 ```
+
+`-march=x86-64-v2` enables the hardware `popcnt` instruction (portable across x86 CPUs
+since ~2009) — without it `__builtin_popcount` falls back to a slow libgcc routine that
+dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware by
+default, so the `-Dc_args` is unnecessary there.
 
 Point the benchmark tooling at the optimized binaries (e.g.
 `--sop-solve build-bench/sop-solve`); see the [Benchmarks](#benchmarks) section.
