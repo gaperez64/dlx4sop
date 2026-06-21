@@ -713,6 +713,38 @@ def _scaling_largest_solved(artifact_dir: pathlib.Path, stem: str, time_ns: str,
     return best
 
 
+def _scaling_median_by_qubits(artifact_dir: pathlib.Path, stem: str,
+                              ns_key: str, ms_key: str) -> dict[int, float]:
+    """Median ok solve time (ms) per qubit count for a scaling artifact."""
+    import json
+    import re
+    import statistics
+    per_q: dict[int, list[float]] = {}
+    path = artifact_dir / stem
+    if not path.exists():
+        return {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get("status") != "ok":
+            continue
+        name = str(r.get("instance_id") or r.get("instance") or r.get("case") or "")
+        m = re.search(r"n0*(\d+)", name)
+        if not m:
+            continue
+        ms = r.get(ms_key)
+        if ms is None and r.get(ns_key) is not None:
+            ms = r[ns_key] / 1e6
+        if ms is not None:
+            per_q.setdefault(int(m.group(1)), []).append(float(ms))
+    return {q: statistics.median(v) for q, v in per_q.items()}
+
+
 def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str, file: TextIO) -> None:
     """WMC-vs-solver scaling study section (synthetic phase-polynomial family)."""
     print("## WMC vs Solver Scaling\n", file=file)
@@ -722,9 +754,22 @@ def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str,
         "qubit count. Real benchmark families cannot show this: the scalable MQT families use "
         "continuous-angle gates the finite-modulus importer rejects, and the importable ones "
         "are Clifford with trivial treewidth. As treewidth grows the branch backend collapses "
-        "first; ganak (WMC) then overtakes the treewidth DP in the crossover region (around "
-        "20 qubits) before both reach the timeout wall."
+        "first."
     )
+    if artifact_dir is not None:
+        tw_by_q = _scaling_median_by_qubits(artifact_dir, "scaling-treewidth-current.jsonl",
+                                            "solve_elapsed_ns", "solve_ms")
+        gk_by_q = _scaling_median_by_qubits(artifact_dir, "scaling-wmc-current.jsonl",
+                                            "wmc_ganak_elapsed_ns", "ganak_ms")
+        shared = sorted(set(tw_by_q) & set(gk_by_q))
+        win = next((q for q in shared if gk_by_q[q] < tw_by_q[q]), None)
+        if win is not None:
+            caption += (f" ganak (WMC) overtakes the treewidth DP at {win} qubits, before "
+                        "both reach the timeout wall.")
+        elif shared:
+            caption += (" Across the sizes both solve, the treewidth DP stays ahead of ganak "
+                        "(WMC) — the DP's lead narrows as treewidth grows, so any crossover lies "
+                        "past the point where ganak itself stays tractable.")
     if artifact_dir is not None:
         tw = _scaling_largest_solved(artifact_dir, "scaling-treewidth-current.jsonl",
                                      "solve_elapsed_ns", "solve_ms")

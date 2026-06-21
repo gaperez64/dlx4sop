@@ -4,44 +4,44 @@
 <text x="360.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Solver time by tier (total, log scale)</text>
 <text x="95.0" y="78.3" text-anchor="end" fill="#333" font-size="10">0-32</text>
 <line x1="100.0" y1="40.0" x2="560.0" y2="40.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="42.0" width="336.0" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="439.0" y="58.2" text-anchor="start" fill="#333" font-size="9">102ms</text>
-<rect x="100.0" y="61.2" width="339.2" height="17.2" fill="#ff7f0e" opacity="0.80"/>
-<text x="442.2" y="77.3" text-anchor="start" fill="#333" font-size="9">121ms</text>
-<rect x="100.0" y="80.3" width="378.6" height="17.2" fill="#8c564b" opacity="0.80"/>
-<text x="481.6" y="96.5" text-anchor="start" fill="#333" font-size="9">1049ms</text>
+<rect x="100.0" y="42.0" width="303.2" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="406.2" y="58.2" text-anchor="start" fill="#333" font-size="9">90ms</text>
+<rect x="100.0" y="61.2" width="306.6" height="17.2" fill="#ff7f0e" opacity="0.80"/>
+<text x="409.6" y="77.3" text-anchor="start" fill="#333" font-size="9">111ms</text>
+<rect x="100.0" y="80.3" width="330.7" height="17.2" fill="#8c564b" opacity="0.80"/>
+<text x="433.7" y="96.5" text-anchor="start" fill="#333" font-size="9">476ms</text>
 <text x="95.0" y="155.0" text-anchor="end" fill="#333" font-size="10">33-64</text>
 <line x1="100.0" y1="116.7" x2="560.0" y2="116.7" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="118.7" width="332.2" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="435.2" y="134.8" text-anchor="start" fill="#333" font-size="9">82ms</text>
-<rect x="100.0" y="137.8" width="336.0" height="17.2" fill="#ff7f0e" opacity="0.80"/>
-<text x="439.0" y="154.0" text-anchor="start" fill="#333" font-size="9">102ms</text>
-<rect x="100.0" y="157.0" width="348.5" height="17.2" fill="#8c564b" opacity="0.80"/>
-<text x="451.5" y="173.2" text-anchor="start" fill="#333" font-size="9">201ms</text>
+<rect x="100.0" y="118.7" width="298.6" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="401.6" y="134.8" text-anchor="start" fill="#333" font-size="9">68ms</text>
+<rect x="100.0" y="137.8" width="300.2" height="17.2" fill="#ff7f0e" opacity="0.80"/>
+<text x="403.2" y="154.0" text-anchor="start" fill="#333" font-size="9">75ms</text>
+<rect x="100.0" y="157.0" width="297.8" height="17.2" fill="#8c564b" opacity="0.80"/>
+<text x="400.8" y="173.2" text-anchor="start" fill="#333" font-size="9">65ms</text>
 <text x="95.0" y="231.7" text-anchor="end" fill="#333" font-size="10">65-128</text>
 <line x1="100.0" y1="193.3" x2="560.0" y2="193.3" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="195.3" width="377.6" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="480.6" y="211.5" text-anchor="start" fill="#333" font-size="9">996ms</text>
-<rect x="100.0" y="214.5" width="383.6" height="17.2" fill="#ff7f0e" opacity="0.80"/>
-<text x="486.6" y="230.7" text-anchor="start" fill="#333" font-size="9">1381ms</text>
-<rect x="100.0" y="233.7" width="412.0" height="17.2" fill="#8c564b" opacity="0.80"/>
-<text x="515.0" y="249.8" text-anchor="start" fill="#333" font-size="9">6565ms</text>
+<rect x="100.0" y="195.3" width="327.6" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="430.6" y="211.5" text-anchor="start" fill="#333" font-size="9">395ms</text>
+<rect x="100.0" y="214.5" width="330.2" height="17.2" fill="#ff7f0e" opacity="0.80"/>
+<text x="433.2" y="230.7" text-anchor="start" fill="#333" font-size="9">463ms</text>
+<rect x="100.0" y="233.7" width="460.0" height="17.2" fill="#8c564b" opacity="0.80"/>
+<text x="563.0" y="249.8" text-anchor="start" fill="#333" font-size="9">1176564ms</text>
 <text x="95.0" y="308.3" text-anchor="end" fill="#333" font-size="10">129-256</text>
 <line x1="100.0" y1="270.0" x2="560.0" y2="270.0" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="272.0" width="398.3" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="501.3" y="288.2" text-anchor="start" fill="#333" font-size="9">3100ms</text>
-<rect x="100.0" y="291.2" width="397.3" height="17.2" fill="#ff7f0e" opacity="0.80"/>
-<text x="500.3" y="307.3" text-anchor="start" fill="#333" font-size="9">2927ms</text>
+<rect x="100.0" y="272.0" width="339.8" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="442.8" y="288.2" text-anchor="start" fill="#333" font-size="9">827ms</text>
+<rect x="100.0" y="291.2" width="337.7" height="17.2" fill="#ff7f0e" opacity="0.80"/>
+<text x="440.7" y="307.3" text-anchor="start" fill="#333" font-size="9">725ms</text>
 <text x="95.0" y="385.0" text-anchor="end" fill="#333" font-size="10">257-512-sample</text>
 <line x1="100.0" y1="346.7" x2="560.0" y2="346.7" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="348.7" width="457.8" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="560.8" y="364.8" text-anchor="start" fill="#333" font-size="9">81119ms</text>
+<rect x="100.0" y="348.7" width="412.2" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="515.2" y="364.8" text-anchor="start" fill="#333" font-size="9">65574ms</text>
 <text x="95.0" y="461.7" text-anchor="end" fill="#333" font-size="10">scaling</text>
 <line x1="100.0" y1="423.3" x2="560.0" y2="423.3" stroke="#ddd" stroke-width="1.0"/>
-<rect x="100.0" y="425.3" width="460.0" height="17.2" fill="#1f77b4" opacity="0.80"/>
-<text x="563.0" y="441.5" text-anchor="start" fill="#333" font-size="9">91333ms</text>
-<rect x="100.0" y="444.5" width="396.3" height="17.2" fill="#ff7f0e" opacity="0.80"/>
-<text x="499.3" y="460.7" text-anchor="start" fill="#333" font-size="9">2772ms</text>
+<rect x="100.0" y="425.3" width="409.5" height="17.2" fill="#1f77b4" opacity="0.80"/>
+<text x="512.5" y="441.5" text-anchor="start" fill="#333" font-size="9">55788ms</text>
+<rect x="100.0" y="444.5" width="340.4" height="17.2" fill="#ff7f0e" opacity="0.80"/>
+<text x="443.4" y="460.7" text-anchor="start" fill="#333" font-size="9">853ms</text>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
 <rect x="570.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>

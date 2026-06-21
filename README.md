@@ -214,8 +214,10 @@ Real scalable circuit families do not work here: the importable QSOP gate set is
 finite-modulus (Clifford+T and dyadic phases), so the MQT families that scale
 treewidth (qaoa/qft/vqe) are rejected for their continuous angles, while the
 importable ones (ghz/bv/graphstate) are Clifford with trivial treewidth. The
-synthetic family has treewidth growing with qubit count, exposing the regime where
-ganak (WMC) overtakes the treewidth and branch backends.
+synthetic family has treewidth growing with qubit count and lets the scoreboard
+compare how the branch and treewidth backends and ganak (WMC) degrade as treewidth
+grows; the [scoreboard](scoreboard-sign.md) reports the measured trend (which depends
+on the build optimization level — the branch backend collapses first in all cases).
 
 ### Render from existing artifacts
 

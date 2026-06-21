@@ -33,16 +33,16 @@
 <text x="560.0" y="385.0" text-anchor="middle" fill="#666" font-size="10">30s</text>
 <line x1="60.0" y1="40.0" x2="60.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
 <line x1="60.0" y1="370.0" x2="560.0" y2="370.0" stroke="#333" stroke-width="1.0"/>
-<polyline points="60.0,296.5 115.6,280.7 171.1,239.6 226.7,217.2 282.2,217.2 337.8,217.2 393.3,217.2 448.9,217.2 504.4,217.2 560.0,217.2" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
+<polyline points="60.0,298.7 115.6,282.1 171.1,241.7 226.7,218.0 282.2,217.2 337.8,215.8 393.3,208.6 448.9,208.6 504.4,208.6 560.0,208.6" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#7f7f7f" opacity="1.00"/>
-<text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 46.3%</text>
-<polyline points="60.0,296.7 115.6,241.7 171.1,131.7 226.7,44.1 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>
+<text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 48.9%</text>
+<polyline points="60.0,261.0 115.6,126.6 171.1,42.0 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="59.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
 <text x="585.0" y="68.0" text-anchor="start" fill="#333" font-size="10">branch:auto — 100.0%</text>
-<polyline points="60.0,286.9 115.6,268.8 171.1,237.5 226.7,223.1 282.2,215.8 337.8,208.6 393.3,203.8 448.9,203.8 504.4,203.8 560.0,203.8" stroke="#8c564b" stroke-width="2.0" fill="none"/>
+<polyline points="60.0,277.3 115.6,241.1 171.1,223.1 226.7,213.4 282.2,203.8 337.8,203.8 393.3,203.8 448.9,203.8 504.4,199.0 560.0,146.0" stroke="#8c564b" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="77.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>
-<text x="585.0" y="86.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best — 50.4%</text>
-<polyline points="60.0,271.4 115.6,211.8 171.1,102.5 226.7,63.4 282.2,53.7 337.8,43.9 393.3,43.9 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#1f77b4" stroke-width="2.0" fill="none"/>
+<text x="585.0" y="86.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best — 67.9%</text>
+<polyline points="60.0,257.7 115.6,109.3 171.1,61.5 226.7,45.9 282.2,43.9 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#1f77b4" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="95.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="585.0" y="104.0" text-anchor="start" fill="#333" font-size="10">treewidth — 100.0%</text>
 <text x="360.0" y="20.0" text-anchor="middle" fill="#222" font-size="13">Solved fraction by time budget — FeynmanDD</text>

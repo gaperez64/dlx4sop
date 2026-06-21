@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-20T22:58:49.074480",
+  "generated_at": "2026-06-21T05:00:20.982469",
   "tiers": [
     "0-32",
     "33-64",
@@ -14,7 +14,7 @@
       "backend": "branch",
       "solved": 212,
       "attempted": 212,
-      "elapsed_ns": 121105896,
+      "elapsed_ns": 111238423,
       "sources": {
         "Internal corpus": 32,
         "FeynmanDD": 80,
@@ -28,11 +28,11 @@
         "cache_misses": 1849,
         "cache_canonical_stores": 1505,
         "cache_lookup_events": 2371,
-        "cache_lookup_elapsed_ns": 2487981,
+        "cache_lookup_elapsed_ns": 1258484,
         "cache_store_events": 1847,
-        "cache_store_elapsed_ns": 3368901,
+        "cache_store_elapsed_ns": 1632068,
         "cache_canonical_store_events": 1505,
-        "cache_canonical_store_elapsed_ns": 2947683,
+        "cache_canonical_store_elapsed_ns": 1494660,
         "cache_entries": 72,
         "cache_canonical_entries": 53,
         "cache_stored_residue_slots": 576,
@@ -49,9 +49,9 @@
         "branch_treewidth_skips": 0,
         "branch_rankwidth_skips": 32,
         "cache_canonical_lookup_events": 1738,
-        "cache_canonical_lookup_elapsed_ns": 2361548,
+        "cache_canonical_lookup_elapsed_ns": 1226768,
         "branch_component_split_events": 1072,
-        "branch_component_split_elapsed_ns": 317876,
+        "branch_component_split_elapsed_ns": 169774,
         "decomposition_width": 2,
         "max_table_entries": 64,
         "max_residual_vars": 32,
@@ -64,11 +64,11 @@
         "branch_component_split_max_components": 7,
         "join_pairs": 5280,
         "branch_rankwidth_probe_events": 24,
-        "branch_rankwidth_probe_elapsed_ns": 10490280,
+        "branch_rankwidth_probe_elapsed_ns": 3052587,
         "branch_treewidth_order_probe_events": 30,
-        "branch_treewidth_order_probe_elapsed_ns": 825924,
+        "branch_treewidth_order_probe_elapsed_ns": 271311,
         "branch_treewidth_delegate_events": 30,
-        "branch_treewidth_delegate_elapsed_ns": 2972190,
+        "branch_treewidth_delegate_elapsed_ns": 1869970,
         "rankwidth_support_width": 2,
         "rankwidth_labelled_width": 2,
         "rankwidth_table_forecast": 32,
@@ -85,10 +85,10 @@
         "rankwidth_labelled_exact_cuts": 0,
         "rankwidth_labelled_proxy_cuts": 0,
         "branch_root_width_probe_events": 2,
-        "branch_root_width_probe_elapsed_ns": 118377,
+        "branch_root_width_probe_elapsed_ns": 35583,
         "branch_rankwidth_skip_treewidth_preferred_events": 2,
         "branch_root_treewidth_delegate_events": 2,
-        "branch_root_treewidth_delegate_elapsed_ns": 337771,
+        "branch_root_treewidth_delegate_elapsed_ns": 158241,
         "branch_root_width_probe_width": 2,
         "branch_root_treewidth_delegate_max_vars": 32
       }
@@ -99,7 +99,7 @@
       "backend": "rankwidth",
       "solved": 212,
       "attempted": 212,
-      "elapsed_ns": 1048745315,
+      "elapsed_ns": 475952481,
       "sources": {
         "Internal corpus": 32,
         "FeynmanDD": 80,
@@ -108,11 +108,11 @@
       },
       "stats": {
         "rankwidth_width_probe_events": 193,
-        "rankwidth_width_probe_elapsed_ns": 4594462,
+        "rankwidth_width_probe_elapsed_ns": 1447453,
         "rankwidth_join_map_events": 1683,
-        "rankwidth_join_map_elapsed_ns": 741142590,
+        "rankwidth_join_map_elapsed_ns": 332445477,
         "rankwidth_join_events": 1683,
-        "rankwidth_join_elapsed_ns": 190870474,
+        "rankwidth_join_elapsed_ns": 34798856,
         "rankwidth_width": 12,
         "rankwidth_support_width": 12,
         "rankwidth_labelled_width": 12,
@@ -142,7 +142,7 @@
       "backend": "sop2wmc",
       "solved": 212,
       "attempted": 212,
-      "elapsed_ns": 532756217952,
+      "elapsed_ns": 496532194987,
       "sources": {
         "Internal corpus": 32,
         "FeynmanDD": 80,
@@ -150,8 +150,8 @@
         "MQT Bench": 56
       },
       "stats": {
-        "wmc_export_elapsed_ns": 1153300593,
-        "wmc_ganak_elapsed_ns": 531602917359
+        "wmc_export_elapsed_ns": 1200536769,
+        "wmc_ganak_elapsed_ns": 495331658218
       }
     },
     {
@@ -160,7 +160,7 @@
       "backend": "treewidth",
       "solved": 212,
       "attempted": 212,
-      "elapsed_ns": 101608133,
+      "elapsed_ns": 90228692,
       "sources": {
         "Internal corpus": 32,
         "FeynmanDD": 80,
@@ -181,7 +181,7 @@
       "backend": "branch",
       "solved": 98,
       "attempted": 98,
-      "elapsed_ns": 2926716413,
+      "elapsed_ns": 725331437,
       "sources": {
         "FeynmanDD": 50,
         "PyZX": 48
@@ -202,21 +202,21 @@
         "branch_treewidth_skips": 0,
         "branch_rankwidth_skips": 128,
         "cache_lookup_events": 946,
-        "cache_lookup_elapsed_ns": 1609561,
+        "cache_lookup_elapsed_ns": 598326,
         "cache_canonical_lookup_events": 668,
-        "cache_canonical_lookup_elapsed_ns": 1387456,
+        "cache_canonical_lookup_elapsed_ns": 569308,
         "cache_store_events": 651,
-        "cache_store_elapsed_ns": 1499527,
+        "cache_store_elapsed_ns": 462810,
         "cache_canonical_store_events": 413,
-        "cache_canonical_store_elapsed_ns": 996059,
+        "cache_canonical_store_elapsed_ns": 375649,
         "branch_rankwidth_probe_events": 32,
-        "branch_rankwidth_probe_elapsed_ns": 12702032,
+        "branch_rankwidth_probe_elapsed_ns": 3274502,
         "branch_treewidth_order_probe_events": 44,
-        "branch_treewidth_order_probe_elapsed_ns": 29418104,
+        "branch_treewidth_order_probe_elapsed_ns": 6756210,
         "branch_component_split_events": 471,
-        "branch_component_split_elapsed_ns": 241438,
+        "branch_component_split_elapsed_ns": 104966,
         "branch_treewidth_delegate_events": 44,
-        "branch_treewidth_delegate_elapsed_ns": 11574712,
+        "branch_treewidth_delegate_elapsed_ns": 5939091,
         "rankwidth_support_width": 2,
         "rankwidth_labelled_width": 2,
         "rankwidth_table_forecast": 32,
@@ -250,10 +250,10 @@
         "rankwidth_labelled_exact_cuts": 0,
         "rankwidth_labelled_proxy_cuts": 0,
         "branch_root_width_probe_events": 84,
-        "branch_root_width_probe_elapsed_ns": 508328073,
+        "branch_root_width_probe_elapsed_ns": 117156400,
         "branch_rankwidth_skip_treewidth_preferred_events": 84,
         "branch_root_treewidth_delegate_events": 84,
-        "branch_root_treewidth_delegate_elapsed_ns": 525206171,
+        "branch_root_treewidth_delegate_elapsed_ns": 191792558,
         "branch_root_width_probe_width": 8,
         "branch_root_treewidth_delegate_max_vars": 249
       }
@@ -264,14 +264,14 @@
       "backend": "sop2wmc",
       "solved": 98,
       "attempted": 98,
-      "elapsed_ns": 39906084306,
+      "elapsed_ns": 37109919715,
       "sources": {
         "FeynmanDD": 50,
         "PyZX": 48
       },
       "stats": {
-        "wmc_export_elapsed_ns": 140009710,
-        "wmc_ganak_elapsed_ns": 39766074596
+        "wmc_export_elapsed_ns": 85407710,
+        "wmc_ganak_elapsed_ns": 37024512005
       }
     },
     {
@@ -280,14 +280,14 @@
       "backend": "sop2wmc",
       "solved": 98,
       "attempted": 98,
-      "elapsed_ns": 39094766501,
+      "elapsed_ns": 37030438955,
       "sources": {
         "FeynmanDD": 50,
         "PyZX": 48
       },
       "stats": {
-        "wmc_export_elapsed_ns": 79533447,
-        "wmc_ganak_elapsed_ns": 39015233054
+        "wmc_export_elapsed_ns": 74124170,
+        "wmc_ganak_elapsed_ns": 36956314785
       }
     },
     {
@@ -296,14 +296,14 @@
       "backend": "sop2wmc",
       "solved": 98,
       "attempted": 98,
-      "elapsed_ns": 44859192588,
+      "elapsed_ns": 42085532106,
       "sources": {
         "FeynmanDD": 50,
         "PyZX": 48
       },
       "stats": {
-        "wmc_export_elapsed_ns": 85307097,
-        "wmc_ganak_elapsed_ns": 44773885491
+        "wmc_export_elapsed_ns": 77610769,
+        "wmc_ganak_elapsed_ns": 42007921337
       }
     },
     {
@@ -312,7 +312,7 @@
       "backend": "treewidth",
       "solved": 98,
       "attempted": 98,
-      "elapsed_ns": 3100456543,
+      "elapsed_ns": 827019032,
       "sources": {
         "FeynmanDD": 50,
         "PyZX": 48
@@ -331,14 +331,14 @@
       "backend": "sop2wmc",
       "solved": 68,
       "attempted": 72,
-      "elapsed_ns": 214856371443,
+      "elapsed_ns": 215919438478,
       "sources": {
         "FeynmanDD": 14,
         "PyZX": 58
       },
       "stats": {
-        "wmc_export_elapsed_ns": 212993129,
-        "wmc_ganak_elapsed_ns": 94625693580
+        "wmc_export_elapsed_ns": 98575284,
+        "wmc_ganak_elapsed_ns": 95813070166
       }
     },
     {
@@ -347,14 +347,14 @@
       "backend": "sop2wmc",
       "solved": 68,
       "attempted": 72,
-      "elapsed_ns": 221773931041,
+      "elapsed_ns": 215333871450,
       "sources": {
         "FeynmanDD": 14,
         "PyZX": 58
       },
       "stats": {
-        "wmc_export_elapsed_ns": 76307725,
-        "wmc_ganak_elapsed_ns": 101691901291
+        "wmc_export_elapsed_ns": 68709211,
+        "wmc_ganak_elapsed_ns": 95260252971
       }
     },
     {
@@ -363,33 +363,33 @@
       "backend": "sop2wmc",
       "solved": 68,
       "attempted": 72,
-      "elapsed_ns": 222523836284,
+      "elapsed_ns": 216871638456,
       "sources": {
         "FeynmanDD": 14,
         "PyZX": 58
       },
       "stats": {
-        "wmc_export_elapsed_ns": 80706801,
-        "wmc_ganak_elapsed_ns": 102436853625
+        "wmc_export_elapsed_ns": 72074416,
+        "wmc_ganak_elapsed_ns": 96794175534
       }
     },
     {
       "tier": "257-512 sample",
       "config": "treewidth --treewidth-order min-fill-max-degree",
       "backend": "treewidth",
-      "solved": 70,
+      "solved": 72,
       "attempted": 72,
-      "elapsed_ns": 141182232105,
+      "elapsed_ns": 65574381447,
       "sources": {
         "FeynmanDD": 14,
         "PyZX": 58
       },
       "stats": {
-        "treewidth_width": 17,
-        "treewidth_max_table_entries": 2097152,
-        "decomposition_width": 17,
-        "max_table_entries": 2097152,
-        "join_pairs": 19270498
+        "treewidth_width": 20,
+        "treewidth_max_table_entries": 16777216,
+        "decomposition_width": 20,
+        "max_table_entries": 16777216,
+        "join_pairs": 55756046
       }
     },
     {
@@ -398,7 +398,7 @@
       "backend": "branch",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 72237283,
+      "elapsed_ns": 43466535,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
@@ -419,19 +419,19 @@
         "branch_treewidth_skips": 0,
         "branch_rankwidth_skips": 42,
         "cache_lookup_events": 2108,
-        "cache_lookup_elapsed_ns": 2153618,
+        "cache_lookup_elapsed_ns": 1037307,
         "cache_canonical_lookup_events": 1714,
-        "cache_canonical_lookup_elapsed_ns": 2018786,
+        "cache_canonical_lookup_elapsed_ns": 1012195,
         "cache_store_events": 1403,
-        "cache_store_elapsed_ns": 1962763,
+        "cache_store_elapsed_ns": 863794,
         "cache_canonical_store_events": 1093,
-        "cache_canonical_store_elapsed_ns": 1574519,
+        "cache_canonical_store_elapsed_ns": 759943,
         "branch_treewidth_order_probe_events": 26,
-        "branch_treewidth_order_probe_elapsed_ns": 1347068,
+        "branch_treewidth_order_probe_elapsed_ns": 408408,
         "branch_component_split_events": 927,
-        "branch_component_split_elapsed_ns": 281877,
+        "branch_component_split_elapsed_ns": 156520,
         "branch_treewidth_delegate_events": 26,
-        "branch_treewidth_delegate_elapsed_ns": 3404483,
+        "branch_treewidth_delegate_elapsed_ns": 1842052,
         "cache_entries": 85,
         "cache_canonical_entries": 68,
         "cache_stored_residue_slots": 768,
@@ -454,14 +454,14 @@
         "branch_treewidth_delegate_max_vars": 49,
         "join_pairs": 13152,
         "branch_root_width_probe_events": 16,
-        "branch_root_width_probe_elapsed_ns": 3234166,
+        "branch_root_width_probe_elapsed_ns": 956837,
         "branch_rankwidth_skip_treewidth_preferred_events": 16,
         "branch_root_treewidth_delegate_events": 16,
-        "branch_root_treewidth_delegate_elapsed_ns": 5099172,
+        "branch_root_treewidth_delegate_elapsed_ns": 2689095,
         "branch_root_width_probe_width": 2,
         "branch_root_treewidth_delegate_max_vars": 63,
         "branch_rankwidth_probe_events": 8,
-        "branch_rankwidth_probe_elapsed_ns": 13992493,
+        "branch_rankwidth_probe_elapsed_ns": 3343526,
         "rankwidth_support_width": 3,
         "rankwidth_labelled_width": 3,
         "rankwidth_table_forecast": 64,
@@ -481,7 +481,7 @@
       "backend": "branch:auto",
       "solved": 72,
       "attempted": 72,
-      "elapsed_ns": 29314078,
+      "elapsed_ns": 31935805,
       "sources": {
         "MQT Bench": 72
       },
@@ -493,18 +493,18 @@
       "backend": "rankwidth",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 201373644,
+      "elapsed_ns": 65331666,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
         "rankwidth_width_probe_events": 48,
-        "rankwidth_width_probe_elapsed_ns": 12285846,
+        "rankwidth_width_probe_elapsed_ns": 2678403,
         "rankwidth_join_map_events": 2376,
-        "rankwidth_join_map_elapsed_ns": 6500504,
+        "rankwidth_join_map_elapsed_ns": 2284214,
         "rankwidth_join_events": 2376,
-        "rankwidth_join_elapsed_ns": 7249677,
+        "rankwidth_join_elapsed_ns": 3044285,
         "rankwidth_width": 4,
         "rankwidth_support_width": 4,
         "rankwidth_labelled_width": 4,
@@ -534,14 +534,14 @@
       "backend": "sop2wmc",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 2787531731,
+      "elapsed_ns": 2557909835,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
-        "wmc_export_elapsed_ns": 31874778,
-        "wmc_ganak_elapsed_ns": 2755656953
+        "wmc_export_elapsed_ns": 28437726,
+        "wmc_ganak_elapsed_ns": 2529472109
       }
     },
     {
@@ -550,14 +550,14 @@
       "backend": "sop2wmc",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 2799083267,
+      "elapsed_ns": 2566334300,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
-        "wmc_export_elapsed_ns": 29048863,
-        "wmc_ganak_elapsed_ns": 2770034404
+        "wmc_export_elapsed_ns": 27681551,
+        "wmc_ganak_elapsed_ns": 2538652749
       }
     },
     {
@@ -566,14 +566,14 @@
       "backend": "sop2wmc",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 3838387521,
+      "elapsed_ns": 3511209726,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
-        "wmc_export_elapsed_ns": 28894991,
-        "wmc_ganak_elapsed_ns": 3809492530
+        "wmc_export_elapsed_ns": 27654912,
+        "wmc_ganak_elapsed_ns": 3483554814
       }
     },
     {
@@ -582,14 +582,14 @@
       "backend": "sop2wmc",
       "solved": 27,
       "attempted": 48,
-      "elapsed_ns": 1760459113958,
+      "elapsed_ns": 1680289341053,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
-        "wmc_export_elapsed_ns": 370723718,
-        "wmc_ganak_elapsed_ns": 753605122719
+        "wmc_export_elapsed_ns": 327521509,
+        "wmc_ganak_elapsed_ns": 700859261530
       }
     },
     {
@@ -598,14 +598,14 @@
       "backend": "sop2wmc",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 14278001724,
+      "elapsed_ns": 13745962110,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
       },
       "stats": {
-        "wmc_export_elapsed_ns": 38437348,
-        "wmc_ganak_elapsed_ns": 14239564376
+        "wmc_export_elapsed_ns": 36365822,
+        "wmc_ganak_elapsed_ns": 13709596288
       }
     },
     {
@@ -614,7 +614,7 @@
       "backend": "treewidth",
       "solved": 72,
       "attempted": 72,
-      "elapsed_ns": 41271066,
+      "elapsed_ns": 35892463,
       "sources": {
         "MQT Bench": 72
       },
@@ -626,7 +626,7 @@
       "backend": "treewidth",
       "solved": 48,
       "attempted": 48,
-      "elapsed_ns": 41227610,
+      "elapsed_ns": 32604345,
       "sources": {
         "FeynmanDD": 28,
         "PyZX": 20
@@ -645,7 +645,7 @@
       "backend": "branch",
       "solved": 202,
       "attempted": 202,
-      "elapsed_ns": 1360072079,
+      "elapsed_ns": 444314116,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
@@ -655,9 +655,9 @@
         "cache_hits": 701,
         "cache_misses": 1325,
         "cache_lookup_events": 1858,
-        "cache_lookup_elapsed_ns": 2546977,
+        "cache_lookup_elapsed_ns": 1090819,
         "cache_store_events": 1157,
-        "cache_store_elapsed_ns": 2283490,
+        "cache_store_elapsed_ns": 856418,
         "cache_entries": 213,
         "cache_stored_residue_slots": 1704,
         "cache_key_bytes": 11658,
@@ -673,17 +673,17 @@
         "branch_treewidth_skips": 0,
         "branch_rankwidth_skips": 190,
         "cache_canonical_lookup_events": 1574,
-        "cache_canonical_lookup_elapsed_ns": 2441010,
+        "cache_canonical_lookup_elapsed_ns": 1072099,
         "cache_canonical_store_events": 907,
-        "cache_canonical_store_elapsed_ns": 1770257,
+        "cache_canonical_store_elapsed_ns": 692038,
         "branch_rankwidth_probe_events": 4,
-        "branch_rankwidth_probe_elapsed_ns": 28832260,
+        "branch_rankwidth_probe_elapsed_ns": 5183198,
         "branch_treewidth_order_probe_events": 22,
-        "branch_treewidth_order_probe_elapsed_ns": 17254732,
+        "branch_treewidth_order_probe_elapsed_ns": 4396841,
         "branch_component_split_events": 793,
-        "branch_component_split_elapsed_ns": 293319,
+        "branch_component_split_elapsed_ns": 140279,
         "branch_treewidth_delegate_events": 22,
-        "branch_treewidth_delegate_elapsed_ns": 8924188,
+        "branch_treewidth_delegate_elapsed_ns": 4775159,
         "rankwidth_support_width": 3,
         "rankwidth_labelled_width": 3,
         "rankwidth_table_forecast": 64,
@@ -711,10 +711,10 @@
         "rankwidth_labelled_exact_cuts": 0,
         "rankwidth_labelled_proxy_cuts": 0,
         "branch_root_width_probe_events": 168,
-        "branch_root_width_probe_elapsed_ns": 206523626,
+        "branch_root_width_probe_elapsed_ns": 53388924,
         "branch_rankwidth_skip_treewidth_preferred_events": 168,
         "branch_root_treewidth_delegate_events": 168,
-        "branch_root_treewidth_delegate_elapsed_ns": 296471086,
+        "branch_root_treewidth_delegate_elapsed_ns": 120522218,
         "branch_root_width_probe_width": 6,
         "branch_root_treewidth_delegate_max_vars": 128,
         "cache_avoided_nodes": 640,
@@ -728,7 +728,7 @@
       "backend": "branch:auto",
       "solved": 42,
       "attempted": 42,
-      "elapsed_ns": 21202636,
+      "elapsed_ns": 18453267,
       "sources": {
         "MQT Bench": 42
       },
@@ -738,39 +738,39 @@
       "tier": "65-128",
       "config": "rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table",
       "backend": "rankwidth",
-      "solved": 66,
+      "solved": 114,
       "attempted": 202,
-      "elapsed_ns": 4088759073575,
+      "elapsed_ns": 3819264172276,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
       },
       "stats": {
-        "rankwidth_width_probe_events": 66,
-        "rankwidth_width_probe_elapsed_ns": 169841527,
-        "rankwidth_join_map_events": 6008,
-        "rankwidth_join_map_elapsed_ns": 551931493,
-        "rankwidth_join_events": 6008,
-        "rankwidth_join_elapsed_ns": 1495626122,
-        "rankwidth_width": 12,
-        "rankwidth_support_width": 12,
-        "rankwidth_labelled_width": 12,
-        "rankwidth_max_table_entries": 32768,
-        "rankwidth_table_forecast": 32768,
-        "rankwidth_join_pair_forecast": 239725,
+        "rankwidth_width_probe_events": 114,
+        "rankwidth_width_probe_elapsed_ns": 41594566,
+        "rankwidth_join_map_events": 9764,
+        "rankwidth_join_map_elapsed_ns": 30364426079,
+        "rankwidth_join_events": 9764,
+        "rankwidth_join_elapsed_ns": 574726661922,
+        "rankwidth_width": 16,
+        "rankwidth_support_width": 16,
+        "rankwidth_labelled_width": 16,
+        "rankwidth_max_table_entries": 524288,
+        "rankwidth_table_forecast": 1048576,
+        "rankwidth_join_pair_forecast": 3803764,
         "rankwidth_labelled_exact_assignments": 0,
-        "rankwidth_max_signature_entries": 4096,
-        "decomposition_width": 12,
-        "max_table_entries": 32768,
-        "max_signature_entries": 4096,
-        "rankwidth_width_probe_width": 12,
-        "rankwidth_support_width_probe_width": 12,
-        "rankwidth_trace_table_forecast": 32768,
-        "rankwidth_trace_join_pair_forecast": 239725,
-        "rankwidth_join_map_max_items": 8192,
-        "rankwidth_join_max_items": 32768,
-        "join_pairs": 9025173,
-        "join_signature_pairs": 1198696,
+        "rankwidth_max_signature_entries": 65536,
+        "decomposition_width": 16,
+        "max_table_entries": 524288,
+        "max_signature_entries": 65536,
+        "rankwidth_width_probe_width": 16,
+        "rankwidth_support_width_probe_width": 16,
+        "rankwidth_trace_table_forecast": 1048576,
+        "rankwidth_trace_join_pair_forecast": 3803764,
+        "rankwidth_join_map_max_items": 131072,
+        "rankwidth_join_max_items": 524288,
+        "join_pairs": 934879925,
+        "join_signature_pairs": 166938600,
         "rankwidth_labelled_exact_cuts": 0,
         "rankwidth_labelled_proxy_cuts": 0
       }
@@ -781,14 +781,14 @@
       "backend": "sop2wmc",
       "solved": 202,
       "attempted": 202,
-      "elapsed_ns": 40756500219,
+      "elapsed_ns": 37002990651,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
       },
       "stats": {
-        "wmc_export_elapsed_ns": 177883092,
-        "wmc_ganak_elapsed_ns": 40578617127
+        "wmc_export_elapsed_ns": 138617009,
+        "wmc_ganak_elapsed_ns": 36864373642
       }
     },
     {
@@ -797,14 +797,14 @@
       "backend": "sop2wmc",
       "solved": 202,
       "attempted": 202,
-      "elapsed_ns": 39971009089,
+      "elapsed_ns": 37242131106,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
       },
       "stats": {
-        "wmc_export_elapsed_ns": 143005128,
-        "wmc_ganak_elapsed_ns": 39828003961
+        "wmc_export_elapsed_ns": 133620024,
+        "wmc_ganak_elapsed_ns": 37108511082
       }
     },
     {
@@ -813,14 +813,14 @@
       "backend": "sop2wmc",
       "solved": 202,
       "attempted": 202,
-      "elapsed_ns": 45123756198,
+      "elapsed_ns": 41364766662,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
       },
       "stats": {
-        "wmc_export_elapsed_ns": 146391931,
-        "wmc_ganak_elapsed_ns": 44977364267
+        "wmc_export_elapsed_ns": 134629684,
+        "wmc_ganak_elapsed_ns": 41230136978
       }
     },
     {
@@ -829,7 +829,7 @@
       "backend": "treewidth",
       "solved": 42,
       "attempted": 42,
-      "elapsed_ns": 87831442,
+      "elapsed_ns": 40472975,
       "sources": {
         "MQT Bench": 42
       },
@@ -841,7 +841,7 @@
       "backend": "treewidth",
       "solved": 202,
       "attempted": 202,
-      "elapsed_ns": 908560665,
+      "elapsed_ns": 354969479,
       "sources": {
         "FeynmanDD": 166,
         "PyZX": 36
