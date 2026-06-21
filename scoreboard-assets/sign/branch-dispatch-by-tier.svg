@@ -2,19 +2,18 @@
 <style>text{font-family:sans-serif;font-size:11px;}</style>
 <rect x="60.0" y="40.0" width="340.0" height="290.0" fill="#f8f8f8" opacity="1.00"/>
 <text x="280.0" y="22.0" text-anchor="middle" fill="#222" font-size="13">Branch dispatch by tier (branch:auto)</text>
-<text x="94.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">0-32</text>
-<rect x="64.0" y="315.0" width="60.0" height="15.0" fill="#1f77b4" opacity="0.85"/>
-<rect x="64.0" y="40.0" width="60.0" height="275.0" fill="#2ca02c" opacity="0.85"/>
-<text x="162.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">33-64</text>
-<rect x="132.0" y="310.3" width="60.0" height="19.7" fill="#1f77b4" opacity="0.85"/>
-<rect x="132.0" y="85.0" width="60.0" height="225.2" fill="#2ca02c" opacity="0.85"/>
-<text x="230.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">65-128</text>
-<rect x="200.0" y="240.8" width="60.0" height="89.2" fill="#1f77b4" opacity="0.85"/>
-<rect x="200.0" y="53.1" width="60.0" height="187.7" fill="#2ca02c" opacity="0.85"/>
-<text x="298.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">129-256</text>
-<rect x="268.0" y="269.9" width="60.0" height="60.1" fill="#1f77b4" opacity="0.85"/>
-<rect x="268.0" y="166.2" width="60.0" height="103.7" fill="#2ca02c" opacity="0.85"/>
-<text x="366.0" y="345.0" text-anchor="middle" fill="#444" font-size="10">scaling</text>
+<text x="102.5" y="345.0" text-anchor="middle" fill="#444" font-size="10">0-32</text>
+<rect x="64.0" y="315.0" width="77.0" height="15.0" fill="#1f77b4" opacity="0.85"/>
+<rect x="64.0" y="40.0" width="77.0" height="275.0" fill="#2ca02c" opacity="0.85"/>
+<text x="187.5" y="345.0" text-anchor="middle" fill="#444" font-size="10">33-64</text>
+<rect x="149.0" y="310.3" width="77.0" height="19.7" fill="#1f77b4" opacity="0.85"/>
+<rect x="149.0" y="85.0" width="77.0" height="225.2" fill="#2ca02c" opacity="0.85"/>
+<text x="272.5" y="345.0" text-anchor="middle" fill="#444" font-size="10">65-128</text>
+<rect x="234.0" y="240.8" width="77.0" height="89.2" fill="#1f77b4" opacity="0.85"/>
+<rect x="234.0" y="53.1" width="77.0" height="187.7" fill="#2ca02c" opacity="0.85"/>
+<text x="357.5" y="345.0" text-anchor="middle" fill="#444" font-size="10">129-256</text>
+<rect x="319.0" y="269.9" width="77.0" height="60.1" fill="#1f77b4" opacity="0.85"/>
+<rect x="319.0" y="166.2" width="77.0" height="103.7" fill="#2ca02c" opacity="0.85"/>
 <rect x="410.0" y="41.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
 <text x="425.0" y="50.0" text-anchor="start" fill="#333" font-size="10">tw delegates</text>
 <rect x="410.0" y="57.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>

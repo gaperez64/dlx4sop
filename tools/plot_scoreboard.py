@@ -161,6 +161,11 @@ def _tier_from_filename(name: str) -> str | None:
 def load_records_from_artifacts(artifact_dir: pathlib.Path) -> list[dict]:
     records = []
     for jf in sorted(artifact_dir.glob("**/*.jsonl")):
+        # The scaling-study artifacts (tier "tier-scaling") feed the dedicated
+        # wmc-vs-solver-scaling plot directly; keep them out of the per-tier plots so they
+        # don't show up as a spurious "scaling" tier column.
+        if jf.name.startswith("scaling-"):
+            continue
         inferred_tier = _tier_from_filename(jf.name)
         try:
             with open(jf, encoding="utf-8") as f:
