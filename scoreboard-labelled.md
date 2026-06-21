@@ -129,5 +129,5 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 ## Current Takeaway
 
 Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill-max-degree`; 33-64: `treewidth --treewidth-order min-fill-max-degree`; 65-128: `treewidth --treewidth-order min-fill-max-degree`; 129-256: `treewidth --treewidth-order min-fill-max-degree`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
-The 257-512 stratified sample is not a full tier yet: 98 / 130 rows solve under the current timeout cap.
+The 257-512 column is an exploratory stratified sample (130 rows), not the full tier; 98 / 130 of its rows solve under the current timeout cap.
 Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier configuration once component splitting and treewidth handoff trigger. Against native baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense `aer-statevector` still wins on some low-width FeynmanDD rows.

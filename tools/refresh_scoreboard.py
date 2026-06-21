@@ -596,9 +596,15 @@ def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) ->
     if best_parts:
         print("Best current internal configurations by tier: " + "; ".join(best_parts) + ".", file=file)
     if sample_total:
+        all_solved = sample_ok == sample_total
+        suffix = (
+            "all solve under the current timeout cap"
+            if all_solved
+            else f"{sample_ok} / {sample_total} of its rows solve under the current timeout cap"
+        )
         print(
-            f"The 257-512 stratified sample is not a full tier yet: "
-            f"{sample_ok} / {sample_total} rows solve under the current timeout cap.",
+            f"The 257-512 column is an exploratory stratified sample ({sample_total} rows), "
+            f"not the full tier; {suffix}.",
             file=file,
         )
     print(
