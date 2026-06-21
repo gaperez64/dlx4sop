@@ -66,6 +66,10 @@ typedef struct rw_table {
   uint64_t *assignments;
   size_t reps_len;
   size_t reps_cap;
+  /* Open-addressing index: signature -> rep index (UINT32_MAX = empty). Avoids the O(reps_len)
+     linear scan in table_add_rep (a rankwidth hot spot). Indices stay valid across reps growth. */
+  uint32_t *rep_slots;
+  size_t rep_slots_mask; /* (power-of-two capacity) - 1; 0 when unallocated */
 } rw_table_t;
 
 typedef struct rw_join_map_entry {
@@ -650,12 +654,51 @@ static bool reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_er
   return true;
 }
 
+static inline size_t rep_hash(uint32_t signature) {
+  return (size_t)(signature * UINT32_C(2654435761)); /* Knuth multiplicative */
+}
+
+/* Grow + rebuild the signature->rep-index hash to keep the load factor under 1/2. */
+static bool rep_slots_rehash(rw_table_t *table, qsop_error_t *error) {
+  size_t new_cap = table->rep_slots_mask != 0 ? (table->rep_slots_mask + 1U) * 2U : 16U;
+  const size_t need = (table->reps_len + 1U) * 2U;
+  while (new_cap < need) {
+    new_cap *= 2U;
+  }
+  uint32_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    set_error(error, "out of memory while growing rankwidth signature index");
+    return false;
+  }
+  memset(slots, 0xFF, new_cap * sizeof(*slots)); /* UINT32_MAX = empty */
+  const size_t mask = new_cap - 1U;
+  for (size_t i = 0; i < table->reps_len; i++) {
+    size_t s = rep_hash(table->reps[i].signature) & mask;
+    while (slots[s] != UINT32_MAX) {
+      s = (s + 1U) & mask;
+    }
+    slots[s] = (uint32_t)i;
+  }
+  free(table->rep_slots);
+  table->rep_slots = slots;
+  table->rep_slots_mask = mask;
+  return true;
+}
+
 static bool table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
                           size_t words, qsop_error_t *error) {
-  for (size_t i = 0; i < table->reps_len; i++) {
-    if (table->reps[i].signature == signature) {
-      return true;
+  if (table->rep_slots == NULL || (table->reps_len + 1U) * 2U > (table->rep_slots_mask + 1U)) {
+    if (!rep_slots_rehash(table, error)) {
+      return false;
     }
+  }
+  const size_t mask = table->rep_slots_mask;
+  size_t s = rep_hash(signature) & mask;
+  while (table->rep_slots[s] != UINT32_MAX) {
+    if (table->reps[table->rep_slots[s]].signature == signature) {
+      return true; /* signature already has a representative */
+    }
+    s = (s + 1U) & mask;
   }
   if (!reserve_reps(table, table->reps_len + 1U, words, error)) {
     return false;
@@ -664,6 +707,7 @@ static bool table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t 
       .signature = signature,
   };
   qsop_bitset_copy(table_assignment(table, table->reps_len, words), assignment, words);
+  table->rep_slots[s] = (uint32_t)table->reps_len;
   table->reps_len++;
   return true;
 }
@@ -719,6 +763,7 @@ static void table_free(rw_table_t *table) {
   free(table->entries);
   free(table->reps);
   free(table->assignments);
+  free(table->rep_slots);
   *table = (rw_table_t){0};
 }
 
