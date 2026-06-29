@@ -440,11 +440,15 @@ Exploited the signed-QSOP invariant before attempting dense/FWHT joins:
 - Even Fourier modes ignore every sign edge because `t * (r/2) = 0 mod r` for even `t`.
 - Rankwidth Fourier leaves and joins now compute only odd modes through the streaming
   boundary-signature DP.
+- Fourier rankwidth DP tables now store only `r/2` odd-mode slots per signature; the full
+  `r`-mode vector is materialized only at the root for the inverse DFT.
 - The root table fills even modes with the closed form
   `prod_v (1 + omega^(t * a_v))`; the constant shift remains handled by the inverse DFT.
 - Added a `rankwidth.fourier_even_closed_form` trace phase.
 - `join_pairs` on rankwidth Fourier rows now reflects actual odd-mode pair work
   (`join_signature_pairs * r/2`) instead of charging the skipped even modes.
+- On the signed 4-cycle smoke instance, Fourier table stats dropped from `table_entries=120`,
+  `max_table_entries=32` to `table_entries=60`, `max_table_entries=16`.
 
 This is not the dense/FWHT kernel from the note; it is the smaller signed-QSOP
 specialization that removes even-mode DP work while keeping the proven odd-mode streaming
