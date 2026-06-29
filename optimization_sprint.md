@@ -303,3 +303,21 @@ Validation:
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build --print-errorlogs`
+
+### 2026-06-29: O(words) Outside-Bitset Construction
+
+Removed another rankwidth join setup cost:
+
+- Added a local helper to fill the all-variables bitset with a masked tail word.
+- Replaced per-variable `qsop_bitset_set(outside, v)` loops in count-table, CRT map
+  building, and Fourier streaming joins.
+- Join setup now builds `outside = all_vars & ~node_vars` in O(bitset words) instead of
+  O(number of variables).
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build --print-errorlogs`

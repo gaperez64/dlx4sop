@@ -2712,6 +2712,17 @@ static uint32_t cross_parity_bitsets_weighted(uint32_t nvars, const uint64_t *ad
   return cross_parity_selected_rows(nvars, adj, left_assignment, right_assignment, words);
 }
 
+static void rankwidth_fill_all_vars(uint64_t *bits, uint32_t nvars, size_t words) {
+  if (words == 0) {
+    return;
+  }
+  memset(bits, 0xFF, words * sizeof(*bits));
+  const uint32_t tail = nvars % 64U;
+  if (tail != 0) {
+    bits[words - 1U] = (UINT64_C(1) << tail) - 1U;
+  }
+}
+
 /* D2.1: Pure transition helper for sign-edge joins.
  * outside must be precomputed as (all_node_vars AND NOT node_vars[node_id]).
  * scratch_sig must be a caller-provided buffer of `words` uint64_t values (overwritten).
@@ -3227,9 +3238,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
     set_error(error, "out of memory while building rankwidth join map");
     return false;
   }
-  for (uint32_t v = 0; v < decomposition->nvars; v++) {
-    qsop_bitset_set(outside, v);
-  }
+  rankwidth_fill_all_vars(outside, decomposition->nvars, words);
   qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), words);
 
   for (size_t i = 0; i < left->reps_len; i++) {
@@ -3288,9 +3297,7 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
   }
   uint64_t *outside = scratch;
   uint64_t *signature = scratch + w;
-  for (uint32_t v = 0; v < decomposition->nvars; v++) {
-    qsop_bitset_set(outside, v);
-  }
+  rankwidth_fill_all_vars(outside, decomposition->nvars, words);
   qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), words);
 
   for (size_t i = 0; i < left->reps_len; i++) {
@@ -4196,7 +4203,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
       qsop_trace_emit_elapsed(trace, "rankwidth.leaf", 0, tables[node_id].len, start);
     } else {
       /* Build outside bitset for this join node. */
-      for (uint32_t v = 0; v < decomposition->nvars; v++) qsop_bitset_set(outside, v);
+      rankwidth_fill_all_vars(outside, decomposition->nvars, decomposition->words);
       qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), decomposition->words);
 
       /* Forecast pair count: left_reps × right_reps. */
@@ -4499,10 +4506,7 @@ static bool solve_rankwidth_fourier_mod_once(
         ok = false;
       } else {
         const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
-        memset(outside, 0, w * sizeof(*outside));
-        for (uint32_t v = 0; v < decomposition->nvars; v++) {
-          qsop_bitset_set(outside, v);
-        }
+        rankwidth_fill_all_vars(outside, decomposition->nvars, decomposition->words);
         qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id),
                             decomposition->words);
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join_map", 0, pair_forecast, start);
