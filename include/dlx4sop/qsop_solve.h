@@ -44,9 +44,6 @@ typedef struct qsop_solve_stats {
   /* Rankwidth-specific */
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
-  uint64_t rankwidth_labelled_exact_cuts;
-  uint64_t rankwidth_labelled_proxy_cuts;
-  uint64_t rankwidth_labelled_exact_assignments;
   uint64_t rankwidth_transition_bytes;
   uint64_t rankwidth_transition_layout_u16_events;
   uint64_t rankwidth_transition_layout_u32_events;
@@ -74,8 +71,7 @@ typedef struct qsop_solve_stats {
   /* Decomposition */
   uint32_t components;
   uint32_t decomposition_width;
-  uint32_t rankwidth_support_width;
-  uint32_t rankwidth_labelled_width;
+  uint32_t rankwidth_cutrank_width;
 } qsop_solve_stats_t;
 
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
@@ -245,9 +241,9 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);
 
-bool qsop_rankwidth_decomposition_widths(
+bool qsop_rankwidth_decomposition_width(
     const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t *support_width_out, uint32_t *labelled_width_out, qsop_error_t *error);
+    uint32_t *cutrank_width_out, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_forecast(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,

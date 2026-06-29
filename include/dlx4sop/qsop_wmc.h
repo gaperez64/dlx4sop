@@ -17,9 +17,9 @@
  *   amplitude = sum_k counts[k] * exp(2*pi*i*k/r).
  *
  * QSOP_WMC_ENCODING_AMPLITUDE / QSOP_WMC_ENCODING_AMP_AND (amp-and):
- *   Deterministic amplitude encoding. Each edge x_u*x_v*b gets a Tseitin
- *   AND auxiliary y_e with W(y_e=1)=omega^b, W(y_e=0)=1. Three clauses per
- *   encoded edge (2 binary + 1 ternary). Use Ganak --mode 6.
+ *   Deterministic amplitude encoding. Each sign edge x_u*x_v*(r/2) gets a
+ *   Tseitin AND auxiliary y_e with W(y_e=1)=-1, W(y_e=0)=1. Three clauses
+ *   per encoded edge (2 binary + 1 ternary). Use Ganak --mode 6.
  *
  * QSOP_WMC_ENCODING_AMP_SOFT (amp-soft):
  *   Soft-feature amplitude encoding. Each edge gets an implication auxiliary
@@ -27,8 +27,7 @@
  *   W(y_e=1) = omega^b - 1, W(y_e=0) = 1. Reduces ternary clause count.
  *   amplitude = ganak_output * amplitude_factor.
  *
- * Both amplitude encodings work for sign and labelled QSOPs without
- * special-casing.
+ * Amplitude encodings are specialized for signed QSOP edges.
  */
 
 typedef enum {
@@ -47,7 +46,7 @@ typedef struct qsop_wmc_stats {
   uint64_t clauses_binary;   /* binary clauses */
   uint64_t clauses_ternary;  /* ternary clauses */
   uint32_t encoded_edges;    /* edges with non-trivial auxiliary */
-  uint32_t skipped_edges;    /* edges skipped (zero label mod r) */
+  uint32_t skipped_edges;    /* sign edges absorbed or canceled before export */
 } qsop_wmc_stats_t;
 
 /*

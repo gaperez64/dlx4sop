@@ -49,7 +49,7 @@ def rotated_counts(counts: list[int], shift: int) -> list[int]:
 
 
 def test_canonicalization_idempotence(sop_check: pathlib.Path, source_root: pathlib.Path) -> None:
-    for name in ["sign_raw.qsop", "labelled_raw.qsop"]:
+    for name in ["sign_raw.qsop"]:
         raw = (source_root / "tests" / "golden" / name).read_text()
         canonical = canonicalize(sop_check, raw)
         canonical_again = canonicalize(sop_check, canonical)
@@ -60,7 +60,7 @@ def test_canonicalization_idempotence(sop_check: pathlib.Path, source_root: path
 def test_solver_agreement(
     sop_check: pathlib.Path, sop_solve: pathlib.Path, source_root: pathlib.Path
 ) -> None:
-    raw = (source_root / "tests" / "golden" / "labelled_raw.qsop").read_text()
+    raw = (source_root / "tests" / "golden" / "sign_raw.qsop").read_text()
     canonical = canonicalize(sop_check, raw)
     expected = solve(sop_solve, canonical, "components")
     for backend in ["components", "brute-force", "branch"]:
@@ -70,12 +70,12 @@ def test_solver_agreement(
 
 
 def test_constant_shift(sop_solve: pathlib.Path) -> None:
-    base = """p qsop 8 2 1
+    base = """p qsop-sign 8 2 1
 n 0
 cst 0
 u 0 1
 u 1 2
-q 0 1 4
+e 0 1
 """
     shifted = base.replace("cst 0", "cst 3")
 

@@ -13,7 +13,7 @@ def test_existing_render(tool: pathlib.Path) -> None:
         "source_url": "https://example.invalid/synthetic",
         "records": [
             {"source": "Synthetic", "source_url": "https://example.invalid/synthetic", "status": "ok", "mode": "sign", "max_imported_nvars": 4},
-            {"source": "Synthetic", "source_url": "https://example.invalid/synthetic", "status": "too_many_vars", "mode": "labelled", "max_imported_nvars": 80},
+            {"source": "Synthetic", "source_url": "https://example.invalid/synthetic", "status": "too_many_vars", "mode": "sign", "max_imported_nvars": 80},
         ],
     }
 
@@ -52,7 +52,7 @@ def test_mqt_scaling_table(tool: pathlib.Path) -> None:
             "nvars_p50": 64.0, "nvars_p90": 112.0, "nvars_max": 160,
             "treewidth_p50": 4.0, "treewidth_p90": 7.0, "treewidth_max": 10,
             "cut_rank_p50": 3.0, "cut_rank_max": 6,
-            "qsop_mode": "labelled", "labelled_count": 12, "sign_count": 0,
+            "qsop_mode": "sign", "sign_count": 12,
         },
         {
             "family": "grover",
@@ -61,7 +61,7 @@ def test_mqt_scaling_table(tool: pathlib.Path) -> None:
             "nvars_p50": 40.0, "nvars_p90": 72.0, "nvars_max": 96,
             "treewidth_p50": 3.0, "treewidth_p90": 5.0, "treewidth_max": 8,
             "cut_rank_p50": 2.0, "cut_rank_max": 4,
-            "qsop_mode": "labelled", "labelled_count": 6, "sign_count": 0,
+            "qsop_mode": "sign", "sign_count": 6,
         },
     ]
     with tempfile.TemporaryDirectory() as tmp:
@@ -83,8 +83,8 @@ def test_mqt_scaling_table(tool: pathlib.Path) -> None:
             "## MQT Bench Scaling by Family",
             "| Family | Mode |",
             "Cut-rank p50",
-            "| qft | labelled | 12 |",
-            "| grover | labelled | 6 |",
+            "| qft | sign | 12 |",
+            "| grover | sign | 6 |",
         ]
         for s in expected_snippets:
             if s not in out:

@@ -965,7 +965,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sources", action="append", dest="sources",
                         default=None, metavar="SOURCE",
                         help="Sources to plot survival curves for (default: all known)")
-    parser.add_argument("--qsop-mode", choices=("all", "sign", "labelled"), default="all",
+    parser.add_argument("--qsop-mode", choices=("all", "sign"), default="all",
                         help="Filter records to this QSOP mode before plotting")
     parser.add_argument("--scaling-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) used for the scaling-study artifacts")
@@ -986,10 +986,6 @@ def main(argv: list[str] | None = None) -> int:
         records = load_records_from_artifacts(args.artifact_dir)
 
     if args.qsop_mode != "all":
-        # Native records carry no qsop_mode and would otherwise be classified by input!=output,
-        # which disagrees with the QSOP file's structural mode. Map each boundary to the mode of
-        # the solver record that shares it, so native baselines land in the right mode's survival
-        # curves (matching how the competitor table classifies them).
         mode_by_key = {}
         for r in records:
             if r.get("qsop_mode") and _has_comparison_identity(r):

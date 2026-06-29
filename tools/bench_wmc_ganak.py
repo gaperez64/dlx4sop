@@ -5,7 +5,7 @@ Five encodings are supported:
   residue          -- one DIMACS CNF per residue, plain #SAT (Ganak --mode 0)
   amplitude/amp-and -- single WPCNF, Tseitin AND auxiliaries (Ganak --mode 6)
   amp-soft         -- single WPCNF, implication-only auxiliaries (Ganak --mode 6)
-  amp-block        -- single WPCNF, bipartite block counter + selectors (Ganak --mode 6)
+  amp-block        -- single WPCNF, bipartite sign-block parity factors (Ganak --mode 6)
   residue-fourier  -- r WPCNF blocks via iDFT (Ganak --mode 6 per block)
   all              -- run all five encodings
 
@@ -45,7 +45,7 @@ def materialize_manifest(qasm2sop: pathlib.Path, manifest: pathlib.Path, dest: p
                 [str(qasm2sop), "--input", inb, "--output", outb, "-"], input=qasm
             )
             if result.returncode != 0:
-                raise RuntimeError(f"qasm2sop failed on {case['name']} {inb}>{outb}:\n{result.stderr}")
+                continue
             slug = hashlib.sha1(f"{case['name']}_{inb}_{outb}".encode()).hexdigest()[:16]
             path = dest / f"{slug}.qsop"
             path.write_text(result.stdout)
@@ -62,13 +62,14 @@ def materialize_manifest(qasm2sop: pathlib.Path, manifest: pathlib.Path, dest: p
 
 
 GANAK_INT_PATTERNS = [
-    re.compile(r"^c s exact arb int (\d+)"),
-    re.compile(r"^c s exact double int (\d+)"),
+    re.compile(r"^c [so] exact arb int (\d+)"),
+    re.compile(r"^c [so] exact double int (\d+)"),
     re.compile(r"^s mc (\d+)"),
 ]
 
 GANAK_COMPLEX_PATTERN = re.compile(
-    r"^c s exact (?:arb frac|quadruple float)\s+([+-]?[\d.e+-]+)\s*\+\s*([+-]?[\d.e+-]+)i"
+    r"^c [so] exact (?:arb frac|quadruple float)\s+"
+    r"([+-]?[\d.e+-]+)(?:\s*\+\s*([+-]?[\d.e+-]+)i)?"
 )
 
 
@@ -80,17 +81,14 @@ def run(cmd, **kwargs):
 
 def read_header(qsop: pathlib.Path):
     for line in qsop.read_text().splitlines():
-        if line.startswith("p qsop"):
+        if line.startswith("p qsop-sign"):
             _, _, r, nvars, nedges = line.split()
             return int(r), int(nvars), int(nedges)
-    raise ValueError(f"{qsop}: no 'p qsop' header")
+    raise ValueError(f"{qsop}: no 'p qsop-sign' header")
 
 
 def read_qsop_mode(qsop: pathlib.Path) -> str:
-    for line in qsop.read_text().splitlines():
-        parts = line.split()
-        if parts and parts[0] == "q":
-            return "labelled"
+    read_header(qsop)
     return "sign"
 
 
@@ -109,7 +107,7 @@ def parse_ganak_complex(text: str) -> complex:
         stripped = line.strip()
         m = GANAK_COMPLEX_PATTERN.match(stripped)
         if m:
-            return complex(float(m.group(1)), float(m.group(2)))
+            return complex(float(m.group(1)), float(m.group(2) or 0.0))
     raise ValueError(f"could not parse ganak complex output:\n{text}")
 
 
@@ -173,7 +171,12 @@ def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path
                 count_s += (timeout or 0.0)
                 return None, export_s, count_s, "timeout"
             count_s += time.perf_counter() - start
-            counts.append(parse_ganak_int(counted.stdout))
+            if counted.returncode != 0:
+                return None, export_s, count_s, "error"
+            try:
+                counts.append(parse_ganak_int(counted.stdout + counted.stderr))
+            except ValueError:
+                return None, export_s, count_s, "error"
     return counts, export_s, count_s, "ok"
 
 
@@ -191,6 +194,8 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
 
         cnf_text = cnf_path.read_text()
         factor = parse_amplitude_factor(cnf_text)
+        if factor == 0j:
+            return 0j, export_s, 0.0, "ok"
 
         start = time.perf_counter()
         try:
@@ -207,7 +212,12 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
             return None, export_s, count_s, "timeout"
         count_s = time.perf_counter() - start
 
-        raw = parse_ganak_complex(counted.stdout)
+        if counted.returncode != 0:
+            return None, export_s, count_s, "error"
+        try:
+            raw = parse_ganak_complex(counted.stdout + counted.stderr)
+        except ValueError:
+            return None, export_s, count_s, "error"
         amplitude = raw * factor
         return amplitude, export_s, count_s, "ok"
 
@@ -259,6 +269,9 @@ def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: path
         F: list[complex] = []
         for t, cnf_text in blocks:
             factor = parse_amplitude_factor(cnf_text)
+            if factor == 0j:
+                F.append(0j)
+                continue
             if t == 0:
                 # F[0] = 2^nvars — trivial, no Ganak call needed.
                 z0_log2 = _parse_z0_log2(cnf_text)
@@ -277,7 +290,12 @@ def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: path
                 count_s += (timeout or 0.0)
                 return None, export_s, count_s, "timeout"
             count_s += time.perf_counter() - start
-            raw = parse_ganak_complex(counted.stdout)
+            if counted.returncode != 0:
+                return None, export_s, count_s, "error"
+            try:
+                raw = parse_ganak_complex(counted.stdout + counted.stderr)
+            except ValueError:
+                return None, export_s, count_s, "error"
             F.append(raw * factor)
 
     # amplitude = F[1] = sum_k counts[k] * omega^k directly.
@@ -342,8 +360,8 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
         solve_ns = export_ns + ganak_ns
-        if status == "timeout" or amplitude is None:
-            return {**base, "status": "timeout", "solve_elapsed_ns": solve_ns,
+        if status != "ok" or amplitude is None:
+            return {**base, "status": status, "solve_elapsed_ns": solve_ns,
                     "wmc_export_elapsed_ns": export_ns, "wmc_ganak_elapsed_ns": ganak_ns,
                     "export_ms": round(export_s * 1e3, 3), "ganak_ms": round(count_s * 1e3, 3),
                     "ganak_total_ms": round((export_s + count_s) * 1e3, 3), "mismatches": 0}
@@ -358,10 +376,10 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
         solve_ns = export_ns + ganak_ns
-        if status == "timeout" or result is None:
+        if status != "ok" or result is None:
             return {
                 **base,
-                "status": "timeout",
+                "status": status,
                 "solve_elapsed_ns": solve_ns,
                 "wmc_export_elapsed_ns": export_ns,
                 "wmc_ganak_elapsed_ns": ganak_ns,
@@ -394,10 +412,10 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance, sop_so
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
         solve_ns = export_ns + ganak_ns
-        if status == "timeout" or amplitude is None:
+        if status != "ok" or amplitude is None:
             return {
                 **base,
-                "status": "timeout",
+                "status": status,
                 "solve_elapsed_ns": solve_ns,
                 "wmc_export_elapsed_ns": export_ns,
                 "wmc_ganak_elapsed_ns": ganak_ns,

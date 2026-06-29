@@ -22,7 +22,6 @@ from render_scoreboard import (
     comparison_speedup,
     format_ns,
     has_comparison_identity,
-    labelled_path,
     markdown_escape,
     read_jsonl,
     rankwidth_kernel_text,
@@ -30,6 +29,7 @@ from render_scoreboard import (
     solver_config,
     summarize_native_comparison_records,
     summarize_solver_records,
+    tier_path,
     tier_sort_key,
 )
 
@@ -253,11 +253,8 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"component kernels {component_kernel}")
     if "rankwidth_width" in stats:
         parts.append(f"rw width {stats['rankwidth_width']}")
-    if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
-        parts.append(
-            f"rw labelled-cut-signature={format_count(stats.get('rankwidth_labelled_width', 0))}, "
-            f"support={format_count(stats.get('rankwidth_support_width', 0))}"
-        )
+    if "rankwidth_cutrank_width" in stats:
+        parts.append(f"rw cutrank width {format_count(stats['rankwidth_cutrank_width'])}")
     if "treewidth_width" in stats:
         parts.append(f"tw width {stats['treewidth_width']}")
     table = max(
@@ -271,12 +268,6 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"rw table forecast {format_count(stats['rankwidth_table_forecast'])}")
     if "rankwidth_join_pair_forecast" in stats:
         parts.append(f"rw join forecast {format_count(stats['rankwidth_join_pair_forecast'])}")
-    if "rankwidth_labelled_exact_cuts" in stats or "rankwidth_labelled_proxy_cuts" in stats:
-        parts.append(
-            f"rw cut estimates exact={format_count(stats.get('rankwidth_labelled_exact_cuts', 0))}, "
-            f"proxy={format_count(stats.get('rankwidth_labelled_proxy_cuts', 0))}, "
-            f"assignments={format_count(stats.get('rankwidth_labelled_exact_assignments', 0))}"
-        )
     signatures = max(
         stats.get("rankwidth_max_signature_entries", 0),
         stats.get("max_signature_entries", 0),
@@ -329,11 +320,8 @@ def public_key_stats(stats: dict[str, int]) -> str:
             f"max residual tw={stats.get('max_residual_min_fill_width', 0)}, "
             f"cut-rank={stats.get('max_residual_prefix_cut_rank', 0)}"
         )
-    if "branch_rankwidth_labelled_width" in stats or "branch_rankwidth_support_width" in stats:
-        parts.append(
-            f"branch rw probe labelled-cut-signature={stats.get('branch_rankwidth_labelled_width', 0)}, "
-            f"support={stats.get('branch_rankwidth_support_width', 0)}"
-        )
+    if "branch_rankwidth_cutrank_width" in stats:
+        parts.append(f"branch rw cutrank probe {stats['branch_rankwidth_cutrank_width']}")
     if "branch_rankwidth_table_forecast" in stats or "branch_treewidth_table_forecast" in stats:
         parts.append(
             "branch table forecast "
@@ -820,7 +808,7 @@ def write_mode_scoreboard(
     print(updated_line + "\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "labelled quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,
@@ -940,7 +928,7 @@ def write_index(solver_records: list[tuple[str, list[dict]]], file: TextIO) -> N
     print(f"Last updated: {today}.\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "labelled quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,
@@ -959,21 +947,16 @@ def write_index(solver_records: list[tuple[str, list[dict]]], file: TextIO) -> N
     )
     print(f"Total current solved coverage: **{total_solved} fixed-boundary benchmark rows**.\n", file=file)
 
-    print("| Source | Total solved | Sign | Labelled |", file=file)
-    print("| --- | ---: | ---: | ---: |", file=file)
+    print("| Source | Total solved | Signed QSOP rows |", file=file)
+    print("| --- | ---: | ---: |", file=file)
     for source in sorted(rows, key=source_sort_key):
         entry = rows[source]
         solved = len(set().union(*entry["solved"].values())) if entry["solved"] else 0
         sign_count = len(entry["modes"].get("sign", set()))
-        labelled_count = len(entry["modes"].get("labelled", set()))
         print(
-            f"| {markdown_escape(source)} | {solved} | {sign_count} | {labelled_count} |",
+            f"| {markdown_escape(source)} | {solved} | {sign_count} |",
             file=file,
         )
-
-    print("", file=file)
-    print("- [Sign QSOP scoreboard](scoreboard-sign.md)", file=file)
-    print("- [Labelled QSOP scoreboard](scoreboard-labelled.md)", file=file)
 
 
 def write_scoreboard(
@@ -988,7 +971,7 @@ def write_scoreboard(
     print(f"Last updated: {today}.\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "labelled quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,
@@ -1144,12 +1127,12 @@ def _write_scoreboard_json(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refresh the public benchmark scoreboard.")
     parser.add_argument("--artifact-dir", type=pathlib.Path, default=pathlib.Path("/tmp"))
-    parser.add_argument("--solver-jsonl", action="append", type=labelled_path, default=[], metavar="TIER=PATH")
-    parser.add_argument("--native-jsonl", action="append", type=labelled_path, default=[], metavar="TIER=PATH")
+    parser.add_argument("--solver-jsonl", action="append", type=tier_path, default=[], metavar="TIER=PATH")
+    parser.add_argument("--native-jsonl", action="append", type=tier_path, default=[], metavar="TIER=PATH")
     parser.add_argument(
         "--rankwidth-comparison-jsonl",
         action="append",
-        type=labelled_path,
+        type=tier_path,
         default=[],
         metavar="TIER=PATH",
         help="JSONL produced by bench_qasm_corpus.py --rankwidth-comparison.",
@@ -1161,7 +1144,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="Write normalized scoreboard intermediate JSON to this path")
     parser.add_argument(
         "--qsop-mode",
-        choices=("sign", "labelled"),
+        choices=("sign",),
         default=None,
         help="Filter records to this QSOP mode and emit a mode scoreboard",
     )
@@ -1169,7 +1152,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--assets-subdir",
         type=str,
         default=None,
-        help="Subdirectory prefix for SVG image paths (e.g. scoreboard-assets/sign)",
+        help="Subdirectory prefix for SVG image paths (default: scoreboard-assets)",
     )
     parser.add_argument(
         "--index",
@@ -1183,7 +1166,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--rankwidth-comparison-qsop-mode",
-        choices=("all", "sign", "labelled"),
+        choices=("all", "sign"),
         default="all",
     )
     parser.add_argument("--rankwidth-comparison-top", type=int, default=10)
@@ -1221,23 +1204,24 @@ def main(argv: list[str]) -> int:
                 write_index(solver_records, output)
             return 0
 
-        if args.qsop_mode is not None:
-            assets_subdir = args.assets_subdir or f"scoreboard-assets/{args.qsop_mode}"
+        mode = args.qsop_mode or "sign"
+        if args.qsop_mode is not None or not args.index:
+            assets_subdir = args.assets_subdir or (
+                "scoreboard-assets"
+            )
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with args.output.open("w", encoding="utf-8") as output:
                 write_mode_scoreboard(
                     solver_records,
                     native_records,
-                    mode=args.qsop_mode,
+                    mode=mode,
                     assets_subdir=assets_subdir,
                     file=output,
                     timeout_note=getattr(args, "timeout_note", ""),
                     artifact_dir=args.artifact_dir,
                 )
             if args.json_out is not None:
-                _write_scoreboard_json(
-                    solver_records, native_records, args.json_out, mode=args.qsop_mode
-                )
+                _write_scoreboard_json(solver_records, native_records, args.json_out, mode=mode)
             return 0
 
         rankwidth_records = read_rankwidth_comparison_records(

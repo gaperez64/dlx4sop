@@ -53,18 +53,8 @@ BRANCH_DISPATCH_METRIC_FIELDS = tuple(
 RANKWIDTH_KERNEL_TRACE_GROUPS = (
     (("rankwidth.join_map", "rankwidth.crt_join_map"), "rankwidth_join_map"),
     (("rankwidth.join", "rankwidth.crt_join"), "rankwidth_join"),
-    (
-        ("rankwidth.labelled_join_map", "rankwidth.labelled_crt_join_map"),
-        "rankwidth_labelled_join_map",
-    ),
-    (("rankwidth.labelled_join", "rankwidth.labelled_crt_join"), "rankwidth_labelled_join"),
-    (
-        ("rankwidth.fourier_join_map", "rankwidth.labelled_fourier_join_map"),
-        "rankwidth_fourier_join_map",
-    ),
-    (("rankwidth.fourier_join", "rankwidth.labelled_fourier_join"), "rankwidth_fourier_join"),
-    (("rankwidth.labelled_fourier_join_map",), "rankwidth_labelled_fourier_join_map"),
-    (("rankwidth.labelled_fourier_join",), "rankwidth_labelled_fourier_join"),
+    (("rankwidth.fourier_join_map",), "rankwidth_fourier_join_map"),
+    (("rankwidth.fourier_join",), "rankwidth_fourier_join"),
 )
 RANKWIDTH_KERNEL_METRIC_FIELDS = tuple(
     field
@@ -88,11 +78,7 @@ BACKEND_ALIAS_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
-    "rankwidth_support_width",
-    "rankwidth_labelled_width",
-    "rankwidth_labelled_exact_cuts",
-    "rankwidth_labelled_proxy_cuts",
-    "rankwidth_labelled_exact_assignments",
+    "rankwidth_cutrank_width",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "rankwidth_signature_entries",
@@ -131,14 +117,13 @@ TOP_METRICS = (
     "cache_canonical_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
-    "branch_rankwidth_labelled_width",
-    "branch_rankwidth_support_width",
+    "branch_rankwidth_cutrank_width",
     "branch_rankwidth_table_forecast",
     "branch_rankwidth_join_pair_forecast",
     "rankwidth_width_probe_events",
     "rankwidth_width_probe_elapsed_ns",
     "rankwidth_width_probe_width",
-    "rankwidth_support_width_probe_width",
+    "rankwidth_cutrank_width_probe_width",
     "rankwidth_trace_table_forecast",
     "rankwidth_trace_join_pair_forecast",
     "branch_treewidth_order_probe_events",
@@ -168,11 +153,7 @@ TOP_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
-    "rankwidth_support_width",
-    "rankwidth_labelled_width",
-    "rankwidth_labelled_exact_cuts",
-    "rankwidth_labelled_proxy_cuts",
-    "rankwidth_labelled_exact_assignments",
+    "rankwidth_cutrank_width",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -251,14 +232,13 @@ CSV_FIELDS = [
     "cache_canonical_store_elapsed_ns",
     "branch_rankwidth_probe_events",
     "branch_rankwidth_probe_elapsed_ns",
-    "branch_rankwidth_labelled_width",
-    "branch_rankwidth_support_width",
+    "branch_rankwidth_cutrank_width",
     "branch_rankwidth_table_forecast",
     "branch_rankwidth_join_pair_forecast",
     "rankwidth_width_probe_events",
     "rankwidth_width_probe_elapsed_ns",
     "rankwidth_width_probe_width",
-    "rankwidth_support_width_probe_width",
+    "rankwidth_cutrank_width_probe_width",
     "rankwidth_trace_table_forecast",
     "rankwidth_trace_join_pair_forecast",
     "branch_treewidth_order_probe_events",
@@ -285,11 +265,7 @@ CSV_FIELDS = [
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
-    "rankwidth_support_width",
-    "rankwidth_labelled_width",
-    "rankwidth_labelled_exact_cuts",
-    "rankwidth_labelled_proxy_cuts",
-    "rankwidth_labelled_exact_assignments",
+    "rankwidth_cutrank_width",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
     "signature_entries",
@@ -327,6 +303,16 @@ class CommandTimeout(RuntimeError):
         self.elapsed_ns = elapsed_ns
 
 
+class CommandFailed(RuntimeError):
+    def __init__(self, cmd: list[str], returncode: int, stdout: str, stderr: str, elapsed_ns: int):
+        super().__init__(f"command failed ({returncode}): {cmd}\n{stderr}")
+        self.cmd = cmd
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.elapsed_ns = elapsed_ns
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -350,7 +336,13 @@ def run_command(
         elapsed = time.perf_counter_ns() - start
         raise CommandTimeout(cmd, timeout_seconds or 0.0, elapsed) from exc
     if completed.returncode != 0:
-        raise RuntimeError(f"command failed: {cmd}\n{completed.stderr}")
+        raise CommandFailed(
+            cmd,
+            completed.returncode,
+            completed.stdout,
+            completed.stderr,
+            elapsed,
+        )
     return completed.stdout, completed.stderr, elapsed
 
 
@@ -363,27 +355,36 @@ def is_skippable_rankwidth_error(error: Exception) -> bool:
     )
 
 
+def summarize_command_error(error: CommandFailed) -> str:
+    for line in reversed(error.stderr.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("error:"):
+            return stripped
+    for line in reversed((error.stderr + "\n" + error.stdout).splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return f"command exited {error.returncode}"
+
+
 def load_cases(path: pathlib.Path) -> list[dict]:
     return json.loads(path.read_text())
 
 
 def qsop_header(qsop: str) -> dict[str, int | str]:
     header: dict[str, int | str] | None = None
-    mode = "sign"
     for line in qsop.splitlines():
         parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
+        if len(parts) == 5 and parts[:2] == ["p", "qsop-sign"]:
             header = {
                 "r": int(parts[2]),
                 "nvars": int(parts[3]),
                 "nedges": int(parts[4]),
             }
             continue
-        if parts and parts[0] == "q":
-            mode = "labelled"
     if header is None:
         raise RuntimeError(f"missing QSOP header:\n{qsop}")
-    header["qsop_mode"] = mode
+    header["qsop_mode"] = "sign"
     return header
 
 
@@ -452,11 +453,7 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
             "max_table_entries": "rankwidth_max_table_entries",
             "rankwidth_table_forecast": "rankwidth_table_forecast",
             "rankwidth_join_pair_forecast": "rankwidth_join_pair_forecast",
-            "rankwidth_support_width": "rankwidth_support_width",
-            "rankwidth_labelled_width": "rankwidth_labelled_width",
-            "rankwidth_labelled_exact_cuts": "rankwidth_labelled_exact_cuts",
-            "rankwidth_labelled_proxy_cuts": "rankwidth_labelled_proxy_cuts",
-            "rankwidth_labelled_exact_assignments": "rankwidth_labelled_exact_assignments",
+            "rankwidth_cutrank_width": "rankwidth_cutrank_width",
             "signature_entries": "rankwidth_signature_entries",
             "max_signature_entries": "rankwidth_max_signature_entries",
         }
@@ -485,13 +482,20 @@ def parse_trace_csv(text: str) -> dict[str, dict[str, int]]:
 
     summary: dict[str, dict[str, int]] = {}
     for row in rows[1:]:
-        phase, _depth, items, elapsed_ns = row.split(",", 3)
+        parts = row.split(",", 3)
+        if len(parts) != 4:
+            continue
+        phase, _depth, items, elapsed_ns = parts
+        try:
+            item_count = int(items)
+            elapsed = int(elapsed_ns)
+        except ValueError:
+            continue
         entry = summary.setdefault(phase, {"events": 0, "items": 0, "max_items": 0, "elapsed_ns": 0})
-        item_count = int(items)
         entry["events"] += 1
         entry["items"] += item_count
         entry["max_items"] = max(entry["max_items"], item_count)
-        entry["elapsed_ns"] += int(elapsed_ns)
+        entry["elapsed_ns"] += elapsed
     return summary
 
 
@@ -591,14 +595,14 @@ def cache_record_metrics(
 
 def branch_rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
     metrics: dict[str, int] = {}
-    labelled = trace.get("branch.rankwidth_probe")
-    if labelled is not None:
-        metrics["branch_rankwidth_probe_events"] = labelled["events"]
-        metrics["branch_rankwidth_probe_elapsed_ns"] = labelled["elapsed_ns"]
-        metrics["branch_rankwidth_labelled_width"] = labelled["max_items"]
-    support = trace.get("branch.rankwidth_support_probe")
-    if support is not None:
-        metrics["branch_rankwidth_support_width"] = support["max_items"]
+    probe = trace.get("branch.rankwidth_probe")
+    if probe is not None:
+        metrics["branch_rankwidth_probe_events"] = probe["events"]
+        metrics["branch_rankwidth_probe_elapsed_ns"] = probe["elapsed_ns"]
+        metrics["branch_rankwidth_cutrank_width"] = probe["max_items"]
+    cutrank = trace.get("branch.rankwidth_cutrank_probe")
+    if cutrank is not None:
+        metrics["branch_rankwidth_cutrank_width"] = cutrank["max_items"]
     table_forecast = trace.get("branch.rankwidth_table_forecast")
     if table_forecast is not None:
         metrics["branch_rankwidth_table_forecast"] = table_forecast["max_items"]
@@ -673,9 +677,9 @@ def rankwidth_probe_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
         metrics["rankwidth_width_probe_events"] = width["events"]
         metrics["rankwidth_width_probe_elapsed_ns"] = width["elapsed_ns"]
         metrics["rankwidth_width_probe_width"] = width["max_items"]
-    support = trace.get("rankwidth.support_width_probe")
-    if support is not None:
-        metrics["rankwidth_support_width_probe_width"] = support["max_items"]
+    cutrank = trace.get("rankwidth.cutrank_width_probe")
+    if cutrank is not None:
+        metrics["rankwidth_cutrank_width_probe_width"] = cutrank["max_items"]
     table_forecast = trace.get("rankwidth.table_forecast")
     if table_forecast is not None:
         metrics["rankwidth_trace_table_forecast"] = table_forecast["max_items"]
@@ -736,8 +740,7 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "rankwidth_max_table_entries",
         "rankwidth_table_forecast",
         "rankwidth_join_pair_forecast",
-        "rankwidth_support_width",
-        "rankwidth_labelled_width",
+        "rankwidth_cutrank_width",
         "treewidth_max_table_entries",
         "max_signature_entries",
         "rankwidth_max_signature_entries",
@@ -753,12 +756,11 @@ def add_stat(total: dict[str, int], key: str, value: int | str | None) -> None:
         "cache_key_bytes",
         "cache_count_bytes",
         "cache_estimated_bytes",
-        "branch_rankwidth_labelled_width",
-        "branch_rankwidth_support_width",
+        "branch_rankwidth_cutrank_width",
         "branch_rankwidth_table_forecast",
         "branch_rankwidth_join_pair_forecast",
         "rankwidth_width_probe_width",
-        "rankwidth_support_width_probe_width",
+        "rankwidth_cutrank_width_probe_width",
         "rankwidth_trace_table_forecast",
         "rankwidth_trace_join_pair_forecast",
         "branch_treewidth_order_width",
@@ -836,14 +838,13 @@ def summarize_records(records: list[dict]) -> dict[tuple[str, str, str, str, str
             "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
-            "branch_rankwidth_labelled_width",
-            "branch_rankwidth_support_width",
+            "branch_rankwidth_cutrank_width",
             "branch_rankwidth_table_forecast",
             "branch_rankwidth_join_pair_forecast",
             "rankwidth_width_probe_events",
             "rankwidth_width_probe_elapsed_ns",
             "rankwidth_width_probe_width",
-            "rankwidth_support_width_probe_width",
+            "rankwidth_cutrank_width_probe_width",
             "rankwidth_trace_table_forecast",
             "rankwidth_trace_join_pair_forecast",
             "branch_treewidth_order_probe_events",
@@ -890,15 +891,12 @@ def cache_hit_rate(stats: dict[str, int]) -> str:
 
 
 def record_metric(record: dict, metric: str) -> int:
-    value = record.get(metric)
-    if isinstance(value, int):
-        return value
-    value = record["stats"].get(metric)
-    return value if isinstance(value, int) else 0
+    value = metric_value(record, metric)
+    return value if value is not None else 0
 
 
 def record_has_metric(record: dict, metric: str) -> bool:
-    return isinstance(record.get(metric), int) or isinstance(record["stats"].get(metric), int)
+    return metric_value(record, metric) is not None
 
 
 def record_rankwidth_kernel_elapsed_ns(record: dict) -> int:
@@ -983,7 +981,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
     metadata = {
         "case_boundaries": 0,
         "imported_sign": 0,
-        "imported_labelled": 0,
+        "skipped_import_records": 0,
         "skipped_rankwidth_records": 0,
         "timed_out_records": 0,
         "skipped_qsop_mode_records": 0,
@@ -995,17 +993,18 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
         source = case_data.get("source", "internal")
         source_url = case_data.get("source_url", "")
         source_relative_path = case_data.get("source_relative_path", "")
-        qsop, _stderr, import_elapsed_ns = run_command(
-            [str(args.qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
-            input_text=qasm,
-        )
-        header = qsop_header(qsop)
         metadata["case_boundaries"] += 1
         metadata["source_boundaries"][source] = metadata["source_boundaries"].get(source, 0) + 1
-        if header["qsop_mode"] == "labelled":
-            metadata["imported_labelled"] += 1
-        else:
-            metadata["imported_sign"] += 1
+        try:
+            qsop, _stderr, import_elapsed_ns = run_command(
+                [str(args.qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
+                input_text=qasm,
+            )
+        except CommandFailed:
+            metadata["skipped_import_records"] += 1
+            continue
+        header = qsop_header(qsop)
+        metadata["imported_sign"] += 1
         if args.qsop_mode != "all" and header["qsop_mode"] != args.qsop_mode:
             metadata["skipped_qsop_mode_records"] += 1
             continue
@@ -1070,11 +1069,58 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         }
                     )
                     continue
-                except RuntimeError as exc:
+                except CommandFailed as exc:
                     if args.skip_unsupported and backend == "rankwidth" and is_skippable_rankwidth_error(exc):
                         metadata["skipped_rankwidth_records"] += 1
                         continue
-                    raise
+                    trace = parse_trace_csv(exc.stderr) if args.trace else {}
+                    branch_probe_metrics = branch_rankwidth_probe_metrics(trace)
+                    rankwidth_probe = rankwidth_probe_metrics(trace)
+                    treewidth_probe_metrics = branch_treewidth_probe_metrics(trace)
+                    kernel_metrics = treewidth_kernel_metrics(trace)
+                    component_metrics = component_kernel_metrics(trace)
+                    rankwidth_metrics = rankwidth_kernel_metrics(trace)
+                    skip_reason_metrics = branch_skip_reason_metrics(trace)
+                    dispatch_metrics = branch_dispatch_metrics(trace)
+                    fallthrough_metrics = branch_fallthrough_metrics(trace)
+                    trace_metrics = trace_record_metrics(trace)
+                    records.append(
+                        {
+                            "case": case_name,
+                            "source": source,
+                            "source_url": source_url,
+                            "source_relative_path": source_relative_path,
+                            "boundary": f"{input_bits}->{output_bits}",
+                            "input": input_bits,
+                            "output": output_bits,
+                            "backend": backend,
+                            "solve_mode": config["solve_mode"],
+                            "branch_heuristic": config["branch_heuristic"],
+                            "rankwidth_mode": config["rankwidth_mode"],
+                            "rankwidth_decomposition": config["rankwidth_generate"],
+                            "treewidth_order": config["treewidth_order"],
+                            "status": "error",
+                            "error": summarize_command_error(exc),
+                            **header,
+                            "import_elapsed_ns": import_elapsed_ns,
+                            "solve_elapsed_ns": exc.elapsed_ns,
+                            "qasm_sha256": sha256_text(qasm),
+                            "qsop_sha256": sha256_text(qsop),
+                            "stats": {},
+                            **branch_probe_metrics,
+                            **rankwidth_probe,
+                            **treewidth_probe_metrics,
+                            **kernel_metrics,
+                            **component_metrics,
+                            **rankwidth_metrics,
+                            **skip_reason_metrics,
+                            **dispatch_metrics,
+                            **fallthrough_metrics,
+                            **trace_metrics,
+                            "trace": trace,
+                        }
+                    )
+                    continue
                 stats, amplitude = parse_stats_and_amplitude(stats_text)
                 aliases = backend_stat_aliases(backend, stats)
                 trace = parse_trace_csv(trace_text) if args.trace else {}
@@ -1173,8 +1219,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
-            "branch_rankwidth_labelled_width",
-            "branch_rankwidth_support_width",
+            "branch_rankwidth_cutrank_width",
             "branch_rankwidth_table_forecast",
             "branch_rankwidth_join_pair_forecast",
             "branch_treewidth_order_probe_events",
@@ -1205,11 +1250,7 @@ def write_csv(records: list[dict], file: TextIO) -> None:
             "rankwidth_max_table_entries",
             "rankwidth_table_forecast",
             "rankwidth_join_pair_forecast",
-            "rankwidth_support_width",
-            "rankwidth_labelled_width",
-            "rankwidth_labelled_exact_cuts",
-            "rankwidth_labelled_proxy_cuts",
-            "rankwidth_labelled_exact_assignments",
+            "rankwidth_cutrank_width",
             "treewidth_table_entries",
             "treewidth_max_table_entries",
             "signature_entries",
@@ -1300,26 +1341,16 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                 line += f" rankwidth_table_forecast={stats['rankwidth_table_forecast']}"
             if "rankwidth_join_pair_forecast" in stats:
                 line += f" rankwidth_join_pair_forecast={stats['rankwidth_join_pair_forecast']}"
-            if "rankwidth_labelled_width" in stats or "rankwidth_support_width" in stats:
-                line += (
-                    f" rankwidth_widths=labelled:{stats.get('rankwidth_labelled_width', 0)}"
-                    f",support:{stats.get('rankwidth_support_width', 0)}"
-                )
-            if (
-                "rankwidth_labelled_exact_cuts" in stats
-                or "rankwidth_labelled_proxy_cuts" in stats
-            ):
-                line += (
-                    f" rankwidth_cut_estimates=exact:{stats.get('rankwidth_labelled_exact_cuts', 0)}"
-                    f",proxy:{stats.get('rankwidth_labelled_proxy_cuts', 0)}"
-                    f",assignments:{stats.get('rankwidth_labelled_exact_assignments', 0)}"
-                )
+            cutrank_width = metric_value({"stats": stats}, "rankwidth_cutrank_width")
+            if cutrank_width is not None:
+                line += f" rankwidth_cutrank_width={cutrank_width}"
             if "rankwidth_width_probe_elapsed_ns" in record:
+                probe_cutrank = record_metric(record, "rankwidth_cutrank_width_probe_width")
                 line += (
                     f" rankwidth_probe=events:{record.get('rankwidth_width_probe_events', 0)}"
                     f",elapsed:{record['rankwidth_width_probe_elapsed_ns']}"
                     f",width:{record.get('rankwidth_width_probe_width', 0)}"
-                    f",support:{record.get('rankwidth_support_width_probe_width', 0)}"
+                    f",cutrank:{probe_cutrank}"
                 )
             if "cache_hits" in stats or "cache_misses" in stats:
                 line += f" cache={stats.get('cache_hits', 0)}/{stats.get('cache_misses', 0)}"
@@ -1361,11 +1392,9 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     " cache_canonical_store_elapsed_ns="
                     f"{record['cache_canonical_store_elapsed_ns']}"
                 )
-            if "branch_rankwidth_labelled_width" in record:
-                line += (
-                    f" branch_rankwidth=labelled:{record['branch_rankwidth_labelled_width']}"
-                    f",support:{record.get('branch_rankwidth_support_width', 0)}"
-                )
+            branch_cutrank = record_metric(record, "branch_rankwidth_cutrank_width")
+            if branch_cutrank:
+                line += f" branch_rankwidth_cutrank={branch_cutrank}"
             if (
                 "branch_rankwidth_table_forecast" in record
                 or "branch_treewidth_table_forecast" in record
@@ -1402,12 +1431,8 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
             if (
                 "rankwidth_join_map_elapsed_ns" in record
                 or "rankwidth_join_elapsed_ns" in record
-                or "rankwidth_labelled_join_map_elapsed_ns" in record
-                or "rankwidth_labelled_join_elapsed_ns" in record
                 or "rankwidth_fourier_join_map_elapsed_ns" in record
                 or "rankwidth_fourier_join_elapsed_ns" in record
-                or "rankwidth_labelled_fourier_join_map_elapsed_ns" in record
-                or "rankwidth_labelled_fourier_join_elapsed_ns" in record
             ):
                 line += (
                     " rankwidth_kernels="
@@ -1415,20 +1440,10 @@ def write_top_records(records: list[dict], args: argparse.Namespace, file: TextI
                     f"{record.get('rankwidth_join_map_elapsed_ns', 0)},"
                     f"join:{record.get('rankwidth_join_events', 0)}/"
                     f"{record.get('rankwidth_join_elapsed_ns', 0)},"
-                    f"labelled_map:{record.get('rankwidth_labelled_join_map_events', 0)}/"
-                    f"{record.get('rankwidth_labelled_join_map_elapsed_ns', 0)},"
-                    f"labelled:{record.get('rankwidth_labelled_join_events', 0)}/"
-                    f"{record.get('rankwidth_labelled_join_elapsed_ns', 0)},"
                     f"fourier_map:{record.get('rankwidth_fourier_join_map_events', 0)}/"
                     f"{record.get('rankwidth_fourier_join_map_elapsed_ns', 0)},"
                     f"fourier:{record.get('rankwidth_fourier_join_events', 0)}/"
                     f"{record.get('rankwidth_fourier_join_elapsed_ns', 0)},"
-                    f"labelled_fourier_map:"
-                    f"{record.get('rankwidth_labelled_fourier_join_map_events', 0)}/"
-                    f"{record.get('rankwidth_labelled_fourier_join_map_elapsed_ns', 0)},"
-                    f"labelled_fourier:"
-                    f"{record.get('rankwidth_labelled_fourier_join_events', 0)}/"
-                    f"{record.get('rankwidth_labelled_fourier_join_elapsed_ns', 0)}"
                 )
             if "treewidth_delegations" in stats or "rankwidth_delegations" in stats:
                 line += (
@@ -1518,8 +1533,12 @@ def metric_value(record: dict, metric: str) -> int | None:
     value = record.get(metric)
     if isinstance(value, int):
         return value
-    value = record["stats"].get(metric)
-    return value if isinstance(value, int) else None
+    stats = record.get("stats", {})
+    if isinstance(stats, dict):
+        value = stats.get(metric)
+        if isinstance(value, int):
+            return value
+    return None
 
 
 def write_timeout_overview(records: list[dict], args: argparse.Namespace, file: TextIO) -> None:
@@ -1584,15 +1603,11 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
         print(f"    solve_elapsed_ns: {sum(int(record['solve_elapsed_ns']) for record in selected)}", file=file)
         for label, metric in (
             ("max_width", "rankwidth_width"),
-            ("max_support_width", "rankwidth_support_width"),
-            ("max_labelled_width", "rankwidth_labelled_width"),
+            ("max_cutrank_width", "rankwidth_cutrank_width"),
             ("max_table_entries", "rankwidth_max_table_entries"),
             ("max_table_forecast", "rankwidth_table_forecast"),
             ("max_join_pair_forecast", "rankwidth_join_pair_forecast"),
             ("max_signature_entries", "rankwidth_max_signature_entries"),
-            ("labelled_exact_cuts", "rankwidth_labelled_exact_cuts"),
-            ("labelled_proxy_cuts", "rankwidth_labelled_proxy_cuts"),
-            ("labelled_exact_assignments", "rankwidth_labelled_exact_assignments"),
             ("join_pairs", "join_pairs"),
             ("join_signature_pairs", "join_signature_pairs"),
         ):
@@ -1606,9 +1621,6 @@ def write_rankwidth_diagnostics(records: list[dict], file: TextIO) -> None:
                 in {
                     "join_pairs",
                     "join_signature_pairs",
-                    "labelled_exact_cuts",
-                    "labelled_proxy_cuts",
-                    "labelled_exact_assignments",
                 }
                 else max(values)
             )
@@ -1673,11 +1685,11 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
     print(f"records: {len(records)}", file=file)
     print(f"case_boundaries: {metadata['case_boundaries']}", file=file)
     print(f"solved_records: {len(solved)}", file=file)
+    print(f"skipped_import_records: {metadata['skipped_import_records']}", file=file)
     print(f"skipped_qsop_mode_records: {metadata['skipped_qsop_mode_records']}", file=file)
     print(f"skipped_rankwidth_records: {metadata['skipped_rankwidth_records']}", file=file)
     print(f"timed_out_records: {metadata['timed_out_records']}", file=file)
     print(f"imported_sign: {metadata['imported_sign']}", file=file)
-    print(f"imported_labelled: {metadata['imported_labelled']}", file=file)
     source_boundaries = metadata.get("source_boundaries", {})
     if source_boundaries:
         print("sources:", file=file)
@@ -1721,8 +1733,7 @@ def write_summary(records: list[dict], metadata: dict, args: argparse.Namespace,
             "cache_canonical_store_elapsed_ns",
             "branch_rankwidth_probe_events",
             "branch_rankwidth_probe_elapsed_ns",
-            "branch_rankwidth_labelled_width",
-            "branch_rankwidth_support_width",
+            "branch_rankwidth_cutrank_width",
             "branch_rankwidth_table_forecast",
             "branch_rankwidth_join_pair_forecast",
             "branch_treewidth_order_probe_events",
@@ -1817,7 +1828,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-vars", type=int, default=24, help="Pass-through solver variable guard.")
     parser.add_argument(
         "--qsop-mode",
-        choices=("all", "sign", "labelled"),
+        choices=("all", "sign"),
         default="all",
         help="Only solve imported QSOP rows with this mode. Imports still count in summary metadata.",
     )

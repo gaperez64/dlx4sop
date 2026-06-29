@@ -39,23 +39,16 @@ _VALID_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><text>ok</text></svg>'
 
 
 def _make_valid_root(tmp: pathlib.Path) -> pathlib.Path:
-    """Create a minimal valid two-mode scoreboard directory tree under tmp."""
-    for mode in ("sign", "labelled"):
-        assets = tmp / "scoreboard-assets" / mode
-        assets.mkdir(parents=True, exist_ok=True)
-        (assets / "survival-feynmandd.svg").write_text(_VALID_SVG, encoding="utf-8")
-        md = (
-            f"# Scoreboard — {mode} QSOPs\n\n"
-            f"![Survival curves — FeynmanDD](scoreboard-assets/{mode}/survival-feynmandd.svg)\n"
-        )
-        (tmp / f"scoreboard-{mode}.md").write_text(md, encoding="utf-8")
-        (tmp / f"scoreboard-{mode}.json").write_text(json.dumps(_VALID_JSON), encoding="utf-8")
+    """Create a minimal valid signed scoreboard tree under tmp."""
+    assets = tmp / "scoreboard-assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "survival-feynmandd.svg").write_text(_VALID_SVG, encoding="utf-8")
     (tmp / "scoreboard.md").write_text(
-        "# Scoreboard\n\n"
-        "- [Sign QSOP scoreboard](scoreboard-sign.md)\n"
-        "- [Labelled QSOP scoreboard](scoreboard-labelled.md)\n",
+        "# Scoreboard — sign QSOPs\n\n"
+        "![Survival curves — FeynmanDD](scoreboard-assets/survival-feynmandd.svg)\n",
         encoding="utf-8",
     )
+    (tmp / "scoreboard.json").write_text(json.dumps(_VALID_JSON), encoding="utf-8")
     return tmp
 
 
@@ -70,17 +63,17 @@ def test_valid_tree_passes(tool):
 def test_missing_scoreboard_json(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard-sign.json").unlink()
-        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
+        (root / "scoreboard.json").unlink()
+        errors = tool.check_scoreboard_json(root, "scoreboard.json")
         if not errors:
-            raise AssertionError("expected error for missing scoreboard-sign.json")
+            raise AssertionError("expected error for missing scoreboard.json")
 
 
 def test_invalid_json(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard-sign.json").write_text("not json", encoding="utf-8")
-        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
+        (root / "scoreboard.json").write_text("not json", encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard.json")
         if not errors:
             raise AssertionError("expected error for invalid JSON")
 
@@ -88,10 +81,10 @@ def test_invalid_json(tool):
 def test_missing_required_key(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        data = json.loads((root / "scoreboard-sign.json").read_text())
+        data = json.loads((root / "scoreboard.json").read_text())
         del data["solver_summary"]
-        (root / "scoreboard-sign.json").write_text(json.dumps(data), encoding="utf-8")
-        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
+        (root / "scoreboard.json").write_text(json.dumps(data), encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard.json")
         if not any("solver_summary" in e for e in errors):
             raise AssertionError("expected error about missing solver_summary")
 
@@ -99,11 +92,11 @@ def test_missing_required_key(tool):
 def test_solved_exceeds_attempted(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        data = json.loads((root / "scoreboard-sign.json").read_text())
+        data = json.loads((root / "scoreboard.json").read_text())
         data["solver_summary"][0]["solved"] = 99
         data["solver_summary"][0]["attempted"] = 10
-        (root / "scoreboard-sign.json").write_text(json.dumps(data), encoding="utf-8")
-        errors = tool.check_scoreboard_json(root, "scoreboard-sign.json")
+        (root / "scoreboard.json").write_text(json.dumps(data), encoding="utf-8")
+        errors = tool.check_scoreboard_json(root, "scoreboard.json")
         if not any("solved" in e and "attempted" in e for e in errors):
             raise AssertionError("expected error when solved > attempted")
 
@@ -111,10 +104,10 @@ def test_solved_exceeds_attempted(tool):
 def test_missing_referenced_svg(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard-sign.md").write_text(
-            "![X](scoreboard-assets/sign/nonexistent.svg)\n", encoding="utf-8"
+        (root / "scoreboard.md").write_text(
+            "![X](scoreboard-assets/nonexistent.svg)\n", encoding="utf-8"
         )
-        errors = tool.check_mode_scoreboard_assets(root, "sign")
+        errors = tool.check_scoreboard_assets(root)
         if not any("nonexistent.svg" in e for e in errors):
             raise AssertionError("expected error for missing referenced SVG")
 
@@ -122,21 +115,12 @@ def test_missing_referenced_svg(tool):
 def test_non_svg_content(tool):
     with tempfile.TemporaryDirectory() as td:
         root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard-assets" / "sign" / "bad.svg").write_text(
+        (root / "scoreboard-assets" / "bad.svg").write_text(
             "not an svg file", encoding="utf-8"
         )
         errors = tool.check_all_svg_files(root)
         if not any("bad.svg" in e for e in errors):
             raise AssertionError("expected error for SVG without <svg tag")
-
-
-def test_missing_index_links(tool):
-    with tempfile.TemporaryDirectory() as td:
-        root = _make_valid_root(pathlib.Path(td))
-        (root / "scoreboard.md").write_text("# Scoreboard\n\nNo links here.\n", encoding="utf-8")
-        errors = tool.check_index_links(root)
-        if not errors:
-            raise AssertionError("expected error when index lacks mode links")
 
 
 def test_real_repo_artifacts(tool):
@@ -159,7 +143,6 @@ def main() -> int:
         ("solved_exceeds_attempted", test_solved_exceeds_attempted),
         ("missing_referenced_svg", test_missing_referenced_svg),
         ("non_svg_content", test_non_svg_content),
-        ("missing_index_links", test_missing_index_links),
         ("real_repo_artifacts", test_real_repo_artifacts),
     ]
     failed = []

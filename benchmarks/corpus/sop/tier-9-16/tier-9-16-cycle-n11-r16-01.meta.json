@@ -1,0 +1,9 @@
+{
+  "name": "tier-9-16-cycle-n11-r16-01",
+  "generator": "build_sop_corpus.py:v2-sign",
+  "r": 16,
+  "nvars": 11,
+  "nedges": 11,
+  "description": "Synthetic cycle graph, 11 vars, r=16, seed=1042+1",
+  "solvable_without_external_tools": true
+}

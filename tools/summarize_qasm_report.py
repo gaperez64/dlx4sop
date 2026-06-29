@@ -64,15 +64,11 @@ def record_source(record: dict, report: dict) -> str:
     return str(record.get("source") or report.get("source") or "unknown")
 
 
-def record_mode(record: dict) -> str:
-    return str(record.get("mode") or "unknown")
-
-
 def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int | None]]) -> dict:
     reports = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
     sources: dict[str, dict] = {}
-    tier_counts: collections.Counter[tuple[str, str, str]] = collections.Counter()
-    too_large: collections.Counter[tuple[str, str, str]] = collections.Counter()
+    tier_counts: collections.Counter[tuple[str, str]] = collections.Counter()
+    too_large: collections.Counter[tuple[str, str]] = collections.Counter()
     diagnostics: collections.Counter[tuple[str, str]] = collections.Counter()
     total_records = 0
 
@@ -87,13 +83,11 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
                     "source_url": record.get("source_url") or report.get("source_url"),
                     "inputs": 0,
                     "statuses": collections.Counter(),
-                    "modes": collections.Counter(),
                 },
             )
             if source_entry.get("source_url") is None and record.get("source_url") is not None:
                 source_entry["source_url"] = record["source_url"]
             status = str(record.get("status", "unknown"))
-            mode = record_mode(record)
             max_nvars = record.get("max_imported_nvars")
             if not isinstance(max_nvars, int):
                 max_nvars = None
@@ -101,10 +95,9 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
 
             source_entry["inputs"] += 1
             source_entry["statuses"][status] += 1
-            source_entry["modes"][mode] += 1
-            tier_counts[(label, status, mode)] += 1
+            tier_counts[(label, status)] += 1
             if status == "too_many_vars":
-                too_large[(source, label, mode)] += 1
+                too_large[(source, label)] += 1
             diagnostic = record.get("diagnostic")
             if diagnostic:
                 diagnostics[(status, str(diagnostic))] += 1
@@ -135,16 +128,14 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
     tier_rows = []
     labels = [name for name, _, _ in tiers] + ["unknown", "unclassified"]
     for label in labels:
-        entries = [(status, mode, count) for (tier, status, mode), count in tier_counts.items() if tier == label]
+        entries = [(status, count) for (tier, status), count in tier_counts.items() if tier == label]
         if not entries:
             continue
         statuses = collections.Counter()
-        modes = collections.Counter()
         total = 0
-        for status, mode, count in entries:
+        for status, count in entries:
             total += count
             statuses[status] += count
-            modes[mode] += count
         tier_rows.append(
             {
                 "tier": label,
@@ -157,15 +148,12 @@ def summarize_reports(paths: list[pathlib.Path], tiers: list[tuple[str, int, int
                     count for status, count in statuses.items()
                     if status not in ("ok", "below_min_vars", "too_many_vars")
                 ),
-                "sign": modes.get("sign", 0),
-                "labelled": modes.get("labelled", 0),
-                "unknown_mode": modes.get("unknown", 0),
             }
         )
 
     too_large_rows = [
-        {"source": source, "tier": label, "mode": mode, "records": count}
-        for (source, label, mode), count in sorted(too_large.items())
+        {"source": source, "tier": label, "records": count}
+        for (source, label), count in sorted(too_large.items())
     ]
     diagnostic_rows = [
         {"status": status, "diagnostic": diagnostic, "records": count}
@@ -208,23 +196,21 @@ def write_markdown(summary: dict, top_diagnostics: int, file) -> None:
         )
 
     print("\n## Size Tiers\n", file=file)
-    print("| Tier | Imported variables | Records | OK | Below min | Too large | Other unsupported | Sign | Labelled | Unknown mode |", file=file)
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print("| Tier | Imported variables | Records | OK | Below min | Too large | Other unsupported |", file=file)
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in summary["tier_summary"]:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['range'])} | {row['records']} | "
-            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} | "
-            f"{row['sign']} | {row['labelled']} | {row['unknown_mode']} |",
+            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} |",
             file=file,
         )
 
     print("\n## Too-Large Candidates\n", file=file)
-    print("| Source | Tier | Mode | Records |", file=file)
-    print("| --- | --- | --- | ---: |", file=file)
+    print("| Source | Tier | Records |", file=file)
+    print("| --- | --- | ---: |", file=file)
     for row in summary["too_large"]:
         print(
-            f"| {markdown_escape(row['source'])} | {markdown_escape(row['tier'])} | "
-            f"{markdown_escape(row['mode'])} | {row['records']} |",
+            f"| {markdown_escape(row['source'])} | {markdown_escape(row['tier'])} | {row['records']} |",
             file=file,
         )
 

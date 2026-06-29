@@ -73,7 +73,7 @@ def main() -> int:
     sop_solve = pathlib.Path(sys.argv[2])
     source_root = pathlib.Path(sys.argv[3])
 
-    for name in ("solve_sign_path.qsop", "solve_labelled.qsop"):
+    for name in ("solve_sign_path.qsop", "solve_signed_edge.qsop"):
         qsop = source_root / "tests" / "golden" / name
         expected = reference_counts(sop_solve, qsop)
         actual = ganak_residue_counts(sop2wmc, pathlib.Path(ganak), qsop, len(expected))

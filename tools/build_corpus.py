@@ -61,9 +61,9 @@ def git_clone_or_update(url: str, commit: str, dest: pathlib.Path) -> None:
 def read_qsop_nvars(stdout: str) -> int:
     for line in stdout.splitlines():
         parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
+        if len(parts) == 5 and parts[:2] == ["p", "qsop-sign"]:
             return int(parts[3])
-    raise ValueError("no 'p qsop' header in qasm2sop output")
+    raise ValueError("no 'p qsop-sign' header in qasm2sop output")
 
 
 def compute_nvars_for_case(qasm2sop: pathlib.Path, qasm: str, boundaries: list) -> int:

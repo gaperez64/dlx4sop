@@ -58,8 +58,7 @@ typedef struct branch_rw_decision_data {
   bool attempted;
   const char *veto_reason; /* NULL = no early veto (decomposition was generated) */
   double generation_ms;
-  uint32_t support_width;
-  uint32_t labelled_width;
+  uint32_t cutrank_width;
   uint64_t forecast_entries;
   uint64_t forecast_join_pairs;
   double actual_ms;
@@ -135,10 +134,9 @@ static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink,
   if (rw != NULL && rw->attempted) {
     fprintf(f, ",\"rankwidth_generation_ms\":%.4f", rw->generation_ms);
     /* Show detailed rankwidth data when: (a) rankwidth won, or (b) calibration populated it. */
-    const bool show_rw_details = (rw->veto_reason == NULL) || (rw->support_width > 0);
+    const bool show_rw_details = (rw->veto_reason == NULL) || (rw->cutrank_width > 0);
     if (show_rw_details) {
-      fprintf(f, ",\"rankwidth_support_width\":%" PRIu32, rw->support_width);
-      fprintf(f, ",\"rankwidth_labelled_width\":%" PRIu32, rw->labelled_width);
+      fprintf(f, ",\"rankwidth_cutrank_width\":%" PRIu32, rw->cutrank_width);
       fprintf(f, ",\"rankwidth_forecast_entries\":%" PRIu64, rw->forecast_entries);
       fprintf(f, ",\"rankwidth_forecast_join_pairs\":%" PRIu64, rw->forecast_join_pairs);
       if (rw->actual_ms > 0.0) {
@@ -147,16 +145,14 @@ static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink,
         fputs(",\"rankwidth_actual_ms\":null", f);
       }
     } else {
-      fputs(",\"rankwidth_support_width\":null", f);
-      fputs(",\"rankwidth_labelled_width\":null", f);
+      fputs(",\"rankwidth_cutrank_width\":null", f);
       fputs(",\"rankwidth_forecast_entries\":null", f);
       fputs(",\"rankwidth_forecast_join_pairs\":null", f);
       fputs(",\"rankwidth_actual_ms\":null", f);
     }
   } else {
     fputs(",\"rankwidth_generation_ms\":0.0", f);
-    fputs(",\"rankwidth_support_width\":null", f);
-    fputs(",\"rankwidth_labelled_width\":null", f);
+    fputs(",\"rankwidth_cutrank_width\":null", f);
     fputs(",\"rankwidth_forecast_entries\":null", f);
     fputs(",\"rankwidth_forecast_join_pairs\":null", f);
     fputs(",\"rankwidth_actual_ms\":null", f);
@@ -194,7 +190,6 @@ typedef struct residual_cache_key {
   uint32_t *unary;
   uint32_t *edge_u;
   uint32_t *edge_v;
-  uint32_t *edge_q;
 } residual_cache_key_t;
 
 typedef struct residual_cache_entry {
@@ -301,9 +296,6 @@ typedef struct branch_search_stats {
   uint64_t join_signature_pairs;
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
-  uint64_t rankwidth_labelled_exact_cuts;
-  uint64_t rankwidth_labelled_proxy_cuts;
-  uint64_t rankwidth_labelled_exact_assignments;
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
   uint64_t branch_fallthroughs;
@@ -328,8 +320,7 @@ typedef struct branch_search_stats {
   uint64_t count_modulus;
   uint32_t depth;
   uint32_t decomposition_width;
-  uint32_t rankwidth_support_width;
-  uint32_t rankwidth_labelled_width;
+  uint32_t rankwidth_cutrank_width;
 } branch_search_stats_t;
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
@@ -358,7 +349,6 @@ static void free_subinstance(qsop_instance_t *sub) {
   free(sub->unary);
   free(sub->edge_u);
   free(sub->edge_v);
-  free(sub->edge_q);
   *sub = (qsop_instance_t){0};
 }
 
@@ -590,7 +580,6 @@ static void residual_cache_key_free(residual_cache_key_t *key) {
   free(key->unary);
   free(key->edge_u);
   free(key->edge_v);
-  free(key->edge_q);
   *key = (residual_cache_key_t){0};
 }
 
@@ -617,9 +606,8 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   key->unary = malloc((nvars == 0 ? 1U : nvars) * sizeof(*key->unary));
   key->edge_u = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_u));
   key->edge_v = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_v));
-  key->edge_q = malloc((nedges == 0 ? 1U : nedges) * sizeof(*key->edge_q));
   if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
-      key->edge_u == NULL || key->edge_v == NULL || key->edge_q == NULL) {
+      key->edge_u == NULL || key->edge_v == NULL) {
     residual_cache_key_free(key);
     set_error(error, "out of memory while allocating residual cache key");
     return false;
@@ -634,7 +622,6 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
     key->active_edge[e] = qsop_residual_edge_active(residual, e) ? 1U : 0U;
     key->edge_u[e] = qsop_residual_edge_u(residual, e);
     key->edge_v[e] = qsop_residual_edge_v(residual, e);
-    key->edge_q[e] = qsop_residual_edge_q(residual, e);
   }
 
   return true;
@@ -669,8 +656,6 @@ static uint64_t residual_cache_key_fingerprint(const residual_cache_key_t *key) 
     fingerprint *= UINT64_C(1099511628211);
     fingerprint ^= key->edge_v[e];
     fingerprint *= UINT64_C(1099511628211);
-    fingerprint ^= key->edge_q[e];
-    fingerprint *= UINT64_C(1099511628211);
   }
   return fingerprint;
 }
@@ -697,9 +682,8 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
   key->unary = malloc((sub->nvars == 0 ? 1U : sub->nvars) * sizeof(*key->unary));
   key->edge_u = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_u));
   key->edge_v = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_v));
-  key->edge_q = malloc((sub->nedges == 0 ? 1U : sub->nedges) * sizeof(*key->edge_q));
   if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
-      key->edge_u == NULL || key->edge_v == NULL || key->edge_q == NULL) {
+      key->edge_u == NULL || key->edge_v == NULL) {
     residual_cache_key_free(key);
     set_error(error, "out of memory while allocating canonical residual cache key");
     return false;
@@ -710,7 +694,6 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
   memcpy(key->unary, sub->unary, (size_t)sub->nvars * sizeof(*key->unary));
   memcpy(key->edge_u, sub->edge_u, (size_t)sub->nedges * sizeof(*key->edge_u));
   memcpy(key->edge_v, sub->edge_v, (size_t)sub->nedges * sizeof(*key->edge_v));
-  memcpy(key->edge_q, sub->edge_q, (size_t)sub->nedges * sizeof(*key->edge_q));
   key->fingerprint = residual_cache_key_fingerprint(key);
   return true;
 }
@@ -753,7 +736,7 @@ static bool residual_cache_key_matches_key(const residual_cache_key_t *lhs,
   }
   for (uint32_t e = 0; e < lhs->nedges; e++) {
     if (lhs->active_edge[e] != rhs->active_edge[e] || lhs->edge_u[e] != rhs->edge_u[e] ||
-        lhs->edge_v[e] != rhs->edge_v[e] || lhs->edge_q[e] != rhs->edge_q[e]) {
+        lhs->edge_v[e] != rhs->edge_v[e]) {
       return false;
     }
   }
@@ -776,8 +759,7 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
 
   for (uint32_t e = 0; e < key->nedges; e++) {
     if (key->edge_u[e] != qsop_residual_edge_u(residual, e) ||
-        key->edge_v[e] != qsop_residual_edge_v(residual, e) ||
-        key->edge_q[e] != qsop_residual_edge_q(residual, e)) {
+        key->edge_v[e] != qsop_residual_edge_v(residual, e)) {
       return false;
     }
   }
@@ -1031,17 +1013,12 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
     }
   }
 
-  uint32_t nedges = 0;
-  bool sign_only = true;
   const uint32_t r = qsop_residual_modulus(residual);
-  const uint32_t sign_coeff = r / 2U;
+  uint32_t nedges = 0;
   for (uint32_t e = 0; e < source_edges; e++) {
     const uint32_t u = qsop_residual_edge_u(residual, e);
     if (qsop_residual_edge_active(residual, e) && component[u] == wanted) {
       nedges++;
-      if (qsop_residual_edge_q(residual, e) != sign_coeff) {
-        sign_only = false;
-      }
     }
   }
 
@@ -1050,14 +1027,12 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
       .nvars = nvars,
       .norm_h = 0,
       .constant = 0,
-      .mode = sign_only ? QSOP_MODE_SIGN : QSOP_MODE_LABELLED,
       .nedges = nedges,
   };
   sub->unary = calloc(nvars == 0 ? 1U : nvars, sizeof(*sub->unary));
   sub->edge_u = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_u));
   sub->edge_v = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_v));
-  sub->edge_q = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_q));
-  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL || sub->edge_q == NULL) {
+  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL) {
     free(map);
     free_subinstance(sub);
     set_error(error, "out of memory while allocating residual component subinstance");
@@ -1079,7 +1054,6 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
     const uint32_t v = qsop_residual_edge_v(residual, e);
     sub->edge_u[out_edge] = map[u];
     sub->edge_v[out_edge] = map[v];
-    sub->edge_q[out_edge] = qsop_residual_edge_q(residual, e);
     out_edge++;
   }
   if (!qsop_canonicalize_small_component(sub, BRANCH_SMALL_COMPONENT_CANONICAL_NVARS, error)) {
@@ -1118,12 +1092,6 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
   add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
   add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
-  add_saturating_u64(&stats->rankwidth_labelled_exact_cuts,
-                     delegated->rankwidth_labelled_exact_cuts);
-  add_saturating_u64(&stats->rankwidth_labelled_proxy_cuts,
-                     delegated->rankwidth_labelled_proxy_cuts);
-  add_saturating_u64(&stats->rankwidth_labelled_exact_assignments,
-                     delegated->rankwidth_labelled_exact_assignments);
   add_saturating_u64(&stats->branch_fallthroughs, delegated->branch_fallthroughs);
   add_saturating_u64(&stats->branch_treewidth_skips, delegated->branch_treewidth_skips);
   add_saturating_u64(&stats->branch_rankwidth_skips, delegated->branch_rankwidth_skips);
@@ -1136,11 +1104,8 @@ static void merge_delegated_stats(branch_search_stats_t *stats,
   if (delegated->decomposition_width > stats->decomposition_width) {
     stats->decomposition_width = delegated->decomposition_width;
   }
-  if (delegated->rankwidth_support_width > stats->rankwidth_support_width) {
-    stats->rankwidth_support_width = delegated->rankwidth_support_width;
-  }
-  if (delegated->rankwidth_labelled_width > stats->rankwidth_labelled_width) {
-    stats->rankwidth_labelled_width = delegated->rankwidth_labelled_width;
+  if (delegated->rankwidth_cutrank_width > stats->rankwidth_cutrank_width) {
+    stats->rankwidth_cutrank_width = delegated->rankwidth_cutrank_width;
   }
   if (delegated->rankwidth_table_forecast > stats->rankwidth_table_forecast) {
     stats->rankwidth_table_forecast = delegated->rankwidth_table_forecast;
@@ -1164,7 +1129,7 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
          treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
-/* Maximum labelled width tried during calibration runs. Wider sub-problems are
+/* Maximum cutrank width tried during calibration runs. Wider sub-problems are
    skipped to bound calibration cost even when policy vetoqs are bypassed. */
 #define BRANCH_CALIBRATION_MAX_WIDTH 20U
 
@@ -1293,20 +1258,17 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     return false;
   }
 
-  uint32_t support_width = 0;
-  uint32_t labelled_width = 0;
-  if (!qsop_rankwidth_decomposition_widths(sub, decomposition, &support_width, &labelled_width,
-                                           error)) {
+  uint32_t cutrank_width = 0;
+  if (!qsop_rankwidth_decomposition_width(sub, decomposition, &cutrank_width, error)) {
     qsop_rankwidth_decomposition_free(decomposition);
     return false;
   }
-  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, labelled_width,
+  qsop_trace_emit_elapsed(stats->trace, "branch.rankwidth_probe", stats->depth, cutrank_width,
                           generate_start);
-  branch_trace_event(stats, "branch.rankwidth_support_probe", support_width);
-  max_u32(&stats->rankwidth_support_width, support_width);
-  max_u32(&stats->rankwidth_labelled_width, labelled_width);
+  branch_trace_event(stats, "branch.rankwidth_cutrank_probe", cutrank_width);
+  max_u32(&stats->rankwidth_cutrank_width, cutrank_width);
   uint64_t rankwidth_table_forecast =
-      saturating_mul_u64(binary_assignment_forecast(labelled_width), sub->r);
+      saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
   uint64_t rankwidth_join_pair_forecast = 0;
   if (!qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table_forecast,
                                              &rankwidth_join_pair_forecast, error)) {
@@ -1323,7 +1285,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     qsop_rankwidth_decomposition_t *native_dec = NULL;
     if (qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
                                               &native_dec, error)) {
-      uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(labelled_width), sub->r);
+      uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
       uint64_t native_join = 0;
       if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join,
                                                 NULL)) {
@@ -1355,8 +1317,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
 
   if (rw_data != NULL) {
     rw_data->generation_ms = branch_ns_to_ms(generation_ns);
-    rw_data->support_width = support_width;
-    rw_data->labelled_width = labelled_width;
+    rw_data->cutrank_width = cutrank_width;
     rw_data->forecast_entries = rankwidth_table_forecast;
     rw_data->forecast_join_pairs = rankwidth_join_pair_forecast;
   }
@@ -1379,10 +1340,10 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     const double   min_speedup = pol->rw_min_speedup;
     const uint64_t mem_penalty = pol->rw_memory_penalty_ns;
 
-    /* Signature count estimate: 2^labelled_width (capped at table forecast / r). */
+    /* Signature count estimate: 2^cutrank_width (capped at table forecast / r). */
     const uint64_t sig_est = sub->r > 0
         ? (rankwidth_table_forecast / sub->r)
-        : binary_assignment_forecast(labelled_width);
+        : binary_assignment_forecast(cutrank_width);
 
     /* Saturating arithmetic to avoid overflow. */
     const uint64_t rw_est = saturating_mul_u64(c_rw_table, rankwidth_table_forecast) +
@@ -1403,11 +1364,11 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       !cost_model_rejects &&
       rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
       (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-       rankwidth_should_override_treewidth(treewidth_width, labelled_width, sub->r));
-  if (!use_rankwidth || labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+       rankwidth_should_override_treewidth(treewidth_width, cutrank_width, sub->r));
+  if (!use_rankwidth || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
     const char *skip_phase = "branch.rankwidth_skip_policy";
     const char *veto = "rw_policy_rejected";
-    if (labelled_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+    if (cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
       skip_phase = "branch.rankwidth_skip_width";
       veto = "rw_width_above_cap";
     } else if (cost_model_rejects) {
@@ -1421,12 +1382,12 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       veto = "rw_predicted_slower_join";
     }
     note_rankwidth_skip(stats, skip_phase,
-                        rankwidth_join_forecast_wins ? labelled_width
+                        rankwidth_join_forecast_wins ? cutrank_width
                                                      : rankwidth_join_pair_forecast);
     if (rw_data != NULL) {
       rw_data->veto_reason = veto;
     }
-    if (!calibrating || labelled_width > BRANCH_CALIBRATION_MAX_WIDTH) {
+    if (!calibrating || cutrank_width > BRANCH_CALIBRATION_MAX_WIDTH) {
       qsop_rankwidth_decomposition_free(decomposition);
       return true;
     }
@@ -1752,14 +1713,13 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     const uint64_t rw_gen_start = qsop_trace_now_ns();
     if (qsop_rankwidth_decomposition_generate(&sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
                                               &cal_decomp, &cal_err)) {
-      uint32_t cal_sw = 0, cal_lw = 0;
-      if (qsop_rankwidth_decomposition_widths(&sub, cal_decomp, &cal_sw, &cal_lw, &cal_err)) {
+      uint32_t cal_width = 0;
+      if (qsop_rankwidth_decomposition_width(&sub, cal_decomp, &cal_width, &cal_err)) {
         rw_data.attempted = true;
         rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
-        rw_data.support_width = cal_sw;
-        rw_data.labelled_width = cal_lw;
-        if (cal_lw <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-          uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_lw), sub.r);
+        rw_data.cutrank_width = cal_width;
+        if (cal_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+          uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_width), sub.r);
           uint64_t cal_jp = 0;
           qsop_error_t fore_err = {0};
           qsop_rankwidth_decomposition_forecast(&sub, cal_decomp, &cal_fe, &cal_jp, &fore_err);
@@ -1877,9 +1837,6 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->join_signature_pairs = search.join_signature_pairs;
     stats->rankwidth_table_forecast = search.rankwidth_table_forecast;
     stats->rankwidth_join_pair_forecast = search.rankwidth_join_pair_forecast;
-    stats->rankwidth_labelled_exact_cuts = search.rankwidth_labelled_exact_cuts;
-    stats->rankwidth_labelled_proxy_cuts = search.rankwidth_labelled_proxy_cuts;
-    stats->rankwidth_labelled_exact_assignments = search.rankwidth_labelled_exact_assignments;
     stats->treewidth_delegations = search.treewidth_delegations;
     stats->rankwidth_delegations = search.rankwidth_delegations;
     stats->branch_fallthroughs = search.branch_fallthroughs;
@@ -1892,8 +1849,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_residual_min_fill_width = search.max_residual_min_fill_width;
     stats->max_residual_prefix_cut_rank = search.max_residual_prefix_cut_rank;
     stats->decomposition_width = search.decomposition_width;
-    stats->rankwidth_support_width = search.rankwidth_support_width;
-    stats->rankwidth_labelled_width = search.rankwidth_labelled_width;
+    stats->rankwidth_cutrank_width = search.rankwidth_cutrank_width;
   }
 
   qsop_residual_free(residual);
@@ -2527,14 +2483,13 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
       const uint64_t rw_gen_start = qsop_trace_now_ns();
       if (qsop_rankwidth_decomposition_generate(qsop, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
                                                 &cal_decomp, &cal_err)) {
-        uint32_t cal_sw = 0, cal_lw = 0;
-        if (qsop_rankwidth_decomposition_widths(qsop, cal_decomp, &cal_sw, &cal_lw, &cal_err)) {
+        uint32_t cal_width = 0;
+        if (qsop_rankwidth_decomposition_width(qsop, cal_decomp, &cal_width, &cal_err)) {
           rw_data.attempted = true;
           rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
-          rw_data.support_width = cal_sw;
-          rw_data.labelled_width = cal_lw;
-          if (cal_lw <= BRANCH_CALIBRATION_MAX_WIDTH) {
-            uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_lw), qsop->r);
+          rw_data.cutrank_width = cal_width;
+          if (cal_width <= BRANCH_CALIBRATION_MAX_WIDTH) {
+            uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_width), qsop->r);
             uint64_t cal_jp = 0;
             qsop_rankwidth_decomposition_forecast(qsop, cal_decomp, &cal_fe, &cal_jp, &cal_err);
             rw_data.forecast_entries = cal_fe;

@@ -1,6 +1,6 @@
 {
   "name": "tier-1-8-path-n2-r8-00",
-  "generator": "build_sop_corpus.py:v1",
+  "generator": "build_sop_corpus.py:v2-sign",
   "r": 8,
   "nvars": 2,
   "nedges": 1,

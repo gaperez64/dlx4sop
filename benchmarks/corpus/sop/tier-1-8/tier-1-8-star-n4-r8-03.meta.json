@@ -1,0 +1,9 @@
+{
+  "name": "tier-1-8-star-n4-r8-03",
+  "generator": "build_sop_corpus.py:v2-sign",
+  "r": 8,
+  "nvars": 4,
+  "nedges": 3,
+  "description": "Synthetic star graph, 4 vars, r=8, seed=42+3",
+  "solvable_without_external_tools": true
+}

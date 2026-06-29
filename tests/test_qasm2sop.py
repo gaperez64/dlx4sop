@@ -168,10 +168,9 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    cu1_expected = source_root / "tests" / "golden" / "qasm_cu1.expected"
     if (
-        spaced_controlled_phase.returncode != 0
-        or spaced_controlled_phase.stdout != cu1_expected.read_text()
+        spaced_controlled_phase.returncode == 0
+        or "unsupported non-sign quadratic phase coefficient" not in spaced_controlled_phase.stderr
     ):
         raise AssertionError(
             "unexpected spaced controlled phase result:\n"
@@ -266,7 +265,7 @@ def run_boundary_options(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected boundary import:\n{completed.stdout}\n{completed.stderr}")
 
     zero_qasm = "OPENQASM 2.0;\nqreg q[1];\nid q[0];\n"
-    zero_expected = "p qsop 8 1 0\nn 0\ncst 0\n\nu 0 4\n"
+    zero_expected = "p qsop-sign 8 1 0\nn 0\ncst 0\n\nu 0 4\n"
     zero_result = subprocess.run(
         [str(exe), "--input=0", "--output", "1", "-"],
         input=zero_qasm,
@@ -301,7 +300,6 @@ def run_decomposed_gates(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ("qasm_cx", ["--input", "10", "--output", "11"]),
         ("qasm_y", ["--input", "0", "--output", "1"]),
         ("qasm_cy", ["--input", "10", "--output", "11"]),
-        ("qasm_csx_dcx", ["--input", "10", "--output", "01"]),
         ("qasm_rccx", ["--input", "110", "--output", "111"]),
     ]
     for name, options in cases:
@@ -335,20 +333,27 @@ def main() -> int:
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
     )
     run_boundary_case(exe, source_root, "qasm_ch", ["--input", "10", "--output", "10"])
-    run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
     run_boundary_case(exe, source_root, "qasm_crz", ["--input", "10", "--output", "10"])
-    run_boundary_case(
-        exe, source_root, "qasm_crz_quarter", ["--input", "10", "--output", "10"]
-    )
-    run_boundary_case(exe, source_root, "qasm_rxx_ryy", ["--input", "00", "--output", "11"])
-    run_boundary_case(exe, source_root, "qasm_rzz", ["--input", "10", "--output", "10"])
-    run_boundary_case(
-        exe, source_root, "qasm_named_cphase", ["--input", "11", "--output", "11"]
-    )
-    run_boundary_case(
-        exe, source_root, "qasm_register_cp", ["--input", "1010", "--output", "1010"]
-    )
-    run_boundary_case(exe, source_root, "qasm_phase_eighth", ["--input", "11", "--output", "11"])
+    for name, options in [
+        ("qasm_cu1", ["--input", "11", "--output", "11"]),
+        ("qasm_crz_quarter", ["--input", "10", "--output", "10"]),
+        ("qasm_rxx_ryy", ["--input", "00", "--output", "11"]),
+        ("qasm_rzz", ["--input", "10", "--output", "10"]),
+        ("qasm_named_cphase", ["--input", "11", "--output", "11"]),
+        ("qasm_register_cp", ["--input", "1010", "--output", "1010"]),
+        ("qasm_phase_eighth", ["--input", "11", "--output", "11"]),
+        ("qasm_csx_dcx", ["--input", "10", "--output", "01"]),
+    ]:
+        qasm = source_root / "tests" / "golden" / f"{name}.qasm"
+        failed = subprocess.run(
+            [str(exe), *options, str(qasm)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if failed.returncode == 0 or "unsupported non-sign quadratic phase coefficient" not in failed.stderr:
+            raise AssertionError(f"{name}: expected non-sign quadratic rejection\n{failed.stderr}")
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)

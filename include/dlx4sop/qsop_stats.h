@@ -13,7 +13,6 @@ typedef struct qsop_stats {
   uint32_t nedges;
   uint32_t nonzero_unary;
   uint64_t norm_h;
-  qsop_mode_t mode;
   uint32_t components;
   uint32_t max_degree;
   bool width_diagnostics_available;

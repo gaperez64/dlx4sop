@@ -133,7 +133,7 @@ def manifest_path(manifests_dir: pathlib.Path, tier: str) -> pathlib.Path:
     return manifests_dir / f"dlx4sop-tier-{tier_slug(tier)}-manifest.json"
 
 
-def run_to_jsonl(cmd: list, output: pathlib.Path, verbose: bool) -> bool:
+def run_to_jsonl(cmd: list, output: pathlib.Path, verbose: bool) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     if verbose:
         print(f"+ {' '.join(str(a) for a in cmd)} > {output}", file=sys.stderr)
@@ -144,13 +144,12 @@ def run_to_jsonl(cmd: list, output: pathlib.Path, verbose: bool) -> bool:
             stderr=None if verbose else subprocess.PIPE,
             text=True,
         )
-    if result.returncode not in (0, 1):
-        print(
-            f"warning: command exited {result.returncode}: {' '.join(str(a) for a in cmd)}",
-            file=sys.stderr,
+    if result.returncode != 0:
+        message = result.stderr.strip() if result.stderr else ""
+        raise RuntimeError(
+            f"command exited {result.returncode}: {' '.join(str(a) for a in cmd)}"
+            + (f"\n{message}" if message else "")
         )
-        return False
-    return True
 
 
 def run_solver_jobs(
@@ -408,7 +407,7 @@ def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None
         "--view", "full",
         "--timeout-note", f"{timeout_s} s",
     ]
-    print("\n--- render full scoreboards (sign + labelled + index) ---", file=sys.stderr)
+    print("\n--- render full scoreboard ---", file=sys.stderr)
     result = subprocess.run([str(a) for a in cmd])
     if result.returncode != 0:
         print("warning: bench.py render exited non-zero", file=sys.stderr)

@@ -11,7 +11,7 @@ def run_stats(
     args: list[str],
     expected_name: str,
 ) -> None:
-    qsop = source_root / "tests" / "golden" / "labelled_raw.qsop"
+    qsop = source_root / "tests" / "golden" / "sign_raw.qsop"
     expected = source_root / "tests" / "golden" / expected_name
     completed = subprocess.run(
         [str(exe), *args, str(qsop)],
@@ -32,8 +32,8 @@ def run_stats(
 
 
 def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
-    qsop = source_root / "tests" / "golden" / "labelled_raw.qsop"
-    expected = source_root / "tests" / "golden" / "stats_labelled.text"
+    qsop = source_root / "tests" / "golden" / "sign_raw.qsop"
+    expected = source_root / "tests" / "golden" / "stats_sign.text"
 
     help_result = subprocess.run(
         [str(exe), "--help"],
@@ -81,7 +81,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         # Pre-header non-p directive → "appears before p header" (line 585)
         ("n 0\n", "appears before p header"),
         # Unknown directive after valid header → "unknown directive" (lines 607-608)
-        ("p qsop 8 1 0\nXXX 0\n", "unknown directive"),
+        ("p qsop-sign 8 1 0\nXXX 0\n", "unknown directive"),
         # Empty file (no p header at all) → "missing p header" (lines 649-650)
         ("", "missing p header"),
     ]
@@ -276,10 +276,10 @@ def main() -> int:
 
     exe = pathlib.Path(sys.argv[1])
     source_root = pathlib.Path(sys.argv[2])
-    run_stats(exe, source_root, [], "stats_labelled.text")
-    run_stats(exe, source_root, ["--json"], "stats_labelled.json")
-    run_stats(exe, source_root, ["--format", "json"], "stats_labelled.json")
-    run_stats(exe, source_root, ["--format", "text"], "stats_labelled.text")
+    run_stats(exe, source_root, [], "stats_sign.text")
+    run_stats(exe, source_root, ["--json"], "stats_sign.json")
+    run_stats(exe, source_root, ["--format", "json"], "stats_sign.json")
+    run_stats(exe, source_root, ["--format", "text"], "stats_sign.text")
     run_cli_paths(exe, source_root)
     run_large_width_diagnostics(exe)
     run_exact_widths(exe)

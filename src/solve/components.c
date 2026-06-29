@@ -105,7 +105,6 @@ static void free_subinstance(qsop_instance_t *sub) {
   free(sub->unary);
   free(sub->edge_u);
   free(sub->edge_v);
-  free(sub->edge_q);
 }
 
 typedef struct component_cache_entry {
@@ -145,11 +144,10 @@ static bool same_u32_array(const uint32_t *a, const uint32_t *b, uint32_t len) {
 
 static bool same_component_key(const qsop_instance_t *a, const qsop_instance_t *b) {
   return a->r == b->r && a->nvars == b->nvars && a->norm_h == b->norm_h &&
-         a->constant == b->constant && a->mode == b->mode && a->nedges == b->nedges &&
+         a->constant == b->constant && a->nedges == b->nedges &&
          same_u32_array(a->unary, b->unary, a->nvars) &&
          same_u32_array(a->edge_u, b->edge_u, a->nedges) &&
-         same_u32_array(a->edge_v, b->edge_v, a->nedges) &&
-         same_u32_array(a->edge_q, b->edge_q, a->nedges);
+         same_u32_array(a->edge_v, b->edge_v, a->nedges);
 }
 
 static uint64_t fingerprint_u64(uint64_t hash, uint64_t value) {
@@ -164,7 +162,6 @@ static uint64_t component_fingerprint(const qsop_instance_t *key) {
   hash = fingerprint_u64(hash, key->nvars);
   hash = fingerprint_u64(hash, key->norm_h);
   hash = fingerprint_u64(hash, key->constant);
-  hash = fingerprint_u64(hash, (uint32_t)key->mode);
   hash = fingerprint_u64(hash, key->nedges);
   for (uint32_t v = 0; v < key->nvars; v++) {
     hash = fingerprint_u64(hash, key->unary[v]);
@@ -172,7 +169,6 @@ static uint64_t component_fingerprint(const qsop_instance_t *key) {
   for (uint32_t e = 0; e < key->nedges; e++) {
     hash = fingerprint_u64(hash, key->edge_u[e]);
     hash = fingerprint_u64(hash, key->edge_v[e]);
-    hash = fingerprint_u64(hash, key->edge_q[e]);
   }
   return hash;
 }
@@ -196,15 +192,13 @@ static bool copy_component_key(const qsop_instance_t *src, qsop_instance_t *dst,
       .nvars = src->nvars,
       .norm_h = src->norm_h,
       .constant = src->constant,
-      .mode = src->mode,
       .nedges = src->nedges,
   };
 
   dst->unary = malloc((src->nvars == 0 ? 1U : src->nvars) * sizeof(*dst->unary));
   dst->edge_u = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_u));
   dst->edge_v = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_v));
-  dst->edge_q = malloc((src->nedges == 0 ? 1U : src->nedges) * sizeof(*dst->edge_q));
-  if (dst->unary == NULL || dst->edge_u == NULL || dst->edge_v == NULL || dst->edge_q == NULL) {
+  if (dst->unary == NULL || dst->edge_u == NULL || dst->edge_v == NULL) {
     free_subinstance(dst);
     set_error(error, "out of memory while copying component cache key");
     return false;
@@ -213,7 +207,6 @@ static bool copy_component_key(const qsop_instance_t *src, qsop_instance_t *dst,
   memcpy(dst->unary, src->unary, (size_t)src->nvars * sizeof(*dst->unary));
   memcpy(dst->edge_u, src->edge_u, (size_t)src->nedges * sizeof(*dst->edge_u));
   memcpy(dst->edge_v, src->edge_v, (size_t)src->nedges * sizeof(*dst->edge_v));
-  memcpy(dst->edge_q, src->edge_q, (size_t)src->nedges * sizeof(*dst->edge_q));
   return true;
 }
 
@@ -282,14 +275,9 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
   }
 
   uint32_t nedges = 0;
-  bool sign_only = true;
-  const uint32_t sign_coeff = qsop->r / 2U;
   for (uint32_t e = 0; e < qsop->nedges; e++) {
     if (component[qsop->edge_u[e]] == wanted) {
       nedges++;
-      if (qsop->edge_q[e] != sign_coeff) {
-        sign_only = false;
-      }
     }
   }
 
@@ -298,14 +286,12 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
       .nvars = nvars,
       .norm_h = 0,
       .constant = 0,
-      .mode = sign_only ? QSOP_MODE_SIGN : QSOP_MODE_LABELLED,
       .nedges = nedges,
   };
   sub->unary = calloc(nvars == 0 ? 1U : nvars, sizeof(*sub->unary));
   sub->edge_u = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_u));
   sub->edge_v = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_v));
-  sub->edge_q = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_q));
-  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL || sub->edge_q == NULL) {
+  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL) {
     free(map);
     free_subinstance(sub);
     set_error(error, "out of memory while allocating component subinstance");
@@ -323,7 +309,6 @@ static bool build_subinstance(const qsop_instance_t *qsop, const uint32_t *compo
     if (component[qsop->edge_u[e]] == wanted) {
       sub->edge_u[out_edge] = map[qsop->edge_u[e]];
       sub->edge_v[out_edge] = map[qsop->edge_v[e]];
-      sub->edge_q[out_edge] = qsop->edge_q[e];
       out_edge++;
     }
   }

@@ -244,21 +244,18 @@ def boundary_pairs(nqubits: int, mode: str) -> list[list[str]]:
 
 def qsop_metadata(qsop: str) -> dict[str, int | str]:
     metadata: dict[str, int | str] | None = None
-    mode = "sign"
     for line in qsop.splitlines():
         parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
+        if len(parts) == 5 and parts[:2] == ["p", "qsop-sign"]:
             metadata = {
                 "modulus": int(parts[2]),
                 "nvars": int(parts[3]),
                 "nedges": int(parts[4]),
             }
             continue
-        if parts and parts[0] == "q":
-            mode = "labelled"
     if metadata is None:
         raise RuntimeError("missing QSOP header")
-    metadata["mode"] = mode
+    metadata["format"] = "qsop-sign"
     return metadata
 
 
@@ -271,6 +268,8 @@ def classify_error(message: str) -> str:
         return "unsupported_gate_definition"
     if "unsupported OpenQASM operation" in message:
         return "unsupported_gate"
+    if "unsupported non-sign quadratic phase coefficient" in message:
+        return "unsupported_sign_quadratic"
     if "unsupported " in message and (" angle" in message or " angle list" in message):
         return "unsupported_angle"
     if "parameterized gate definitions" in message or "simple gate definition" in message:
@@ -330,7 +329,6 @@ def build_case(
 ) -> tuple[dict | None, str, list[dict[str, int | str]], int, int, str]:
     max_nvars = 0
     max_edges = 0
-    modes: set[str] = set()
     boundary_records: list[dict[str, int | str]] = []
     for input_bits, output_bits in boundaries:
         metadata = import_boundary_metadata(qasm2sop, qasm, input_bits, output_bits)
@@ -338,7 +336,6 @@ def build_case(
         nedges = int(metadata["nedges"])
         max_nvars = max(max_nvars, nvars)
         max_edges = max(max_edges, nedges)
-        modes.add(str(metadata["mode"]))
         boundary_records.append(
             {
                 "input": input_bits,
@@ -347,7 +344,7 @@ def build_case(
             }
         )
 
-    mode = "labelled" if "labelled" in modes else "sign"
+    mode = "sign"
 
     if max_nvars > max_vars:
         return None, "too_many_vars", boundary_records, max_nvars, max_edges, mode

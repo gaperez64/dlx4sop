@@ -444,9 +444,8 @@ def verify_amp_block(sop2wmc: pathlib.Path, sop_solve: pathlib.Path,
                      min_side_override: str | None = None) -> None:
     """Verify amp-block: WMC matches sop-solve amplitude.
 
-    Uses Tseitin resolution (eval_wmc) when the block encoding was triggered
-    (all auxiliaries are gate-determined), eval_wmc_all_vars for fallback
-    (amp-soft, non-determined auxiliaries — caller must keep instance small).
+    amp-block and its amp-soft fallback both use non-determined soft auxiliaries,
+    so this brute-forces all CNF variables; callers keep fixtures small.
     """
     ref_amplitude = reference_amplitude(sop_solve, qsop_text)
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
@@ -460,13 +459,8 @@ def verify_amp_block(sop2wmc: pathlib.Path, sop_solve: pathlib.Path,
     result = run(cmd)
     if result.returncode != 0:
         raise AssertionError(f"sop2wmc --encoding amp-block failed:\n{result.stderr}")
-    xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
-    if "encoding=amp-block" in result.stdout:
-        # Block path: all auxiliaries are Tseitin-determined → use Tseitin resolution
-        got = eval_wmc(xvars, weights, amp_factor, clauses, nvars_total)
-    else:
-        # Fallback to amp-soft: some auxiliaries non-determined → brute force all vars
-        got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+    _, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
+    got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
     if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
         raise AssertionError(
             f"amp-block: got {got}, reference {ref_amplitude}\n"
@@ -479,60 +473,59 @@ def test_amp_block(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> None:
 
     # 4x4 complete bipartite block, label=4, r=8: forced with negative min_savings
     qsop_block_r8 = (
-        "p qsop 8 8 16\nn 0\ncst 0\n"
-        "q 0 4 4\nq 0 5 4\nq 0 6 4\nq 0 7 4\n"
-        "q 1 4 4\nq 1 5 4\nq 1 6 4\nq 1 7 4\n"
-        "q 2 4 4\nq 2 5 4\nq 2 6 4\nq 2 7 4\n"
-        "q 3 4 4\nq 3 5 4\nq 3 6 4\nq 3 7 4\n"
+        "p qsop-sign 8 8 16\nn 0\ncst 0\n"
+        "e 0 4\ne 0 5\ne 0 6\ne 0 7\n"
+        "e 1 4\ne 1 5\ne 1 6\ne 1 7\n"
+        "e 2 4\ne 2 5\ne 2 6\ne 2 7\n"
+        "e 3 4\ne 3 5\ne 3 6\ne 3 7\n"
     )
     verify_amp_block(sop2wmc, sop_solve, qsop_block_r8, "-9999")
 
     # 3x3 block, label=1, r=2: forced (min-side=3 to override default of 4)
     qsop_block_r2 = (
-        "p qsop 2 6 9\nn 0\ncst 0\n"
-        "q 0 3 1\nq 0 4 1\nq 0 5 1\n"
-        "q 1 3 1\nq 1 4 1\nq 1 5 1\n"
-        "q 2 3 1\nq 2 4 1\nq 2 5 1\n"
+        "p qsop-sign 2 6 9\nn 0\ncst 0\n"
+        "e 0 3\ne 0 4\ne 0 5\n"
+        "e 1 3\ne 1 4\ne 1 5\n"
+        "e 2 3\ne 2 4\ne 2 5\n"
     )
     verify_amp_block(sop2wmc, sop_solve, qsop_block_r2, "-9999", min_side_override="3")
 
     # 3x3 block, label=1, r=4: forced (min-side=3 to override default of 4)
     qsop_block_r4 = (
-        "p qsop 4 6 9\nn 0\ncst 0\n"
-        "q 0 3 1\nq 0 4 1\nq 0 5 1\n"
-        "q 1 3 1\nq 1 4 1\nq 1 5 1\n"
-        "q 2 3 1\nq 2 4 1\nq 2 5 1\n"
+        "p qsop-sign 4 6 9\nn 0\ncst 0\n"
+        "e 0 3\ne 0 4\ne 0 5\n"
+        "e 1 3\ne 1 4\ne 1 5\n"
+        "e 2 3\ne 2 4\ne 2 5\n"
     )
     verify_amp_block(sop2wmc, sop_solve, qsop_block_r4, "-9999", min_side_override="3")
 
     # Path graph (no block): should fall back to amp-soft transparently
     qsop_path = (
-        "p qsop 8 5 4\nn 0\ncst 0\n"
-        "q 0 1 3\nq 1 2 3\nq 2 3 3\nq 3 4 3\n"
+        "p qsop-sign 8 5 4\nn 0\ncst 0\n"
+        "e 0 1\ne 1 2\ne 2 3\ne 3 4\n"
     )
     verify_amp_block(sop2wmc, sop_solve, qsop_path, "0")
 
     # Non-uniform labels: 3x3 block + extra edge; forced (min-side=3)
     qsop_mixed = (
-        "p qsop 8 7 10\nn 0\ncst 0\n"
-        "q 0 4 4\nq 0 5 4\nq 0 6 4\n"
-        "q 1 4 4\nq 1 5 4\nq 1 6 4\n"
-        "q 2 4 4\nq 2 5 4\nq 2 6 4\n"
-        "q 3 6 2\n"  # extra non-block edge
+        "p qsop-sign 8 7 10\nn 0\ncst 0\n"
+        "e 0 4\ne 0 5\ne 0 6\n"
+        "e 1 4\ne 1 5\ne 1 6\n"
+        "e 2 4\ne 2 5\ne 2 6\n"
+        "e 3 6\n"  # extra non-block edge
     )
     verify_amp_block(sop2wmc, sop_solve, qsop_mixed, "-9999", min_side_override="3")
 
 
 def test_amp_block_threshold(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> None:
     """amp-block threshold: below threshold falls back, at threshold triggers block."""
-    # 3x3 block r=4: w=2, block_cost = 5*2*(3+3)+16 = 76, savings = 9-76 = -67.
-    # min_savings=-67 triggers; min_savings=-66 falls back.
-    # Using small instance (6 x-vars + 9 aux = 15 total) for fast brute-force.
+    # 3x3 block: parity chains cost (3-1)+(3-1)+1 = 5, savings = 9-5 = 4.
+    # min_savings=4 triggers; min_savings=5 falls back.
     qsop_block = (
-        "p qsop 4 6 9\nn 0\ncst 0\n"
-        "q 0 3 1\nq 0 4 1\nq 0 5 1\n"
-        "q 1 3 1\nq 1 4 1\nq 1 5 1\n"
-        "q 2 3 1\nq 2 4 1\nq 2 5 1\n"
+        "p qsop-sign 4 6 9\nn 0\ncst 0\n"
+        "e 0 3\ne 0 4\ne 0 5\n"
+        "e 1 3\ne 1 4\ne 1 5\n"
+        "e 2 3\ne 2 4\ne 2 5\n"
     )
     ref = reference_amplitude(sop_solve, qsop_block)
 
@@ -540,10 +533,10 @@ def test_amp_block_threshold(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> 
         f.write(qsop_block)
         qsop_path = f.name
 
-    # Exact threshold: savings=-67, min_savings=-66 → falls back
+    # Exact threshold: savings=4, min_savings=5 -> falls back
     r_fallback = run([str(sop2wmc), "--encoding", "amp-block",
                       "--wmc-block-min-side", "3",
-                      "--wmc-block-min-savings", "-66", qsop_path])
+                      "--wmc-block-min-savings", "5", qsop_path])
     assert r_fallback.returncode == 0
     assert "encoding=amp-block" not in r_fallback.stdout, \
         "Expected amp-soft fallback but got block encoding"
@@ -552,21 +545,21 @@ def test_amp_block_threshold(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> 
     assert abs(got_fb - ref) < 1e-9 * max(1.0, abs(ref)), \
         f"Fallback amplitude {got_fb} != reference {ref}"
 
-    # Exact threshold: savings=-67, min_savings=-67 → triggers block
+    # Exact threshold: savings=4, min_savings=4 -> triggers block
     r_block = run([str(sop2wmc), "--encoding", "amp-block",
                    "--wmc-block-min-side", "3",
-                   "--wmc-block-min-savings", "-67", qsop_path])
+                   "--wmc-block-min-savings", "4", qsop_path])
     assert r_block.returncode == 0
     assert "encoding=amp-block" in r_block.stdout, \
         "Expected block encoding but got fallback"
-    xvars2, weights2, amp_factor2, clauses2, nvars_total2 = parse_amplitude_wpcnf(r_block.stdout)
-    got_block = eval_wmc(xvars2, weights2, amp_factor2, clauses2, nvars_total2)
+    _, weights2, amp_factor2, clauses2, nvars_total2 = parse_amplitude_wpcnf(r_block.stdout)
+    got_block = eval_wmc_all_vars(weights2, amp_factor2, clauses2, nvars_total2)
     assert abs(got_block - ref) < 1e-9 * max(1.0, abs(ref)), \
         f"Block amplitude {got_block} != reference {ref}"
 
 
 def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
-    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
 
     help_result = run([str(sop2wmc), "--help"])
     if help_result.returncode != 0 or "usage: sop2wmc" not in help_result.stdout:
@@ -635,7 +628,7 @@ def main() -> int:
     sop_solve = pathlib.Path(sys.argv[2])
     source_root = pathlib.Path(sys.argv[3])
 
-    for name in ("solve_sign_path.qsop", "solve_labelled.qsop"):
+    for name in ("solve_sign_path.qsop", "solve_signed_edge.qsop"):
         qsop = source_root / "tests" / "golden" / name
         verify_instance(sop2wmc, sop_solve, qsop)
         verify_amplitude(sop2wmc, sop_solve, qsop)

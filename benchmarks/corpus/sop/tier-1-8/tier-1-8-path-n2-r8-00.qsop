@@ -1,5 +1,5 @@
-p qsop 8 2 1
+p qsop-sign 8 2 1
 n 4
 cst 3
 u 1 4
-q 0 1 2
+e 0 1

@@ -11,11 +11,11 @@ def base_record(backend: str, case: str, elapsed_ns: int) -> dict:
     return {
         "backend": backend,
         "source": "Synthetic",
-        "source_relative_path": "labelled.qasm",
+        "source_relative_path": "signed.qasm",
         "case": case,
         "input": "0",
         "output": "0",
-        "qsop_mode": "labelled",
+        "qsop_mode": "sign",
         "status": "ok",
         "solve_elapsed_ns": elapsed_ns,
     }
@@ -31,8 +31,8 @@ def rankwidth_record(case: str, elapsed_ns: int, max_table: int, table_forecast:
             "rankwidth_max_table_entries": max_table,
             "rankwidth_table_forecast": table_forecast,
             "rankwidth_join_pair_forecast": 80,
-            "rankwidth_labelled_join_map_elapsed_ns": 10,
-            "rankwidth_labelled_join_elapsed_ns": 20,
+            "rankwidth_join_map_elapsed_ns": 10,
+            "rankwidth_join_elapsed_ns": 20,
         }
     )
     return record
@@ -83,7 +83,7 @@ def main() -> int:
                 "--comparison-jsonl",
                 f"33-64={jsonl_path}",
                 "--qsop-mode",
-                "labelled",
+                "sign",
                 "--top",
                 "3",
             ],
@@ -97,7 +97,7 @@ def main() -> int:
         for expected in (
             "# Rankwidth Backend Comparison",
             "`rankwidth:min-fill-cut:count-table` | 2 / 2 | 350 ns | 2 | 32 | 60 ns | 60 | 160",
-            "| 33-64 | labelled | 2 | 1 | 1 | 350 ns | 350 ns | 0 ns | 1 / 2 | 1 / 0 / 1 | 1 / 0 / 1 | 1 / 2 | -50 ns / -20 ns | 1 |",
+            "| 33-64 | sign | 2 | 1 | 1 | 350 ns | 350 ns | 0 ns | 1 / 2 | 1 / 0 / 1 | 1 / 0 / 1 | 1 / 2 | -50 ns / -20 ns | 1 |",
             "Synthetic:rankwidth-win 0->0",
             "`branch:split` 250 ns",
         ):
@@ -110,7 +110,7 @@ def main() -> int:
                 "--comparison-jsonl",
                 f"33-64={jsonl_path}",
                 "--qsop-mode",
-                "labelled",
+                "sign",
                 "--format",
                 "json",
             ],

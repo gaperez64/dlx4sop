@@ -206,18 +206,15 @@ static int test_qsop_write_errors(void) {
   uint32_t unary[] = {1, 0};
   uint32_t edge_u[] = {0};
   uint32_t edge_v[] = {1};
-  uint32_t edge_q[] = {4};
   qsop_instance_t qsop = {
       .r = 8,
       .nvars = 2,
       .norm_h = 0,
       .constant = 3,
-      .mode = QSOP_MODE_SIGN,
       .unary = unary,
       .nedges = 1,
       .edge_u = edge_u,
       .edge_v = edge_v,
-      .edge_q = edge_q,
   };
 
   FILE *full = fopen("/dev/full", "w");

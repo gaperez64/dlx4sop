@@ -15,7 +15,6 @@
 typedef struct raw_edge {
   uint32_t u;
   uint32_t v;
-  uint32_t q;
 } raw_edge_t;
 
 typedef struct edge_vec {
@@ -31,7 +30,6 @@ typedef struct parser {
   size_t line_no;
 
   bool have_header;
-  bool header_sign;
   uint32_t r;
   uint32_t nvars;
   uint32_t expected_terms;
@@ -101,13 +99,13 @@ static bool reserve_edges(edge_vec_t *vec, uint32_t needed) {
   return true;
 }
 
-static bool push_edge(parser_t *parser, uint32_t u, uint32_t v, uint32_t q, size_t column) {
+static bool push_edge(parser_t *parser, uint32_t u, uint32_t v, size_t column) {
   if (!reserve_edges(&parser->edges, parser->edges.len + 1U)) {
     set_error(parser, column, "out of memory while storing quadratic terms");
     return false;
   }
 
-  parser->edges.items[parser->edges.len] = (raw_edge_t){.u = u, .v = v, .q = q};
+  parser->edges.items[parser->edges.len] = (raw_edge_t){.u = u, .v = v};
   parser->edges.len++;
   return true;
 }
@@ -250,16 +248,13 @@ static bool parse_header(parser_t *parser, const char *line, char **cursor) {
   char *nvars_tok = next_token(cursor);
   char *terms_tok = next_token(cursor);
   if (kind == NULL || r_tok == NULL || nvars_tok == NULL || terms_tok == NULL) {
-    set_error(parser, 1, "p header must be: p qsop|qsop-sign <r> <num_vars> <num_terms>");
+    set_error(parser, 1, "p header must be: p qsop-sign <r> <num_vars> <num_terms>");
     return false;
   }
 
-  if (strcmp(kind, "qsop") == 0) {
-    parser->header_sign = false;
-  } else if (strcmp(kind, "qsop-sign") == 0) {
-    parser->header_sign = true;
-  } else {
-    set_error(parser, column_of(line, kind), "unsupported problem kind '%s'", kind);
+  if (strcmp(kind, "qsop-sign") != 0) {
+    set_error(parser, column_of(line, kind),
+              "QSOP header must use p qsop-sign");
     return false;
   }
 
@@ -364,35 +359,23 @@ static bool parse_pin(parser_t *parser, const char *line, char **cursor) {
   return no_more_tokens(parser, line, cursor);
 }
 
-static bool parse_quadratic(parser_t *parser, const char *line, char **cursor, bool shorthand) {
+static bool parse_edge(parser_t *parser, const char *line, char **cursor) {
   char *u_tok = next_token(cursor);
   char *v_tok = next_token(cursor);
-  char *q_tok = shorthand ? NULL : next_token(cursor);
-  if (u_tok == NULL || v_tok == NULL || (!shorthand && q_tok == NULL)) {
-    set_error(parser, 1,
-              shorthand ? "e line must be: e <u> <v>"
-                        : "q line must be: q <u> <v> <coefficient_mod_r>");
+  if (u_tok == NULL || v_tok == NULL) {
+    set_error(parser, 1, "e line must be: e <u> <v>");
     return false;
   }
 
   uint32_t u = 0;
   uint32_t v = 0;
-  uint32_t q = parser->r / 2U;
   if (!parse_vertex_token(parser, line, u_tok, &u) ||
       !parse_vertex_token(parser, line, v_tok, &v)) {
     return false;
   }
-  if (!shorthand && !parse_coeff_token(parser, line, q_tok, &q)) {
-    return false;
-  }
-  if (parser->header_sign && q != parser->r / 2U) {
-    set_error(parser, shorthand ? column_of(line, u_tok) : column_of(line, q_tok),
-              "p qsop-sign accepts only sign coefficient %" PRIu32, parser->r / 2U);
-    return false;
-  }
 
   parser->seen_terms++;
-  if (!push_edge(parser, u, v, q, column_of(line, u_tok))) {
+  if (!push_edge(parser, u, v, column_of(line, u_tok))) {
     return false;
   }
   return no_more_tokens(parser, line, cursor);
@@ -410,13 +393,13 @@ static int compare_edges(const void *left, const void *right) {
   return 0;
 }
 
-static bool add_normalized_edge(edge_vec_t *vec, uint32_t u, uint32_t v, uint32_t q,
-                                qsop_error_t *error, const char *path) {
+static bool add_normalized_edge(edge_vec_t *vec, uint32_t u, uint32_t v, qsop_error_t *error,
+                                const char *path) {
   if (!reserve_edges(vec, vec->len + 1U)) {
     set_global_error(error, path, "out of memory while normalizing quadratic terms");
     return false;
   }
-  vec->items[vec->len] = (raw_edge_t){.u = u, .v = v, .q = q};
+  vec->items[vec->len] = (raw_edge_t){.u = u, .v = v};
   vec->len++;
   return true;
 }
@@ -440,6 +423,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
 
   uint32_t nfree = 0;
   uint32_t constant = parser->constant;
+  const uint32_t sign_coeff = parser->r / 2U;
   for (uint32_t v = 0; v < parser->nvars; v++) {
     if (parser->pins[v] == 1) {
       constant = add_mod_u32(constant, parser->unary[v], parser->r);
@@ -456,31 +440,27 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
   edge_vec_t kept = {0};
   for (uint32_t i = 0; i < parser->edges.len; i++) {
     raw_edge_t edge = parser->edges.items[i];
-    if (edge.q == 0) {
-      continue;
-    }
-
     const int8_t pin_u = parser->pins[edge.u];
     const int8_t pin_v = parser->pins[edge.v];
     if (pin_u != -1 || pin_v != -1) {
       if (edge.u == edge.v) {
         if (pin_u == 1) {
-          constant = add_mod_u32(constant, edge.q, parser->r);
+          constant = add_mod_u32(constant, sign_coeff, parser->r);
         }
         continue;
       }
       if (pin_u != -1 && pin_v != -1) {
         if (pin_u == 1 && pin_v == 1) {
-          constant = add_mod_u32(constant, edge.q, parser->r);
+          constant = add_mod_u32(constant, sign_coeff, parser->r);
         }
         continue;
       }
       if (pin_u == 1 && pin_v == -1) {
         const uint32_t v = renumber[edge.v];
-        unary[v] = add_mod_u32(unary[v], edge.q, parser->r);
+        unary[v] = add_mod_u32(unary[v], sign_coeff, parser->r);
       } else if (pin_v == 1 && pin_u == -1) {
         const uint32_t u = renumber[edge.u];
-        unary[u] = add_mod_u32(unary[u], edge.q, parser->r);
+        unary[u] = add_mod_u32(unary[u], sign_coeff, parser->r);
       }
       continue;
     }
@@ -488,7 +468,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
     uint32_t u = renumber[edge.u];
     uint32_t v = renumber[edge.v];
     if (u == v) {
-      unary[u] = add_mod_u32(unary[u], edge.q, parser->r);
+      unary[u] = add_mod_u32(unary[u], sign_coeff, parser->r);
       continue;
     }
     if (u > v) {
@@ -496,7 +476,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
       u = v;
       v = tmp;
     }
-    if (!add_normalized_edge(&kept, u, v, edge.q, parser->error, parser->path)) {
+    if (!add_normalized_edge(&kept, u, v, parser->error, parser->path)) {
       free(renumber);
       free(unary);
       free(kept.items);
@@ -511,14 +491,14 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
   uint32_t out_edges = 0;
   for (uint32_t i = 0; i < kept.len;) {
     raw_edge_t edge = kept.items[i];
-    uint32_t q = 0;
+    uint32_t parity = 0;
     do {
-      q = add_mod_u32(q, kept.items[i].q, parser->r);
+      parity ^= 1U;
       i++;
     } while (i < kept.len && kept.items[i].u == edge.u && kept.items[i].v == edge.v);
 
-    if (q != 0) {
-      kept.items[out_edges] = (raw_edge_t){.u = edge.u, .v = edge.v, .q = q};
+    if (parity != 0U) {
+      kept.items[out_edges] = (raw_edge_t){.u = edge.u, .v = edge.v};
       out_edges++;
     }
   }
@@ -541,8 +521,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
   qsop->nedges = kept.len;
   qsop->edge_u = calloc(kept.len == 0 ? 1U : kept.len, sizeof(*qsop->edge_u));
   qsop->edge_v = calloc(kept.len == 0 ? 1U : kept.len, sizeof(*qsop->edge_v));
-  qsop->edge_q = calloc(kept.len == 0 ? 1U : kept.len, sizeof(*qsop->edge_q));
-  if (qsop->edge_u == NULL || qsop->edge_v == NULL || qsop->edge_q == NULL) {
+  if (qsop->edge_u == NULL || qsop->edge_v == NULL) {
     free(renumber);
     free(kept.items);
     qsop_free(qsop);
@@ -550,17 +529,10 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
     return false;
   }
 
-  bool sign_only = true;
-  const uint32_t sign_coeff = parser->r / 2U;
   for (uint32_t i = 0; i < kept.len; i++) {
     qsop->edge_u[i] = kept.items[i].u;
     qsop->edge_v[i] = kept.items[i].v;
-    qsop->edge_q[i] = kept.items[i].q;
-    if (kept.items[i].q != sign_coeff) {
-      sign_only = false;
-    }
   }
-  qsop->mode = sign_only ? QSOP_MODE_SIGN : QSOP_MODE_LABELLED;
 
   free(renumber);
   free(kept.items);
@@ -595,10 +567,12 @@ static bool parse_line(parser_t *parser, char *line) {
     return parse_unary(parser, line, &cursor);
   }
   if (strcmp(token, "q") == 0) {
-    return parse_quadratic(parser, line, &cursor, false);
+    set_error(parser, column_of(line, token),
+              "quadratic coefficients are not supported; use sign edge e <u> <v>");
+    return false;
   }
   if (strcmp(token, "e") == 0) {
-    return parse_quadratic(parser, line, &cursor, true);
+    return parse_edge(parser, line, &cursor);
   }
   if (strcmp(token, "f") == 0) {
     return parse_pin(parser, line, &cursor);

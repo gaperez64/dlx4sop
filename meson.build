@@ -729,6 +729,6 @@ if get_option('build_fuzzers')
   test(
     'fuzz parser smoke',
     fuzz_qsop_parse,
-    args: files('tests/golden/labelled_raw.qsop'),
+    args: files('tests/golden/sign_raw.qsop'),
   )
 endif

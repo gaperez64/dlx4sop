@@ -1593,7 +1593,7 @@ static bool parse_qasm(FILE *input, const char *path, qasm_importer_t *importer)
 }
 
 static bool write_zero_qsop(FILE *file, uint64_t norm_h) {
-  fprintf(file, "p qsop 8 1 0\n");
+  fprintf(file, "p qsop-sign 8 1 0\n");
   fprintf(file, "n %" PRIu64 "\n", norm_h);
   fputs("cst 0\n\n", file);
   fputs("u 0 4\n", file);
@@ -1656,7 +1656,7 @@ static uint32_t output_coeff(uint32_t coeff, uint32_t modulus) {
   return modulus == 8 ? coeff / 2U : coeff;
 }
 
-static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
+static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
   int8_t *pins = NULL;
   bool boundary_conflict = false;
   if (!collect_boundary_pins(importer, &pins, &boundary_conflict)) {
@@ -1668,7 +1668,20 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
   }
 
   const uint32_t modulus = output_modulus(importer);
-  fprintf(file, "p qsop %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", modulus, importer->nvars,
+  const uint32_t sign_coeff = modulus / 2U;
+  for (uint32_t i = 0; i < importer->edges_len; i++) {
+    const uint32_t coeff = output_coeff(importer->edges[i].q, modulus);
+    if (coeff != sign_coeff) {
+      set_error(importer,
+                "unsupported non-sign quadratic phase coefficient %" PRIu32
+                " for modulus %" PRIu32 " between variables %" PRIu32 " and %" PRIu32,
+                coeff, modulus, importer->edges[i].u, importer->edges[i].v);
+      free(pins);
+      return false;
+    }
+  }
+
+  fprintf(file, "p qsop-sign %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", modulus, importer->nvars,
           importer->edges_len);
   fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
   fprintf(file, "cst %" PRIu32 "\n", output_coeff(importer->constant, modulus));
@@ -1678,8 +1691,7 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
             output_coeff(importer->unary[i].q, modulus));
   }
   for (uint32_t i = 0; i < importer->edges_len; i++) {
-    fprintf(file, "q %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u,
-            importer->edges[i].v, output_coeff(importer->edges[i].q, modulus));
+    fprintf(file, "e %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u, importer->edges[i].v);
   }
   for (uint32_t v = 0; v < importer->nvars; v++) {
     if (pins[v] != -1) {
@@ -1691,7 +1703,7 @@ static bool write_raw_qsop(FILE *file, const qasm_importer_t *importer) {
   return !ferror(file);
 }
 
-static bool canonicalize_to_stdout(const qasm_importer_t *importer, qsop_error_t *error) {
+static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *error) {
   char *raw = NULL;
   size_t raw_len = 0;
   FILE *raw_file = open_memstream(&raw, &raw_len);
@@ -1703,7 +1715,11 @@ static bool canonicalize_to_stdout(const qasm_importer_t *importer, qsop_error_t
   const bool close_ok = fclose(raw_file) == 0;
   if (!write_ok || !close_ok) {
     free(raw);
-    snprintf(error->message, sizeof(error->message), "failed to write raw QSOP");
+    if (importer->error[0] != '\0') {
+      snprintf(error->message, sizeof(error->message), "%s", importer->error);
+    } else {
+      snprintf(error->message, sizeof(error->message), "failed to write raw QSOP");
+    }
     return false;
   }
 

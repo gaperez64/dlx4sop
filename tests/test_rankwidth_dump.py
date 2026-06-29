@@ -9,9 +9,9 @@ import tempfile
 
 def make_path_qsop(nvars: int, r: int = 8) -> str:
     nedges = nvars - 1
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nedges):
-        lines.append(f"q {i} {i + 1} 1")
+        lines.append(f"e {i} {i + 1}")
     return "\n".join(lines) + "\n"
 
 

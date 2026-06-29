@@ -118,6 +118,7 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
   result->norm_h = qsop->norm_h;
 
   const uint64_t assignments = UINT64_C(1) << qsop->nvars;
+  const uint32_t sign_coeff = qsop->r / 2U;
   if (stats != NULL) {
     stats->leaf_assignments = assignments;
   }
@@ -131,7 +132,7 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
       if (bit_is_set(assignment, qsop->edge_u[e]) && bit_is_set(assignment, qsop->edge_v[e])) {
-        phase = (uint32_t)(((uint64_t)phase + qsop->edge_q[e]) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % qsop->r);
       }
     }
     for (uint32_t mode = 0; mode < qsop->r; mode++) {
@@ -206,6 +207,7 @@ bool qsop_solve_bruteforce_mode_trace_stats(
   }
 
   const uint64_t assignments = UINT64_C(1) << qsop->nvars;
+  const uint32_t sign_coeff = qsop->r / 2U;
   if (stats != NULL) {
     stats->leaf_assignments = assignments;
   }
@@ -219,7 +221,7 @@ bool qsop_solve_bruteforce_mode_trace_stats(
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
       if (bit_is_set(assignment, qsop->edge_u[e]) && bit_is_set(assignment, qsop->edge_v[e])) {
-        phase = (uint32_t)(((uint64_t)phase + qsop->edge_q[e]) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % qsop->r);
       }
     }
     if (!qsop_count_add(&result->counts[phase], 1, error)) {

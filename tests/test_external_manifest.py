@@ -39,7 +39,7 @@ PARAM_GATE_QASM_SAMPLE = """OPENQASM 2.0;
 include "qelib1.inc";
 gate phasepair(theta) a,b {
 u1(theta) a;
-cp(theta) a,b;
+cz a,b;
 }
 qreg q[2];
 h q;
@@ -187,7 +187,7 @@ def main() -> int:
         param_qasm = "\n".join(param[0]["qasm_lines"])
         if "phasepair" in param_qasm or "theta" in param_qasm:
             raise AssertionError(f"parameterized macro was not inlined:\n{param_qasm}")
-        if "u1(pi/4) q[0];" not in param_qasm or "cp(pi/4) q[0],q[1];" not in param_qasm:
+        if "u1(pi/4) q[0];" not in param_qasm or "cz q[0],q[1];" not in param_qasm:
             raise AssertionError(f"parameterized macro missing expanded body:\n{param_qasm}")
         nested_param_qasm = "\n".join(nested_param[0]["qasm_lines"])
         if "cu1fixed" in nested_param_qasm or "cu " in nested_param_qasm or " a" in nested_param_qasm:

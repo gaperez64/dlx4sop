@@ -920,7 +920,7 @@ static bool append_edge_factor(const qsop_instance_t *qsop, uint32_t edge, tw_fa
   for (size_t assignment = 0; assignment < factor.assignments; assignment++) {
     const bool left = (assignment & 1U) != 0;
     const bool right = (assignment & 2U) != 0;
-    const uint32_t residue = left && right ? qsop->edge_q[edge] % qsop->r : 0;
+    const uint32_t residue = left && right ? qsop->r / 2U : 0;
     factor_counts(&factor, qsop->r, assignment)[residue] = 1;
   }
   if (!factor_list_push_take(list, &factor, error)) {
@@ -947,7 +947,7 @@ static bool append_edge_factor_fourier(const qsop_instance_t *qsop, uint32_t edg
   for (size_t assignment = 0; assignment < factor.assignments; assignment++) {
     const bool left = (assignment & 1U) != 0;
     const bool right = (assignment & 2U) != 0;
-    const uint32_t residue = left && right ? qsop->edge_q[edge] % qsop->r : 0;
+    const uint32_t residue = left && right ? qsop->r / 2U : 0;
     for (uint32_t mode = 0; mode < qsop->r; mode++) {
       factor_counts(&factor, qsop->r, assignment)[mode] =
           powers[(size_t)mode * qsop->r + residue];

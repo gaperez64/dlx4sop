@@ -44,7 +44,7 @@ def main() -> int:
                 "source": "Example",
                 "source_url": "https://example.invalid/bench",
                 "status": "too_many_vars",
-                "mode": "labelled",
+                "mode": "sign",
                 "max_imported_nvars": 63,
                 "max_imported_edges": 90,
             },
@@ -83,9 +83,9 @@ def main() -> int:
         markdown = run_summary(tool, str(report_path), "--top-diagnostics", "1")
         for expected in [
             "| Example | https://example.invalid/bench | 5 | 1 | 1 | 2 | 1 |",
-            "| 0-32 | 0-32 | 2 | 1 | 1 | 0 | 0 | 2 | 0 | 0 |",
-            "| 33-64 | 33-64 | 1 | 0 | 0 | 1 | 0 | 0 | 1 | 0 |",
-            "| 257+ | 257+ | 1 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |",
+            "| 0-32 | 0-32 | 2 | 1 | 1 | 0 | 0 |",
+            "| 33-64 | 33-64 | 1 | 0 | 0 | 1 | 0 |",
+            "| 257+ | 257+ | 1 | 0 | 0 | 1 | 0 |",
             "| Example | unsupported_gate | 1 |",
             "| unsupported_gate | 1 | unsupported OpenQASM operation 'foo' |",
         ]:
@@ -100,7 +100,7 @@ def main() -> int:
             "--tier",
             "wider:17:",
         )
-        if "| wider | 17+ | 3 | 0 | 1 | 2 | 0 | 2 | 1 | 0 |" not in custom:
+        if "| wider | 17+ | 3 | 0 | 1 | 2 | 0 |" not in custom:
             raise AssertionError(f"missing custom tier:\n{custom}")
 
         summary = json.loads(run_summary(tool, str(report_path), "--format", "json"))

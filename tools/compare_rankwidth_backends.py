@@ -7,19 +7,15 @@ import pathlib
 import sys
 from typing import Iterable, TextIO
 
-from render_scoreboard import format_ns, labelled_path, read_jsonl
+from render_scoreboard import format_ns, read_jsonl, tier_path
 from summarize_qasm_report import markdown_escape
 
 
 RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
     "rankwidth_join_map_elapsed_ns",
     "rankwidth_join_elapsed_ns",
-    "rankwidth_labelled_join_map_elapsed_ns",
-    "rankwidth_labelled_join_elapsed_ns",
     "rankwidth_fourier_join_map_elapsed_ns",
     "rankwidth_fourier_join_elapsed_ns",
-    "rankwidth_labelled_fourier_join_map_elapsed_ns",
-    "rankwidth_labelled_fourier_join_elapsed_ns",
 )
 
 
@@ -505,12 +501,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--comparison-jsonl",
         action="append",
-        type=labelled_path,
+        type=tier_path,
         default=[],
         metavar="TIER=PATH",
         help="JSONL produced by bench_qasm_corpus.py --rankwidth-comparison.",
     )
-    parser.add_argument("--qsop-mode", choices=("all", "sign", "labelled"), default="all")
+    parser.add_argument("--qsop-mode", choices=("all", "sign"), default="all")
     parser.add_argument("--rankwidth-config", default="rankwidth:min-fill-cut:count-table")
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")

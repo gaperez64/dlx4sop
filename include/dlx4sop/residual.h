@@ -39,8 +39,6 @@ uint32_t qsop_residual_edge_u(const qsop_residual_t *residual, uint32_t e);
 
 uint32_t qsop_residual_edge_v(const qsop_residual_t *residual, uint32_t e);
 
-uint32_t qsop_residual_edge_q(const qsop_residual_t *residual, uint32_t e);
-
 uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual);
 
 uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v);

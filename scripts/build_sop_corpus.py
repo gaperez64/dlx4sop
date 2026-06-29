@@ -7,8 +7,9 @@ them to benchmarks/corpus/sop/ with .meta.json provenance sidecar files.
 Usage:
     python3 scripts/build_sop_corpus.py [--output-dir DIR]
 
-The generated instances are small enough to solve with every backend and
-cover moduli r=8, r=16 so that WMC encodings can be tested without Ganak.
+The generated instances are signed QSOPs small enough to solve with every
+backend and cover moduli r=8, r=16 so that WMC encodings can be tested without
+Ganak.
 """
 
 import argparse
@@ -27,8 +28,8 @@ TIERS = [
     {"name": "tier-33-64", "min_vars": 33, "max_vars": 64, "r_choices": [8],  "count": 3},
 ]
 
-# Rankwidth-positive instances: complete-bipartite-uniform K_{a,b} with all
-# quadratic coefficients = 1. Treewidth = min(a,b); labelled cut rank ≈ 2.
+# Rankwidth-positive instances: complete-bipartite K_{a,b} with signed edges.
+# Treewidth = min(a,b); cut rank is 1 across the natural bipartition.
 # Rankwidth wins massively; pure treewidth backend is too slow (skip_backends).
 RW_POSITIVE_INSTANCES = [
     {"tier": "tier-17-32", "nvars": 20, "r": 8,  "idx": "04"},
@@ -38,14 +39,13 @@ RW_POSITIVE_INSTANCES = [
 ]
 
 # Provenance template for generated instances.
-GENERATOR = "build_sop_corpus.py:v1"
+GENERATOR = "build_sop_corpus.py:v2-sign"
 
 
 def write_qsop(path: pathlib.Path, r: int, norm_h: int,
                nvars: int, constant: int, unary: list[int], edges: list[tuple[int, int, int]]) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        # Header: p qsop <r> <nvars> <nedges>
-        f.write(f"p qsop {r} {nvars} {len(edges)}\n")
+        f.write(f"p qsop-sign {r} {nvars} {len(edges)}\n")
         # Normalization constant (norm_h).
         f.write(f"n {norm_h}\n")
         if constant:
@@ -53,8 +53,8 @@ def write_qsop(path: pathlib.Path, r: int, norm_h: int,
         for v, c in enumerate(unary):
             if c:
                 f.write(f"u {v} {c}\n")
-        for u, v, q in edges:
-            f.write(f"q {u} {v} {q}\n")
+        for u, v, _q in edges:
+            f.write(f"e {u} {v}\n")
 
 
 def write_meta(path: pathlib.Path, name: str, r: int, nvars: int, nedges: int,
@@ -75,16 +75,16 @@ def write_meta(path: pathlib.Path, name: str, r: int, nvars: int, nedges: int,
 
 
 def gen_path_graph(rng: random.Random, nvars: int, r: int) -> dict:
-    """Path graph x0-x1-...-x(n-1) with random labels."""
+    """Path graph x0-x1-...-x(n-1) with signed edges."""
     unary = [rng.randint(0, r - 1) for _ in range(nvars)]
-    edges = [(i, i + 1, rng.randint(1, r - 1)) for i in range(nvars - 1)]
+    edges = [(i, i + 1, r // 2) for i in range(nvars - 1)]
     return {"unary": unary, "edges": edges, "constant": rng.randint(0, r - 1)}
 
 
 def gen_cycle_graph(rng: random.Random, nvars: int, r: int) -> dict:
-    """Cycle graph with random labels."""
+    """Cycle graph with signed edges."""
     unary = [rng.randint(0, r - 1) for _ in range(nvars)]
-    edges = [(i, (i + 1) % nvars, rng.randint(1, r - 1)) for i in range(nvars)]
+    edges = [(i, (i + 1) % nvars, r // 2) for i in range(nvars)]
     return {"unary": unary, "edges": edges, "constant": 0}
 
 
@@ -95,29 +95,29 @@ def gen_random_sparse(rng: random.Random, nvars: int, r: int, edge_prob: float =
     for u in range(nvars):
         for v in range(u + 1, nvars):
             if rng.random() < edge_prob:
-                edges.append((u, v, rng.randint(1, r - 1)))
+                edges.append((u, v, r // 2))
     return {"unary": unary, "edges": edges, "constant": rng.randint(0, r - 1)}
 
 
 def gen_star_graph(rng: random.Random, nvars: int, r: int) -> dict:
     """Star graph: center=0 connected to all others."""
     unary = [rng.randint(0, r - 1) for _ in range(nvars)]
-    edges = [(0, v, rng.randint(1, r - 1)) for v in range(1, nvars)]
+    edges = [(0, v, r // 2) for v in range(1, nvars)]
     return {"unary": unary, "edges": edges, "constant": 0}
 
 
 def gen_complete_bipartite_uniform(rng: random.Random, nvars: int, r: int) -> dict:
-    """Complete bipartite K_{a,b} with all quadratic coefficients = 1.
+    """Complete bipartite K_{a,b} with signed edges.
 
-    The uniform coefficient forces rank-1 interaction across the (A,B) cut:
+    The uniform sign coefficient forces rank-1 interaction across the (A,B) cut:
     sum_{u in A, v in B} x_u*x_v = (sum_A x_u)*(sum_B x_v).
-    Labelled cut rank ≈ 2 regardless of |A|; treewidth = min(|A|,|B|) = nvars/2.
+    GF(2) cut rank is 1 regardless of |A|; treewidth = min(|A|,|B|) = nvars/2.
     Rankwidth wins massively on these instances.
     """
     a = nvars // 2
     b = nvars - a
     unary = [rng.randint(0, r - 1) for _ in range(nvars)]
-    edges = [(u, a + v, 1) for u in range(a) for v in range(b)]
+    edges = [(u, a + v, r // 2) for u in range(a) for v in range(b)]
     return {"unary": unary, "edges": edges, "constant": 0}
 
 
@@ -186,7 +186,7 @@ def build_rw_positive_instances(output_dir: pathlib.Path, seed: int) -> list[str
         write_qsop(qsop_path, r, nvars + 2, nvars, data["constant"], data["unary"], edges)
         write_meta(
             meta_path, name, r, nvars, len(edges),
-            f"K_{{{a},{nvars - a}}} uniform coeff=1, r={r}; labelled cut rank ≈ 2, treewidth ≈ {a}",
+            f"K_{{{a},{nvars - a}}} signed complete bipartite, r={r}; cut rank=1, treewidth≈{a}",
             family="complete-bipartite-uniform",
             benchmark_roles=["local-tuning", "rankwidth-positive"],
             expected_winner="rankwidth",

@@ -20,11 +20,11 @@ def rankwidth_record(
         "rankwidth_decomposition": generator,
         "rankwidth_mode": "count-table",
         "source": "Synthetic",
-        "source_relative_path": "labelled.qasm",
-        "case": "labelled",
+        "source_relative_path": "signed.qasm",
+        "case": "signed",
         "input": "0",
         "output": "0",
-        "qsop_mode": "labelled",
+        "qsop_mode": "sign",
         "status": "ok",
         "solve_elapsed_ns": elapsed_ns,
         "rankwidth_width": 3,
@@ -61,7 +61,7 @@ def main() -> int:
         jsonl_path = tmp_path / "rankwidth.jsonl"
         jsonl_path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
         completed = subprocess.run(
-            [str(tool), "--rankwidth-jsonl", f"33-64={jsonl_path}", "--qsop-mode", "labelled"],
+            [str(tool), "--rankwidth-jsonl", f"33-64={jsonl_path}", "--qsop-mode", "sign"],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -92,7 +92,7 @@ def main() -> int:
                 "--rankwidth-jsonl",
                 f"33-64={jsonl_path}",
                 "--qsop-mode",
-                "labelled",
+                "sign",
                 "--format",
                 "json",
             ],

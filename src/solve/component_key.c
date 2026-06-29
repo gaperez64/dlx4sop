@@ -26,41 +26,32 @@ static void swap_u32(uint32_t *a, uint32_t *b) {
   *b = tmp;
 }
 
-static bool component_edge_less(uint32_t au, uint32_t av, uint32_t aq, uint32_t bu, uint32_t bv,
-                                uint32_t bq) {
+static bool component_edge_less(uint32_t au, uint32_t av, uint32_t bu, uint32_t bv) {
   if (au != bu) {
     return au < bu;
   }
-  if (av != bv) {
-    return av < bv;
-  }
-  return aq < bq;
+  return av < bv;
 }
 
-static void sort_component_edges(uint32_t nedges, uint32_t *edge_u, uint32_t *edge_v,
-                                 uint32_t *edge_q) {
+static void sort_component_edges(uint32_t nedges, uint32_t *edge_u, uint32_t *edge_v) {
   for (uint32_t i = 1; i < nedges; i++) {
     uint32_t u = edge_u[i];
     uint32_t v = edge_v[i];
-    uint32_t q = edge_q[i];
     uint32_t j = i;
-    while (j > 0 && component_edge_less(u, v, q, edge_u[j - 1U], edge_v[j - 1U], edge_q[j - 1U])) {
+    while (j > 0 && component_edge_less(u, v, edge_u[j - 1U], edge_v[j - 1U])) {
       edge_u[j] = edge_u[j - 1U];
       edge_v[j] = edge_v[j - 1U];
-      edge_q[j] = edge_q[j - 1U];
       j--;
     }
     edge_u[j] = u;
     edge_v[j] = v;
-    edge_q[j] = q;
   }
 }
 
 static int compare_component_arrays(uint32_t nvars, uint32_t nedges, const uint32_t *lhs_unary,
                                     const uint32_t *lhs_edge_u, const uint32_t *lhs_edge_v,
-                                    const uint32_t *lhs_edge_q, const uint32_t *rhs_unary,
-                                    const uint32_t *rhs_edge_u, const uint32_t *rhs_edge_v,
-                                    const uint32_t *rhs_edge_q) {
+                                    const uint32_t *rhs_unary,
+                                    const uint32_t *rhs_edge_u, const uint32_t *rhs_edge_v) {
   for (uint32_t v = 0; v < nvars; v++) {
     if (lhs_unary[v] != rhs_unary[v]) {
       return lhs_unary[v] < rhs_unary[v] ? -1 : 1;
@@ -73,9 +64,6 @@ static int compare_component_arrays(uint32_t nvars, uint32_t nedges, const uint3
     if (lhs_edge_v[e] != rhs_edge_v[e]) {
       return lhs_edge_v[e] < rhs_edge_v[e] ? -1 : 1;
     }
-    if (lhs_edge_q[e] != rhs_edge_q[e]) {
-      return lhs_edge_q[e] < rhs_edge_q[e] ? -1 : 1;
-    }
   }
   return 0;
 }
@@ -87,11 +75,9 @@ typedef struct small_component_canonicalizer {
   uint32_t *candidate_unary;
   uint32_t *candidate_edge_u;
   uint32_t *candidate_edge_v;
-  uint32_t *candidate_edge_q;
   uint32_t *best_unary;
   uint32_t *best_edge_u;
   uint32_t *best_edge_v;
-  uint32_t *best_edge_q;
   bool have_best;
 } small_component_canonicalizer_t;
 
@@ -108,22 +94,19 @@ static void consider_component_permutation(small_component_canonicalizer_t *ctx)
     }
     ctx->candidate_edge_u[e] = u;
     ctx->candidate_edge_v[e] = v;
-    ctx->candidate_edge_q[e] = sub->edge_q[e];
   }
-  sort_component_edges(sub->nedges, ctx->candidate_edge_u, ctx->candidate_edge_v,
-                       ctx->candidate_edge_q);
+  sort_component_edges(sub->nedges, ctx->candidate_edge_u, ctx->candidate_edge_v);
 
   if (ctx->have_best &&
       compare_component_arrays(sub->nvars, sub->nedges, ctx->candidate_unary, ctx->candidate_edge_u,
-                               ctx->candidate_edge_v, ctx->candidate_edge_q, ctx->best_unary,
-                               ctx->best_edge_u, ctx->best_edge_v, ctx->best_edge_q) >= 0) {
+                               ctx->candidate_edge_v, ctx->best_unary,
+                               ctx->best_edge_u, ctx->best_edge_v) >= 0) {
     return;
   }
 
   memcpy(ctx->best_unary, ctx->candidate_unary, (size_t)sub->nvars * sizeof(*ctx->best_unary));
   memcpy(ctx->best_edge_u, ctx->candidate_edge_u, (size_t)sub->nedges * sizeof(*ctx->best_edge_u));
   memcpy(ctx->best_edge_v, ctx->candidate_edge_v, (size_t)sub->nedges * sizeof(*ctx->best_edge_v));
-  memcpy(ctx->best_edge_q, ctx->candidate_edge_q, (size_t)sub->nedges * sizeof(*ctx->best_edge_q));
   ctx->have_best = true;
 }
 
@@ -160,26 +143,21 @@ bool qsop_canonicalize_small_component(qsop_instance_t *sub, uint32_t max_nvars,
       .candidate_unary = malloc(nvars_alloc * sizeof(uint32_t)),
       .candidate_edge_u = malloc(nedges_alloc * sizeof(uint32_t)),
       .candidate_edge_v = malloc(nedges_alloc * sizeof(uint32_t)),
-      .candidate_edge_q = malloc(nedges_alloc * sizeof(uint32_t)),
       .best_unary = malloc(nvars_alloc * sizeof(uint32_t)),
       .best_edge_u = malloc(nedges_alloc * sizeof(uint32_t)),
       .best_edge_v = malloc(nedges_alloc * sizeof(uint32_t)),
-      .best_edge_q = malloc(nedges_alloc * sizeof(uint32_t)),
   };
   if (ctx.perm == NULL || ctx.used == NULL || ctx.candidate_unary == NULL ||
       ctx.candidate_edge_u == NULL || ctx.candidate_edge_v == NULL ||
-      ctx.candidate_edge_q == NULL || ctx.best_unary == NULL || ctx.best_edge_u == NULL ||
-      ctx.best_edge_v == NULL || ctx.best_edge_q == NULL) {
+      ctx.best_unary == NULL || ctx.best_edge_u == NULL || ctx.best_edge_v == NULL) {
     free(ctx.perm);
     free(ctx.used);
     free(ctx.candidate_unary);
     free(ctx.candidate_edge_u);
     free(ctx.candidate_edge_v);
-    free(ctx.candidate_edge_q);
     free(ctx.best_unary);
     free(ctx.best_edge_u);
     free(ctx.best_edge_v);
-    free(ctx.best_edge_q);
     set_error(error, "out of memory while canonicalizing small component");
     return false;
   }
@@ -188,17 +166,14 @@ bool qsop_canonicalize_small_component(qsop_instance_t *sub, uint32_t max_nvars,
   memcpy(sub->unary, ctx.best_unary, (size_t)sub->nvars * sizeof(*sub->unary));
   memcpy(sub->edge_u, ctx.best_edge_u, (size_t)sub->nedges * sizeof(*sub->edge_u));
   memcpy(sub->edge_v, ctx.best_edge_v, (size_t)sub->nedges * sizeof(*sub->edge_v));
-  memcpy(sub->edge_q, ctx.best_edge_q, (size_t)sub->nedges * sizeof(*sub->edge_q));
 
   free(ctx.perm);
   free(ctx.used);
   free(ctx.candidate_unary);
   free(ctx.candidate_edge_u);
   free(ctx.candidate_edge_v);
-  free(ctx.candidate_edge_q);
   free(ctx.best_unary);
   free(ctx.best_edge_u);
   free(ctx.best_edge_v);
-  free(ctx.best_edge_q);
   return true;
 }

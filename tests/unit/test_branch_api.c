@@ -11,18 +11,15 @@ static qsop_instance_t make_tiny(void) {
   static uint32_t unary[]  = {1, 2, 5};
   static uint32_t edge_u[] = {0, 1};
   static uint32_t edge_v[] = {1, 2};
-  static uint32_t edge_q[] = {4, 3};
   return (qsop_instance_t){
       .r        = 8,
       .nvars    = 3,
       .norm_h   = 4,
       .constant = 7,
-      .mode     = QSOP_MODE_LABELLED,
       .unary    = unary,
       .nedges   = 2,
       .edge_u   = edge_u,
       .edge_v   = edge_v,
-      .edge_q   = edge_q,
   };
 }
 

@@ -34,7 +34,7 @@ def main() -> int:
                 "branch.rankwidth_skip_join_pair_forecast,1,128,0",
                 "branch.treewidth_skip_width,1,15,0",
                 "rankwidth.width_probe,0,5,10",
-                "rankwidth.support_width_probe,0,4,0",
+                "rankwidth.cutrank_width_probe,0,4,0",
                 "rankwidth.table_forecast,0,64,0",
                 "rankwidth.join_pair_forecast,0,512,0",
                 "branch.cache_lookup,0,4,50",
@@ -53,14 +53,8 @@ def main() -> int:
                 "rankwidth.crt_join_map,2,20,130",
                 "rankwidth.join,2,18,240",
                 "rankwidth.crt_join,2,22,260",
-                "rankwidth.labelled_join_map,2,9,90",
-                "rankwidth.labelled_crt_join_map,2,11,110",
-                "rankwidth.labelled_join,2,14,210",
-                "rankwidth.labelled_crt_join,2,17,230",
                 "rankwidth.fourier_join_map,2,7,70",
                 "rankwidth.fourier_join,2,8,80",
-                "rankwidth.labelled_fourier_join_map,2,6,60",
-                "rankwidth.labelled_fourier_join,2,7,75",
                 "",
             ]
         )
@@ -166,24 +160,12 @@ def main() -> int:
         "rankwidth_join_events": 2,
         "rankwidth_join_elapsed_ns": 500,
         "rankwidth_join_max_items": 22,
-        "rankwidth_labelled_join_map_events": 2,
-        "rankwidth_labelled_join_map_elapsed_ns": 200,
-        "rankwidth_labelled_join_map_max_items": 11,
-        "rankwidth_labelled_join_events": 2,
-        "rankwidth_labelled_join_elapsed_ns": 440,
-        "rankwidth_labelled_join_max_items": 17,
-        "rankwidth_fourier_join_map_events": 2,
-        "rankwidth_fourier_join_map_elapsed_ns": 130,
+        "rankwidth_fourier_join_map_events": 1,
+        "rankwidth_fourier_join_map_elapsed_ns": 70,
         "rankwidth_fourier_join_map_max_items": 7,
-        "rankwidth_fourier_join_events": 2,
-        "rankwidth_fourier_join_elapsed_ns": 155,
+        "rankwidth_fourier_join_events": 1,
+        "rankwidth_fourier_join_elapsed_ns": 80,
         "rankwidth_fourier_join_max_items": 8,
-        "rankwidth_labelled_fourier_join_map_events": 1,
-        "rankwidth_labelled_fourier_join_map_elapsed_ns": 60,
-        "rankwidth_labelled_fourier_join_map_max_items": 6,
-        "rankwidth_labelled_fourier_join_events": 1,
-        "rankwidth_labelled_fourier_join_elapsed_ns": 75,
-        "rankwidth_labelled_fourier_join_max_items": 7,
     }
     if rankwidth_kernel != expected_rankwidth_kernel:
         raise AssertionError(f"unexpected rankwidth kernel metrics: {rankwidth_kernel}")
@@ -192,33 +174,55 @@ def main() -> int:
         "rankwidth_width_probe_events": 1,
         "rankwidth_width_probe_elapsed_ns": 10,
         "rankwidth_width_probe_width": 5,
-        "rankwidth_support_width_probe_width": 4,
+        "rankwidth_cutrank_width_probe_width": 4,
         "rankwidth_trace_table_forecast": 64,
         "rankwidth_trace_join_pair_forecast": 512,
     }
     if rankwidth_probe != expected_rankwidth_probe:
         raise AssertionError(f"unexpected rankwidth probe metrics: {rankwidth_probe}")
     kernel_record = {"stats": {}, **rankwidth_kernel}
-    if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 1810:
+    if bench.record_rankwidth_kernel_elapsed_ns(kernel_record) != 900:
         raise AssertionError(f"unexpected rankwidth kernel elapsed: {kernel_record}")
 
-    if bench.trace_elapsed_ns(trace) != 5610:
+    if bench.trace_elapsed_ns(trace) != 4835:
         raise AssertionError(f"unexpected trace elapsed: {bench.trace_elapsed_ns(trace)}")
     expected_top = (
-        "branch.rankwidth_delegate:1100:19.6%,"
-        "branch.treewidth_delegate:700:12.5%,"
-        "treewidth.sum_out:500:8.9%"
+        "branch.rankwidth_delegate:1100:22.8%,"
+        "branch.treewidth_delegate:700:14.5%,"
+        "treewidth.sum_out:500:10.3%"
     )
     if bench.trace_top_phase_text(trace) != expected_top:
         raise AssertionError(f"unexpected trace top phases: {bench.trace_top_phase_text(trace)}")
     expected_trace_metrics = {
-        "trace_elapsed_ns": 5610,
+        "trace_elapsed_ns": 4835,
         "trace_top_phase": "branch.rankwidth_delegate",
         "trace_top_elapsed_ns": 1100,
-        "trace_top_share_ppm": 196078,
+        "trace_top_share_ppm": 227507,
     }
     if bench.trace_record_metrics(trace) != expected_trace_metrics:
         raise AssertionError(f"unexpected trace record metrics: {bench.trace_record_metrics(trace)}")
+
+    trace_with_error = bench.parse_trace_csv(
+        "\n".join(
+            [
+                "phase,depth,items,elapsed_ns",
+                "rankwidth.width_probe,0,19,100",
+                "rankwidth.join_map,0,2048,200",
+                "error: <stdin>: out of memory while growing rankwidth join map",
+            ]
+        )
+    )
+    expected_trace_with_error = {
+        "rankwidth.width_probe": {"events": 1, "items": 19, "max_items": 19, "elapsed_ns": 100},
+        "rankwidth.join_map": {"events": 1, "items": 2048, "max_items": 2048, "elapsed_ns": 200},
+    }
+    if trace_with_error != expected_trace_with_error:
+        raise AssertionError(f"unexpected trace with error: {trace_with_error}")
+    failed = bench.CommandFailed(
+        ["sop-solve"], 1, "", "trace row\nerror: <stdin>: out of memory", 123
+    )
+    if bench.summarize_command_error(failed) != "error: <stdin>: out of memory":
+        raise AssertionError(f"unexpected command failure summary: {bench.summarize_command_error(failed)}")
 
     if not bench.amplitude_metrics(8, 10, [1, 0, 0, 0, 0, 0, 0, 0]):
         raise AssertionError("small exact counts should emit amplitude metrics")

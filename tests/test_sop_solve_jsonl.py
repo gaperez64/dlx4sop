@@ -11,9 +11,9 @@ import tempfile
 def make_path_qsop(nvars: int, r: int = 8) -> str:
     """Return a QSOP string for a path graph with `nvars` nodes."""
     nedges = nvars - 1
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nedges):
-        lines.append(f"q {i} {i + 1} 1")
+        lines.append(f"e {i} {i + 1}")
     return "\n".join(lines) + "\n"
 
 
@@ -139,11 +139,11 @@ def test_jsonl_small_instance_no_delegation(exe: pathlib.Path, tmpdir: pathlib.P
 def make_two_component_qsop(n1: int, n2: int, r: int = 8) -> str:
     """Path of n1 nodes + path of n2 nodes (disjoint components)."""
     nedges = (n1 - 1) + (n2 - 1)
-    lines = [f"p qsop {r} {n1 + n2} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {n1 + n2} {nedges}", "n 0", "cst 0"]
     for i in range(n1 - 1):
-        lines.append(f"q {i} {i + 1} 1")
+        lines.append(f"e {i} {i + 1}")
     for i in range(n2 - 1):
-        lines.append(f"q {n1 + i} {n1 + i + 1} 1")
+        lines.append(f"e {n1 + i} {n1 + i + 1}")
     return "\n".join(lines) + "\n"
 
 

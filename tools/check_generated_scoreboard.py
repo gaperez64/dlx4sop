@@ -2,11 +2,10 @@
 """Validate committed scoreboard artifacts for self-consistency.
 
 Checks:
-  1. scoreboard-sign.json and scoreboard-labelled.json exist, parse, and have required fields.
-  2. scoreboard-assets/<mode>/ directories contain all SVGs referenced in each mode scoreboard.
-  3. Every SVG under scoreboard-assets/**/ is a non-empty, well-formed SVG element.
+  1. scoreboard.json exists, parses, and has required fields.
+  2. scoreboard.md exists and references only present SVG assets.
+  3. Every SVG under scoreboard-assets/ is non-empty and contains an SVG element.
   4. solver_summary entries have required keys and solved <= attempted.
-  5. scoreboard.md exists and links to both scoreboard-sign.md and scoreboard-labelled.md.
 
 Usage:
     python3 tools/check_generated_scoreboard.py [--repo-root PATH]
@@ -110,20 +109,7 @@ def check_all_svg_files(root: pathlib.Path) -> list[str]:
     return errors
 
 
-def check_index_links(root: pathlib.Path) -> list[str]:
-    errors: list[str] = []
-    index_path = root / "scoreboard.md"
-    if not index_path.exists():
-        return [f"scoreboard.md not found at {index_path}"]
-    content = index_path.read_text(encoding="utf-8")
-    for name in ("scoreboard-sign.md", "scoreboard-labelled.md"):
-        if name not in content:
-            errors.append(f"scoreboard.md does not link to {name}")
-    return errors
-
-
 def check_scoreboard_assets(root: pathlib.Path) -> list[str]:
-    """Legacy single-mode check: kept for compatibility with old test fixtures."""
     errors: list[str] = []
     assets_dir = root / "scoreboard-assets"
     if not assets_dir.is_dir():
@@ -163,11 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     root = args.repo_root.resolve()
 
     all_errors: list[str] = []
-    for mode in ("sign", "labelled"):
-        all_errors.extend(check_scoreboard_json(root, f"scoreboard-{mode}.json"))
-        all_errors.extend(check_mode_scoreboard_assets(root, mode))
+    all_errors.extend(check_scoreboard_json(root, "scoreboard.json"))
+    all_errors.extend(check_scoreboard_assets(root))
     all_errors.extend(check_all_svg_files(root))
-    all_errors.extend(check_index_links(root))
 
     if all_errors:
         for err in all_errors:

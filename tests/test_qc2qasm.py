@@ -81,8 +81,11 @@ def main() -> int:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if imported.returncode != 0:
-        raise AssertionError(f"translated QASM did not import:\n{imported.stderr}")
+    if (
+        imported.returncode == 0
+        or "unsupported non-sign quadratic phase coefficient" not in imported.stderr
+    ):
+        raise AssertionError(f"translated QASM had unexpected import result:\n{imported.stderr}")
 
     invalid = subprocess.run(
         [str(qc2qasm), "-"],

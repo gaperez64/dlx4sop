@@ -160,7 +160,7 @@ def materialize_row(
             "r": r,
             "nvars": nvars,
             "nedges": nedges,
-            "qsop_mode": "labelled" if boundary_input != boundary_output else "sign",
+            "qsop_mode": "sign",
             "treewidth_probe": treewidth_probe,
             "prefix_cut_rank": prefix_cut_rank,
             "component_count": stats.get("component_count", 1),

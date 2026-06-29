@@ -2,12 +2,11 @@
 
 `dlx4sop` is a C/Meson toolkit for exact finite-modulus quadratic sums of
 powers (QSOPs). The project goal is a competitive exact strong simulator using
-labelled quadratic SOPs with fixed-boundary circuit amplitudes as the current
+signed quadratic SOPs with fixed-boundary circuit amplitudes as the current
 benchmark contract.
 
 Current corpus coverage, solver timings, and native simulator comparisons live
-in [scoreboard.md](scoreboard.md) (index), [scoreboard-sign.md](scoreboard-sign.md),
-and [scoreboard-labelled.md](scoreboard-labelled.md).
+in [scoreboard.md](scoreboard.md).
 
 ## Build
 
@@ -94,41 +93,41 @@ External frameworks stay at the benchmark/import boundary.
   widened corpus tiers.
 - `branch --branch-heuristic split`: current hybrid backend; it splits
   components and dispatches eligible residuals to treewidth or rankwidth.
-- `rankwidth`: exact decomposition-DP backend with labelled cut-signature
-  diagnostics and count-table/Fourier modes; useful for comparison and targeted
+- `rankwidth`: exact decomposition-DP backend with cut-rank diagnostics and
+  count-table/Fourier modes; useful for comparison and targeted
   low-rank cases, but not the default corpus winner.
 - `brute-force`: small-instance oracle.
 
 ## QSOP Format
 
 ```text
-p qsop <r> <variables> <quadratic_terms>
+p qsop-sign <r> <variables> <sign_edges>
 n <normalization_h>
 cst <constant_mod_r>
 u <vertex> <unary_coefficient_mod_r>
-q <u> <v> <quadratic_coefficient_mod_r>
 e <u> <v>
 f <vertex> <0 | 1>
 ```
 
-`e u v` is shorthand for a sign edge with coefficient `r/2`. Pins (`f`) are
-applied during parsing, and canonical output uses dense variable IDs. Solver
+Quadratic terms are sign edges with implicit coefficient `r/2`;
+duplicate sign edges cancel by parity. Pins (`f`) are applied during parsing,
+and canonical output uses dense variable IDs. Solver
 `counts` are ordinary assignment counts bucketed by phase residue modulo `r`.
 
 ## Examples
 
 ```sh
-build/sop-check tests/golden/labelled_raw.qsop
-build/sop-stats --format json tests/golden/labelled_expected.qsop
+build/sop-check tests/golden/sign_raw.qsop
+build/sop-stats --format json tests/golden/sign_expected.qsop
 build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
-build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_labelled.qsop
-build/sop-solve --format stats --include-result tests/golden/solve_labelled.qsop
-build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_labelled.qsop
+build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_disconnected.qsop
+build/sop-solve --format stats --include-result tests/golden/solve_single.qsop
+build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_disconnected.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
-build/sop2wmc --residue all tests/golden/solve_labelled.qsop
-build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_labelled.qsop && ganak residue2.cnf
-build/sop2wmc --encoding amplitude tests/golden/solve_labelled.qsop | ganak --mode 6 --verb 0 -
+build/sop2wmc --residue all tests/golden/solve_disconnected.qsop
+build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_disconnected.qsop && ganak residue2.cnf
+build/sop2wmc --encoding amplitude tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
 ```
 
 The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
@@ -138,12 +137,8 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-The public performance summary is split into two mode-specific scoreboards plus
-an index:
-
-- [scoreboard.md](scoreboard.md) — index with combined totals and links
-- [scoreboard-sign.md](scoreboard-sign.md) — sign QSOP benchmarks
-- [scoreboard-labelled.md](scoreboard-labelled.md) — labelled QSOP benchmarks
+The public performance summary is the signed-QSOP
+[scoreboard.md](scoreboard.md).
 
 `tools/bench.py` is the unified benchmark entry point. It requires only the
 built binaries and the committed QSOP corpus for local runs; external tools
@@ -189,10 +184,8 @@ python3 tools/run_corpus_benchmarks.py \
 
 `run_corpus_benchmarks.py` is the single orchestrator. It runs solver, WMC (Ganak),
 and native-simulator jobs for all tiers (including the MQT Bench large tiers) and the
-WMC-vs-solver scaling study, then renders:
-1. `scoreboard-sign.md` + `scoreboard-assets/sign/` SVGs (sign QSOPs only)
-2. `scoreboard-labelled.md` + `scoreboard-assets/labelled/` SVGs (labelled QSOPs only)
-3. `scoreboard.md` — combined index linking to both mode scoreboards
+WMC-vs-solver scaling study, then renders `scoreboard.md`, `scoreboard.json`, and
+flat `scoreboard-assets/` SVGs for the signed QSOP benchmark set.
 
 `bench.py full` is a thin alias for the same pipeline. Pass `--skip-wmc`,
 `--skip-native`, `--skip-solver`, `--skip-scaling`, or `--skip-scoreboard` to run a
@@ -202,7 +195,7 @@ stabilizer-engine qubit cap.
 
 The native baseline uses dense statevector engines under a qubit cap plus
 `qiskit-clifford` (stabilizer, O(n²) memory) for the large Clifford circuits the
-statevector engines cannot reach. Labelled QSOPs are compared against native runs on
+statevector engines cannot reach. Signed QSOPs are compared against native runs on
 the same boundaries (native amplitudes are the shared ground truth).
 
 #### Scaling study (synthetic family)
@@ -221,7 +214,7 @@ treewidth (qaoa/qft/vqe) are rejected for their continuous angles, while the
 importable ones (ghz/bv/graphstate) are Clifford with trivial treewidth. The
 synthetic family has treewidth growing with qubit count and lets the scoreboard
 compare how the branch and treewidth backends and ganak (WMC) degrade as treewidth
-grows; the [scoreboard](scoreboard-sign.md) reports the measured trend (which depends
+grows; the [scoreboard](scoreboard.md) reports the measured trend (which depends
 on the build optimization level — the branch backend collapses first in all cases).
 
 ### Render from existing artifacts
@@ -232,8 +225,8 @@ python3 tools/bench.py render \
     --view full
 ```
 
-This regenerates both mode scoreboards, their SVG plots, and the index from
-existing JSONL artifacts without re-running any experiments.
+This regenerates `scoreboard.md`, `scoreboard.json`, and SVG plots from existing
+JSONL artifacts without re-running any experiments.
 
 ### Other benchmark tools
 
@@ -246,11 +239,10 @@ existing JSONL artifacts without re-running any experiments.
 
 ## Current Status
 
-[scoreboard.md](scoreboard.md) is the index with combined coverage totals and
-links to the per-mode scoreboards: [scoreboard-sign.md](scoreboard-sign.md) and
-[scoreboard-labelled.md](scoreboard-labelled.md). Each tracks corpus coverage,
-solver timings, and the recommended solver configuration per tier.
+[scoreboard.md](scoreboard.md) tracks signed-QSOP corpus coverage, solver timings,
+WMC backend behavior, native simulator comparisons, and the recommended solver
+configuration per tier.
 
-Headline finding: on both sign and labelled QSOPs, the solver beats the
-`pyzx-matrix` baseline across tiers while dense `aer-statevector` still wins some
-low-width rows.
+Headline finding: on signed QSOPs, treewidth and hybrid branch remain the useful
+native baselines; WMC/Ganak is complementary and reaches some hard rows, but it
+does not yet beat native treewidth on the current scaling study.

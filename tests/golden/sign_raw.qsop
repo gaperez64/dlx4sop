@@ -1,5 +1,5 @@
 c duplicate sign edges cancel and self-loops fold into unary coefficients
-p qsop 8 4 4
+p qsop-sign 8 4 4
 n 12
 cst 3
 u 0 1

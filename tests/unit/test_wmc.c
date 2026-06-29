@@ -47,10 +47,8 @@ static int test_amp_soft_stats(void) {
   uint32_t s_unary[] = {1, 0, 1};
   uint32_t s_eu[] = {0, 1};
   uint32_t s_ev[] = {1, 2};
-  uint32_t s_eq[] = {1, 1};
   qsop_instance_t sign2 = {.r = 2, .nvars = 3, .norm_h = 3, .constant = 1,
-                           .mode = QSOP_MODE_SIGN, .unary = s_unary, .nedges = 2,
-                           .edge_u = s_eu, .edge_v = s_ev, .edge_q = s_eq};
+                           .unary = s_unary, .nedges = 2, .edge_u = s_eu, .edge_v = s_ev};
 
   /* amp-soft on sign2: 2 encoded edges -> 2 aux vars, 4 binary, 0 ternary. */
   qsop_wmc_options_t soft = qsop_wmc_options_default();
@@ -100,23 +98,29 @@ static int test_amp_soft_stats(void) {
     return 1;
   }
 
-  /* Edge with zero label is skipped in both encodings. */
+  /* Even Fourier mode makes sign edges trivial and skips them in amplitude encodings. */
   uint32_t w_unary[] = {0, 0};
   uint32_t w_eu[] = {0};
   uint32_t w_ev[] = {1};
-  uint32_t w_eq[] = {0};  /* zero label */
   qsop_instance_t zero_edge = {.r = 8, .nvars = 2, .norm_h = 0, .constant = 0,
-                               .mode = QSOP_MODE_LABELLED, .unary = w_unary, .nedges = 1,
-                               .edge_u = w_eu, .edge_v = w_ev, .edge_q = w_eq};
+                               .unary = w_unary, .nedges = 1, .edge_u = w_eu, .edge_v = w_ev};
   qsop_wmc_stats_t soft_zero_stats = {0};
   qsop_wmc_options_t soft_zero = soft;
   soft_zero.stats_out = &soft_zero_stats;
-  if (run_ok("amp-soft-zero-edge", &zero_edge, &soft_zero) != 0) {
+  FILE *tmp = tmpfile();
+  if (tmp == NULL) {
+    return 0;
+  }
+  qsop_error_t error = {0};
+  const bool ok = qsop_wmc_write(tmp, &zero_edge, &soft_zero, &error);
+  fclose(tmp);
+  if (!ok) {
+    fprintf(stderr, "amp-soft-zero-edge: qsop_wmc_write failed: %s\n", error.message);
     return 1;
   }
-  if (soft_zero_stats.encoded_edges != 0 || soft_zero_stats.skipped_edges != 1) {
+  if (soft_zero_stats.encoded_edges != 1 || soft_zero_stats.skipped_edges != 0) {
     fprintf(stderr,
-            "amp-soft-zero-edge: expected 0 encoded / 1 skipped, got %u/%u\n",
+            "amp-soft-zero-edge: expected 1 encoded / 0 skipped, got %u/%u\n",
             soft_zero_stats.encoded_edges, soft_zero_stats.skipped_edges);
     return 1;
   }
@@ -143,8 +147,7 @@ static int test_export_shapes(void) {
   int rc = 0;
 
   /* No variables: pure constant. */
-  qsop_instance_t empty = {.r = 8, .nvars = 0, .norm_h = 0, .constant = 5,
-                           .mode = QSOP_MODE_SIGN};
+  qsop_instance_t empty = {.r = 8, .nvars = 0, .norm_h = 0, .constant = 5};
   rc |= run_ok("empty", &empty, &all);
   rc |= run_ok("empty-single", &empty, &single);
   rc |= run_ok("empty-amp", &empty, &amp);
@@ -153,10 +156,8 @@ static int test_export_shapes(void) {
   uint32_t s_unary[] = {1, 0, 1};
   uint32_t s_eu[] = {0, 1};
   uint32_t s_ev[] = {1, 2};
-  uint32_t s_eq[] = {1, 1};
   qsop_instance_t sign2 = {.r = 2, .nvars = 3, .norm_h = 3, .constant = 1,
-                           .mode = QSOP_MODE_SIGN, .unary = s_unary, .nedges = 2,
-                           .edge_u = s_eu, .edge_v = s_ev, .edge_q = s_eq};
+                           .unary = s_unary, .nedges = 2, .edge_u = s_eu, .edge_v = s_ev};
   rc |= run_ok("sign2", &sign2, &all);
   rc |= run_ok("sign2-no-meta", &sign2, &no_meta);
   rc |= run_ok("sign2-amp", &sign2, &amp);
@@ -164,27 +165,24 @@ static int test_export_shapes(void) {
   rc |= run_ok("sign2-amp-soft", &sign2, &amp_soft);
   rc |= run_ok("sign2-amp-soft-no-meta", &sign2, &amp_soft_no_meta);
 
-  /* Labelled instance, r = 8. */
-  uint32_t l_unary[] = {2, 4};
-  uint32_t l_eu[] = {0};
-  uint32_t l_ev[] = {1};
-  uint32_t l_eq[] = {3};
-  qsop_instance_t labelled = {.r = 8, .nvars = 2, .norm_h = 4, .constant = 2,
-                              .mode = QSOP_MODE_LABELLED, .unary = l_unary, .nedges = 1,
-                              .edge_u = l_eu, .edge_v = l_ev, .edge_q = l_eq};
-  rc |= run_ok("labelled", &labelled, &all);
-  rc |= run_ok("labelled-single", &labelled, &single);
-  rc |= run_ok("labelled-amp", &labelled, &amp);
-  rc |= run_ok("labelled-amp-soft", &labelled, &amp_soft);
+  /* Signed instance, r = 8. */
+  uint32_t s8_unary[] = {2, 4};
+  uint32_t s8_eu[] = {0};
+  uint32_t s8_ev[] = {1};
+  qsop_instance_t sign8 = {.r = 8, .nvars = 2, .norm_h = 4, .constant = 2,
+                           .unary = s8_unary, .nedges = 1, .edge_u = s8_eu,
+                           .edge_v = s8_ev};
+  rc |= run_ok("sign8", &sign8, &all);
+  rc |= run_ok("sign8-single", &sign8, &single);
+  rc |= run_ok("sign8-amp", &sign8, &amp);
+  rc |= run_ok("sign8-amp-soft", &sign8, &amp_soft);
 
   /* Non-power-of-two modulus exercises the conditional subtract (residue only). */
   uint32_t n_unary[] = {5, 4};
   uint32_t n_eu[] = {0};
   uint32_t n_ev[] = {1};
-  uint32_t n_eq[] = {5};
   qsop_instance_t mod6 = {.r = 6, .nvars = 2, .norm_h = 1, .constant = 4,
-                          .mode = QSOP_MODE_LABELLED, .unary = n_unary, .nedges = 1,
-                          .edge_u = n_eu, .edge_v = n_ev, .edge_q = n_eq};
+                          .unary = n_unary, .nedges = 1, .edge_u = n_eu, .edge_v = n_ev};
   rc |= run_ok("mod6", &mod6, &all);
   rc |= run_ok("mod6-amp", &mod6, &amp);
 
@@ -192,10 +190,8 @@ static int test_export_shapes(void) {
   uint32_t w_unary[] = {300, 0};
   uint32_t w_eu[] = {0};
   uint32_t w_ev[] = {1};
-  uint32_t w_eq[] = {0};
   qsop_instance_t wide = {.r = 1024, .nvars = 2, .norm_h = 0, .constant = 100,
-                          .mode = QSOP_MODE_LABELLED, .unary = w_unary, .nedges = 1,
-                          .edge_u = w_eu, .edge_v = w_ev, .edge_q = w_eq};
+                          .unary = w_unary, .nedges = 1, .edge_u = w_eu, .edge_v = w_ev};
   rc |= run_ok("wide", &wide, &all);
   rc |= run_ok("wide-amp", &wide, &amp);
 
@@ -204,8 +200,7 @@ static int test_export_shapes(void) {
 
 static int test_error_paths(void) {
   const qsop_wmc_options_t all = qsop_wmc_options_default();
-  qsop_instance_t qsop = {.r = 8, .nvars = 0, .norm_h = 0, .constant = 0,
-                          .mode = QSOP_MODE_SIGN};
+  qsop_instance_t qsop = {.r = 8, .nvars = 0, .norm_h = 0, .constant = 0};
 
   qsop_error_t error = {0};
   if (qsop_wmc_write(NULL, &qsop, &all, &error)) {
@@ -257,7 +252,7 @@ static int test_error_paths(void) {
 }
 
 /* Brute-force amplitude: sum_x omega^P(x) where omega = exp(2*pi*i/r).
- * P(x) = constant + sum_v unary[v]*x_v + sum_e edge_q[e]*x_u*x_v mod r.
+ * P(x) = constant + sum_v unary[v]*x_v + (r/2)*sum_e x_u*x_v mod r.
  * Returns re/im via output pointers. */
 static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out) {
   const uint32_t n = qsop->nvars;
@@ -272,7 +267,7 @@ static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, d
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
       if (((mask >> qsop->edge_u[e]) & 1U) && ((mask >> qsop->edge_v[e]) & 1U)) {
-        phase = (uint32_t)((phase + qsop->edge_q[e]) % r);
+        phase = (uint32_t)((phase + (r / 2U)) % r);
       }
     }
     double ere, eim;
@@ -317,10 +312,8 @@ static int test_peel1(void) {
   uint32_t c_unary[] = {0, 0, 0};
   uint32_t c_eu[] = {0, 1};
   uint32_t c_ev[] = {1, 2};
-  uint32_t c_eq[] = {2, 2};
   qsop_instance_t chain = {.r = 4, .nvars = 3, .norm_h = 0, .constant = 0,
-                            .mode = QSOP_MODE_LABELLED, .unary = c_unary, .nedges = 2,
-                            .edge_u = c_eu, .edge_v = c_ev, .edge_q = c_eq};
+                            .unary = c_unary, .nedges = 2, .edge_u = c_eu, .edge_v = c_ev};
 
   if (check_peel1_amplitude("chain-amp-and", &chain, QSOP_WMC_ENCODING_AMPLITUDE) != 0 ||
       check_peel1_amplitude("chain-amp-soft", &chain, QSOP_WMC_ENCODING_AMP_SOFT) != 0) {
@@ -332,10 +325,8 @@ static int test_peel1(void) {
   uint32_t st_unary[] = {0, 1, 1, 1};
   uint32_t st_eu[] = {0, 0, 0};
   uint32_t st_ev[] = {1, 2, 3};
-  uint32_t st_eq[] = {2, 2, 2};
   qsop_instance_t star = {.r = 4, .nvars = 4, .norm_h = 0, .constant = 0,
-                           .mode = QSOP_MODE_LABELLED, .unary = st_unary, .nedges = 3,
-                           .edge_u = st_eu, .edge_v = st_ev, .edge_q = st_eq};
+                           .unary = st_unary, .nedges = 3, .edge_u = st_eu, .edge_v = st_ev};
 
   if (check_peel1_amplitude("star-amp-and", &star, QSOP_WMC_ENCODING_AMPLITUDE) != 0 ||
       check_peel1_amplitude("star-amp-soft", &star, QSOP_WMC_ENCODING_AMP_SOFT) != 0) {
@@ -345,7 +336,7 @@ static int test_peel1(void) {
   /* Isolated vars: 3 vars with no edges; peel1 should eliminate all (degree-0). */
   uint32_t iso_unary[] = {1, 2, 3};
   qsop_instance_t iso = {.r = 8, .nvars = 3, .norm_h = 0, .constant = 1,
-                          .mode = QSOP_MODE_LABELLED, .unary = iso_unary, .nedges = 0};
+                          .unary = iso_unary, .nedges = 0};
 
   if (check_peel1_amplitude("iso-amp-and", &iso, QSOP_WMC_ENCODING_AMPLITUDE) != 0 ||
       check_peel1_amplitude("iso-amp-soft", &iso, QSOP_WMC_ENCODING_AMP_SOFT) != 0) {
@@ -357,10 +348,8 @@ static int test_peel1(void) {
   uint32_t z_unary[] = {2, 2};
   uint32_t z_eu[] = {0};
   uint32_t z_ev[] = {1};
-  uint32_t z_eq[] = {2};  /* omega^2 = -1 for r=4 */
   qsop_instance_t zero_qsop = {.r = 4, .nvars = 2, .norm_h = 0, .constant = 0,
-                                .mode = QSOP_MODE_LABELLED, .unary = z_unary, .nedges = 1,
-                                .edge_u = z_eu, .edge_v = z_ev, .edge_q = z_eq};
+                                .unary = z_unary, .nedges = 1, .edge_u = z_eu, .edge_v = z_ev};
 
   /* Brute force: omega^0 + omega^2 + omega^2 + omega^(2+2+2) = 1 + (-1) + (-1) + (-1) = -2.
    * So this is NOT zero amplitude for the full SOP. But peel1 on var 0 (deg-1 neighbor of 1):
@@ -375,7 +364,7 @@ static int test_peel1(void) {
    * Z = 1 + (-1) = 0. Peel1 should produce is_zero=true. */
   uint32_t za_unary[] = {4};  /* omega^4 = -1 for r=8 */
   qsop_instance_t zero_amp = {.r = 8, .nvars = 1, .norm_h = 0, .constant = 0,
-                               .mode = QSOP_MODE_LABELLED, .unary = za_unary, .nedges = 0};
+                               .unary = za_unary, .nedges = 0};
   double ref_re, ref_im;
   brute_force_amplitude(&zero_amp, &ref_re, &ref_im);
   if (fabs(ref_re) > 1e-10 || fabs(ref_im) > 1e-10) {

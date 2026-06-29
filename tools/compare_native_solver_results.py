@@ -14,7 +14,7 @@ from summarize_qasm_report import markdown_escape
 AMPLITUDE_ABS_TOL = 1e-6
 
 
-def labelled_path(text: str) -> tuple[str, pathlib.Path]:
+def tier_path(text: str) -> tuple[str, pathlib.Path]:
     if "=" in text:
         label, path_text = text.split("=", 1)
         if not label:
@@ -238,8 +238,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Join QSOP solver benchmark JSONL with native simulator JSONL."
     )
-    parser.add_argument("--solver-jsonl", action="append", type=labelled_path, required=True)
-    parser.add_argument("--native-jsonl", action="append", type=labelled_path, required=True)
+    parser.add_argument("--solver-jsonl", action="append", type=tier_path, required=True)
+    parser.add_argument("--native-jsonl", action="append", type=tier_path, required=True)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     return parser.parse_args(argv)
 

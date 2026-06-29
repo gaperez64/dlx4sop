@@ -181,9 +181,6 @@ def main(argv: list[str] | None = None) -> int:
         nvars_list = [r["imported_nvars"] for r in rows]
         tw_list = [r["treewidth_probe"] for r in rows if r.get("treewidth_probe", 0) > 0]
         cr_list = [r["prefix_cut_rank"] for r in rows if r.get("prefix_cut_rank", 0) > 0]
-        qsop_modes = {r.get("qsop_mode", "unknown") for r in rows}
-        mode_label = "+".join(sorted(m for m in qsop_modes if m))
-        labelled_count = sum(1 for r in rows if r.get("qsop_mode", "") == "labelled")
         sign_count = sum(1 for r in rows if r.get("qsop_mode", "") == "sign")
         scaling.append({
             "family": family,
@@ -199,8 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             "treewidth_max": max(tw_list, default=0),
             "cut_rank_p50": _percentile(cr_list, 50),
             "cut_rank_max": max(cr_list, default=0),
-            "qsop_mode": mode_label or "unknown",
-            "labelled_count": labelled_count,
+            "qsop_mode": "sign" if sign_count else "unknown",
             "sign_count": sign_count,
         })
 

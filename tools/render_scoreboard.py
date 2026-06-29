@@ -52,12 +52,8 @@ BRANCH_DISPATCH_MAX_FIELDS = (
 RANKWIDTH_KERNEL_PREFIXES = (
     "rankwidth_join_map",
     "rankwidth_join",
-    "rankwidth_labelled_join_map",
-    "rankwidth_labelled_join",
     "rankwidth_fourier_join_map",
     "rankwidth_fourier_join",
-    "rankwidth_labelled_fourier_join_map",
-    "rankwidth_labelled_fourier_join",
 )
 RANKWIDTH_KERNEL_SUM_FIELDS = tuple(
     field
@@ -77,16 +73,12 @@ COMPONENT_KERNEL_SUM_FIELDS = tuple(
     for prefix in COMPONENT_KERNEL_PREFIXES
     for field in (f"{prefix}_events", f"{prefix}_elapsed_ns")
 )
-LEGACY_STAT_ALIASES = {
-    "max_residual_prefix_cut_rank": "max_residual_linear_cut_rank",
-}
-
 
 def read_jsonl(path: pathlib.Path) -> list[dict]:
     return _read_jsonl_common(path, strict=True)
 
 
-def labelled_path(text: str) -> tuple[str, pathlib.Path]:
+def tier_path(text: str) -> tuple[str, pathlib.Path]:
     if "=" in text:
         label, path_text = text.split("=", 1)
         if not label:
@@ -98,14 +90,12 @@ def labelled_path(text: str) -> tuple[str, pathlib.Path]:
 
 def record_qsop_mode(record: dict) -> str:
     mode = record.get("qsop_mode")
-    if isinstance(mode, str) and mode:
+    if mode == "sign":
         return mode
-    inp, outp = record.get("input"), record.get("output")
-    if inp is not None and outp is not None:
-        return "labelled" if inp != outp else "sign"
-    legacy = record.get("mode")
-    if isinstance(legacy, str) and legacy:
-        return legacy
+    if mode not in (None, ""):
+        return "unknown"
+    if record.get("input") is not None and record.get("output") is not None:
+        return "sign"
     return "unknown"
 
 
@@ -158,9 +148,6 @@ def stat_value(record: dict, key: str) -> int | None:
         return value
     stats = record.get("stats", {})
     value = stats.get(key) if isinstance(stats, dict) else None
-    if not isinstance(value, int) and isinstance(stats, dict):
-        legacy_key = LEGACY_STAT_ALIASES.get(key)
-        value = stats.get(legacy_key) if legacy_key else value
     if key == "leaf_assignments" and value == (1 << 64) - 1:
         return None
     return value if isinstance(value, int) else None
@@ -231,12 +218,8 @@ def rankwidth_kernel_text(stats: dict[str, int], value_formatter=str) -> str:
     for prefix, label in (
         ("rankwidth_join_map", "map"),
         ("rankwidth_join", "join"),
-        ("rankwidth_labelled_join_map", "labelled-map"),
-        ("rankwidth_labelled_join", "labelled"),
         ("rankwidth_fourier_join_map", "fourier-map"),
         ("rankwidth_fourier_join", "fourier"),
-        ("rankwidth_labelled_fourier_join_map", "labelled-fourier-map"),
-        ("rankwidth_labelled_fourier_join", "labelled-fourier"),
     ):
         events = stats.get(f"{prefix}_events", 0)
         elapsed = stats.get(f"{prefix}_elapsed_ns", 0)
@@ -371,12 +354,10 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 add_sum(stats, stat, stat_value(record, stat))
             for stat in (
                 "rankwidth_width",
-                "rankwidth_support_width",
-                "rankwidth_labelled_width",
+                "rankwidth_cutrank_width",
                 "rankwidth_max_table_entries",
                 "rankwidth_table_forecast",
                 "rankwidth_join_pair_forecast",
-                "rankwidth_labelled_exact_assignments",
                 "rankwidth_max_signature_entries",
                 "cache_entries",
                 "cache_canonical_entries",
@@ -395,10 +376,9 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "max_residual_largest_component",
                 "max_residual_min_fill_width",
                 "max_residual_prefix_cut_rank",
-                "branch_rankwidth_labelled_width",
-                "branch_rankwidth_support_width",
+                "branch_rankwidth_cutrank_width",
                 "rankwidth_width_probe_width",
-                "rankwidth_support_width_probe_width",
+                "rankwidth_cutrank_width_probe_width",
                 "rankwidth_trace_table_forecast",
                 "rankwidth_trace_join_pair_forecast",
                 "branch_fallthrough_max_vars",
@@ -415,8 +395,6 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
             for stat in (
                 "join_pairs",
                 "join_signature_pairs",
-                "rankwidth_labelled_exact_cuts",
-                "rankwidth_labelled_proxy_cuts",
             ):
                 add_sum(stats, stat, stat_value(record, stat))
     return [grouped[key] for key in sorted(grouped)]
@@ -537,13 +515,12 @@ def write_import_tables(report_paths: list[pathlib.Path], file: TextIO) -> None:
             f"{row['unsupported']} |",
             file=file,
         )
-    print("\n| Tier | Imported variables | Records | OK | Below min | Too large | Other unsupported | Sign | Labelled |", file=file)
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    print("\n| Tier | Imported variables | Records | OK | Below min | Too large | Other unsupported |", file=file)
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in summary["tier_summary"]:
         print(
             f"| {markdown_escape(row['tier'])} | {markdown_escape(row['range'])} | {row['records']} | "
-            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} | "
-            f"{row['sign']} | {row['labelled']} |",
+            f"{row['ok']} | {row['below_min_vars']} | {row['too_many_vars']} | {row['unsupported']} |",
             file=file,
         )
 
@@ -567,17 +544,8 @@ def write_mqt_scaling_table(scaling_table_path: pathlib.Path | None, file: TextI
     )
     print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     for row in scaling:
-        mode = row.get("qsop_mode", "")
-        labelled = row.get("labelled_count", 0)
         sign = row.get("sign_count", 0)
-        if labelled > 0 and sign > 0:
-            mode_str = f"mixed ({labelled}L/{sign}S)"
-        elif labelled > 0:
-            mode_str = "labelled"
-        elif sign > 0:
-            mode_str = "sign"
-        else:
-            mode_str = mode or "unknown"
+        mode_str = "sign" if sign > 0 or row.get("qsop_mode") == "sign" else "unknown"
         print(
             f"| {markdown_escape(row.get('family', ''))} "
             f"| {markdown_escape(mode_str)} "
@@ -653,7 +621,6 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
             "total_ns": 0,
             "elapsed_values": [],
             "sign": 0,
-            "labelled": 0,
         })
         status = r.get("status", "")
         if status == "ok":
@@ -671,8 +638,6 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
         qsop_mode = r.get("qsop_mode", "")
         if qsop_mode == "sign":
             entry["sign"] += 1
-        elif qsop_mode == "labelled":
-            entry["labelled"] += 1
 
     if not by_tier_backend:
         return
@@ -685,7 +650,7 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
         fastest_ns = min(ok_ns) if ok_ns else 0
 
         print(f"### {tier}\n", file=file)
-        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio | Sign / Labelled |", file=file)
+        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio | Signed rows |", file=file)
         print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
 
         for backend in sorted(tier_entries):
@@ -699,7 +664,7 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
                 if fastest_ns > 0 and v["total_ns"] > 0
                 else "—"
             )
-            mode_str = f"{v['sign']} / {v['labelled']}"
+            mode_str = f"{v['sign']}"
             print(
                 f"| `{backend}` | {v['solved']} | {v['skipped']} | {v['timeout']} | {v['error']}"
                 f" | {format_ns(v['total_ns'])}"

@@ -1,0 +1,9 @@
+{
+  "name": "tier-33-64-sparse-n36-r8-02",
+  "generator": "build_sop_corpus.py:v2-sign",
+  "r": 8,
+  "nvars": 36,
+  "nedges": 87,
+  "description": "Synthetic sparse graph, 36 vars, r=8, seed=3042+2",
+  "solvable_without_external_tools": true
+}

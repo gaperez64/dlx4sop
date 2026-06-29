@@ -38,18 +38,18 @@ def _load_refresh(render_mod):
 def test_explicit_qsop_mode_field(render_mod):
     m = render_mod.record_qsop_mode
     assert m({"qsop_mode": "sign"}) == "sign"
-    assert m({"qsop_mode": "labelled"}) == "labelled"
+    assert m({"qsop_mode": "not-sign"}) == "unknown"
 
 
 def test_derive_from_input_output(render_mod):
     m = render_mod.record_qsop_mode
-    assert m({"input": "01", "output": "10"}) == "labelled"
+    assert m({"input": "01", "output": "10"}) == "sign"
     assert m({"input": "00", "output": "00"}) == "sign"
 
 
-def test_legacy_mode_field(render_mod):
+def test_no_mode_field_fallback(render_mod):
     m = render_mod.record_qsop_mode
-    assert m({"mode": "sign"}) == "sign"
+    assert m({"mode": "sign"}) == "unknown"
 
 
 def test_unknown_when_no_fields(render_mod):
@@ -74,11 +74,11 @@ _SIGN_RECORD = {
     "stats": {},
 }
 
-_LABELLED_RECORD = {
+_SECOND_SIGN_RECORD = {
     **_SIGN_RECORD,
     "input": "0",
     "output": "1",
-    "qsop_mode": "labelled",
+    "qsop_mode": "sign",
 }
 
 
@@ -88,7 +88,7 @@ def test_write_mode_scoreboard_sign(refresh_mod):
         [("0-32", [_SIGN_RECORD])],
         [],
         mode="sign",
-        assets_subdir="scoreboard-assets/sign",
+        assets_subdir="scoreboard-assets",
         file=buf,
     )
     out = buf.getvalue()
@@ -107,26 +107,8 @@ def test_write_mode_scoreboard_sign(refresh_mod):
     for heading in expected_headings:
         if heading not in out:
             raise AssertionError(f"missing heading {heading!r} in write_mode_scoreboard output")
-    if "scoreboard-assets/sign/survival-feynmandd.svg" not in out:
+    if "scoreboard-assets/survival-feynmandd.svg" not in out:
         raise AssertionError("expected sign assets subdir in SVG paths")
-    if "labelled" in out.lower() and "scoreboard-assets/labelled" in out:
-        raise AssertionError("labelled assets path leaked into sign scoreboard")
-
-
-def test_write_mode_scoreboard_labelled(refresh_mod):
-    buf = io.StringIO()
-    refresh_mod.write_mode_scoreboard(
-        [("0-32", [_LABELLED_RECORD])],
-        [],
-        mode="labelled",
-        assets_subdir="scoreboard-assets/labelled",
-        file=buf,
-    )
-    out = buf.getvalue()
-    if "# Scoreboard — labelled QSOPs" not in out:
-        raise AssertionError("expected labelled scoreboard title")
-    if "scoreboard-assets/labelled/survival-feynmandd.svg" not in out:
-        raise AssertionError("expected labelled assets subdir in SVG paths")
 
 
 def test_write_mode_scoreboard_no_details_link(refresh_mod):
@@ -135,7 +117,7 @@ def test_write_mode_scoreboard_no_details_link(refresh_mod):
         [("0-32", [_SIGN_RECORD])],
         [],
         mode="sign",
-        assets_subdir="scoreboard-assets/sign",
+        assets_subdir="scoreboard-assets",
         file=buf,
     )
     out = buf.getvalue()
@@ -146,18 +128,16 @@ def test_write_mode_scoreboard_no_details_link(refresh_mod):
 def test_write_index(refresh_mod):
     buf = io.StringIO()
     refresh_mod.write_index(
-        [("0-32", [_SIGN_RECORD, _LABELLED_RECORD])],
+        [("0-32", [_SIGN_RECORD, _SECOND_SIGN_RECORD])],
         buf,
     )
     out = buf.getvalue()
     if "# Scoreboard" not in out:
         raise AssertionError("expected '# Scoreboard' in index")
-    if "scoreboard-sign.md" not in out:
-        raise AssertionError("expected link to scoreboard-sign.md")
-    if "scoreboard-labelled.md" not in out:
-        raise AssertionError("expected link to scoreboard-labelled.md")
-    if "| Source | Total solved | Sign | Labelled |" not in out:
-        raise AssertionError("expected Source × {Sign, Labelled} table in index")
+    if ".md)" in out:
+        raise AssertionError("index must not link secondary markdown scoreboards")
+    if "| Source | Total solved | Signed QSOP rows |" not in out:
+        raise AssertionError("expected signed-row summary table in index")
     if "scoreboard-assets" in out:
         raise AssertionError("index must not contain SVG paths")
 
@@ -169,10 +149,9 @@ def main() -> int:
     tests = [
         ("explicit_qsop_mode_field", lambda: test_explicit_qsop_mode_field(render_mod)),
         ("derive_from_input_output", lambda: test_derive_from_input_output(render_mod)),
-        ("legacy_mode_field", lambda: test_legacy_mode_field(render_mod)),
+        ("no_mode_field_fallback", lambda: test_no_mode_field_fallback(render_mod)),
         ("unknown_when_no_fields", lambda: test_unknown_when_no_fields(render_mod)),
         ("write_mode_scoreboard_sign", lambda: test_write_mode_scoreboard_sign(refresh_mod)),
-        ("write_mode_scoreboard_labelled", lambda: test_write_mode_scoreboard_labelled(refresh_mod)),
         ("write_mode_scoreboard_no_details_link", lambda: test_write_mode_scoreboard_no_details_link(refresh_mod)),
         ("write_index", lambda: test_write_index(refresh_mod)),
     ]

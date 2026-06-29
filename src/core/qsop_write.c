@@ -29,7 +29,7 @@ bool qsop_write_file(FILE *file, const qsop_instance_t *qsop, qsop_error_t *erro
     return false;
   }
 
-  fprintf(file, "p qsop %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", qsop->r, qsop->nvars,
+  fprintf(file, "p qsop-sign %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", qsop->r, qsop->nvars,
           qsop->nedges);
   fprintf(file, "n %" PRIu64 "\n", qsop->norm_h);
   fprintf(file, "cst %" PRIu32 "\n", qsop->constant);
@@ -49,14 +49,8 @@ bool qsop_write_file(FILE *file, const qsop_instance_t *qsop, qsop_error_t *erro
     fputc('\n', file);
   }
 
-  const uint32_t sign_coeff = qsop->r / 2U;
   for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (qsop->mode == QSOP_MODE_SIGN && qsop->edge_q[e] == sign_coeff) {
-      fprintf(file, "e %" PRIu32 " %" PRIu32 "\n", qsop->edge_u[e], qsop->edge_v[e]);
-    } else {
-      fprintf(file, "q %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", qsop->edge_u[e],
-              qsop->edge_v[e], qsop->edge_q[e]);
-    }
+    fprintf(file, "e %" PRIu32 " %" PRIu32 "\n", qsop->edge_u[e], qsop->edge_v[e]);
   }
 
   return !write_failed(file, error);

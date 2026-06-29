@@ -40,7 +40,7 @@ def solve(sop_solve: pathlib.Path, qsop: str, backend: str, fmt: str) -> str:
 def qsop_nvars(qsop: str) -> int:
     for line in qsop.splitlines():
         parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["p", "qsop"]:
+        if len(parts) == 5 and parts[:2] == ["p", "qsop-sign"]:
             return int(parts[3])
     raise AssertionError(f"missing QSOP header:\n{qsop}")
 

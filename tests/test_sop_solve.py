@@ -317,38 +317,38 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{brute_force.stdout}\n{brute_force.stderr}"
         )
 
-    labelled_qsop = "p qsop 8 64 1\nn 0\ncst 0\nq 0 1 3\n"
-    labelled = subprocess.run(
+    signed_qsop = "p qsop-sign 8 64 1\nn 0\ncst 0\ne 0 1\n"
+    signed = subprocess.run(
         [str(exe), "--backend", "rankwidth", "--max-vars", "64", "-"],
-        input=labelled_qsop,
+        input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    labelled_expected = (
+    signed_expected = (
         "p qsop-result 8\n"
         "n 0\n"
-        "counts 13835058055282163712 0 0 4611686018427387904 0 0 0 0\n"
+        "counts 13835058055282163712 0 0 0 4611686018427387904 0 0 0\n"
     )
-    if labelled.returncode != 0 or labelled.stdout != labelled_expected:
-        raise AssertionError(f"large labelled rankwidth CRT solve failed\n{labelled.stdout}\n{labelled.stderr}")
+    if signed.returncode != 0 or signed.stdout != signed_expected:
+        raise AssertionError(f"large signed rankwidth CRT solve failed\n{signed.stdout}\n{signed.stderr}")
 
-    labelled_branch = subprocess.run(
+    signed_branch = subprocess.run(
         [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
-        input=labelled_qsop,
+        input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if labelled_branch.returncode != 0 or labelled_branch.stdout != labelled_expected:
+    if signed_branch.returncode != 0 or signed_branch.stdout != signed_expected:
         raise AssertionError(
-            f"large labelled branch CRT solve failed\n{labelled_branch.stdout}\n"
-            f"{labelled_branch.stderr}"
+            f"large signed branch CRT solve failed\n{signed_branch.stdout}\n"
+            f"{signed_branch.stderr}"
         )
 
-    labelled_treewidth_fourier = subprocess.run(
+    signed_treewidth_fourier = subprocess.run(
         [
             str(exe),
             "--backend",
@@ -359,19 +359,19 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "64",
             "-",
         ],
-        input=labelled_qsop,
+        input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     if (
-        labelled_treewidth_fourier.returncode != 0
-        or labelled_treewidth_fourier.stdout != labelled_expected
+        signed_treewidth_fourier.returncode != 0
+        or signed_treewidth_fourier.stdout != signed_expected
     ):
         raise AssertionError(
-            f"large labelled treewidth Fourier CRT solve failed\n"
-            f"{labelled_treewidth_fourier.stdout}\n{labelled_treewidth_fourier.stderr}"
+            f"large signed treewidth Fourier CRT solve failed\n"
+            f"{signed_treewidth_fourier.stdout}\n{signed_treewidth_fourier.stderr}"
         )
 
     rankwidth_fourier = subprocess.run(
@@ -397,7 +397,7 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
         )
 
-    labelled_rankwidth_fourier = subprocess.run(
+    signed_rankwidth_fourier = subprocess.run(
         [
             str(exe),
             "--backend",
@@ -408,25 +408,25 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "64",
             "-",
         ],
-        input=labelled_qsop,
+        input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     if (
-        labelled_rankwidth_fourier.returncode != 0
-        or labelled_rankwidth_fourier.stdout != labelled_expected
+        signed_rankwidth_fourier.returncode != 0
+        or signed_rankwidth_fourier.stdout != signed_expected
     ):
         raise AssertionError(
-            f"large labelled rankwidth Fourier CRT solve failed\n"
-            f"{labelled_rankwidth_fourier.stdout}\n{labelled_rankwidth_fourier.stderr}"
+            f"large signed rankwidth Fourier CRT solve failed\n"
+            f"{signed_rankwidth_fourier.stdout}\n{signed_rankwidth_fourier.stderr}"
         )
 
 
 def run_branch_dp_handoff(exe: pathlib.Path) -> None:
-    left_edges = [f"q {i} {i + 1} 8" for i in range(31)]
-    right_edges = [f"q {i} {i + 1} 8" for i in range(32, 63)]
+    left_edges = [f"e {i} {i + 1}" for i in range(31)]
+    right_edges = [f"e {i} {i + 1}" for i in range(32, 63)]
     edges = "\n".join(left_edges + right_edges)
     qsop = f"p qsop-sign 16 64 62\nn 0\ncst 3\n{edges}\n"
     branch = subprocess.run(
@@ -491,7 +491,7 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
 
 
 def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
-    edges = "\n".join(f"q {i} {i + 1} 8" for i in range(31))
+    edges = "\n".join(f"e {i} {i + 1}" for i in range(31))
     qsop = f"p qsop-sign 16 32 31\nn 0\ncst 3\n{edges}\n"
     stats = subprocess.run(
         [
@@ -585,7 +585,7 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
 
 
 def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
-    edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
+    edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
     qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
     branch = subprocess.run(
         [str(exe), "--backend", "branch", "--max-vars", "40", "-"],
@@ -641,7 +641,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
     expected_trace = {
         "branch.rankwidth_probe",
-        "branch.rankwidth_support_probe",
+        "branch.rankwidth_cutrank_probe",
         "branch.rankwidth_table_forecast",
         "branch.rankwidth_join_pair_forecast",
         "branch.treewidth_table_forecast",
@@ -703,9 +703,9 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             f"{expected_fourier_trace - fourier_trace_phases}\n{fourier_stats.stderr}"
         )
 
-    labelled_edges = "\n".join(f"q {u} {v} 3" for u in range(16) for v in range(16, 32))
-    labelled_qsop = f"p qsop 8 32 256\nn 0\ncst 5\n{labelled_edges}\n"
-    labelled_fourier_stats = subprocess.run(
+    signed_edges = "\n".join(f"e {u} {v}" for u in range(16) for v in range(16, 32))
+    signed_qsop = f"p qsop-sign 8 32 256\nn 0\ncst 5\n{signed_edges}\n"
+    signed_fourier_stats = subprocess.run(
         [
             str(exe),
             "--format",
@@ -720,42 +720,41 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "csv",
             "-",
         ],
-        input=labelled_qsop,
+        input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    expected_labelled_stats = {
+    expected_signed_stats = {
         "backend: branch",
         "solve_mode: fourier",
         "rankwidth_delegations: 1",
-        "rankwidth_labelled_width: 3",
-        "rankwidth_labelled_proxy_cuts: 0",
+        "rankwidth_cutrank_width: 1",
     }
-    if labelled_fourier_stats.returncode != 0 or not all(
-        part in labelled_fourier_stats.stdout for part in expected_labelled_stats
+    if signed_fourier_stats.returncode != 0 or not all(
+        part in signed_fourier_stats.stdout for part in expected_signed_stats
     ):
         raise AssertionError(
-            f"branch labelled rankwidth Fourier handoff stats failed\n"
-            f"{labelled_fourier_stats.stdout}\n{labelled_fourier_stats.stderr}"
+            f"branch signed rankwidth Fourier handoff stats failed\n"
+            f"{signed_fourier_stats.stdout}\n{signed_fourier_stats.stderr}"
         )
-    labelled_trace_phases = {
+    signed_trace_phases = {
         line.split(",", 1)[0]
-        for line in labelled_fourier_stats.stderr.splitlines()[1:]
+        for line in signed_fourier_stats.stderr.splitlines()[1:]
         if line
     }
-    expected_labelled_trace = {
+    expected_signed_trace = {
         "branch.rankwidth_delegate",
-        "rankwidth.labelled_fourier_leaf",
-        "rankwidth.labelled_fourier_join_map",
-        "rankwidth.labelled_fourier_join",
+        "rankwidth.fourier_leaf",
+        "rankwidth.fourier_join_map",
+        "rankwidth.fourier_join",
     }
-    if not expected_labelled_trace.issubset(labelled_trace_phases):
+    if not expected_signed_trace.issubset(signed_trace_phases):
         raise AssertionError(
-            f"branch labelled rankwidth Fourier trace missing "
-            f"{expected_labelled_trace - labelled_trace_phases}\n"
-            f"{labelled_fourier_stats.stderr}"
+            f"branch signed rankwidth Fourier trace missing "
+            f"{expected_signed_trace - signed_trace_phases}\n"
+            f"{signed_fourier_stats.stderr}"
         )
 
 
@@ -768,7 +767,7 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 "stats",
                 "--backend",
                 "branch",
-                str(source_root / "tests" / "golden" / "solve_labelled.qsop"),
+                str(source_root / "tests" / "golden" / "solve_signed_edge.qsop"),
             ],
             source_root / "tests" / "golden" / "solve_branch.stats",
         ),
@@ -860,7 +859,7 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
 
 def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
-    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     completed = subprocess.run(
         [str(exe), "--format", "stats", "--include-result", "--include-probability", str(qsop)],
         check=False,
@@ -871,7 +870,7 @@ def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> No
     expected_result = {
         "result_modulus: 8",
         "result_norm_h: 4",
-        "result_counts: 0 0 1 1 1 0 1 0",
+        "result_counts: 0 0 1 0 2 0 1 0",
     }
     if completed.returncode != 0 or not expected_result.issubset(set(completed.stdout.splitlines())):
         raise AssertionError(f"include-result stats failed\n{completed.stdout}\n{completed.stderr}")
@@ -881,7 +880,7 @@ def run_include_result_stats(exe: pathlib.Path, source_root: pathlib.Path) -> No
     if len(probability_lines) != 1:
         raise AssertionError(f"missing probability line\n{completed.stdout}\n{completed.stderr}")
     probability = float(probability_lines[0].split(": ", 1)[1])
-    if abs(probability - 0.21338834764831843) > 1e-15:
+    if abs(probability - 0.25) > 1e-15:
         raise AssertionError(f"unexpected probability {probability}\n{completed.stdout}")
 
     invalid = subprocess.run(
@@ -956,15 +955,15 @@ def run_branch_component_cache(exe: pathlib.Path, source_root: pathlib.Path) -> 
             raise AssertionError(f"{name}: cache estimate is smaller than count storage")
 
     repeated_triangle = (
-        "p qsop 8 6 6\n"
+        "p qsop-sign 8 6 6\n"
         "n 0\n"
         "cst 0\n"
-        "q 0 1 4\n"
-        "q 1 2 4\n"
-        "q 0 2 4\n"
-        "q 3 4 4\n"
-        "q 4 5 4\n"
-        "q 3 5 4\n"
+        "e 0 1\n"
+        "e 1 2\n"
+        "e 0 2\n"
+        "e 3 4\n"
+        "e 4 5\n"
+        "e 3 5\n"
     )
     completed = subprocess.run(
         [str(exe), "--format", "stats", "--backend", "branch", "-"],
@@ -1181,8 +1180,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "rankwidth_mode: count-table",
         "rankwidth_decomposition: explicit",
         "decomposition_width: 1",
-        "rankwidth_support_width:",
-        "rankwidth_labelled_width:",
+        "rankwidth_cutrank_width:",
         "table_entries:",
         "max_table_entries:",
         "signature_entries:",
@@ -1191,9 +1189,6 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "join_signature_pairs:",
         "rankwidth_table_forecast:",
         "rankwidth_join_pair_forecast:",
-        "rankwidth_labelled_exact_cuts:",
-        "rankwidth_labelled_proxy_cuts:",
-        "rankwidth_labelled_exact_assignments:",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
@@ -1243,7 +1238,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(f"rankwidth min-fill-cut stats failed\n{cut_stats.stdout}\n{cut_stats.stderr}")
 
-    zero_var_qsop = "p qsop 8 0 0\nn 4\ncst 3\n"
+    zero_var_qsop = "p qsop-sign 8 0 0\nn 4\ncst 3\n"
     zero_var_stats = subprocess.run(
         [
             str(exe),
@@ -1267,8 +1262,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "rankwidth_mode: count-table",
         "rankwidth_decomposition: min-fill-cut",
         "decomposition_width: 0",
-        "rankwidth_support_width: 0",
-        "rankwidth_labelled_width: 0",
+        "rankwidth_cutrank_width: 0",
         "table_entries: 1",
         "max_table_entries: 1",
         "signature_entries: 1",
@@ -1277,9 +1271,6 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "join_signature_pairs: 0",
         "rankwidth_table_forecast: 1",
         "rankwidth_join_pair_forecast: 0",
-        "rankwidth_labelled_exact_cuts: 0",
-        "rankwidth_labelled_proxy_cuts: 0",
-        "rankwidth_labelled_exact_assignments: 0",
         "result_counts: 0 0 0 1 0 0 0 0",
     }
     if zero_var_stats.returncode != 0 or not all(
@@ -1436,38 +1427,38 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "variable count does not match QSOP",
         )
 
-    labelled = source_root / "tests" / "golden" / "solve_labelled.qsop"
-    labelled_decomposition = source_root / "tests" / "golden" / "solve_labelled.rwdec"
-    labelled_expected = subprocess.run(
-        [str(exe), "--backend", "brute-force", str(labelled)],
+    signed = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
+    signed_decomposition = source_root / "tests" / "golden" / "solve_signed_edge.rwdec"
+    signed_expected = subprocess.run(
+        [str(exe), "--backend", "brute-force", str(signed)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if labelled_expected.returncode != 0:
-        raise AssertionError(f"labelled brute force solve failed\n{labelled_expected.stderr}")
+    if signed_expected.returncode != 0:
+        raise AssertionError(f"signed brute force solve failed\n{signed_expected.stderr}")
     assert_rankwidth_matches(
         exe,
-        labelled,
-        labelled_expected.stdout,
+        signed,
+        signed_expected.stdout,
         "--rankwidth-decomposition",
-        str(labelled_decomposition),
+        str(signed_decomposition),
     )
     assert_rankwidth_matches(
         exe,
-        labelled,
-        labelled_expected.stdout,
+        signed,
+        signed_expected.stdout,
         "--rankwidth-mode",
         "fourier",
         "--rankwidth-decomposition",
-        str(labelled_decomposition),
+        str(signed_decomposition),
     )
-    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout)
-    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "balanced")
-    assert_rankwidth_matches(exe, labelled, labelled_expected.stdout, "--rankwidth-generate", "min-fill-cut")
+    assert_rankwidth_matches(exe, signed, signed_expected.stdout)
+    assert_rankwidth_matches(exe, signed, signed_expected.stdout, "--rankwidth-generate", "balanced")
+    assert_rankwidth_matches(exe, signed, signed_expected.stdout, "--rankwidth-generate", "min-fill-cut")
 
-    labelled_stats = subprocess.run(
+    signed_stats = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1475,8 +1466,8 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "--backend",
             "rankwidth",
             "--rankwidth-decomposition",
-            str(labelled_decomposition),
-            str(labelled),
+            str(signed_decomposition),
+            str(signed),
         ],
         check=False,
         stdout=subprocess.PIPE,
@@ -1484,18 +1475,15 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         text=True,
     )
     if (
-        labelled_stats.returncode != 0
-        or "rankwidth_mode: count-table" not in labelled_stats.stdout
-        or "decomposition_width: 1" not in labelled_stats.stdout
-        or "rankwidth_support_width: 1" not in labelled_stats.stdout
-        or "rankwidth_labelled_width: 1" not in labelled_stats.stdout
-        or "rankwidth_labelled_exact_cuts: 2" not in labelled_stats.stdout
-        or "rankwidth_labelled_proxy_cuts: 0" not in labelled_stats.stdout
-        or "join_signature_pairs: 4" not in labelled_stats.stdout
+        signed_stats.returncode != 0
+        or "rankwidth_mode: count-table" not in signed_stats.stdout
+        or "decomposition_width: 1" not in signed_stats.stdout
+        or "rankwidth_cutrank_width: 1" not in signed_stats.stdout
+        or "join_signature_pairs: 4" not in signed_stats.stdout
     ):
-        raise AssertionError(f"labelled rankwidth stats failed\n{labelled_stats.stdout}\n{labelled_stats.stderr}")
+        raise AssertionError(f"signed rankwidth stats failed\n{signed_stats.stdout}\n{signed_stats.stderr}")
 
-    three_signature_qsop = "p qsop 4 3 2\nn 0\ncst 0\nq 0 2 1\nq 1 2 1\n"
+    three_signature_qsop = "p qsop-sign 4 3 2\nn 0\ncst 0\ne 0 2\ne 1 2\n"
     three_signature_stats = subprocess.run(
         [
             str(exe),
@@ -1520,13 +1508,10 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         )
     three_stats = parse_solver_stats(three_signature_stats.stdout)
     expected_three_stats = {
-        "rankwidth_support_width": 1,
-        "rankwidth_labelled_width": 2,
-        "max_table_entries": 3,
-        "rankwidth_table_forecast": 12,
-        "rankwidth_join_pair_forecast": 10,
-        "rankwidth_labelled_exact_cuts": 4,
-        "rankwidth_labelled_proxy_cuts": 0,
+        "rankwidth_cutrank_width": 1,
+        "max_table_entries": 2,
+        "rankwidth_table_forecast": 8,
+        "rankwidth_join_pair_forecast": 8,
     }
     for key, value in expected_three_stats.items():
         if three_stats.get(key) != value:
@@ -1535,7 +1520,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 f"{three_stats.get(key)}\n{three_signature_stats.stdout}"
             )
 
-    labelled_left_deep_stats = subprocess.run(
+    signed_left_deep_stats = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1544,14 +1529,14 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "rankwidth",
             "--rankwidth-generate",
             "left-deep",
-            str(labelled),
+            str(signed),
         ],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    labelled_min_fill_cut_stats = subprocess.run(
+    signed_min_fill_cut_stats = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1560,21 +1545,21 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "rankwidth",
             "--rankwidth-generate",
             "min-fill-cut",
-            str(labelled),
+            str(signed),
         ],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if labelled_left_deep_stats.returncode != 0 or labelled_min_fill_cut_stats.returncode != 0:
+    if signed_left_deep_stats.returncode != 0 or signed_min_fill_cut_stats.returncode != 0:
         raise AssertionError(
-            f"labelled generated rankwidth stats failed\n"
-            f"left-deep:\n{labelled_left_deep_stats.stdout}\n{labelled_left_deep_stats.stderr}\n"
-            f"min-fill-cut:\n{labelled_min_fill_cut_stats.stdout}\n{labelled_min_fill_cut_stats.stderr}"
+            f"signed generated rankwidth stats failed\n"
+            f"left-deep:\n{signed_left_deep_stats.stdout}\n{signed_left_deep_stats.stderr}\n"
+            f"min-fill-cut:\n{signed_min_fill_cut_stats.stdout}\n{signed_min_fill_cut_stats.stderr}"
         )
-    left_stats = parse_solver_stats(labelled_left_deep_stats.stdout)
-    cut_stats = parse_solver_stats(labelled_min_fill_cut_stats.stdout)
+    left_stats = parse_solver_stats(signed_left_deep_stats.stdout)
+    cut_stats = parse_solver_stats(signed_min_fill_cut_stats.stdout)
     for key in (
         "decomposition_width",
         "table_entries",
@@ -1588,12 +1573,12 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         if left_stats[key] != cut_stats[key]:
             raise AssertionError(
-                f"labelled min-fill-cut should use the left-deep fallback for {key}\n"
-                f"left-deep:\n{labelled_left_deep_stats.stdout}\n"
-                f"min-fill-cut:\n{labelled_min_fill_cut_stats.stdout}"
+                f"signed min-fill-cut should use the left-deep fallback for {key}\n"
+                f"left-deep:\n{signed_left_deep_stats.stdout}\n"
+                f"min-fill-cut:\n{signed_min_fill_cut_stats.stdout}"
             )
 
-    labelled_trace = subprocess.run(
+    signed_trace = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1601,10 +1586,10 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "--backend",
             "rankwidth",
             "--rankwidth-decomposition",
-            str(labelled_decomposition),
+            str(signed_decomposition),
             "--trace",
             "csv",
-            str(labelled),
+            str(signed),
         ],
         check=False,
         stdout=subprocess.PIPE,
@@ -1612,14 +1597,14 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         text=True,
     )
     if (
-        labelled_trace.returncode != 0
-        or "rankwidth.labelled_leaf" not in labelled_trace.stderr
-        or "rankwidth.labelled_join_map" not in labelled_trace.stderr
-        or "rankwidth.labelled_join" not in labelled_trace.stderr
+        signed_trace.returncode != 0
+        or "rankwidth.leaf" not in signed_trace.stderr
+        or "rankwidth.join_map" not in signed_trace.stderr
+        or "rankwidth.join" not in signed_trace.stderr
     ):
-        raise AssertionError(f"labelled rankwidth trace failed\n{labelled_trace.stdout}\n{labelled_trace.stderr}")
+        raise AssertionError(f"signed rankwidth trace failed\n{signed_trace.stdout}\n{signed_trace.stderr}")
 
-    labelled_fourier_trace = subprocess.run(
+    signed_fourier_trace = subprocess.run(
         [
             str(exe),
             "--format",
@@ -1629,10 +1614,10 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             "--rankwidth-mode",
             "fourier",
             "--rankwidth-decomposition",
-            str(labelled_decomposition),
+            str(signed_decomposition),
             "--trace",
             "csv",
-            str(labelled),
+            str(signed),
         ],
         check=False,
         stdout=subprocess.PIPE,
@@ -1640,19 +1625,19 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         text=True,
     )
     if (
-        labelled_fourier_trace.returncode != 0
-        or "rankwidth.labelled_fourier_leaf" not in labelled_fourier_trace.stderr
-        or "rankwidth.labelled_fourier_join_map" not in labelled_fourier_trace.stderr
-        or "rankwidth.labelled_fourier_join" not in labelled_fourier_trace.stderr
+        signed_fourier_trace.returncode != 0
+        or "rankwidth.fourier_leaf" not in signed_fourier_trace.stderr
+        or "rankwidth.fourier_join_map" not in signed_fourier_trace.stderr
+        or "rankwidth.fourier_join" not in signed_fourier_trace.stderr
     ):
         raise AssertionError(
-            f"labelled rankwidth Fourier trace failed\n"
-            f"{labelled_fourier_trace.stdout}\n{labelled_fourier_trace.stderr}"
+            f"signed rankwidth Fourier trace failed\n"
+            f"{signed_fourier_trace.stdout}\n{signed_fourier_trace.stderr}"
         )
 
 
 def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
-    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     expected = subprocess.run(
         [str(exe), "--backend", "branch", str(qsop)],
         check=False,
@@ -1700,7 +1685,7 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
 
 def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
-    for name in ["solve_single", "solve_labelled", "solve_disconnected"]:
+    for name in ["solve_single", "solve_signed_edge", "solve_disconnected"]:
         qsop = source_root / "tests" / "golden" / f"{name}.qsop"
         expected = subprocess.run(
             [str(exe), "--backend", "brute-force", str(qsop)],
@@ -1747,7 +1732,7 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                     f"{fourier_completed.stdout}\n{fourier_completed.stderr}"
                 )
 
-    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     stats = subprocess.run(
         [str(exe), "--format", "stats", "--backend", "treewidth", str(qsop)],
         check=False,
@@ -1872,7 +1857,7 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"treewidth trace missing phases {expected_phases - phases}\n{traced.stderr}")
 
 def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
-    qsop = source_root / "tests" / "golden" / "solve_labelled.qsop"
+    qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     expected_stats = source_root / "tests" / "golden" / "solve_branch.stats"
     completed = subprocess.run(
         [str(exe), "--format", "stats", "--backend", "branch", "--trace", "csv", str(qsop)],
@@ -1939,8 +1924,8 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
 
 def _path_qsop(nvars: int, r: int) -> str:
-    edges = "\n".join(f"q {i} {i + 1} 1" for i in range(nvars - 1))
-    return f"p qsop {r} {nvars} {nvars - 1}\nn 0\ncst 0\n{edges}\n"
+    edges = "\n".join(f"e {i} {i + 1}" for i in range(nvars - 1))
+    return f"p qsop-sign {r} {nvars} {nvars - 1}\nn 0\ncst 0\n{edges}\n"
 
 
 def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
@@ -1973,10 +1958,10 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     # With --stats-jsonl the treewidth-delegation recording path fires for each component
     # (lines 1672-1678 in branch.c).
     asym_two_paths = (
-        f"p qsop 8 40 38\nn 0\ncst 0\nu 0 1\n"
-        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        f"p qsop-sign 8 40 38\nn 0\ncst 0\nu 0 1\n"
+        + "\n".join(f"e {i} {i + 1}" for i in range(19))
         + "\n"
-        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n".join(f"e {20 + i} {20 + i + 1}" for i in range(19))
         + "\n"
     )
     with tempfile.TemporaryDirectory() as td:
@@ -1999,13 +1984,13 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
             f"ref: {asym_ref.stdout}{asym_ref.stderr}"
         )
 
-    # K_16 complete graph (r=2, all edges weight 1 = r/2 → sign mode, labelled_width=1).
+    # K_16 complete graph (r=2, all edges weight 1 = r/2, cutrank_width=1).
     # min_fill_width=15 > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH=14 AND rw_uses_from_treewidth=true
     # → use_stats_order_for_rankwidth=true → covers lines 1460-1463 (wide path in branch_try_dp_delegate).
     k16_edges = "\n".join(
-        f"q {u} {v} 1" for u in range(16) for v in range(u + 1, 16)
+        f"e {u} {v}" for u in range(16) for v in range(u + 1, 16)
     )
-    k16 = f"p qsop 2 16 120\nn 0\ncst 0\n{k16_edges}\n"
+    k16 = f"p qsop-sign 2 16 120\nn 0\ncst 0\n{k16_edges}\n"
     k16_ft = subprocess.run(
         [str(exe), "--backend", "branch", "--branch-rw-source", "from-treewidth",
          "--max-vars", "32", "-"],
@@ -2024,10 +2009,10 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
 
     # 2×P_20 symmetric (both components identical): exercise the "both" rw_source code path.
     two_paths = (
-        f"p qsop 8 40 38\nn 0\ncst 0\n"
-        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        f"p qsop-sign 8 40 38\nn 0\ncst 0\n"
+        + "\n".join(f"e {i} {i + 1}" for i in range(19))
         + "\n"
-        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n".join(f"e {20 + i} {20 + i + 1}" for i in range(19))
         + "\n"
     )
     for rw_source in ("from-treewidth", "both"):
@@ -2069,10 +2054,10 @@ def run_branch_large_fourier(exe: pathlib.Path) -> None:
     # use_fourier=true, covering the NTT prime/root setup and per-component convolution
     # (lines 1853-1875, 1883-1890, 1920-1932 in branch.c).
     two_paths = (
-        f"p qsop 8 40 38\nn 0\ncst 0\n"
-        + "\n".join(f"q {i} {i + 1} 1" for i in range(19))
+        f"p qsop-sign 8 40 38\nn 0\ncst 0\n"
+        + "\n".join(f"e {i} {i + 1}" for i in range(19))
         + "\n"
-        + "\n".join(f"q {20 + i} {20 + i + 1} 1" for i in range(19))
+        + "\n".join(f"e {20 + i} {20 + i + 1}" for i in range(19))
         + "\n"
     )
     fourier2 = subprocess.run(
@@ -2092,7 +2077,7 @@ def run_branch_large_fourier(exe: pathlib.Path) -> None:
 
 def run_branch_stats_sink(exe: pathlib.Path) -> None:
     # K_{20,20}: rankwidth wins → recording after rankwidth delegation (lines 1537-1543).
-    knn_edges = "\n".join(f"q {u} {v} 8" for u in range(20) for v in range(20, 40))
+    knn_edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
     knn = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{knn_edges}\n"
     # P_20: treewidth wins → recording after treewidth delegation (lines 1672-1678).
     p20 = _path_qsop(20, 8)
@@ -2231,7 +2216,7 @@ def main() -> int:
     exe = pathlib.Path(sys.argv[1])
     source_root = pathlib.Path(sys.argv[2])
     run_solve(exe, source_root, "solve_single")
-    run_solve(exe, source_root, "solve_labelled")
+    run_solve(exe, source_root, "solve_signed_edge")
     run_solve(exe, source_root, "solve_disconnected")
     run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)

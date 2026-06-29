@@ -73,7 +73,7 @@ def benchmark(args: argparse.Namespace) -> list[dict]:
                 "stats_elapsed_ns": stats_elapsed_ns,
                 "variables": stats["variables"],
                 "quadratic_terms": stats["quadratic_terms"],
-                "mode": stats["mode"],
+                "format": stats["format"],
                 "components": stats["components"],
                 "max_degree": stats["max_degree"],
                 "min_fill_width": stats.get("min_fill_width"),
@@ -128,7 +128,7 @@ def write_summary(records: list[dict], file: TextIO) -> None:
         print(
             f"{label}: {record['source']}:{record['case']} {record['input']}->{record['output']} "
             f"value={record[key]} variables={record['variables']} terms={record['quadratic_terms']} "
-            f"mode={record['mode']}",
+            f"format={record['format']}",
             file=file,
         )
     if skipped:

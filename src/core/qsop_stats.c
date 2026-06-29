@@ -534,7 +534,6 @@ static bool compute_stats_internal(const qsop_instance_t *qsop,
       .nvars = qsop->nvars,
       .nedges = qsop->nedges,
       .norm_h = qsop->norm_h,
-      .mode = qsop->mode,
   };
 
   for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -639,7 +638,7 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   fprintf(file, "quadratic_terms: %" PRIu32 "\n", stats->nedges);
   fprintf(file, "nonzero_unary: %" PRIu32 "\n", stats->nonzero_unary);
   fprintf(file, "normalization_h: %" PRIu64 "\n", stats->norm_h);
-  fprintf(file, "mode: %s\n", qsop_mode_name(stats->mode));
+  fprintf(file, "format: qsop-sign\n");
   fprintf(file, "components: %" PRIu32 "\n", stats->components);
   fprintf(file, "max_degree: %" PRIu32 "\n", stats->max_degree);
   fprintf(file, "width_diagnostics: %s\n",
@@ -670,11 +669,10 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   fprintf(file,
           "{\"modulus\":%" PRIu32 ",\"variables\":%" PRIu32
           ",\"quadratic_terms\":%" PRIu32 ",\"nonzero_unary\":%" PRIu32
-          ",\"normalization_h\":%" PRIu64 ",\"mode\":\"%s\",\"components\":%" PRIu32
+          ",\"normalization_h\":%" PRIu64 ",\"format\":\"qsop-sign\",\"components\":%" PRIu32
           ",\"max_degree\":%" PRIu32 ",\"width_diagnostics_available\":%s",
           stats->r, stats->nvars, stats->nedges, stats->nonzero_unary, stats->norm_h,
-          qsop_mode_name(stats->mode), stats->components, stats->max_degree,
-          stats->width_diagnostics_available ? "true" : "false");
+          stats->components, stats->max_degree, stats->width_diagnostics_available ? "true" : "false");
   if (stats->width_diagnostics_available) {
     fprintf(file,
             ",\"min_fill_width\":%" PRIu32 ",\"min_fill_edges\":%" PRIu64

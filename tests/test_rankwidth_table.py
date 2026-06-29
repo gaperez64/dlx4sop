@@ -7,53 +7,51 @@ import sys
 import tempfile
 
 
-def make_labelled_path_qsop(nvars: int, r: int = 8) -> str:
-    """Path graph with non-sign unary and quadratic terms (labelled instance)."""
+def make_signed_path_qsop(nvars: int, r: int = 8) -> str:
+    """Path graph with non-sign unary terms and signed quadratic edges."""
     nedges = nvars - 1
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 1"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 1"]
     for i in range(nvars):
         lines.append(f"u {i} {(i % (r - 1)) + 1}")
     for i in range(nedges):
-        coeff = (i % (r // 2 - 1)) + 1
-        lines.append(f"q {i} {i + 1} {coeff}")
+        lines.append(f"e {i} {i + 1}")
     return "\n".join(lines) + "\n"
 
 
-def make_labelled_star_qsop(nvars: int, r: int = 8) -> str:
-    """Star graph (center=0) with non-sign unary and quadratic terms."""
+def make_signed_star_qsop(nvars: int, r: int = 8) -> str:
+    """Star graph (center=0) with non-sign unary terms and signed quadratic edges."""
     nedges = nvars - 1
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nvars):
         lines.append(f"u {i} {(i * 3 % (r - 1)) + 1}")
     for v in range(1, nvars):
-        lines.append(f"q 0 {v} {(v % (r // 2 - 1)) + 1}")
+        lines.append(f"e 0 {v}")
     return "\n".join(lines) + "\n"
 
 
 def make_path_qsop(nvars: int, r: int = 8) -> str:
     """Return a QSOP string for a path graph with `nvars` nodes."""
     nedges = nvars - 1
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nedges):
-        lines.append(f"q {i} {i + 1} 1")
+        lines.append(f"e {i} {i + 1}")
     return "\n".join(lines) + "\n"
 
 
 def make_sign_edge_path_qsop(nvars: int, r: int = 8) -> str:
     """Path graph with sign-edge coefficients (all edges = r/2, triggering the sign-edge path)."""
     nedges = nvars - 1
-    sign = r // 2
-    lines = [f"p qsop {r} {nvars} {nedges}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nedges}", "n 0", "cst 0"]
     for i in range(nedges):
-        lines.append(f"q {i} {i + 1} {sign}")
+        lines.append(f"e {i} {i + 1}")
     return "\n".join(lines) + "\n"
 
 
 def make_cycle_qsop(nvars: int, r: int = 8) -> str:
     """Return a QSOP string for a cycle with `nvars` nodes."""
-    lines = [f"p qsop {r} {nvars} {nvars}", "n 0", "cst 0"]
+    lines = [f"p qsop-sign {r} {nvars} {nvars}", "n 0", "cst 0"]
     for i in range(nvars):
-        lines.append(f"q {i} {(i + 1) % nvars} 1")
+        lines.append(f"e {i} {(i + 1) % nvars}")
     return "\n".join(lines) + "\n"
 
 
@@ -126,54 +124,54 @@ def test_rankwidth_table_unknown_option_rejected(exe: pathlib.Path) -> None:
     )
 
 
-def test_rankwidth_labelled_path_agrees_with_treewidth(exe: pathlib.Path) -> None:
-    """Rankwidth must produce the same residue vector as treewidth on labelled path graphs."""
+def test_rankwidth_signed_path_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """Rankwidth must produce the same residue vector as treewidth on signed path graphs."""
     for nvars in range(3, 11):
         for r in [8, 16]:
-            qsop_text = make_labelled_path_qsop(nvars, r)
+            qsop_text = make_signed_path_qsop(nvars, r)
             r_tw = run_treewidth(exe, qsop_text)
             r_rw = run_rankwidth(exe, qsop_text)
             assert r_tw.returncode == 0, (
-                f"treewidth failed on labelled path-{nvars} r={r}: {r_tw.stderr}"
+                f"treewidth failed on signed path-{nvars} r={r}: {r_tw.stderr}"
             )
             assert r_rw.returncode == 0, (
-                f"rankwidth failed on labelled path-{nvars} r={r}: {r_rw.stderr}"
+                f"rankwidth failed on signed path-{nvars} r={r}: {r_rw.stderr}"
             )
             assert r_tw.stdout == r_rw.stdout, (
-                f"treewidth/rankwidth mismatch on labelled path-{nvars} r={r}:\n"
+                f"treewidth/rankwidth mismatch on signed path-{nvars} r={r}:\n"
                 f"  tw: {r_tw.stdout!r}\n  rw: {r_rw.stdout!r}"
             )
 
 
-def test_rankwidth_labelled_large_crt_agrees_with_treewidth(exe: pathlib.Path) -> None:
+def test_rankwidth_signed_large_crt_agrees_with_treewidth(exe: pathlib.Path) -> None:
     """Labelled CRT path (nvars >= 64) must agree with treewidth on a large path graph."""
     for nvars in [70, 100]:
-        qsop_text = make_labelled_path_qsop(nvars, r=8)
+        qsop_text = make_signed_path_qsop(nvars, r=8)
         r_tw = run_treewidth(exe, qsop_text, extra_args=["--max-vars", "256"])
         r_rw = run_rankwidth(exe, qsop_text, extra_args=["--max-vars", "256"])
-        assert r_tw.returncode == 0, f"treewidth failed on labelled path-{nvars}: {r_tw.stderr}"
-        assert r_rw.returncode == 0, f"rankwidth failed on labelled path-{nvars}: {r_rw.stderr}"
+        assert r_tw.returncode == 0, f"treewidth failed on signed path-{nvars}: {r_tw.stderr}"
+        assert r_rw.returncode == 0, f"rankwidth failed on signed path-{nvars}: {r_rw.stderr}"
         assert r_tw.stdout == r_rw.stdout, (
-            f"treewidth/rankwidth mismatch on labelled path-{nvars}:\n"
+            f"treewidth/rankwidth mismatch on signed path-{nvars}:\n"
             f"  tw: {r_tw.stdout!r}\n  rw: {r_rw.stdout!r}"
         )
 
 
-def test_rankwidth_labelled_star_agrees_with_treewidth(exe: pathlib.Path) -> None:
-    """Rankwidth must produce the same residue vector as treewidth on labelled star graphs."""
+def test_rankwidth_signed_star_agrees_with_treewidth(exe: pathlib.Path) -> None:
+    """Rankwidth must produce the same residue vector as treewidth on signed star graphs."""
     for nvars in range(3, 9):
         for r in [8]:
-            qsop_text = make_labelled_star_qsop(nvars, r)
+            qsop_text = make_signed_star_qsop(nvars, r)
             r_tw = run_treewidth(exe, qsop_text)
             r_rw = run_rankwidth(exe, qsop_text)
             assert r_tw.returncode == 0, (
-                f"treewidth failed on labelled star-{nvars} r={r}: {r_tw.stderr}"
+                f"treewidth failed on signed star-{nvars} r={r}: {r_tw.stderr}"
             )
             assert r_rw.returncode == 0, (
-                f"rankwidth failed on labelled star-{nvars} r={r}: {r_rw.stderr}"
+                f"rankwidth failed on signed star-{nvars} r={r}: {r_rw.stderr}"
             )
             assert r_tw.stdout == r_rw.stdout, (
-                f"treewidth/rankwidth mismatch on labelled star-{nvars} r={r}:\n"
+                f"treewidth/rankwidth mismatch on signed star-{nvars} r={r}:\n"
                 f"  tw: {r_tw.stdout!r}\n  rw: {r_rw.stdout!r}"
             )
 
@@ -237,9 +235,9 @@ def main(argv: list[str]) -> None:
     test_rankwidth_cycle_agrees_with_treewidth(exe)
     test_rankwidth_sign_edge_large_crt_agrees_with_treewidth(exe)
     test_fourier_count_table_agree_sign_edge(exe)
-    test_rankwidth_labelled_path_agrees_with_treewidth(exe)
-    test_rankwidth_labelled_large_crt_agrees_with_treewidth(exe)
-    test_rankwidth_labelled_star_agrees_with_treewidth(exe)
+    test_rankwidth_signed_path_agrees_with_treewidth(exe)
+    test_rankwidth_signed_large_crt_agrees_with_treewidth(exe)
+    test_rankwidth_signed_star_agrees_with_treewidth(exe)
     test_rankwidth_table_unknown_option_rejected(exe)
 
     print("all rankwidth table tests passed")

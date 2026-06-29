@@ -27,7 +27,7 @@ def run_check(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
         )
 
 
-def run_invalid_sign_header(exe: pathlib.Path, source_root: pathlib.Path) -> None:
+def run_q_rejected(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     invalid = source_root / "tests" / "golden" / "invalid_sign_coeff.qsop"
     completed = subprocess.run(
         [str(exe), str(invalid)],
@@ -37,8 +37,8 @@ def run_invalid_sign_header(exe: pathlib.Path, source_root: pathlib.Path) -> Non
         text=True,
     )
     if completed.returncode == 0:
-        raise AssertionError("invalid sign coefficient unexpectedly parsed")
-    if "qsop-sign accepts only sign coefficient" not in completed.stderr:
+        raise AssertionError("q line unexpectedly parsed")
+    if "quadratic coefficients are not supported" not in completed.stderr:
         raise AssertionError(f"unexpected diagnostic:\n{completed.stderr}")
 
 
@@ -127,8 +127,7 @@ def main() -> int:
     exe = pathlib.Path(sys.argv[1])
     source_root = pathlib.Path(sys.argv[2])
     run_check(exe, source_root, "sign")
-    run_check(exe, source_root, "labelled")
-    run_invalid_sign_header(exe, source_root)
+    run_q_rejected(exe, source_root)
     run_cli_paths(exe, source_root)
     return 0
 

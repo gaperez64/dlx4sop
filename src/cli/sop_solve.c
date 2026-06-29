@@ -267,21 +267,13 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
       fprintf(file, "max_residual_prefix_cut_rank: %" PRIu32 "\n",
               stats->max_residual_prefix_cut_rank);
       fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
-      if (stats->rankwidth_support_width != 0 || stats->rankwidth_labelled_width != 0) {
-        fprintf(file, "rankwidth_support_width: %" PRIu32 "\n",
-                stats->rankwidth_support_width);
-        fprintf(file, "rankwidth_labelled_width: %" PRIu32 "\n",
-                stats->rankwidth_labelled_width);
+      if (stats->rankwidth_cutrank_width != 0) {
+        fprintf(file, "rankwidth_cutrank_width: %" PRIu32 "\n",
+                stats->rankwidth_cutrank_width);
         fprintf(file, "rankwidth_table_forecast: %" PRIu64 "\n",
                 stats->rankwidth_table_forecast);
         fprintf(file, "rankwidth_join_pair_forecast: %" PRIu64 "\n",
                 stats->rankwidth_join_pair_forecast);
-        fprintf(file, "rankwidth_labelled_exact_cuts: %" PRIu64 "\n",
-                stats->rankwidth_labelled_exact_cuts);
-        fprintf(file, "rankwidth_labelled_proxy_cuts: %" PRIu64 "\n",
-                stats->rankwidth_labelled_proxy_cuts);
-        fprintf(file, "rankwidth_labelled_exact_assignments: %" PRIu64 "\n",
-                stats->rankwidth_labelled_exact_assignments);
       }
       fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
       fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
@@ -291,10 +283,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "rankwidth_mode: %s\n", rankwidth_mode_name(rankwidth_mode));
     fprintf(file, "rankwidth_decomposition: %s\n", rankwidth_decomposition);
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
-    fprintf(file, "rankwidth_support_width: %" PRIu32 "\n",
-            stats->rankwidth_support_width);
-    fprintf(file, "rankwidth_labelled_width: %" PRIu32 "\n",
-            stats->rankwidth_labelled_width);
+    fprintf(file, "rankwidth_cutrank_width: %" PRIu32 "\n",
+            stats->rankwidth_cutrank_width);
     fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
     fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
     fprintf(file, "signature_entries: %" PRIu64 "\n", stats->signature_entries);
@@ -305,12 +295,6 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_table_forecast);
     fprintf(file, "rankwidth_join_pair_forecast: %" PRIu64 "\n",
             stats->rankwidth_join_pair_forecast);
-    fprintf(file, "rankwidth_labelled_exact_cuts: %" PRIu64 "\n",
-            stats->rankwidth_labelled_exact_cuts);
-    fprintf(file, "rankwidth_labelled_proxy_cuts: %" PRIu64 "\n",
-            stats->rankwidth_labelled_proxy_cuts);
-    fprintf(file, "rankwidth_labelled_exact_assignments: %" PRIu64 "\n",
-            stats->rankwidth_labelled_exact_assignments);
     fprintf(file, "rankwidth_transition_bytes: %" PRIu64 "\n",
             stats->rankwidth_transition_bytes);
     fprintf(file, "rankwidth_transition_layout_u16_events: %" PRIu64 "\n",

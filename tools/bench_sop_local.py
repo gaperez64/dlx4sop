@@ -225,15 +225,20 @@ def bench_case(
 
 def _qsop_mode(case: CorpusCase) -> str:
     mode = case.meta.get("qsop_mode")
-    if mode is not None:
-        return mode
-    try:
-        for ln in case.qsop_path.read_text().splitlines():
-            if ln.split()[:1] == ["q"]:
-                return "labelled"
+    if mode == "sign":
         return "sign"
-    except OSError:
+    if mode is not None:
         return "unknown"
+    try:
+        for line in case.qsop_path.read_text().splitlines():
+            words = line.split()
+            if words[:2] == ["p", "qsop-sign"]:
+                return "sign"
+            if words[:1] == ["p"]:
+                return "unknown"
+    except OSError:
+        pass
+    return "unknown"
 
 
 def _make_record(

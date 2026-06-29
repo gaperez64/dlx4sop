@@ -6,5 +6,5 @@ cache_entries: 2
 cache_stored_residue_slots: 16
 cache_key_bytes: 40
 cache_count_bytes: 128
-cache_estimated_bytes: 488
+cache_estimated_bytes: 456
 leaf_assignments: 8

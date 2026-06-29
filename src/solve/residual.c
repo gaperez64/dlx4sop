@@ -33,7 +33,6 @@ struct qsop_residual {
   uint32_t *unary;
   uint32_t *edge_u;
   uint32_t *edge_v;
-  uint32_t *edge_q;
   uint32_t *incident_offset;
   uint32_t *incident_edge;
   uint32_t *incident_var;
@@ -410,13 +409,12 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
   residual->unary = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*residual->unary));
   residual->edge_u = malloc((qsop->nedges == 0 ? 1U : qsop->nedges) * sizeof(*residual->edge_u));
   residual->edge_v = malloc((qsop->nedges == 0 ? 1U : qsop->nedges) * sizeof(*residual->edge_v));
-  residual->edge_q = malloc((qsop->nedges == 0 ? 1U : qsop->nedges) * sizeof(*residual->edge_q));
   residual->active_var =
       malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*residual->active_var));
   residual->active_edge =
       malloc((qsop->nedges == 0 ? 1U : qsop->nedges) * sizeof(*residual->active_edge));
   if (residual->unary == NULL || residual->edge_u == NULL || residual->edge_v == NULL ||
-      residual->edge_q == NULL || residual->active_var == NULL || residual->active_edge == NULL) {
+      residual->active_var == NULL || residual->active_edge == NULL) {
     qsop_residual_free(residual);
     set_error(error, "out of memory while copying residual state");
     return false;
@@ -425,7 +423,6 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
   memcpy(residual->unary, qsop->unary, (size_t)qsop->nvars * sizeof(*residual->unary));
   memcpy(residual->edge_u, qsop->edge_u, (size_t)qsop->nedges * sizeof(*residual->edge_u));
   memcpy(residual->edge_v, qsop->edge_v, (size_t)qsop->nedges * sizeof(*residual->edge_v));
-  memcpy(residual->edge_q, qsop->edge_q, (size_t)qsop->nedges * sizeof(*residual->edge_q));
   memset(residual->active_var, 1, (size_t)qsop->nvars * sizeof(*residual->active_var));
   memset(residual->active_edge, 1, (size_t)qsop->nedges * sizeof(*residual->active_edge));
   if (!build_incidence(residual, error)) {
@@ -445,7 +442,6 @@ void qsop_residual_free(qsop_residual_t *residual) {
   free(residual->unary);
   free(residual->edge_u);
   free(residual->edge_v);
-  free(residual->edge_q);
   free(residual->incident_offset);
   free(residual->incident_edge);
   free(residual->incident_var);
@@ -562,7 +558,7 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
       }
 
       if (other != UINT32_MAX && residual->active_var[other] != 0 &&
-          !set_unary(residual, other, add_mod(residual->unary[other], residual->edge_q[e],
+          !set_unary(residual, other, add_mod(residual->unary[other], residual->r / 2U,
                                              residual->r),
                      error)) {
         return false;
@@ -627,13 +623,6 @@ uint32_t qsop_residual_edge_v(const qsop_residual_t *residual, uint32_t e) {
   return residual->edge_v[e];
 }
 
-uint32_t qsop_residual_edge_q(const qsop_residual_t *residual, uint32_t e) {
-  if (residual == NULL || e >= residual->nedges) {
-    return 0;
-  }
-  return residual->edge_q[e];
-}
-
 uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
   if (residual == NULL) {
     return 0;
@@ -656,7 +645,6 @@ uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
   for (uint32_t e = 0; e < residual->nedges; e++) {
     fingerprint = fingerprint_u64(fingerprint, residual->edge_u[e]);
     fingerprint = fingerprint_u64(fingerprint, residual->edge_v[e]);
-    fingerprint = fingerprint_u64(fingerprint, residual->edge_q[e]);
     fingerprint = fingerprint_u64(fingerprint, residual->active_edge[e]);
   }
 

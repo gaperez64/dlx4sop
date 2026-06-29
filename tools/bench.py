@@ -228,74 +228,39 @@ def _render_local(args: argparse.Namespace) -> int:
 
 
 def _render_full(args: argparse.Namespace) -> int:
-    """Render full per-mode scoreboards and index using refresh_scoreboard.py + plot_scoreboard.py."""
+    """Render the signed scoreboard and plots using refresh_scoreboard.py + plot_scoreboard.py."""
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts"
     refresh = str(TOOLS_DIR / "refresh_scoreboard.py")
     plot = str(TOOLS_DIR / "plot_scoreboard.py")
     timeout_note = getattr(args, "timeout_note", "") or ""
     rc = 0
 
-    # 1. sign scoreboard + JSON
-    sign_cmd = [
+    refresh_cmd = [
         sys.executable, refresh,
         "--artifact-dir", str(artifact_dir),
         "--allow-missing",
         "--qsop-mode", "sign",
-        "--assets-subdir", "scoreboard-assets/sign",
-        "--output", str(REPO_ROOT / "scoreboard-sign.md"),
-        "--json", str(REPO_ROOT / "scoreboard-sign.json"),
+        "--assets-subdir", "scoreboard-assets",
+        "--output", str(REPO_ROOT / "scoreboard.md"),
+        "--json", str(REPO_ROOT / "scoreboard.json"),
     ]
     if timeout_note:
-        sign_cmd += ["--timeout-note", timeout_note]
-    rc = rc or _run(sign_cmd)
+        refresh_cmd += ["--timeout-note", timeout_note]
+    rc = rc or _run(refresh_cmd)
 
-    # 2. labelled scoreboard + JSON
-    labelled_cmd = [
-        sys.executable, refresh,
-        "--artifact-dir", str(artifact_dir),
-        "--allow-missing",
-        "--qsop-mode", "labelled",
-        "--assets-subdir", "scoreboard-assets/labelled",
-        "--output", str(REPO_ROOT / "scoreboard-labelled.md"),
-        "--json", str(REPO_ROOT / "scoreboard-labelled.json"),
-    ]
-    if timeout_note:
-        labelled_cmd += ["--timeout-note", timeout_note]
-    rc = rc or _run(labelled_cmd)
-
-    # 3. sign SVGs (includes the WMC-vs-solver scaling plot)
+    # SVGs include the WMC-vs-solver scaling plot.
     scaling_timeout = "30"
     if timeout_note:
         digits = "".join(ch for ch in timeout_note if ch.isdigit())
         if digits:
             scaling_timeout = digits
-    sign_assets = REPO_ROOT / "scoreboard-assets" / "sign"
     rc = rc or _run([
         sys.executable, plot,
-        "--scoreboard-json", str(REPO_ROOT / "scoreboard-sign.json"),
+        "--scoreboard-json", str(REPO_ROOT / "scoreboard.json"),
         "--artifact-dir", str(artifact_dir),
         "--qsop-mode", "sign",
-        "--output-dir", str(sign_assets),
+        "--output-dir", str(REPO_ROOT / "scoreboard-assets"),
         "--scaling-timeout", scaling_timeout,
-    ])
-
-    # 4. labelled SVGs
-    labelled_assets = REPO_ROOT / "scoreboard-assets" / "labelled"
-    rc = rc or _run([
-        sys.executable, plot,
-        "--scoreboard-json", str(REPO_ROOT / "scoreboard-labelled.json"),
-        "--artifact-dir", str(artifact_dir),
-        "--qsop-mode", "labelled",
-        "--output-dir", str(labelled_assets),
-    ])
-
-    # 5. index
-    rc = rc or _run([
-        sys.executable, refresh,
-        "--artifact-dir", str(artifact_dir),
-        "--allow-missing",
-        "--index",
-        "--output", str(REPO_ROOT / "scoreboard.md"),
     ])
 
     return rc

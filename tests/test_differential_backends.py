@@ -53,18 +53,17 @@ def random_qsop(rng: random.Random, nvars: int, r: int,
     for u in range(nvars):
         for v in range(u + 1, nvars):
             if rng.random() < edge_density:
-                q = rng.randint(1, r - 1)   # non-zero coefficient
-                edges.append((u, v, q))
+                edges.append((u, v))
 
     unary = [rng.randint(0, r - 1) for _ in range(nvars)]
     constant = rng.randint(0, r - 1)
 
-    lines = [f"p qsop {r} {nvars} {len(edges)}", "n 0", f"cst {constant}"]
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", f"cst {constant}"]
     for v in range(nvars):
         if unary[v] != 0:
             lines.append(f"u {v} {unary[v]}")
-    for u, v, q in edges:
-        lines.append(f"q {u} {v} {q}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
     text = "\n".join(lines) + "\n"
     return SopInstance(r=r, nvars=nvars, nedges=len(edges), text=text)
 
@@ -239,14 +238,14 @@ def test_metamorphic_variable_rename(exe: pathlib.Path) -> None:
                 parts = line.split()
                 v = int(parts[1])
                 lines_new.append(f"u {perm[v]} {parts[2]}")
-            elif line.startswith("q "):
+            elif line.startswith("e "):
                 parts = line.split()
                 u, v = int(parts[1]), int(parts[2])
                 # Sort u/v to keep canonical form (u < v)
                 pu, pv = perm[u], perm[v]
                 if pu > pv:
                     pu, pv = pv, pu
-                lines_new.append(f"q {pu} {pv} {parts[3]}")
+                lines_new.append(f"e {pu} {pv}")
             else:
                 lines_new.append(line)
         renamed_text = "\n".join(lines_new) + "\n"
@@ -265,23 +264,22 @@ def test_metamorphic_variable_rename(exe: pathlib.Path) -> None:
         )
 
 
-def test_metamorphic_zero_edge(exe: pathlib.Path) -> None:
-    """Metamorphic: adding a zero-coefficient edge must not change the result."""
+def test_metamorphic_duplicate_edge_pair(exe: pathlib.Path) -> None:
+    """Metamorphic: adding the same sign edge twice must not change the result."""
     rng = random.Random(SEED + 2)
     for _ in range(10):
         inst = random_qsop(rng, 6, 8)
-        # Add an edge with coefficient = 0 (zero edge)
         nvars = inst.nvars
         u, v = 0, nvars - 1
         if u == v:
             continue
-        # Parse and add the zero edge
         lines = inst.text.splitlines()
         header = lines[0].split()
-        nedges_new = int(header[3]) + 1
+        nedges_new = int(header[3]) + 2
         header[3] = str(nedges_new)
         lines[0] = " ".join(header)
-        lines.append(f"q {u} {v} 0")
+        lines.append(f"e {u} {v}")
+        lines.append(f"e {u} {v}")
         modified_text = "\n".join(lines) + "\n"
 
         orig_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
@@ -291,9 +289,9 @@ def test_metamorphic_zero_edge(exe: pathlib.Path) -> None:
         orig = parse_residue_vector(orig_out)
         modified = parse_residue_vector(modified_out)
         assert orig == modified, (
-            f"Zero-coefficient edge changed residue vector!\n"
-            f"  without zero edge: {orig}\n"
-            f"  with zero edge:    {modified}"
+            f"Duplicate edge pair changed residue vector!\n"
+            f"  original: {orig}\n"
+            f"  modified: {modified}"
         )
 
 
@@ -307,7 +305,7 @@ def main(argv: list[str]) -> None:
 
     test_all_backends_agree(exe, verbose=verbose)
     test_metamorphic_variable_rename(exe)
-    test_metamorphic_zero_edge(exe)
+    test_metamorphic_duplicate_edge_pair(exe)
     print(f"all differential backend tests passed (seed={SEED})")
 
 

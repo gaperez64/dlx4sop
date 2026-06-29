@@ -7,19 +7,15 @@ import pathlib
 import sys
 from typing import Iterable, TextIO
 
-from render_scoreboard import format_ns, labelled_path, read_jsonl
+from render_scoreboard import format_ns, read_jsonl, tier_path
 from summarize_qasm_report import markdown_escape
 
 
 RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
     "rankwidth_join_map_elapsed_ns",
     "rankwidth_join_elapsed_ns",
-    "rankwidth_labelled_join_map_elapsed_ns",
-    "rankwidth_labelled_join_elapsed_ns",
     "rankwidth_fourier_join_map_elapsed_ns",
     "rankwidth_fourier_join_elapsed_ns",
-    "rankwidth_labelled_fourier_join_map_elapsed_ns",
-    "rankwidth_labelled_fourier_join_elapsed_ns",
 )
 
 
@@ -102,9 +98,6 @@ def config_summary(records: list[dict]) -> list[dict]:
                 "join_pair_forecast_pressure": 0,
                 "max_join_pair_forecast": 0,
                 "join_signature_pressure": 0,
-                "labelled_exact_cuts": 0,
-                "labelled_proxy_cuts": 0,
-                "labelled_exact_assignments": 0,
             },
         )
         entry["records"] += 1
@@ -135,11 +128,6 @@ def config_summary(records: list[dict]) -> list[dict]:
             entry["join_pair_pressure"] += join_pairs
             entry["join_pair_forecast_pressure"] += join_pair_forecast
             entry["join_signature_pressure"] += join_signature_pairs
-            entry["labelled_exact_cuts"] += metric_or_zero(record, "rankwidth_labelled_exact_cuts")
-            entry["labelled_proxy_cuts"] += metric_or_zero(record, "rankwidth_labelled_proxy_cuts")
-            entry["labelled_exact_assignments"] += metric_or_zero(
-                record, "rankwidth_labelled_exact_assignments"
-            )
         elif status(record) == "timeout":
             entry["timeouts"] += 1
     return [grouped[key] for key in sorted(grouped)]
@@ -333,12 +321,11 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
     print(
         "| Tier | QSOP mode | Config | OK / records | Total solve time | Kernel time | Max width | "
         "Max table | Forecast table | Max signatures | Join pairs | Forecast join pairs | "
-        "Join signature pairs | Exact/proxy cuts | Exact assignments | Mean table | "
-        "Mean forecast table | Mean signatures |",
+        "Join signature pairs | Mean table | Mean forecast table | Mean signatures |",
         file=file,
     )
     print(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         file=file,
     )
     for row in config_summary(records):
@@ -352,8 +339,6 @@ def write_markdown(records: list[dict], baseline: str, file: TextIO) -> None:
             f"{row['max_width']} | {row['max_table']} | {row['max_table_forecast']} | "
             f"{row['max_signatures']} | {row['join_pairs']} | "
             f"{row['max_join_pair_forecast']} | {row['join_signature_pairs']} | "
-            f"{row['labelled_exact_cuts']} / {row['labelled_proxy_cuts']} | "
-            f"{row['labelled_exact_assignments']} | "
             f"{mean_table:.1f} | {mean_table_forecast:.1f} | {mean_signatures:.1f} |",
             file=file,
         )
@@ -434,8 +419,8 @@ def serializable_row(row: dict) -> dict:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare rankwidth generator benchmark JSONL artifacts.")
-    parser.add_argument("--rankwidth-jsonl", action="append", type=labelled_path, default=[], metavar="TIER=PATH")
-    parser.add_argument("--qsop-mode", choices=("all", "sign", "labelled"), default="all")
+    parser.add_argument("--rankwidth-jsonl", action="append", type=tier_path, default=[], metavar="TIER=PATH")
+    parser.add_argument("--qsop-mode", choices=("all", "sign"), default="all")
     parser.add_argument("--baseline", default="min-fill-cut:count-table")
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     return parser.parse_args(argv)

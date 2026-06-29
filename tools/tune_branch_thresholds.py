@@ -85,7 +85,7 @@ def format_text_report(records: list[dict], rw_buckets: dict, tw_buckets: dict,
                         win_rate: float, file=sys.stdout) -> None:
     print(f"Calibration records: {len(records)}", file=file)
     print(file=file)
-    print("Rankwidth win rate by labelled width (rankwidth_actual_ms < treewidth_actual_ms):",
+    print("Rankwidth win rate by cutrank width (rankwidth_actual_ms < treewidth_actual_ms):",
           file=file)
     print(f"  {'width':>6}  {'total':>6}  {'wins':>6}  {'win_rate':>8}  {'rw_ms/tw_ms':>12}",
           file=file)
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rw_buckets = analyse_by_width(
         records,
-        width_field="rankwidth_labelled_width",
+        width_field="rankwidth_cutrank_width",
         speed_field="rankwidth_actual_ms",
         baseline_field="treewidth_actual_ms",
     )

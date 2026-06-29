@@ -33,19 +33,16 @@ static qsop_instance_t fixture_instance(void) {
   static uint32_t unary[] = {1, 2, 5};
   static uint32_t edge_u[] = {0, 1};
   static uint32_t edge_v[] = {1, 2};
-  static uint32_t edge_q[] = {4, 3};
 
   return (qsop_instance_t){
       .r = 8,
       .nvars = 3,
       .norm_h = 4,
       .constant = 7,
-      .mode = QSOP_MODE_LABELLED,
       .unary = unary,
       .nedges = 2,
       .edge_u = edge_u,
       .edge_v = edge_v,
-      .edge_q = edge_q,
   };
 }
 
@@ -132,7 +129,7 @@ static int test_branch_one_undo(void) {
       expect_u32("one active_edges", qsop_residual_active_edges(residual), 0) != 0 ||
       expect_u32("one constant", qsop_residual_constant(residual), 1) != 0 ||
       expect_u32("one unary0", qsop_residual_unary(residual, 0), 5) != 0 ||
-      expect_u32("one unary2", qsop_residual_unary(residual, 2), 0) != 0 ||
+      expect_u32("one unary2", qsop_residual_unary(residual, 2), 1) != 0 ||
       expect_u32("one degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
       expect_u32("one degree1", qsop_residual_active_degree(residual, 1), 0) != 0 ||
       expect_u32("one degree2", qsop_residual_active_degree(residual, 2), 0) != 0 ||

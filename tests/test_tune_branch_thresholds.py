@@ -17,7 +17,7 @@ def load_tool(path: pathlib.Path):
     return module
 
 
-def make_calib_record(*, rw_lw: int | None, tw_width: int | None,
+def make_calib_record(*, rw_width: int | None, tw_width: int | None,
                        rw_ms: float, tw_ms: float) -> str:
     rec = {
         "schema": "sop_solve_backend_stats_v1",
@@ -32,8 +32,7 @@ def make_calib_record(*, rw_lw: int | None, tw_width: int | None,
         "treewidth_forecast_join_pairs": 256,
         "treewidth_actual_ms": tw_ms,
         "rankwidth_generation_ms": 0.5,
-        "rankwidth_support_width": rw_lw,
-        "rankwidth_labelled_width": rw_lw,
+        "rankwidth_cutrank_width": rw_width,
         "rankwidth_forecast_entries": 128,
         "rankwidth_forecast_join_pairs": 64,
         "rankwidth_actual_ms": rw_ms,
@@ -49,9 +48,9 @@ def write_jsonl(lines: list[str]) -> str:
 
 def test_load_calibration_records(tool) -> None:
     lines = [
-        make_calib_record(rw_lw=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
-        make_calib_record(rw_lw=3, tw_width=10, rw_ms=2.0, tw_ms=4.0),
-        make_calib_record(rw_lw=6, tw_width=12, rw_ms=8.0, tw_ms=3.0),
+        make_calib_record(rw_width=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
+        make_calib_record(rw_width=3, tw_width=10, rw_ms=2.0, tw_ms=4.0),
+        make_calib_record(rw_width=6, tw_width=12, rw_ms=8.0, tw_ms=3.0),
         # Record without rw_actual_ms should be filtered out
         json.dumps({"schema": "sop_solve_backend_stats_v1", "treewidth_actual_ms": 2.0}),
     ]
@@ -62,17 +61,17 @@ def test_load_calibration_records(tool) -> None:
 
 def test_analyse_by_width(tool) -> None:
     lines = [
-        # rw_lw=3 wins twice (rw_ms < tw_ms)
-        make_calib_record(rw_lw=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
-        make_calib_record(rw_lw=3, tw_width=10, rw_ms=2.0, tw_ms=4.0),
-        # rw_lw=6 loses once
-        make_calib_record(rw_lw=6, tw_width=12, rw_ms=8.0, tw_ms=3.0),
+        # rw_width=3 wins twice (rw_ms < tw_ms)
+        make_calib_record(rw_width=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
+        make_calib_record(rw_width=3, tw_width=10, rw_ms=2.0, tw_ms=4.0),
+        # rw_width=6 loses once
+        make_calib_record(rw_width=6, tw_width=12, rw_ms=8.0, tw_ms=3.0),
     ]
     path = pathlib.Path(write_jsonl(lines))
     records = tool.load_calibration_records([path])
     rw_buckets = tool.analyse_by_width(
         records,
-        width_field="rankwidth_labelled_width",
+        width_field="rankwidth_cutrank_width",
         speed_field="rankwidth_actual_ms",
         baseline_field="treewidth_actual_ms",
     )
@@ -100,9 +99,9 @@ def test_threshold_recommendation(tool) -> None:
 
 def test_json_output(tool) -> None:
     lines = [
-        make_calib_record(rw_lw=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
-        make_calib_record(rw_lw=3, tw_width=11, rw_ms=1.5, tw_ms=3.0),
-        make_calib_record(rw_lw=5, tw_width=10, rw_ms=9.0, tw_ms=2.0),
+        make_calib_record(rw_width=3, tw_width=10, rw_ms=1.0, tw_ms=5.0),
+        make_calib_record(rw_width=3, tw_width=11, rw_ms=1.5, tw_ms=3.0),
+        make_calib_record(rw_width=5, tw_width=10, rw_ms=9.0, tw_ms=2.0),
     ]
     path = write_jsonl(lines)
     result = tool.main(["--format", "json", path])

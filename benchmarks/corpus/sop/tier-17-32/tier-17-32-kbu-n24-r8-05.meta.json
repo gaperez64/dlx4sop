@@ -1,10 +1,10 @@
 {
   "name": "tier-17-32-kbu-n24-r8-05",
-  "generator": "build_sop_corpus.py:v1",
+  "generator": "build_sop_corpus.py:v2-sign",
   "r": 8,
   "nvars": 24,
   "nedges": 144,
-  "description": "K_{12,12} uniform coeff=1, r=8; labelled cut rank \u2248 2, treewidth \u2248 12",
+  "description": "K_{12,12} signed complete bipartite, r=8; cut rank=1, treewidth\u224812",
   "solvable_without_external_tools": true,
   "family": "complete-bipartite-uniform",
   "benchmark_roles": [
