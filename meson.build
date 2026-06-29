@@ -686,6 +686,14 @@ if python3.found()
     ],
   )
   test(
+    'wmc ganak benchmark metadata smoke',
+    python3,
+    args: [
+      files('tests/test_bench_wmc_ganak.py'),
+      files('tools/bench_wmc_ganak.py'),
+    ],
+  )
+  test(
     'build corpus help',
     python3,
     args: [
