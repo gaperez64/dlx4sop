@@ -525,3 +525,22 @@ Validation:
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Direct Amp-Soft/Amp-And Emission
+
+Removed temporary clause buffering from the two simple amplitude WMC encodings:
+
+- `amp-soft` now counts active mapped pairs, assigns deterministic auxiliary ids, writes
+  weights, then streams the two implication clauses per pair directly.
+- `amp-and` does the same for deterministic Tseitin-AND auxiliaries and streams the two
+  binary plus one ternary clause per pair directly.
+- This avoids per-clause builder reallocations and the `pair_var` side arrays in the
+  common WMC export modes; `amp-block` still uses the builder where parity XOR gates need
+  generated intermediate literals.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`

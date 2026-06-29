@@ -877,6 +877,21 @@ static int *fg_build_var_map(const wmc_factor_graph_t *fg, uint32_t *n_active_ou
   return var_dimacs;
 }
 
+static uint32_t fg_count_active_mapped_pairs(const wmc_factor_graph_t *fg,
+                                             const int *var_dimacs) {
+  uint32_t count = 0;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    count++;
+  }
+  return count;
+}
+
 /* amp-and: Tseitin AND auxiliary per encoded edge.
  * W(y=1) = omega^b, W(y=0) = 1. Three clauses per edge (2 binary + 1 ternary). */
 static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
@@ -889,33 +904,11 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
     return false;
   }
 
-  /* Count active pairs and build Tseitin AND clauses. */
-  wmc_builder_t b = {0};
-  b.nvars = n_active_vars;
+  const uint32_t encoded_edges = fg_count_active_mapped_pairs(fg, var_dimacs);
+  const uint32_t nvars_total = n_active_vars + encoded_edges;
+  const uint64_t nclauses = 3U * (uint64_t)encoded_edges;
 
-  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
-  if (fg->npairs > 0 && pair_var == NULL) {
-    set_error(error, "out of memory while building amplitude CNF");
-    free(var_dimacs);
-    return false;
-  }
-  uint32_t encoded_edges = 0;
-  for (size_t p = 0; p < fg->npairs; p++) {
-    if (!fg->pair_active[p]) {
-      continue;
-    }
-    pair_var[p] = gate_and(&b, var_dimacs[fg->pairs[p].u], var_dimacs[fg->pairs[p].v]);
-    encoded_edges++;
-  }
-  if (b.failed) {
-    set_error(error, "out of memory while building amplitude CNF");
-    free(pair_var);
-    free(var_dimacs);
-    builder_free(&b);
-    return false;
-  }
-
-  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", nvars_total, nclauses);
   if (emit_metadata) {
     write_amp_metadata(file, qsop, fg, "amp-and", n_active_vars, encoded_edges);
     for (uint32_t v = 0; v < fg->nvars; v++) {
@@ -938,20 +931,32 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
   }
 
   /* Literal weights for Tseitin AND variables: W(y=1) = R_uv, W(y=0) = 1. */
+  int aux = (int)n_active_vars + 1;
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p]) {
       continue;
     }
-    write_weight(file, pair_var[p], fg->pairs[p].R_re, fg->pairs[p].R_im);
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    write_weight(file, aux, fg->pairs[p].R_re, fg->pairs[p].R_im);
+    aux++;
   }
 
-  /* Buffered Tseitin biconditional clauses. */
-  for (size_t i = 0; i < b.len; i++) {
-    if (b.lits[i] == 0) {
-      fputs("0\n", file);
-    } else {
-      fprintf(file, "%d ", b.lits[i]);
+  aux = (int)n_active_vars + 1;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -aux, u);
+    fprintf(file, "%d %d 0\n", -aux, v);
+    fprintf(file, "%d %d %d 0\n", aux, -u, -v);
+    aux++;
   }
 
   if (stats_out != NULL) {
@@ -967,9 +972,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
   }
 
-  free(pair_var);
   free(var_dimacs);
-  builder_free(&b);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
@@ -991,35 +994,11 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
     return false;
   }
 
-  wmc_builder_t b = {0};
-  b.nvars = n_active_vars;
+  const uint32_t encoded_edges = fg_count_active_mapped_pairs(fg, var_dimacs);
+  const uint32_t nvars_total = n_active_vars + encoded_edges;
+  const uint64_t nclauses = 2U * (uint64_t)encoded_edges;
 
-  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
-  if (fg->npairs > 0 && pair_var == NULL) {
-    set_error(error, "out of memory while building amp-soft CNF");
-    free(var_dimacs);
-    return false;
-  }
-  uint32_t encoded_edges = 0;
-  for (size_t p = 0; p < fg->npairs; p++) {
-    if (!fg->pair_active[p]) {
-      continue;
-    }
-    const int y = new_var(&b);
-    pair_var[p] = y;
-    add_clause2(&b, -y, var_dimacs[fg->pairs[p].u]);  /* y -> x_u */
-    add_clause2(&b, -y, var_dimacs[fg->pairs[p].v]);  /* y -> x_v */
-    encoded_edges++;
-  }
-  if (b.failed) {
-    set_error(error, "out of memory while building amp-soft CNF");
-    free(pair_var);
-    free(var_dimacs);
-    builder_free(&b);
-    return false;
-  }
-
-  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", nvars_total, nclauses);
   if (emit_metadata) {
     write_amp_metadata(file, qsop, fg, "amp-soft", n_active_vars, encoded_edges);
     for (uint32_t v = 0; v < fg->nvars; v++) {
@@ -1042,20 +1021,31 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
   }
 
   /* Literal weights for soft auxiliaries: W(y=1) = R_uv - 1, W(y=0) = 1. */
+  int aux = (int)n_active_vars + 1;
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p]) {
       continue;
     }
-    write_weight(file, pair_var[p], fg->pairs[p].R_re - 1.0, fg->pairs[p].R_im);
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    write_weight(file, aux, fg->pairs[p].R_re - 1.0, fg->pairs[p].R_im);
+    aux++;
   }
 
-  /* Binary implication clauses — no ternary backward clauses. */
-  for (size_t i = 0; i < b.len; i++) {
-    if (b.lits[i] == 0) {
-      fputs("0\n", file);
-    } else {
-      fprintf(file, "%d ", b.lits[i]);
+  aux = (int)n_active_vars + 1;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -aux, u);  /* y -> x_u */
+    fprintf(file, "%d %d 0\n", -aux, v);  /* y -> x_v */
+    aux++;
   }
 
   if (stats_out != NULL) {
@@ -1073,9 +1063,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
   }
 
-  free(pair_var);
   free(var_dimacs);
-  builder_free(&b);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
