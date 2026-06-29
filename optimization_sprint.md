@@ -544,3 +544,21 @@ Validation:
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Amp-Block Residual Clause Streaming
+
+Finished the same direct-emission cleanup for the residual soft edges inside `amp-block`:
+
+- Parity-block XOR gates still use the builder because they create intermediate
+  literals.
+- Residual non-block soft edges are now counted, assigned deterministic auxiliary ids,
+  weighted, and streamed directly.
+- This removes the residual `extra_var`/`extra_pair` arrays and avoids buffering two
+  implication clauses per residual edge in the builder.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`

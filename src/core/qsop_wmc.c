@@ -1458,20 +1458,6 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   }
 
   uint32_t n_extra = 0;
-  int *extra_var = calloc(fg->npairs == 0 ? 1U : fg->npairs, sizeof(*extra_var));
-  size_t *extra_pair = calloc(fg->npairs == 0 ? 1U : fg->npairs, sizeof(*extra_pair));
-  if (extra_var == NULL || extra_pair == NULL) {
-    free(extra_var);
-    free(extra_pair);
-    free(block_var);
-    free(var_dimacs);
-    free(covered);
-    sign_blocks_free(&blocks);
-    builder_free(&b);
-    set_error(error, "out of memory building amp-block CNF");
-    return false;
-  }
-
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p] || covered[p]) {
       continue;
@@ -1481,17 +1467,13 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
     if (u == 0 || v == 0) {
       continue;
     }
-    const int y = new_var(&b);
-    add_clause2(&b, -y, u);
-    add_clause2(&b, -y, v);
-    extra_var[n_extra] = y;
-    extra_pair[n_extra] = p;
     n_extra++;
   }
+  const int extra_first_var = (int)b.nvars + 1;
+  b.nvars += n_extra;
+  b.nclauses += 2U * (uint64_t)n_extra;
 
   if (b.failed) {
-    free(extra_var);
-    free(extra_pair);
     free(block_var);
     free(var_dimacs);
     free(covered);
@@ -1538,9 +1520,17 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   for (size_t bi = 0; bi < blocks.len; bi++) {
     write_weight(file, block_var[bi], -2.0, 0.0);
   }
-  for (uint32_t i = 0; i < n_extra; i++) {
-    const wmc_pair_t *pair = &fg->pairs[extra_pair[i]];
-    write_weight(file, extra_var[i], pair->R_re - 1.0, pair->R_im);
+  int extra_var = extra_first_var;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || covered[p]) {
+      continue;
+    }
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    const wmc_pair_t *pair = &fg->pairs[p];
+    write_weight(file, extra_var, pair->R_re - 1.0, pair->R_im);
+    extra_var++;
   }
 
   for (size_t ci = 0; ci < b.len; ci++) {
@@ -1549,6 +1539,20 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
     } else {
       fprintf(file, "%d ", b.lits[ci]);
     }
+  }
+  extra_var = extra_first_var;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || covered[p]) {
+      continue;
+    }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -extra_var, u);
+    fprintf(file, "%d %d 0\n", -extra_var, v);
+    extra_var++;
   }
 
   if (stats_out != NULL) {
@@ -1567,8 +1571,6 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
   }
 
-  free(extra_var);
-  free(extra_pair);
   free(block_var);
   free(var_dimacs);
   free(covered);
