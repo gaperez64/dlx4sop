@@ -449,6 +449,8 @@ Exploited the signed-QSOP invariant before attempting dense/FWHT joins:
   (`join_signature_pairs * r/2`) instead of charging the skipped even modes.
 - On the signed 4-cycle smoke instance, Fourier table stats dropped from `table_entries=120`,
   `max_table_entries=32` to `table_entries=60`, `max_table_entries=16`.
+- Edge-free signed QSOPs now bypass rankwidth Fourier DP entirely: every mode factors as
+  `prod_v (1 + omega^(t * a_v))`, with trace phase `rankwidth.fourier_factorized`.
 
 This is not the dense/FWHT kernel from the note; it is the smaller signed-QSOP
 specialization that removes even-mode DP work while keeping the proven odd-mode streaming

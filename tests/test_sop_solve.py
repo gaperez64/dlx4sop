@@ -397,6 +397,38 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
         )
 
+    rankwidth_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "--format",
+            "stats",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        rankwidth_fourier_stats.returncode != 0
+        or "rankwidth.fourier_factorized" not in rankwidth_fourier_stats.stderr
+        or "join_pairs: 0" not in rankwidth_fourier_stats.stdout
+        or "max_table_entries: 16" not in rankwidth_fourier_stats.stdout
+    ):
+        raise AssertionError(
+            f"large rankwidth Fourier factorized stats failed\n"
+            f"{rankwidth_fourier_stats.stdout}\n{rankwidth_fourier_stats.stderr}"
+        )
+
     signed_rankwidth_fourier = subprocess.run(
         [
             str(exe),

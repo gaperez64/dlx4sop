@@ -3711,6 +3711,19 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
 static bool fourier_table_find_signature(const rw_fourier_table_t *table, uint32_t signature,
                                          size_t *out);
 
+static uint64_t fourier_factorized_mode_value(const qsop_instance_t *qsop,
+                                              const uint64_t *powers, uint64_t prime,
+                                              uint32_t mode) {
+  uint64_t acc = 1;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    const uint32_t residue = qsop->unary[v] % qsop->r;
+    const uint64_t term =
+        qsop_mod_add_u64(1, powers[(size_t)mode * qsop->r + residue], prime);
+    acc = qsop_mod_mul_u64(acc, term, prime);
+  }
+  return acc;
+}
+
 static void fourier_fill_root_modes_sign(const qsop_instance_t *qsop,
                                          const rw_fourier_table_t *root_table,
                                          const uint64_t *powers, uint64_t prime,
@@ -3725,14 +3738,7 @@ static void fourier_fill_root_modes_sign(const qsop_instance_t *qsop,
     }
   }
   for (uint32_t mode = 0; mode < qsop->r; mode += 2U) {
-    uint64_t acc = 1;
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      const uint32_t residue = qsop->unary[v] % qsop->r;
-      const uint64_t term =
-          qsop_mod_add_u64(1, powers[(size_t)mode * qsop->r + residue], prime);
-      acc = qsop_mod_mul_u64(acc, term, prime);
-    }
-    modes[mode] = acc;
+    modes[mode] = fourier_factorized_mode_value(qsop, powers, prime, mode);
   }
 }
 
@@ -4459,12 +4465,52 @@ static bool rankwidth_fourier_prime_state(uint32_t r, uint64_t prime, uint64_t *
   return true;
 }
 
+static bool solve_rankwidth_fourier_no_edges_mod_once(
+    const qsop_instance_t *qsop, const uint64_t *powers, const uint64_t *inv_powers,
+    uint64_t prime, qsop_rankwidth_fourier_kernel_t kernel, uint64_t *counts,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *modes = calloc(qsop->r, sizeof(*modes));
+  if (modes == NULL) {
+    set_error(error, "out of memory while allocating factorized rankwidth Fourier modes");
+    return false;
+  }
+  const uint64_t start = qsop_trace_begin(trace);
+  for (uint32_t mode = 0; mode < qsop->r; mode++) {
+    modes[mode] = fourier_factorized_mode_value(qsop, powers, prime, mode);
+  }
+  qsop_trace_emit_elapsed(trace, "rankwidth.fourier_factorized", 0, qsop->r, start);
+  const bool ok = qsop_fourier_inverse_counts(qsop->r, modes, qsop->constant, powers,
+                                              inv_powers, prime, counts, error);
+  free(modes);
+  if (!ok) {
+    return false;
+  }
+  if (stats != NULL) {
+    stats->table_entries = qsop->r;
+    stats->max_table_entries = qsop->r;
+    stats->signature_entries = 1;
+    stats->max_signature_entries = 1;
+    stats->join_pairs = 0;
+    stats->join_signature_pairs = 0;
+    stats->rankwidth_fourier_kernel = (uint32_t)kernel;
+    stats->decomposition_width = 0;
+  }
+  return true;
+}
+
 static bool solve_rankwidth_fourier_mod_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t prime, const uint64_t *powers, const uint64_t *inv_powers,
     qsop_rankwidth_fourier_kernel_t kernel,
     uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
+  if (qsop->nedges == 0) {
+    (void)decomposition;
+    (void)adj;
+    return solve_rankwidth_fourier_no_edges_mod_once(qsop, powers, inv_powers, prime, kernel,
+                                                     counts, stats, trace, error);
+  }
+
   rw_fourier_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
   if (tables == NULL) {
