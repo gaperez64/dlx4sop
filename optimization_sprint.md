@@ -321,3 +321,17 @@ Validation:
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build --print-errorlogs`
+
+### 2026-06-29: Fourier Root Signature Lookup
+
+Small cleanup after the Fourier table indexing change:
+
+- `fourier_table_find_signature()` now probes the maintained open-addressing signature
+  index instead of linearly scanning the root table.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
+- `meson test -C build --print-errorlogs`

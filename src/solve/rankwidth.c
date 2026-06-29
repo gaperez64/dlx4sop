@@ -3732,6 +3732,19 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
 
 static bool fourier_table_find_signature(const rw_fourier_table_t *table, uint32_t signature,
                                          size_t *out) {
+  if (table->signature_slots != NULL && table->signature_slots_mask != 0) {
+    const size_t mask = table->signature_slots_mask;
+    size_t slot = rep_hash(signature) & mask;
+    while (table->signature_slots[slot] != UINT32_MAX) {
+      const uint32_t index = table->signature_slots[slot];
+      if (table->signatures[index] == signature) {
+        *out = index;
+        return true;
+      }
+      slot = (slot + 1U) & mask;
+    }
+    return false;
+  }
   for (size_t i = 0; i < table->len; i++) {
     if (table->signatures[i] == signature) {
       *out = i;
