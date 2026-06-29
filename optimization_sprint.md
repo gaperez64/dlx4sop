@@ -415,3 +415,20 @@ Wired the backend WMC optimization controls into the refresh orchestration:
 Validation:
 
 - `python3 tests/test_wmc_runner_options.py tools/run_corpus_benchmarks.py tools/bench.py`
+
+### 2026-06-29: Amp-Block Extractor Hot-Path Tightening
+
+Tightened the signed WMC block extractor without changing its greedy semantics:
+
+- Candidate `B` sides are now represented as bitsets and counted with popcount.
+- Candidate `A` membership uses word-wise subset checks instead of looping over every
+  vertex in `B`.
+- Allocation failures in block search now propagate as errors instead of being
+  indistinguishable from "no profitable block found" and silently falling back to
+  amp-soft.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' --print-errorlogs`

@@ -1129,6 +1129,15 @@ static int64_t block_cost(uint32_t a, uint32_t b) {
   return (int64_t)a_xor + (int64_t)b_xor + 1;
 }
 
+static bool bitset_contains_all(const uint64_t *set, const uint64_t *subset, size_t words) {
+  for (size_t w = 0; w < words; w++) {
+    if ((set[w] & subset[w]) != subset[w]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /*
  * Find the best uncovered complete bipartite sign block in the active factor graph.
  * The search is bitset-based and greedy; callers repeat it while marking covered
@@ -1136,14 +1145,31 @@ static int64_t block_cost(uint32_t a, uint32_t b) {
  */
 static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *covered,
                                  uint32_t min_side, int64_t min_savings,
-                                 wmc_sign_block_t *out, qsop_error_t *error) {
+                                 wmc_sign_block_t *out, bool *found_out,
+                                 qsop_error_t *error) {
   const uint32_t n = fg->nvars;
-  if (n == 0 || fg->npairs == 0) return false;
+  if (found_out != NULL) {
+    *found_out = false;
+  }
+  if (n == 0 || fg->npairs == 0) return true;
   if (min_side == 0U) min_side = 1U;
   const size_t words = (n + 63U) / 64U;
 
   uint64_t *adj = calloc((size_t)n * words, sizeof(*adj));
-  if (adj == NULL) return false;
+  uint64_t *active_bits = calloc(words, sizeof(*active_bits));
+  uint64_t *b_bits = calloc(words, sizeof(*b_bits));
+  if (adj == NULL || active_bits == NULL || b_bits == NULL) {
+    free(adj);
+    free(active_bits);
+    free(b_bits);
+    set_error(error, "out of memory searching amp-block parity blocks");
+    return false;
+  }
+  for (uint32_t v = 0; v < n; v++) {
+    if (fg->var_active[v]) {
+      qsop_bitset_set(active_bits, v);
+    }
+  }
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p] || (covered != NULL && covered[p]) ||
         !fg_pair_is_sign(&fg->pairs[p])) {
@@ -1165,7 +1191,8 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
   uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
   uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
   if (!b_tmp || !a_tmp) {
-    free(b_tmp); free(a_tmp); free(adj);
+    free(b_tmp); free(a_tmp); free(adj); free(active_bits); free(b_bits);
+    set_error(error, "out of memory searching amp-block parity blocks");
     return false;
   }
 
@@ -1176,11 +1203,16 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
     const uint64_t *u_adj = qsop_bitset_const_row(adj, words, u);
 
     /* B = uncovered sign neighbours of u. */
-    uint32_t b_len = 0;
-    for (uint32_t v = 0; v < n; v++) {
-      if (fg->var_active[v] && qsop_bitset_get(u_adj, v)) b_tmp[b_len++] = v;
-    }
+    qsop_bitset_copy(b_bits, u_adj, words);
+    qsop_bitset_and(b_bits, active_bits, words);
+    const uint32_t b_len = qsop_bitset_popcount(b_bits, words);
     if (b_len < min_side) continue;
+    uint32_t b_written = 0;
+    for (uint32_t v = 0; v < n; v++) {
+      if (qsop_bitset_get(b_bits, v)) {
+        b_tmp[b_written++] = v;
+      }
+    }
 
     /* A = vertices not in B whose uncovered sign-neighbourhood contains B. */
     uint32_t a_len = 0;
@@ -1188,18 +1220,10 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
       if (!fg->var_active[up]) {
         continue;
       }
-      bool in_b = false;
-      for (uint32_t bi = 0; bi < b_len; bi++) {
-        if (b_tmp[bi] == up) { in_b = true; break; }
-      }
-      if (in_b) continue;
+      if (qsop_bitset_get(b_bits, up)) continue;
 
-      bool covers_b = true;
       const uint64_t *up_adj = qsop_bitset_const_row(adj, words, up);
-      for (uint32_t bi = 0; bi < b_len; bi++) {
-        if (!qsop_bitset_get(up_adj, b_tmp[bi])) { covers_b = false; break; }
-      }
-      if (covers_b) a_tmp[a_len++] = up;
+      if (bitset_contains_all(up_adj, b_bits, words)) a_tmp[a_len++] = up;
     }
     if (a_len < min_side) continue;
 
@@ -1215,7 +1239,8 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
       best_b = malloc(b_len * sizeof(*best_b));
       if (!best_a || !best_b) {
         free(best_a); free(best_b);
-        free(a_tmp); free(b_tmp); free(adj);
+        free(a_tmp); free(b_tmp); free(adj); free(active_bits); free(b_bits);
+        set_error(error, "out of memory searching amp-block parity blocks");
         return false;
       }
       memcpy(best_a, a_tmp, a_len * sizeof(*best_a));
@@ -1223,15 +1248,17 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
     }
   }
 
-  free(a_tmp); free(b_tmp); free(adj);
+  free(a_tmp); free(b_tmp); free(adj); free(active_bits); free(b_bits);
 
-  if (best_score == 0) return false;
+  if (best_score == 0) return true;
   out->a = best_a;
   out->a_len = best_a_len;
   out->b = best_b;
   out->b_len = best_b_len;
   out->edge_count = best_a_len * best_b_len;
-  (void)error;
+  if (found_out != NULL) {
+    *found_out = true;
+  }
   return true;
 }
 
@@ -1245,7 +1272,13 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
   }
   for (;;) {
     wmc_sign_block_t block = {0};
-    if (!find_best_sign_block(fg, covered, min_side, min_savings, &block, error)) {
+    bool found = false;
+    if (!find_best_sign_block(fg, covered, min_side, min_savings, &block, &found, error)) {
+      sign_blocks_free(blocks);
+      free(covered);
+      return false;
+    }
+    if (!found) {
       break;
     }
     bool *in_a = calloc(fg->nvars == 0 ? 1U : fg->nvars, sizeof(*in_a));
