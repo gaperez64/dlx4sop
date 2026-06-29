@@ -152,6 +152,21 @@ def run_to_jsonl(cmd: list, output: pathlib.Path, verbose: bool) -> None:
         )
 
 
+def wmc_sop2wmc_extra_args(args: argparse.Namespace, *, block: bool = False) -> list[str]:
+    """sop2wmc tuning flags shared by WMC refresh jobs."""
+    extra: list[str] = []
+    if args.wmc_preprocess is not None:
+        extra += ["--wmc-preprocess", args.wmc_preprocess]
+    if args.wmc_peel2_fill_budget is not None:
+        extra += ["--wmc-peel2-fill-budget", str(args.wmc_peel2_fill_budget)]
+    if block:
+        if args.wmc_block_min_side is not None:
+            extra += ["--wmc-block-min-side", str(args.wmc_block_min_side)]
+        if args.wmc_block_min_savings is not None:
+            extra += ["--wmc-block-min-savings", str(args.wmc_block_min_savings)]
+    return extra
+
+
 def run_solver_jobs(
     args: argparse.Namespace,
     manifests_dir: pathlib.Path,
@@ -214,26 +229,32 @@ def run_wmc_jobs(
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
         ]
+        common_wmc_extra = wmc_sop2wmc_extra_args(args)
+        block_wmc_extra = wmc_sop2wmc_extra_args(args, block=True)
         # amp-and (amplitude): all tiers
         amp_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amplitude-current.jsonl"
         print(f"\n--- WMC amp-and: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amplitude"], amp_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amplitude", *common_wmc_extra],
+                     amp_output, args.verbose)
 
         # amp-soft: all tiers
         amp_soft_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-soft-current.jsonl"
         print(f"\n--- WMC amp-soft: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amp-soft"], amp_soft_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-soft", *common_wmc_extra],
+                     amp_soft_output, args.verbose)
 
         # amp-block: all tiers
         amp_block_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-block-current.jsonl"
         print(f"\n--- WMC amp-block: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amp-block"], amp_block_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-block", *block_wmc_extra],
+                     amp_block_output, args.verbose)
 
         # residue-fourier: mode-1 amplitude encoding, still WPCNF/Ganak heavy.
         if tier in WMC_RESIDUE_TIERS:
             res_fourier_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-fourier-current.jsonl"
             print(f"\n--- WMC residue-fourier: {tier} ---", file=sys.stderr)
-            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier"], res_fourier_output, args.verbose)
+            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier", *common_wmc_extra],
+                         res_fourier_output, args.verbose)
 
         # residue (plain #SAT): small tiers only
         if tier in WMC_RESIDUE_TIERS:
@@ -391,7 +412,8 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
             sys.executable, str(TOOLS_DIR / "bench_wmc_ganak.py"),
             "--ganak", str(args.ganak), "--sop2wmc", str(args.sop2wmc),
             "--ganak-timeout", timeout, "--format", "jsonl",
-            "--encoding", "amp-soft",
+            "--encoding", "amp-block",
+            *wmc_sop2wmc_extra_args(args, block=True),
             *[str(p) for p in instances],
         ]
         print("\n--- scaling WMC: ganak ---", file=sys.stderr)
@@ -472,6 +494,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "(CI uses a small cap)")
     parser.add_argument("--rankwidth-study-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) for the bounded-rankwidth study")
+    parser.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
+                        default="peel2-safe",
+                        help="sop2wmc preprocessing for amplitude-style WMC jobs "
+                             "(default: peel2-safe; use none for ablations)")
+    parser.add_argument("--wmc-peel2-fill-budget", type=int, default=None,
+                        help="sop2wmc peel2-safe fill budget (default: exporter default)")
+    parser.add_argument("--wmc-block-min-side", type=int, default=2,
+                        help="amp-block minimum side size for optimized WMC rows")
+    parser.add_argument("--wmc-block-min-savings", type=int, default=1,
+                        help="amp-block minimum positive savings threshold")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 

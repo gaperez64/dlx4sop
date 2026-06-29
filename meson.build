@@ -694,6 +694,15 @@ if python3.found()
     ],
   )
   test(
+    'wmc runner options smoke',
+    python3,
+    args: [
+      files('tests/test_wmc_runner_options.py'),
+      files('tools/run_corpus_benchmarks.py'),
+      files('tools/bench.py'),
+    ],
+  )
+  test(
     'build corpus help',
     python3,
     args: [

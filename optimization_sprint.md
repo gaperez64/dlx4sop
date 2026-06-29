@@ -396,3 +396,22 @@ Validation:
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_bench_qasm_corpus.py tools/bench_qasm_corpus.py`
 - `meson test -C build 'wmc unit' --print-errorlogs`
+
+### 2026-06-29: Optimized WMC Runner Defaults
+
+Wired the backend WMC optimization controls into the refresh orchestration:
+
+- `tools/run_corpus_benchmarks.py` now passes `--wmc-preprocess peel2-safe` by default
+  to amplitude-style WMC jobs.
+- `amp-block` rows use the actionable sign-block threshold defaults
+  `--wmc-block-min-side 2 --wmc-block-min-savings 1`.
+- Plain residue #SAT rows remain small-tier baselines; amplitude, amp-soft,
+  amp-block, and residue-fourier use the optimized factor-graph path.
+- The synthetic WMC-vs-solver scaling study now runs optimized `amp-block` instead of
+  stale `amp-soft`, so the crossover evidence targets the best current WMC backend.
+- `tools/bench.py full` and `tools/bench.py ganak` forward the same knobs, while
+  `--wmc-preprocess none` remains available for ablations.
+
+Validation:
+
+- `python3 tests/test_wmc_runner_options.py tools/run_corpus_benchmarks.py tools/bench.py`

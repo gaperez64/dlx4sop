@@ -59,6 +59,19 @@ def _run(cmd: list[str]) -> int:
     return result.returncode
 
 
+def append_wmc_tuning_args(cmd: list, args: argparse.Namespace, *, block: bool = True) -> None:
+    """Append WMC exporter tuning flags shared by benchmark frontends."""
+    if getattr(args, "wmc_preprocess", None) is not None:
+        cmd += ["--wmc-preprocess", str(args.wmc_preprocess)]
+    if getattr(args, "wmc_peel2_fill_budget", None) is not None:
+        cmd += ["--wmc-peel2-fill-budget", str(args.wmc_peel2_fill_budget)]
+    if block:
+        if getattr(args, "wmc_block_min_side", None) is not None:
+            cmd += ["--wmc-block-min-side", str(args.wmc_block_min_side)]
+        if getattr(args, "wmc_block_min_savings", None) is not None:
+            cmd += ["--wmc-block-min-savings", str(args.wmc_block_min_savings)]
+
+
 # ---------------------------------------------------------------------------
 # Subcommand: local
 # ---------------------------------------------------------------------------
@@ -107,7 +120,8 @@ def cmd_ganak(args: argparse.Namespace) -> int:
         "--ganak-timeout", str(args.timeout),
         "--format", "jsonl",
     ]
-    for enc in (args.encodings or ["amp-soft"]):
+    append_wmc_tuning_args(cmd, args, block=True)
+    for enc in (args.encodings or ["amp-block"]):
         cmd += ["--encoding", enc]
     cmd += [str(p) for p in instances]
     if args.out:
@@ -299,6 +313,7 @@ def cmd_full(args: argparse.Namespace) -> int:
         cmd += ["--skip-native"]
     if getattr(args, "skip_scoreboard", False):
         cmd += ["--skip-scoreboard"]
+    append_wmc_tuning_args(cmd, args, block=True)
     return _run(cmd)
 
 
@@ -406,6 +421,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_ganak.add_argument("--sop2wmc", type=pathlib.Path, default=_sop2wmc)
     p_ganak.add_argument("--encoding", action="append", dest="encodings", metavar="ENC")
     p_ganak.add_argument("--timeout", type=float, default=30.0)
+    p_ganak.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
+                         default="peel2-safe",
+                         help="sop2wmc preprocessing for amplitude-style WMC jobs "
+                              "(default: peel2-safe; use none for ablations)")
+    p_ganak.add_argument("--wmc-peel2-fill-budget", type=int, default=None,
+                         help="sop2wmc peel2-safe fill budget")
+    p_ganak.add_argument("--wmc-block-min-side", type=int, default=2,
+                         help="amp-block minimum side size for optimized WMC rows")
+    p_ganak.add_argument("--wmc-block-min-savings", type=int, default=1,
+                         help="amp-block minimum positive savings threshold")
     p_ganak.add_argument("--out", type=pathlib.Path, default=None)
     p_ganak.set_defaults(func=cmd_ganak)
 
@@ -447,6 +472,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_full.add_argument("--json", type=pathlib.Path, default=None, dest="json_out",
                         help="Write normalized scoreboard intermediate JSON")
     p_full.add_argument("--timeout", type=float, default=30.0)
+    p_full.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
+                        default="peel2-safe",
+                        help="sop2wmc preprocessing for amplitude-style WMC jobs "
+                             "(default: peel2-safe; use none for ablations)")
+    p_full.add_argument("--wmc-peel2-fill-budget", type=int, default=None,
+                        help="sop2wmc peel2-safe fill budget")
+    p_full.add_argument("--wmc-block-min-side", type=int, default=2,
+                        help="amp-block minimum side size for optimized WMC rows")
+    p_full.add_argument("--wmc-block-min-savings", type=int, default=1,
+                        help="amp-block minimum positive savings threshold")
     p_full.add_argument("--skip-solver", action="store_true")
     p_full.add_argument("--skip-wmc", action="store_true")
     p_full.add_argument("--skip-native", action="store_true")
