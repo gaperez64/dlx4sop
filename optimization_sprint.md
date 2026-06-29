@@ -283,3 +283,23 @@ Validation:
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build --print-errorlogs`
+
+### 2026-06-29: Cached Rankwidth Representative Weights
+
+Continued the parity hot-path cleanup:
+
+- Count-table rankwidth reps now cache assignment popcounts when each representative is
+  inserted.
+- Fourier rankwidth tables cache the same weight alongside each representative assignment.
+- Sign-edge join transition code uses the cached weights to iterate the smaller assignment
+  side when computing cross parity, avoiding two full popcount scans per transition pair.
+- Materialized, CSR, streaming, and Fourier rankwidth join paths all use the weighted
+  parity helper.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build --print-errorlogs`

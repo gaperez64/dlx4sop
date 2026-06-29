@@ -60,6 +60,7 @@ typedef struct rw_table {
   size_t cap;
   rw_signature_rep_t *reps;
   uint64_t *assignments;
+  uint32_t *rep_weights;
   size_t reps_len;
   size_t reps_cap;
   /* Open-addressing index: signature -> rep index (UINT32_MAX = empty). Avoids the O(reps_len)
@@ -133,6 +134,7 @@ typedef struct rw_transition_csr {
 typedef struct rw_fourier_table {
   uint32_t *signatures;
   uint64_t *assignments;
+  uint32_t *assignment_weights;
   uint64_t *values;
   uint32_t *signature_slots;
   size_t len;
@@ -456,20 +458,25 @@ static bool reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_er
   }
   rw_signature_rep_t *reps = calloc(new_cap, sizeof(*reps));
   uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
-  if (reps == NULL || assignments == NULL) {
+  uint32_t *rep_weights = calloc(new_cap, sizeof(*rep_weights));
+  if (reps == NULL || assignments == NULL || rep_weights == NULL) {
     free(reps);
     free(assignments);
+    free(rep_weights);
     set_error(error, "out of memory while growing rankwidth signature table");
     return false;
   }
   if (table->reps_len != 0) {
     memcpy(reps, table->reps, table->reps_len * sizeof(*reps));
     memcpy(assignments, table->assignments, table->reps_len * words * sizeof(*assignments));
+    memcpy(rep_weights, table->rep_weights, table->reps_len * sizeof(*rep_weights));
   }
   free(table->reps);
   free(table->assignments);
+  free(table->rep_weights);
   table->reps = reps;
   table->assignments = assignments;
+  table->rep_weights = rep_weights;
   table->reps_cap = new_cap;
   return true;
 }
@@ -555,6 +562,7 @@ static bool table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t 
       .signature = signature,
   };
   qsop_bitset_copy(table_assignment(table, table->reps_len, words), assignment, words);
+  table->rep_weights[table->reps_len] = qsop_bitset_popcount(assignment, words);
   table->rep_slots[s] = (uint32_t)table->reps_len;
   table->reps_len++;
   return true;
@@ -611,6 +619,7 @@ static void table_free(rw_table_t *table) {
   free(table->entries);
   free(table->reps);
   free(table->assignments);
+  free(table->rep_weights);
   free(table->rep_slots);
   *table = (rw_table_t){0};
 }
@@ -874,10 +883,12 @@ static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint
 
   uint32_t *signatures = calloc(new_cap, sizeof(*signatures));
   uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
+  uint32_t *assignment_weights = calloc(new_cap, sizeof(*assignment_weights));
   uint64_t *values = calloc(new_cap * (size_t)r, sizeof(*values));
-  if (signatures == NULL || assignments == NULL || values == NULL) {
+  if (signatures == NULL || assignments == NULL || assignment_weights == NULL || values == NULL) {
     free(signatures);
     free(assignments);
+    free(assignment_weights);
     free(values);
     set_error(error, "out of memory while growing rankwidth Fourier table");
     return false;
@@ -885,13 +896,17 @@ static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint
   if (table->len != 0) {
     memcpy(signatures, table->signatures, table->len * sizeof(*signatures));
     memcpy(assignments, table->assignments, table->len * words * sizeof(*assignments));
+    memcpy(assignment_weights, table->assignment_weights,
+           table->len * sizeof(*assignment_weights));
     memcpy(values, table->values, table->len * (size_t)r * sizeof(*values));
   }
   free(table->signatures);
   free(table->assignments);
+  free(table->assignment_weights);
   free(table->values);
   table->signatures = signatures;
   table->assignments = assignments;
+  table->assignment_weights = assignment_weights;
   table->values = values;
   table->cap = new_cap;
   return true;
@@ -903,6 +918,7 @@ static void fourier_table_free(rw_fourier_table_t *table) {
   }
   free(table->signatures);
   free(table->assignments);
+  free(table->assignment_weights);
   free(table->values);
   free(table->signature_slots);
   *table = (rw_fourier_table_t){0};
@@ -2682,11 +2698,11 @@ static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
   return parity;
 }
 
-static uint32_t cross_parity_bitsets(uint32_t nvars, const uint64_t *adj,
-                                     const uint64_t *left_assignment,
-                                     const uint64_t *right_assignment, size_t words) {
-  const uint32_t left_count = qsop_bitset_popcount(left_assignment, words);
-  const uint32_t right_count = qsop_bitset_popcount(right_assignment, words);
+static uint32_t cross_parity_bitsets_weighted(uint32_t nvars, const uint64_t *adj,
+                                              const uint64_t *left_assignment,
+                                              uint32_t left_count,
+                                              const uint64_t *right_assignment,
+                                              uint32_t right_count, size_t words) {
   if (left_count == 0 || right_count == 0) {
     return 0;
   }
@@ -2703,11 +2719,13 @@ static uint32_t cross_parity_bitsets(uint32_t nvars, const uint64_t *adj,
 static bool rw_compute_join_transition_sign(
     uint32_t nvars, const uint64_t *adj, rw_signature_pool_t *pool,
     const uint64_t *outside, size_t words, uint32_t r,
-    uint32_t left_signature, const uint64_t *left_rep,
-    uint32_t right_signature, const uint64_t *right_rep,
+    uint32_t left_signature, const uint64_t *left_rep, uint32_t left_weight,
+    uint32_t right_signature, const uint64_t *right_rep, uint32_t right_weight,
     uint64_t *scratch_sig, rw_transition_eval_t *out, qsop_error_t *error) {
   const uint32_t sign = r / 2U;
-  const uint32_t parity = cross_parity_bitsets(nvars, adj, left_rep, right_rep, words);
+  const uint32_t parity =
+      cross_parity_bitsets_weighted(nvars, adj, left_rep, left_weight, right_rep, right_weight,
+                                    words);
   qsop_bitset_copy(scratch_sig, signature_bits(pool, left_signature), words);
   qsop_bitset_xor(scratch_sig, signature_bits(pool, right_signature), words);
   qsop_bitset_and(scratch_sig, outside, words);
@@ -2761,7 +2779,9 @@ static bool rw_transition_csr_build_sign(
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
                                            left->reps[i].signature, lrep,
+                                           left->rep_weights[i],
                                            right->reps[j].signature, rrep,
+                                           right->rep_weights[j],
                                            scratch_sig, &eval, error)) {
         free(counts);
         return false;
@@ -2834,7 +2854,9 @@ static bool rw_transition_csr_build_sign(
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
                                            left->reps[i].signature, lrep,
+                                           left->rep_weights[i],
                                            right->reps[j].signature, rrep,
+                                           right->rep_weights[j],
                                            scratch_sig, &eval, error)) {
         free(left_signatures); free(offsets); free(items); free(cursors);
         return false;
@@ -3129,7 +3151,9 @@ static bool rw_join_count_table_streaming_sign(
       rw_transition_eval_t eval;
       candidate_pairs++;
       if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
-                                           lsig, lrep, right->reps[j].signature, rrep,
+                                           lsig, lrep, left->rep_weights[i],
+                                           right->reps[j].signature, rrep,
+                                           right->rep_weights[j],
                                            scratch_sig, &eval, error)) {
         free(left_starts); free(left_ends); free(right_starts); free(right_ends);
         return false;
@@ -3212,8 +3236,9 @@ static bool build_join_map(const qsop_instance_t *qsop,
     for (size_t j = 0; j < right->reps_len; j++) {
       const uint64_t *left_rep = table_assignment(left, i, words);
       const uint64_t *right_rep = table_assignment(right, j, words);
-      const uint32_t parity =
-          cross_parity_bitsets(qsop->nvars, adj, left_rep, right_rep, words);
+      const uint32_t parity = cross_parity_bitsets_weighted(
+          qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep, right->rep_weights[j],
+          words);
       qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
       qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
       qsop_bitset_and(signature, outside, words);
@@ -3272,8 +3297,9 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
     for (size_t j = 0; j < right->reps_len; j++) {
       const uint64_t *left_rep = table_assignment(left, i, words);
       const uint64_t *right_rep = table_assignment(right, j, words);
-      const uint32_t parity =
-          cross_parity_bitsets(qsop->nvars, adj, left_rep, right_rep, words);
+      const uint32_t parity = cross_parity_bitsets_weighted(
+          qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep, right->rep_weights[j],
+          words);
       qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
       qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
       qsop_bitset_and(signature, outside, words);
@@ -3564,6 +3590,7 @@ static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t si
   const size_t index = table->len++;
   table->signatures[index] = signature;
   qsop_bitset_copy(fourier_assignment(table, index, words), assignment, words);
+  table->assignment_weights[index] = qsop_bitset_popcount(assignment, words);
   memset(&table->values[index * (size_t)r], 0, (size_t)r * sizeof(*table->values));
   table->signature_slots[slot] = (uint32_t)index;
   *out = index;
@@ -3635,7 +3662,9 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
                                            left->signatures[i], left_rep,
+                                           left->assignment_weights[i],
                                            right->signatures[j], right_rep,
+                                           right->assignment_weights[j],
                                            scratch_sig, &eval, error)) {
         return false;
       }
