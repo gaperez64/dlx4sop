@@ -1143,7 +1143,9 @@ static bool bitset_contains_all(const uint64_t *set, const uint64_t *subset, siz
  * The search is bitset-based and greedy; callers repeat it while marking covered
  * sign-pair indices to extract edge-disjoint blocks.
  */
-static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *covered,
+static bool find_best_sign_block(const wmc_factor_graph_t *fg, const uint64_t *adj,
+                                 const uint64_t *active_bits, size_t words,
+                                 uint64_t *b_bits, uint32_t *a_tmp, uint32_t *b_tmp,
                                  uint32_t min_side, int64_t min_savings,
                                  wmc_sign_block_t *out, bool *found_out,
                                  qsop_error_t *error) {
@@ -1153,48 +1155,10 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
   }
   if (n == 0 || fg->npairs == 0) return true;
   if (min_side == 0U) min_side = 1U;
-  const size_t words = (n + 63U) / 64U;
-
-  uint64_t *adj = calloc((size_t)n * words, sizeof(*adj));
-  uint64_t *active_bits = calloc(words, sizeof(*active_bits));
-  uint64_t *b_bits = calloc(words, sizeof(*b_bits));
-  if (adj == NULL || active_bits == NULL || b_bits == NULL) {
-    free(adj);
-    free(active_bits);
-    free(b_bits);
-    set_error(error, "out of memory searching amp-block parity blocks");
-    return false;
-  }
-  for (uint32_t v = 0; v < n; v++) {
-    if (fg->var_active[v]) {
-      qsop_bitset_set(active_bits, v);
-    }
-  }
-  for (size_t p = 0; p < fg->npairs; p++) {
-    if (!fg->pair_active[p] || (covered != NULL && covered[p]) ||
-        !fg_pair_is_sign(&fg->pairs[p])) {
-      continue;
-    }
-    const uint32_t u = fg->pairs[p].u;
-    const uint32_t v = fg->pairs[p].v;
-    if (!fg->var_active[u] || !fg->var_active[v]) {
-      continue;
-    }
-    qsop_bitset_set(qsop_bitset_row(adj, words, u), v);
-    qsop_bitset_set(qsop_bitset_row(adj, words, v), u);
-  }
 
   uint32_t best_score = 0;
   uint32_t *best_a = NULL, *best_b = NULL;
   uint32_t best_a_len = 0, best_b_len = 0;
-
-  uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
-  uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
-  if (!b_tmp || !a_tmp) {
-    free(b_tmp); free(a_tmp); free(adj); free(active_bits); free(b_bits);
-    set_error(error, "out of memory searching amp-block parity blocks");
-    return false;
-  }
 
   for (uint32_t u = 0; u < n; u++) {
     if (!fg->var_active[u]) {
@@ -1239,7 +1203,6 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
       best_b = malloc(b_len * sizeof(*best_b));
       if (!best_a || !best_b) {
         free(best_a); free(best_b);
-        free(a_tmp); free(b_tmp); free(adj); free(active_bits); free(b_bits);
         set_error(error, "out of memory searching amp-block parity blocks");
         return false;
       }
@@ -1247,8 +1210,6 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const bool *cover
       memcpy(best_b, b_tmp, b_len * sizeof(*best_b));
     }
   }
-
-  free(a_tmp); free(b_tmp); free(adj); free(active_bits); free(b_bits);
 
   if (best_score == 0) return true;
   out->a = best_a;
@@ -1270,11 +1231,58 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
     set_error(error, "out of memory extracting amp-block parity blocks");
     return false;
   }
+  if (fg->nvars == 0 || fg->npairs == 0) {
+    *covered_out = covered;
+    return true;
+  }
+
+  const uint32_t n = fg->nvars;
+  const size_t words = qsop_bitset_words(n);
+  uint64_t *adj = calloc((size_t)n * words, sizeof(*adj));
+  uint64_t *active_bits = calloc(words, sizeof(*active_bits));
+  uint64_t *b_bits = calloc(words, sizeof(*b_bits));
+  uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
+  uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
+  if (adj == NULL || active_bits == NULL || b_bits == NULL || b_tmp == NULL || a_tmp == NULL) {
+    free(adj);
+    free(active_bits);
+    free(b_bits);
+    free(b_tmp);
+    free(a_tmp);
+    free(covered);
+    set_error(error, "out of memory extracting amp-block parity blocks");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < n; v++) {
+    if (fg->var_active[v]) {
+      qsop_bitset_set(active_bits, v);
+    }
+  }
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || !fg_pair_is_sign(&fg->pairs[p])) {
+      continue;
+    }
+    const uint32_t u = fg->pairs[p].u;
+    const uint32_t v = fg->pairs[p].v;
+    if (!fg->var_active[u] || !fg->var_active[v]) {
+      continue;
+    }
+    qsop_bitset_set(qsop_bitset_row(adj, words, u), v);
+    qsop_bitset_set(qsop_bitset_row(adj, words, v), u);
+  }
+
   for (;;) {
     wmc_sign_block_t block = {0};
     bool found = false;
-    if (!find_best_sign_block(fg, covered, min_side, min_savings, &block, &found, error)) {
+    if (!find_best_sign_block(fg, adj, active_bits, words, b_bits, a_tmp, b_tmp,
+                              min_side, min_savings, &block, &found, error)) {
       sign_blocks_free(blocks);
+      free(adj);
+      free(active_bits);
+      free(b_bits);
+      free(b_tmp);
+      free(a_tmp);
       free(covered);
       return false;
     }
@@ -1288,6 +1296,11 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
       free(in_b);
       sign_block_free(&block);
       sign_blocks_free(blocks);
+      free(adj);
+      free(active_bits);
+      free(b_bits);
+      free(b_tmp);
+      free(a_tmp);
       free(covered);
       set_error(error, "out of memory marking amp-block parity block");
       return false;
@@ -1303,6 +1316,8 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
       const uint32_t v = fg->pairs[p].v;
       if ((in_a[u] && in_b[v]) || (in_a[v] && in_b[u])) {
         covered[p] = true;
+        qsop_bitset_clear(qsop_bitset_row(adj, words, u), v);
+        qsop_bitset_clear(qsop_bitset_row(adj, words, v), u);
         marked++;
       }
     }
@@ -1315,10 +1330,20 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
     if (!sign_blocks_push(blocks, &block, error)) {
       sign_block_free(&block);
       sign_blocks_free(blocks);
+      free(adj);
+      free(active_bits);
+      free(b_bits);
+      free(b_tmp);
+      free(a_tmp);
       free(covered);
       return false;
     }
   }
+  free(adj);
+  free(active_bits);
+  free(b_bits);
+  free(b_tmp);
+  free(a_tmp);
   *covered_out = covered;
   return true;
 }

@@ -490,3 +490,21 @@ Validation:
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'sop-solve golden' 'rankwidth join strategy smoke' 'differential backends' 'rankwidth family crosscheck smoke' --print-errorlogs`
 - `meson test -C build --print-errorlogs`
+
+### 2026-06-29: Amp-Block Greedy Search Reuse
+
+Removed repeated graph rebuild work from the signed WMC `amp-block` extractor:
+
+- The greedy complete-bipartite sign-block search now builds the active sign-edge
+  adjacency bitset once per export.
+- Covered block edges are removed from that adjacency in place before the next greedy
+  pass.
+- Search scratch arrays and bitsets are reused across passes instead of being allocated
+  and freed in every `find_best_sign_block` call.
+- The greedy scoring and edge-disjoint block semantics are unchanged.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
