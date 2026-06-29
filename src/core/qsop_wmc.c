@@ -1271,12 +1271,17 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
   uint64_t *b_bits = calloc(words, sizeof(*b_bits));
   uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
   uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
-  if (adj == NULL || active_bits == NULL || b_bits == NULL || b_tmp == NULL || a_tmp == NULL) {
+  uint32_t *mark_a = calloc(n, sizeof(*mark_a));
+  uint32_t *mark_b = calloc(n, sizeof(*mark_b));
+  if (adj == NULL || active_bits == NULL || b_bits == NULL || b_tmp == NULL ||
+      a_tmp == NULL || mark_a == NULL || mark_b == NULL) {
     free(adj);
     free(active_bits);
     free(b_bits);
     free(b_tmp);
     free(a_tmp);
+    free(mark_a);
+    free(mark_b);
     free(covered);
     set_error(error, "out of memory extracting amp-block parity blocks");
     return false;
@@ -1300,6 +1305,7 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
     qsop_bitset_set(qsop_bitset_row(adj, words, v), u);
   }
 
+  uint32_t marker_stamp = 0;
   for (;;) {
     wmc_sign_block_t block = {0};
     bool found = false;
@@ -1311,30 +1317,22 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
       free(b_bits);
       free(b_tmp);
       free(a_tmp);
+      free(mark_a);
+      free(mark_b);
       free(covered);
       return false;
     }
     if (!found) {
       break;
     }
-    bool *in_a = calloc(fg->nvars == 0 ? 1U : fg->nvars, sizeof(*in_a));
-    bool *in_b = calloc(fg->nvars == 0 ? 1U : fg->nvars, sizeof(*in_b));
-    if (in_a == NULL || in_b == NULL) {
-      free(in_a);
-      free(in_b);
-      sign_block_free(&block);
-      sign_blocks_free(blocks);
-      free(adj);
-      free(active_bits);
-      free(b_bits);
-      free(b_tmp);
-      free(a_tmp);
-      free(covered);
-      set_error(error, "out of memory marking amp-block parity block");
-      return false;
+    marker_stamp++;
+    if (marker_stamp == 0) {
+      memset(mark_a, 0, (size_t)n * sizeof(*mark_a));
+      memset(mark_b, 0, (size_t)n * sizeof(*mark_b));
+      marker_stamp = 1;
     }
-    for (uint32_t i = 0; i < block.a_len; i++) in_a[block.a[i]] = true;
-    for (uint32_t i = 0; i < block.b_len; i++) in_b[block.b[i]] = true;
+    for (uint32_t i = 0; i < block.a_len; i++) mark_a[block.a[i]] = marker_stamp;
+    for (uint32_t i = 0; i < block.b_len; i++) mark_b[block.b[i]] = marker_stamp;
     uint32_t marked = 0;
     for (size_t p = 0; p < fg->npairs; p++) {
       if (!fg->pair_active[p] || covered[p] || !fg_pair_is_sign(&fg->pairs[p])) {
@@ -1342,15 +1340,14 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
       }
       const uint32_t u = fg->pairs[p].u;
       const uint32_t v = fg->pairs[p].v;
-      if ((in_a[u] && in_b[v]) || (in_a[v] && in_b[u])) {
+      if ((mark_a[u] == marker_stamp && mark_b[v] == marker_stamp) ||
+          (mark_a[v] == marker_stamp && mark_b[u] == marker_stamp)) {
         covered[p] = true;
         qsop_bitset_clear(qsop_bitset_row(adj, words, u), v);
         qsop_bitset_clear(qsop_bitset_row(adj, words, v), u);
         marked++;
       }
     }
-    free(in_a);
-    free(in_b);
     if (marked != block.edge_count) {
       sign_block_free(&block);
       continue;
@@ -1363,6 +1360,8 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
       free(b_bits);
       free(b_tmp);
       free(a_tmp);
+      free(mark_a);
+      free(mark_b);
       free(covered);
       return false;
     }
@@ -1372,6 +1371,8 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
   free(b_bits);
   free(b_tmp);
   free(a_tmp);
+  free(mark_a);
+  free(mark_b);
   *covered_out = covered;
   return true;
 }

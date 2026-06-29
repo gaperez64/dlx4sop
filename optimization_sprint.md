@@ -562,3 +562,18 @@ Validation:
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Amp-Block Marker Reuse
+
+Removed one more allocator hot spot from multi-block `amp-block` extraction:
+
+- Per-block `in_a`/`in_b` marker arrays are replaced with reusable `uint32_t` stamp arrays.
+- This preserves the same edge-marking logic while avoiding two calloc/free pairs for
+  every extracted sign block.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
