@@ -239,6 +239,7 @@ def parse_stats_result_and_amplitude(
         "backend",
         "branch_heuristic",
         "rankwidth_mode",
+        "rankwidth_fourier_kernel",
         "rankwidth_decomposition",
         "treewidth_order",
         "solve_mode",
@@ -324,7 +325,8 @@ def rankwidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]
 def backend_stat_aliases(stats: dict[str, int | str]) -> dict[str, int | str]:
     backend = str(stats.get("backend", ""))
     aliases: dict[str, int | str] = {}
-    for key in ("rankwidth_mode", "rankwidth_decomposition", "treewidth_order"):
+    for key in ("rankwidth_mode", "rankwidth_fourier_kernel", "rankwidth_decomposition",
+                "treewidth_order"):
         if key in stats:
             aliases[key] = stats[key]
     width = stats.get("decomposition_width")

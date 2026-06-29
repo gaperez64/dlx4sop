@@ -54,6 +54,7 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
   uint64_t rankwidth_table_assignment_bytes;
+  uint32_t rankwidth_fourier_kernel;
 
   /* Branch dispatch counters */
   uint64_t treewidth_delegations;
@@ -99,6 +100,13 @@ typedef enum qsop_rankwidth_solve_mode {
   QSOP_RANKWIDTH_SOLVE_FOURIER,
 } qsop_rankwidth_solve_mode_t;
 
+typedef enum qsop_rankwidth_fourier_kernel {
+  QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_HYBRID_EVEN_FWHT,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE,
+} qsop_rankwidth_fourier_kernel_t;
+
 typedef enum qsop_treewidth_order {
   QSOP_TREEWIDTH_ORDER_MIN_FILL,
   QSOP_TREEWIDTH_ORDER_MIN_DEGREE,
@@ -121,6 +129,7 @@ typedef enum qsop_rankwidth_join_strategy {
 typedef struct qsop_rankwidth_solve_options {
   qsop_rankwidth_join_strategy_t join_strategy; /* default AUTO */
   uint64_t materialize_join_max_pairs;           /* 0 = use built-in default */
+  qsop_rankwidth_fourier_kernel_t fourier_kernel; /* default AUTO */
 } qsop_rankwidth_solve_options_t;
 
 /* Policy for how the branch solver sources a rank decomposition when considering

@@ -60,6 +60,7 @@ static void print_usage(FILE *file) {
         "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
         "[--rankwidth-memory-policy skip|fallback|hard-error] "
         "[--rankwidth-join-strategy auto|materialized|streaming] "
+        "[--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference] "
         "[--rankwidth-materialize-join-max-pairs N] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
         file);
@@ -131,6 +132,20 @@ static const char *rankwidth_mode_name(qsop_rankwidth_solve_mode_t mode) {
     return "count-table";
   case QSOP_RANKWIDTH_SOLVE_FOURIER:
     return "fourier";
+  }
+  return "unknown";
+}
+
+static const char *rankwidth_fourier_kernel_name(qsop_rankwidth_fourier_kernel_t kernel) {
+  switch (kernel) {
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO:
+    return "auto";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING:
+    return "streaming";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_HYBRID_EVEN_FWHT:
+    return "hybrid-even-fwht";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE:
+    return "dense-reference";
   }
   return "unknown";
 }
@@ -281,6 +296,11 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     }
   } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
     fprintf(file, "rankwidth_mode: %s\n", rankwidth_mode_name(rankwidth_mode));
+    if (rankwidth_mode == QSOP_RANKWIDTH_SOLVE_FOURIER) {
+      fprintf(file, "rankwidth_fourier_kernel: %s\n",
+              rankwidth_fourier_kernel_name(
+                  (qsop_rankwidth_fourier_kernel_t)stats->rankwidth_fourier_kernel));
+    }
     fprintf(file, "rankwidth_decomposition: %s\n", rankwidth_decomposition);
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
     fprintf(file, "rankwidth_cutrank_width: %" PRIu32 "\n",
@@ -532,6 +552,9 @@ int main(int argc, char **argv) {
   uint64_t rw_memory_budget_bytes = 0; /* 0 = no limit */
   rankwidth_memory_policy_t rw_memory_policy = RW_MEMORY_POLICY_SKIP;
   qsop_rankwidth_join_strategy_t rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+  qsop_rankwidth_fourier_kernel_t rw_fourier_kernel =
+      QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
+  bool rw_fourier_kernel_set = false;
   uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
   solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
@@ -662,6 +685,31 @@ int main(int argc, char **argv) {
       }
       if (!parse_u64_arg("--rankwidth-materialize-join-max-pairs", argv[++i],
                          &rw_materialize_join_max_pairs)) return 2;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-fourier-kernel") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-fourier-kernel requires auto|streaming|hybrid-even-fwht|dense-reference\n",
+              stderr);
+        return 2;
+      }
+      const char *val = argv[++i];
+      if (strcmp(val, "auto") == 0) {
+        rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
+      } else if (strcmp(val, "streaming") == 0) {
+        rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING;
+      } else if (strcmp(val, "hybrid-even-fwht") == 0) {
+        rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_HYBRID_EVEN_FWHT;
+      } else if (strcmp(val, "dense-reference") == 0) {
+        rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE;
+      } else {
+        fprintf(stderr,
+                "error: unknown rankwidth Fourier kernel '%s' "
+                "(expected auto|streaming|hybrid-even-fwht|dense-reference)\n",
+                val);
+        return 2;
+      }
+      rw_fourier_kernel_set = true;
       continue;
     }
     if (strcmp(argv[i], "--branch-heuristic") == 0) {
@@ -922,6 +970,10 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-mode requires --backend rankwidth\n", stderr);
     return 2;
   }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rw_fourier_kernel_set) {
+    fputs("error: --rankwidth-fourier-kernel requires --backend rankwidth\n", stderr);
+    return 2;
+  }
   if (rankwidth_mode_set && solve_mode_set &&
       rankwidth_mode != rankwidth_mode_from_solve_mode(solve_mode)) {
     fputs("error: --solve-mode conflicts with --rankwidth-mode\n", stderr);
@@ -934,6 +986,10 @@ int main(int argc, char **argv) {
     solve_mode = rankwidth_mode == QSOP_RANKWIDTH_SOLVE_FOURIER ? QSOP_SOLVE_MODE_FOURIER
                                                                 : QSOP_SOLVE_MODE_COUNT_TABLE;
     solve_mode_set = true;
+  }
+  if (rw_fourier_kernel_set && rankwidth_mode != QSOP_RANKWIDTH_SOLVE_FOURIER) {
+    fputs("error: --rankwidth-fourier-kernel requires --rankwidth-mode fourier\n", stderr);
+    return 2;
   }
   if (backend != SOLVE_BACKEND_TREEWIDTH && treewidth_order_set) {
     fputs("error: --treewidth-order requires --backend treewidth\n", stderr);
@@ -1115,6 +1171,7 @@ int main(int argc, char **argv) {
           &(qsop_rankwidth_solve_options_t){
               .join_strategy = rw_join_strategy,
               .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+              .fourier_kernel = rw_fourier_kernel,
           },
           &result, &solve_stats, trace_ptr, &error);
     }

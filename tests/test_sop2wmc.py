@@ -399,35 +399,63 @@ def verify_residue_fourier(
         )
 
 
-def verify_peel1(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
-    """Verify that peel1 preprocessing gives the same amplitude as no-preprocess."""
+def verify_residue_fourier_mode_one(
+    sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path
+) -> None:
+    """Verify residue-fourier --wmc-fourier-mode 1 emits exactly F[1]."""
+    ref_counts = reference_counts(sop_solve, qsop)
+    r = len(ref_counts)
+    ref_amplitude = counts_to_amplitude(ref_counts, r)
+
+    result = run(
+        [str(sop2wmc), "--encoding", "residue-fourier", "--wmc-fourier-mode", "1", str(qsop)]
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"sop2wmc residue-fourier mode 1 failed on {qsop}:\n{result.stderr}"
+        )
+    blocks = parse_fourier_blocks(result.stdout)
+    if len(blocks) != 1 or blocks[0][0] != 1:
+        raise AssertionError(f"{qsop}: expected exactly one t=1 block, got {blocks}")
+    _, block_text = blocks[0]
+    xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(block_text)
+    got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+    if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
+        raise AssertionError(
+            f"{qsop}: mode-1 amplitude {got} != sop-solve reference {ref_amplitude}"
+        )
+
+
+def verify_preprocess(sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path) -> None:
+    """Verify that WMC preprocessing gives the same amplitude as no-preprocess."""
     counts = reference_counts(sop_solve, qsop)
     r = len(counts)
     ref_amplitude = counts_to_amplitude(counts, r)
 
-    for enc in ("amp-and", "amp-soft"):
-        result = run(
-            [str(sop2wmc), "--encoding", enc, "--wmc-preprocess", "peel1", str(qsop)]
-        )
-        if result.returncode != 0:
-            raise AssertionError(
-                f"sop2wmc --encoding {enc} --wmc-preprocess peel1 failed on {qsop}:\n{result.stderr}"
+    for enc in ("amp-and", "amp-soft", "amp-block"):
+        for pp in ("peel1", "peel2-safe"):
+            result = run(
+                [str(sop2wmc), "--encoding", enc, "--wmc-preprocess", pp, str(qsop)]
             )
-
-        # Handle the special zero-amplitude case.
-        if "encoding=zero" in result.stdout:
-            if abs(ref_amplitude) > 1e-9:
+            if result.returncode != 0:
                 raise AssertionError(
-                    f"{qsop}: peel1 emitted zero-amplitude WPCNF but reference is {ref_amplitude}"
+                    f"sop2wmc --encoding {enc} --wmc-preprocess {pp} failed on {qsop}:\n{result.stderr}"
                 )
-            continue
 
-        xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
-        got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
-        if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
-            raise AssertionError(
-                f"{qsop} {enc} peel1: got {got}, reference {ref_amplitude}"
-            )
+            # Handle the special zero-amplitude case.
+            if "encoding=zero" in result.stdout:
+                if abs(ref_amplitude) > 1e-9:
+                    raise AssertionError(
+                        f"{qsop}: {pp} emitted zero-amplitude WPCNF but reference is {ref_amplitude}"
+                    )
+                continue
+
+            xvars, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
+            got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+            if abs(got - ref_amplitude) > 1e-9 * max(1.0, abs(ref_amplitude)):
+                raise AssertionError(
+                    f"{qsop} {enc} {pp}: got {got}, reference {ref_amplitude}"
+                )
 
 
 def reference_amplitude(sop_solve: pathlib.Path, qsop_text: str) -> complex:
@@ -558,6 +586,40 @@ def test_amp_block_threshold(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> 
         f"Block amplitude {got_block} != reference {ref}"
 
 
+def test_amp_block_multi(sop2wmc: pathlib.Path, sop_solve: pathlib.Path) -> None:
+    """amp-block should extract multiple edge-disjoint sign blocks."""
+    qsop_two_blocks = (
+        "p qsop-sign 8 8 8\nn 0\ncst 0\n"
+        "e 0 2\ne 0 3\ne 1 2\ne 1 3\n"
+        "e 4 6\ne 4 7\ne 5 6\ne 5 7\n"
+    )
+    ref = reference_amplitude(sop_solve, qsop_two_blocks)
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(qsop_two_blocks)
+        qsop_path = f.name
+
+    result = run(
+        [
+            str(sop2wmc),
+            "--encoding",
+            "amp-block",
+            "--wmc-block-min-side",
+            "2",
+            "--wmc-block-min-savings",
+            "1",
+            qsop_path,
+        ]
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"multi amp-block export failed:\n{result.stderr}")
+    if "c block count=2 " not in result.stdout:
+        raise AssertionError(f"expected two parity blocks, got:\n{result.stdout[:1200]}")
+    _, weights, amp_factor, clauses, nvars_total = parse_amplitude_wpcnf(result.stdout)
+    got = eval_wmc_all_vars(weights, amp_factor, clauses, nvars_total)
+    assert abs(got - ref) < 1e-9 * max(1.0, abs(ref)), \
+        f"Multi-block amplitude {got} != reference {ref}"
+
+
 def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
 
@@ -585,9 +647,9 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         if r.returncode != 0:
             raise AssertionError(f"--encoding {enc} unexpectedly failed:\n{r.stderr}")
 
-    # peel1 preprocessing should succeed for amplitude encodings and residue-fourier.
+    # WMC preprocessing should succeed for amplitude encodings and residue-fourier.
     for enc in ("amp-and", "amp-soft", "residue-fourier"):
-        for pp in ("none", "peel1"):
+        for pp in ("none", "peel1", "peel2-safe"):
             r = run([str(sop2wmc), "--encoding", enc, "--wmc-preprocess", pp, str(qsop)])
             if r.returncode != 0:
                 raise AssertionError(
@@ -603,6 +665,14 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
                 f"--wmc-fourier-inner {inner} unexpectedly failed:\n{r.stderr}"
             )
 
+    for mode in ("all", "1"):
+        r = run([str(sop2wmc), "--encoding", "residue-fourier",
+                 "--wmc-fourier-mode", mode, str(qsop)])
+        if r.returncode != 0:
+            raise AssertionError(
+                f"--wmc-fourier-mode {mode} unexpectedly failed:\n{r.stderr}"
+            )
+
     error_cases = [
         ([str(sop2wmc), "--residue"], "requires a value"),
         ([str(sop2wmc), "--residue", "nope", str(qsop)], "must be 'all'"),
@@ -613,6 +683,8 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(sop2wmc), "-o"], "requires a path"),
         ([str(sop2wmc), "--encoding"], "requires a value"),
         ([str(sop2wmc), "--encoding", "nope", str(qsop)], "must be 'amp-and'"),
+        ([str(sop2wmc), "--encoding", "residue-fourier", "--wmc-fourier-mode", "999", str(qsop)],
+         "out of range"),
     ]
     for cmd, expected in error_cases:
         completed = run(cmd)
@@ -634,9 +706,11 @@ def main() -> int:
         verify_amplitude(sop2wmc, sop_solve, qsop)
         verify_amp_soft(sop2wmc, sop_solve, qsop)
         verify_residue_fourier(sop2wmc, sop_solve, qsop)
-        verify_peel1(sop2wmc, sop_solve, qsop)
+        verify_residue_fourier_mode_one(sop2wmc, sop_solve, qsop)
+        verify_preprocess(sop2wmc, sop_solve, qsop)
     test_amp_block(sop2wmc, sop_solve)
     test_amp_block_threshold(sop2wmc, sop_solve)
+    test_amp_block_multi(sop2wmc, sop_solve)
     check_cli(sop2wmc, source_root)
     return 0
 

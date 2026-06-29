@@ -6,7 +6,7 @@ Five encodings are supported:
   amplitude/amp-and -- single WPCNF, Tseitin AND auxiliaries (Ganak --mode 6)
   amp-soft         -- single WPCNF, implication-only auxiliaries (Ganak --mode 6)
   amp-block        -- single WPCNF, bipartite sign-block parity factors (Ganak --mode 6)
-  residue-fourier  -- r WPCNF blocks via iDFT (Ganak --mode 6 per block)
+  residue-fourier  -- one WPCNF block for Fourier mode 1 (Ganak --mode 6)
   all              -- run all five encodings
 
 For each QSOP instance the script cross-checks Ganak's output against the
@@ -251,32 +251,26 @@ def _parse_z0_log2(cnf_text: str) -> int | None:
 
 def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path,
                           r: int, timeout: float | None):
-    """Run residue-fourier encoding: r WPCNF blocks via Ganak --mode 6, iDFT to recover amplitude."""
+    """Run residue-fourier amplitude encoding for Fourier mode 1 only."""
     export_s, count_s = 0.0, 0.0
     with tempfile.TemporaryDirectory() as tmp:
-        # Emit all r blocks in one sop2wmc call.
         start = time.perf_counter()
         exported = run([str(sop2wmc), "--encoding", "residue-fourier",
-                        "--residue", "all", str(qsop)])
+                        "--wmc-fourier-mode", "1", str(qsop)])
         export_s = time.perf_counter() - start
         if exported.returncode != 0:
             raise RuntimeError(f"sop2wmc --encoding residue-fourier failed:\n{exported.stderr}")
 
         blocks = _split_fourier_blocks(exported.stdout)
-        if len(blocks) != r:
-            raise RuntimeError(f"residue-fourier: expected {r} blocks, got {len(blocks)}")
+        if len(blocks) != 1:
+            raise RuntimeError(f"residue-fourier: expected 1 mode-1 block, got {len(blocks)}")
 
-        F: list[complex] = []
         for t, cnf_text in blocks:
+            if t != 1:
+                raise RuntimeError(f"residue-fourier: expected t=1 block, got t={t}")
             factor = parse_amplitude_factor(cnf_text)
             if factor == 0j:
-                F.append(0j)
-                continue
-            if t == 0:
-                # F[0] = 2^nvars — trivial, no Ganak call needed.
-                z0_log2 = _parse_z0_log2(cnf_text)
-                F.append(complex(2 ** z0_log2) * factor if z0_log2 is not None else complex(0))
-                continue
+                return 0j, export_s, count_s, "ok"
             cnf_path = pathlib.Path(tmp) / f"t{t}.cnf"
             cnf_path.write_text(cnf_text)
             start = time.perf_counter()
@@ -296,11 +290,9 @@ def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: path
                 raw = parse_ganak_complex(counted.stdout + counted.stderr)
             except ValueError:
                 return None, export_s, count_s, "error"
-            F.append(raw * factor)
+            return raw * factor, export_s, count_s, "ok"
 
-    # amplitude = F[1] = sum_k counts[k] * omega^k directly.
-    amplitude = F[1] if len(F) > 1 else F[0]
-    return amplitude, export_s, count_s, "ok"
+    return None, export_s, count_s, "error"
 
 
 def counts_to_amplitude(counts: list, r: int) -> complex:

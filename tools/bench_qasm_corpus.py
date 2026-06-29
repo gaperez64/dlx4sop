@@ -193,6 +193,7 @@ CSV_FIELDS = [
     "backend",
     "branch_heuristic",
     "rankwidth_mode",
+    "rankwidth_fourier_kernel",
     "rankwidth_decomposition",
     "treewidth_order",
     "status",
@@ -433,6 +434,7 @@ def parse_stats_and_amplitude(text: str) -> tuple[dict[str, int | str], dict[str
                 "solve_mode",
                 "solve_mode_kernel",
                 "rankwidth_mode",
+                "rankwidth_fourier_kernel",
                 "rankwidth_decomposition",
                 "treewidth_order",
             }
@@ -460,6 +462,7 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
             "rankwidth_dense_table_forecast": "rankwidth_dense_table_forecast",
             "rankwidth_dense_even_join_forecast": "rankwidth_dense_even_join_forecast",
             "rankwidth_cutrank_width": "rankwidth_cutrank_width",
+            "rankwidth_fourier_kernel": "rankwidth_fourier_kernel",
             "signature_entries": "rankwidth_signature_entries",
             "max_signature_entries": "rankwidth_max_signature_entries",
         }
@@ -474,7 +477,7 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
 
     for source, target in mapping.items():
         value = stats.get(source)
-        if isinstance(value, int):
+        if isinstance(value, (int, str)):
             aliases[target] = value
     return aliases
 

@@ -49,12 +49,15 @@ Implementation phases:
 2. Pack signatures into dense coordinates `0..2^k-1`.
 3. Keep the existing pairwise Fourier join as the reference path.
 4. For even Fourier modes, use XOR convolution over the parent signature space.
-5. For odd Fourier modes, implement a dense blocked twisted-join kernel.
+5. For odd Fourier modes, implement the normal-form twisted-join kernel described in the
+   note. Do not substitute an ad hoc blocked pair loop for this step.
 6. Add a validator mode that compares dense and reference joins on small instances.
 
-The even-mode path is the first actionable matrix-adjacent target: the bilinear twist
-vanishes, so Walsh-Hadamard convolution should be much simpler than the full
-Bravyi-Fattal-Gottesman-style normal form.
+The even-mode path is the first actionable dense target for full residue histograms: the
+bilinear twist vanishes, so Walsh-Hadamard convolution should be much simpler than the
+full Bravyi-Fattal-Gottesman-style normal form. Single-amplitude acceleration still
+requires the odd twisted path, so benchmarks must not claim the dense theorem until that
+kernel exists.
 
 ### 3. Make SIMD Useful After Layout Changes
 
@@ -171,15 +174,24 @@ time-to-solution.
 
 ## Suggested Sprint Order
 
+Backend optimization comes first. Scoreboard refresh and publication experiments wait until
+the native rankwidth solver and WMC/Ganak backend are in the best currently practical
+shape.
+
 1. Done: finish current scoreboard refresh and keep the generated status/error rows.
 2. Done: preserve solver status/error rows in the scoreboard data path so OOM/refusal rows
    remain visible.
 3. Done: implement streaming Fourier rankwidth joins.
 4. Done: add the bounded-rank-width synthetic corpus generator and manifest.
 5. Done: add a targeted rankwidth crossover benchmark path.
-6. Later: implement dense even-mode Fourier joins with FWHT.
-7. Later: add dense odd-mode blocked twisted joins.
-8. Later: add SIMD only after dense layout and scalar dense kernels are correct.
+6. Now: add rankwidth Fourier kernel selection and keep unsupported dense kernels as
+   explicit refusals until the scalar dense implementation is reference-checked.
+7. Now: optimize the WMC/Ganak backend for signed QSOPs, especially single Fourier-mode
+   export and block-heavy sign-edge instances.
+8. Next: implement dense even-mode Fourier joins with FWHT for full residue histograms.
+9. Next: implement odd twisted dense joins only through the normal-form route described in
+   the note; do not add an ad hoc blocked odd join and call it the matrix kernel.
+10. Later: add SIMD only after dense layout and scalar dense kernels are correct.
 
 ## Sprint Log
 
@@ -356,3 +368,31 @@ Release smoke with `build-bench/sop-solve` before the driver change:
 - `rankwidth:best`: 7/7 ok, geomean 1.996 ms, max width 1.
 - `rankwidth:from-treewidth:fourier`: 7/7 ok, geomean 0.721 ms, max width 2.
 - `rankwidth:best:fourier`: 7/7 ok, geomean 1.998 ms, max width 1.
+
+### 2026-06-29: Backend-First WMC and Fourier-Kernel Plumbing
+
+Implemented the first backend-first tranche after the PDF v4 alignment:
+
+- Added `--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference`.
+- `auto` currently resolves to the proven streaming Fourier kernel.
+- Dense selections refuse clearly with `not implemented` rather than producing misleading
+  benchmark rows.
+- Rankwidth Fourier leaves now reuse per-solve scratch buffers instead of allocating three
+  bitsets per leaf.
+- `sop-solve --format stats` reports the selected Fourier kernel on rankwidth Fourier rows.
+- Added `--wmc-fourier-mode all|T`; `tools/bench_wmc_ganak.py` now runs residue-fourier
+  amplitude rows with mode `1` only.
+- Implemented `peel2-safe` degree-2 factor-graph elimination with nonzero-denominator and
+  fill-budget checks.
+- Reworked `amp-block` to run after WMC preprocessing, extract multiple edge-disjoint
+  complete bipartite sign blocks with bitsets, and emit residual pair factors via the
+  amp-soft encoding.
+- Extended WMC stats with block/preprocess counters.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_bench_qasm_corpus.py tools/bench_qasm_corpus.py`
+- `meson test -C build 'wmc unit' --print-errorlogs`

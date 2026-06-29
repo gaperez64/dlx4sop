@@ -242,7 +242,37 @@ def run_tests(sop_solve):
         else:
             print(f"    OK: {f.name} fourier+streaming matches count-table")
 
-    # 9. D2.2: streaming join on sign-edge instance records streaming_join_events > 0.
+    # 9. Fourier kernel selector is visible, and unimplemented dense kernels refuse clearly.
+    print("  test: rankwidth Fourier kernel selector")
+    r_stream_stats = _run_rankwidth_stdin(
+        sop_solve,
+        _SIGN_EDGE_4CYCLE,
+        ["--rankwidth-mode", "fourier", "--rankwidth-fourier-kernel", "streaming"],
+        format_stats=True,
+    )
+    if r_stream_stats.returncode != 0:
+        print(f"    FAIL: streaming Fourier kernel failed: {r_stream_stats.stderr.decode()[:120]}")
+        all_passed = False
+    else:
+        text = r_stream_stats.stdout.decode(errors="replace")
+        if "rankwidth_fourier_kernel: streaming" not in text:
+            print("    FAIL: missing rankwidth_fourier_kernel: streaming in stats")
+            all_passed = False
+        else:
+            print("    OK: streaming kernel recorded in stats")
+
+    r_dense = _run_rankwidth_stdin(
+        sop_solve,
+        _SIGN_EDGE_4CYCLE,
+        ["--rankwidth-mode", "fourier", "--rankwidth-fourier-kernel", "hybrid-even-fwht"],
+    )
+    if r_dense.returncode == 0 or "not implemented" not in r_dense.stderr.decode(errors="replace"):
+        print(f"    FAIL: hybrid-even-fwht should refuse clearly, got rc={r_dense.returncode}")
+        all_passed = False
+    else:
+        print("    OK: unimplemented hybrid-even-fwht refuses clearly")
+
+    # 10. D2.2: streaming join on sign-edge instance records streaming_join_events > 0.
     print("  test: D2.2 streaming join on sign-edge records streaming_join_events > 0")
     r = _run_rankwidth_stdin(sop_solve, _SIGN_EDGE_4CYCLE,
                              ["--rankwidth-join-strategy", "streaming"],

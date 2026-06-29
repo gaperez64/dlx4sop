@@ -3607,17 +3607,13 @@ static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t si
 static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
                                const rw_node_t *node, const uint64_t *powers,
                                uint64_t prime, size_t words, rw_signature_pool_t *pool,
-                               rw_fourier_table_t *table, qsop_error_t *error) {
-  uint64_t *zero_bits = calloc(words == 0 ? 1U : words, sizeof(*zero_bits));
-  uint64_t *one_bits = calloc(words == 0 ? 1U : words, sizeof(*one_bits));
-  uint64_t *signature_bits_buffer = calloc(words == 0 ? 1U : words, sizeof(*signature_bits_buffer));
-  if (zero_bits == NULL || one_bits == NULL || signature_bits_buffer == NULL) {
-    free(zero_bits);
-    free(one_bits);
-    free(signature_bits_buffer);
-    set_error(error, "out of memory while solving rankwidth Fourier leaf");
-    return false;
-  }
+                               rw_fourier_table_t *table, uint64_t *zero_bits,
+                               uint64_t *one_bits, uint64_t *signature_bits_buffer,
+                               qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  memset(zero_bits, 0, w * sizeof(*zero_bits));
+  memset(one_bits, 0, w * sizeof(*one_bits));
+  memset(signature_bits_buffer, 0, w * sizeof(*signature_bits_buffer));
 
   uint32_t zero_signature = 0;
   uint32_t one_signature = 0;
@@ -3632,9 +3628,6 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
                                      error) ||
       !fourier_table_signature_index(table, one_signature, one_bits, qsop->r, words, &one,
                                      error)) {
-    free(zero_bits);
-    free(one_bits);
-    free(signature_bits_buffer);
     return false;
   }
   for (uint32_t mode = 0; mode < qsop->r; mode++) {
@@ -3644,9 +3637,6 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
         table->values[one * (size_t)qsop->r + mode],
         powers[(size_t)mode * qsop->r + (qsop->unary[node->var] % qsop->r)], prime);
   }
-  free(zero_bits);
-  free(one_bits);
-  free(signature_bits_buffer);
   return true;
 }
 
@@ -4469,6 +4459,7 @@ static bool rankwidth_fourier_prime_state(uint32_t r, uint64_t prime, uint64_t *
 static bool solve_rankwidth_fourier_mod_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t prime, const uint64_t *powers, const uint64_t *inv_powers,
+    qsop_rankwidth_fourier_kernel_t kernel,
     uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
   rw_fourier_table_t *tables =
@@ -4486,7 +4477,7 @@ static bool solve_rankwidth_fourier_mod_once(
   }
 
   const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
-  uint64_t *scratch = calloc(3U * w, sizeof(*scratch));
+  uint64_t *scratch = calloc(6U * w, sizeof(*scratch));
   if (scratch == NULL) {
     free(tables);
     signature_pool_free(&pool);
@@ -4496,6 +4487,9 @@ static bool solve_rankwidth_fourier_mod_once(
   uint64_t *outside = scratch;
   uint64_t *scratch_sig = scratch + w;
   uint64_t *parent_assignment = scratch + 2U * w;
+  uint64_t *leaf_zero = scratch + 3U * w;
+  uint64_t *leaf_one = scratch + 4U * w;
+  uint64_t *leaf_signature = scratch + 5U * w;
 
   uint64_t join_signature_pairs = 0;
   uint64_t table_entries = 0;
@@ -4509,7 +4503,7 @@ static bool solve_rankwidth_fourier_mod_once(
     bool ok = false;
     if (node->kind == RW_NODE_LEAF) {
       ok = solve_fourier_leaf(qsop, adj, node, powers, prime, decomposition->words, &pool,
-                              &tables[node_id], error);
+                              &tables[node_id], leaf_zero, leaf_one, leaf_signature, error);
       qsop_trace_emit_elapsed(trace, "rankwidth.fourier_leaf", 0, tables[node_id].len, start);
     } else {
       const size_t left_len = tables[node->left].len;
@@ -4524,11 +4518,16 @@ static bool solve_rankwidth_fourier_mod_once(
                             decomposition->words);
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join_map", 0, pair_forecast, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_fourier_join_streaming(qsop, adj, &pool, &tables[node->left],
-                                          &tables[node->right], prime, &tables[node_id],
-                                          outside, scratch_sig,
-                                          parent_assignment, decomposition->words,
-                                          &join_signature_pairs, error);
+        if (kernel != QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING) {
+          set_error(error, "rankwidth Fourier kernel is not implemented for this join");
+          ok = false;
+        } else {
+          ok = solve_fourier_join_streaming(qsop, adj, &pool, &tables[node->left],
+                                            &tables[node->right], prime, &tables[node_id],
+                                            outside, scratch_sig,
+                                            parent_assignment, decomposition->words,
+                                            &join_signature_pairs, error);
+        }
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join", 0, tables[node_id].len,
                                 join_start);
       }
@@ -4571,6 +4570,7 @@ static bool solve_rankwidth_fourier_mod_once(
     stats->max_signature_entries = max_signature_entries;
     stats->join_pairs = join_signature_pairs * qsop->r;
     stats->join_signature_pairs = join_signature_pairs;
+    stats->rankwidth_fourier_kernel = (uint32_t)kernel;
     stats->decomposition_width = decomposition_width(decomposition, adj, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
@@ -4592,11 +4592,51 @@ static bool solve_rankwidth_fourier_mod_once(
   return true;
 }
 
+static const char *rankwidth_fourier_kernel_internal_name(
+    qsop_rankwidth_fourier_kernel_t kernel) {
+  switch (kernel) {
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO:
+    return "auto";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING:
+    return "streaming";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_HYBRID_EVEN_FWHT:
+    return "hybrid-even-fwht";
+  case QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE:
+    return "dense-reference";
+  }
+  return "unknown";
+}
+
+static bool rankwidth_fourier_kernel_resolve(qsop_rankwidth_fourier_kernel_t requested,
+                                             qsop_rankwidth_fourier_kernel_t *resolved,
+                                             qsop_error_t *error) {
+  if (requested == QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO) {
+    *resolved = QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING;
+    return true;
+  }
+  if (requested == QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING) {
+    *resolved = requested;
+    return true;
+  }
+  set_error(error, "rankwidth Fourier kernel '%s' is not implemented yet",
+            rankwidth_fourier_kernel_internal_name(requested));
+  return false;
+}
+
 static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
                                     const qsop_rankwidth_decomposition_t *decomposition,
-                                    const uint64_t *adj, qsop_result_t **out,
+                                    const uint64_t *adj,
+                                    qsop_rankwidth_fourier_kernel_t requested_kernel,
+                                    qsop_result_t **out,
                                     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                     qsop_error_t *error) {
+  qsop_rankwidth_fourier_kernel_t kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING;
+  if (!rankwidth_fourier_kernel_resolve(requested_kernel, &kernel, error)) {
+    return false;
+  }
+  if (stats != NULL) {
+    stats->rankwidth_fourier_kernel = (uint32_t)kernel;
+  }
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
@@ -4650,8 +4690,8 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
     const bool ok =
         rankwidth_fourier_prime_state(qsop->r, primes[p], &root, &powers, &inv_powers, error) &&
         solve_rankwidth_fourier_mod_once(qsop, decomposition, adj, primes[p], powers, inv_powers,
-                                         &all_counts[p * (size_t)qsop->r], stats_for_prime,
-                                         trace_for_prime, error);
+                                         kernel, &all_counts[p * (size_t)qsop->r],
+                                         stats_for_prime, trace_for_prime, error);
     (void)root;
     free(powers);
     free(inv_powers);
@@ -4727,6 +4767,8 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   const qsop_rankwidth_join_strategy_t js = (options != NULL)
       ? options->join_strategy : QSOP_RANKWIDTH_JOIN_AUTO;
   const uint64_t mp = (options != NULL) ? options->materialize_join_max_pairs : 0;
+  const qsop_rankwidth_fourier_kernel_t fk = (options != NULL)
+      ? options->fourier_kernel : QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
 
   uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
   if (adj == NULL) {
@@ -4735,7 +4777,7 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   /* Fourier path does not support streaming; count-table path does. */
   const bool ok =
       mode == QSOP_RANKWIDTH_SOLVE_FOURIER
-          ? solve_rankwidth_fourier(qsop, decomposition, adj, out, stats, trace, error)
+          ? solve_rankwidth_fourier(qsop, decomposition, adj, fk, out, stats, trace, error)
           : solve_rankwidth_count_table(qsop, decomposition, adj, js, mp, out, stats, trace, error);
   free(adj);
   return ok;

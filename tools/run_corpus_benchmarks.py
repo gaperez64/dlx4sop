@@ -229,7 +229,7 @@ def run_wmc_jobs(
         print(f"\n--- WMC amp-block: {tier} ---", file=sys.stderr)
         run_to_jsonl([*base_cmd, "--encoding", "amp-block"], amp_block_output, args.verbose)
 
-        # residue-fourier: small tiers only (r calls per instance, expensive)
+        # residue-fourier: mode-1 amplitude encoding, still WPCNF/Ganak heavy.
         if tier in WMC_RESIDUE_TIERS:
             res_fourier_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-fourier-current.jsonl"
             print(f"\n--- WMC residue-fourier: {tier} ---", file=sys.stderr)
