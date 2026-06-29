@@ -2456,6 +2456,15 @@ bool qsop_rankwidth_decomposition_width(
     set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
+  if (qsop->nedges == 0) {
+    const uint64_t table_forecast = qsop->nvars == 0 ? 1U : qsop->r;
+    *cutrank_width_out = 0;
+    decomposition->score_cached              = true;
+    decomposition->cached_cutrank_width      = 0;
+    decomposition->cached_table_forecast     = table_forecast;
+    decomposition->cached_join_pair_forecast = 0;
+    return true;
+  }
 
   uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
   if (adj == NULL) {
@@ -2541,6 +2550,15 @@ bool qsop_rankwidth_decomposition_forecast(
     }
     if (join_pairs_out != NULL) {
       *join_pairs_out = decomposition->cached_join_pair_forecast;
+    }
+    return true;
+  }
+  if (qsop->nedges == 0) {
+    if (max_table_entries_out != NULL) {
+      *max_table_entries_out = qsop->nvars == 0 ? 1U : qsop->r;
+    }
+    if (join_pairs_out != NULL) {
+      *join_pairs_out = 0;
     }
     return true;
   }
@@ -2636,6 +2654,10 @@ static bool rankwidth_record_decomposition_diagnostics(
     score.cutrank_width      = decomposition->cached_cutrank_width;
     score.table_forecast     = decomposition->cached_table_forecast;
     score.join_pair_forecast = decomposition->cached_join_pair_forecast;
+  } else if (qsop->nedges == 0) {
+    score.cutrank_width = 0;
+    score.table_forecast = qsop->nvars == 0 ? 1U : qsop->r;
+    score.join_pair_forecast = 0;
   } else {
     uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
     if (adj == NULL) {
@@ -4111,6 +4133,211 @@ static bool solve_rankwidth_count_table_crt(
   return true;
 }
 
+static void rankwidth_no_edges_stats(const qsop_instance_t *qsop, qsop_solve_stats_t *stats) {
+  if (stats == NULL) {
+    return;
+  }
+  const uint64_t table_entries = qsop->nvars == 0 ? 1U : qsop->r;
+  stats->table_entries = table_entries;
+  stats->max_table_entries = table_entries;
+  stats->signature_entries = 1;
+  stats->max_signature_entries = 1;
+  stats->join_pairs = 0;
+  stats->join_signature_pairs = 0;
+  stats->rankwidth_table_forecast = table_entries;
+  stats->rankwidth_join_pair_forecast = 0;
+  stats->rankwidth_dense_table_forecast = qsop->r;
+  stats->rankwidth_dense_even_join_forecast = 0;
+  stats->rankwidth_transition_bytes = 0;
+  stats->rankwidth_transition_layout_u16_events = 0;
+  stats->rankwidth_transition_layout_u32_events = 0;
+  stats->rankwidth_materialized_join_events = 0;
+  stats->rankwidth_streaming_join_events = 0;
+  stats->rankwidth_streaming_join_candidate_pairs = 0;
+  stats->rankwidth_streaming_join_emitted_pairs = 0;
+  stats->rankwidth_table_assignment_bytes = 0;
+  stats->decomposition_width = 0;
+  stats->rankwidth_cutrank_width = 0;
+}
+
+static bool rankwidth_no_edges_add_count(uint64_t *dst, uint64_t value,
+                                         uint64_t count_modulus,
+                                         qsop_error_t *error) {
+  if (count_modulus != 0) {
+    *dst = qsop_mod_add_u64(*dst, value % count_modulus, count_modulus);
+    return true;
+  }
+  return qsop_count_add(dst, value, error);
+}
+
+static bool solve_rankwidth_no_edges_count_table_mod_once(
+    const qsop_instance_t *qsop, uint64_t count_modulus, uint64_t *counts,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (count_modulus == 0 && qsop->nvars >= 64U) {
+    set_error(error, "rankwidth exact no-edge count-table handoff requires fewer than 64 variables");
+    return false;
+  }
+  uint64_t *current = NULL;
+  uint64_t *next = NULL;
+  if (!qsop_counts_alloc(qsop->r, &current, error) ||
+      !qsop_counts_alloc(qsop->r, &next, error)) {
+    free(current);
+    free(next);
+    return false;
+  }
+
+  const uint64_t start = qsop_trace_begin(trace);
+  current[0] = count_modulus == 0 ? 1U : 1U % count_modulus;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    qsop_counts_clear(qsop->r, next);
+    const uint32_t shift = qsop->unary[v] % qsop->r;
+    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+      const uint64_t value = current[residue];
+      if (value == 0) {
+        continue;
+      }
+      uint32_t shifted = residue + shift;
+      if (shifted >= qsop->r) {
+        shifted -= qsop->r;
+      }
+      if (!rankwidth_no_edges_add_count(&next[residue], value, count_modulus, error) ||
+          !rankwidth_no_edges_add_count(&next[shifted], value, count_modulus, error)) {
+        free(current);
+        free(next);
+        return false;
+      }
+    }
+    uint64_t *tmp = current;
+    current = next;
+    next = tmp;
+  }
+
+  qsop_counts_clear(qsop->r, counts);
+  const uint32_t constant = qsop->constant % qsop->r;
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    if (current[residue] == 0) {
+      continue;
+    }
+    uint32_t shifted = residue + constant;
+    if (shifted >= qsop->r) {
+      shifted -= qsop->r;
+    }
+    if (!rankwidth_no_edges_add_count(&counts[shifted], current[residue], count_modulus,
+                                      error)) {
+      free(current);
+      free(next);
+      return false;
+    }
+  }
+  qsop_trace_emit_elapsed(trace, "rankwidth.count_table_factorized", 0,
+                          saturating_mul_u64(qsop->nvars, qsop->r), start);
+  rankwidth_no_edges_stats(qsop, stats);
+  free(current);
+  free(next);
+  return true;
+}
+
+static bool solve_rankwidth_no_edges_count_table_crt(
+    const qsop_instance_t *qsop, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  size_t nprimes = 0;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    free(primes);
+    set_error(error, "rankwidth no-edge CRT count table is too large");
+    return false;
+  }
+
+  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth no-edge CRT state");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth no-edge CRT result strings");
+    return false;
+  }
+
+  bool ok = true;
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!solve_rankwidth_no_edges_count_table_mod_once(
+            qsop, primes[p], &all_counts[p * (size_t)qsop->r], stats_for_prime,
+            trace_for_prime, error)) {
+      ok = false;
+      break;
+    }
+  }
+  if (!ok) {
+    free(primes);
+    free(all_counts);
+    free(residues);
+    qsop_result_free(result);
+    return false;
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                      &result->count_strings[residue], error)) {
+      free(primes);
+      free(all_counts);
+      free(residues);
+      qsop_result_free(result);
+      return false;
+    }
+  }
+
+  free(primes);
+  free(all_counts);
+  free(residues);
+  *out = result;
+  return true;
+}
+
+static bool solve_rankwidth_no_edges_count_table(
+    const qsop_instance_t *qsop, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop->nvars >= 64U) {
+    return solve_rankwidth_no_edges_count_table_crt(qsop, out, stats, trace, error);
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth no-edge result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (!solve_rankwidth_no_edges_count_table_mod_once(qsop, 0, result->counts, stats, trace,
+                                                     error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  *out = result;
+  return true;
+}
+
 static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
                                            const qsop_rankwidth_decomposition_t *decomposition,
                                            const uint64_t *adj,
@@ -4119,6 +4346,13 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
                                            qsop_result_t **out,
                                            qsop_solve_stats_t *stats,
                                            qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop->nedges == 0) {
+    (void)decomposition;
+    (void)adj;
+    (void)join_strategy;
+    (void)materialize_join_max_pairs;
+    return solve_rankwidth_no_edges_count_table(qsop, out, stats, trace, error);
+  }
   if (qsop->nvars >= 64U) {
     return solve_rankwidth_count_table_crt(qsop, decomposition, adj, out, stats, trace, error);
   }
@@ -4414,6 +4648,10 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
       set_error(error, "rankwidth exact count-table handoff requires fewer than 64 variables");
       return false;
     }
+    if (qsop->nedges == 0) {
+      return solve_rankwidth_no_edges_count_table_mod_once(qsop, 0, counts, stats, trace,
+                                                           error);
+    }
     qsop_result_t *result = NULL;
     uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
     if (adj == NULL) {
@@ -4430,6 +4668,10 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
     memcpy(counts, result->counts, (size_t)qsop->r * sizeof(*counts));
     qsop_result_free(result);
     return true;
+  }
+  if (qsop->nedges == 0) {
+    return solve_rankwidth_no_edges_count_table_mod_once(qsop, count_modulus, counts, stats,
+                                                         trace, error);
   }
 
   uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
@@ -4486,14 +4728,8 @@ static bool solve_rankwidth_fourier_no_edges_mod_once(
     return false;
   }
   if (stats != NULL) {
-    stats->table_entries = qsop->r;
-    stats->max_table_entries = qsop->r;
-    stats->signature_entries = 1;
-    stats->max_signature_entries = 1;
-    stats->join_pairs = 0;
-    stats->join_signature_pairs = 0;
+    rankwidth_no_edges_stats(qsop, stats);
     stats->rankwidth_fourier_kernel = (uint32_t)kernel;
-    stats->decomposition_width = 0;
   }
   return true;
 }
@@ -4838,6 +5074,11 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   const uint64_t mp = (options != NULL) ? options->materialize_join_max_pairs : 0;
   const qsop_rankwidth_fourier_kernel_t fk = (options != NULL)
       ? options->fourier_kernel : QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
+  if (qsop->nedges == 0) {
+    return mode == QSOP_RANKWIDTH_SOLVE_FOURIER
+        ? solve_rankwidth_fourier(qsop, decomposition, NULL, fk, out, stats, trace, error)
+        : solve_rankwidth_no_edges_count_table(qsop, out, stats, trace, error);
+  }
 
   uint64_t *adj = adjacency_bitsets(qsop, decomposition->words, error);
   if (adj == NULL) {

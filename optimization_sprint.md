@@ -188,7 +188,8 @@ shape.
    explicit refusals until the scalar dense implementation is reference-checked.
 7. Now: optimize the WMC/Ganak backend for signed QSOPs, especially single Fourier-mode
    export and block-heavy sign-edge instances.
-8. Next: implement dense even-mode Fourier joins with FWHT for full residue histograms.
+8. Done/retired: dense even-mode FWHT is no longer the signed-only first target; even
+   Fourier modes factor in closed form, and edge-free count-table rows now factor too.
 9. Next: implement odd twisted dense joins only through the normal-form route described in
    the note; do not add an ad hoc blocked odd join and call it the matrix kernel.
 10. Later: add SIMD only after dense layout and scalar dense kernels are correct.
@@ -464,3 +465,28 @@ Validation:
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
 - `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
 - `meson test -C build 'sop-solve golden' 'rankwidth join strategy smoke' 'differential backends' 'rankwidth family crosscheck smoke' --print-errorlogs`
+
+### 2026-06-29: Edge-Free Rankwidth Count-Table Factorization
+
+Applied the same signed-only factorization principle to count-table rankwidth rows:
+
+- Edge-free signed QSOPs now bypass the rankwidth count-table decomposition traversal.
+- The count-table shortcut computes the unary product
+  `prod_v (1 + z^(a_v))` as an `O(n*r)` residue DP, then applies the constant shift.
+- Exact rows with `nvars >= 64` use the existing CRT reconstruction path, so large
+  edge-free rows no longer build per-node rankwidth transition maps.
+- Rankwidth forecasts and diagnostics now report edge-free work honestly:
+  `rankwidth_join_pair_forecast=0`, `rankwidth_table_forecast=r`, cutrank width `0`.
+- The rankwidth entry point skips adjacency-bitset allocation for edge-free count-table
+  and Fourier solves.
+- Fourier edge-free stats now use the same no-edge stats helper, so both modes expose the
+  same scoreboard-visible zero-join diagnostics.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop_solve.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'sop-solve golden' 'rankwidth join strategy smoke' 'differential backends' 'rankwidth family crosscheck smoke' --print-errorlogs`
+- `meson test -C build --print-errorlogs`

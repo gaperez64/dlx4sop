@@ -236,6 +236,37 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if completed.returncode != 0 or completed.stdout != expected:
         raise AssertionError(f"large rankwidth CRT solve failed\n{completed.stdout}\n{completed.stderr}")
 
+    rankwidth_stats = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--max-vars",
+            "64",
+            "--format",
+            "stats",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        rankwidth_stats.returncode != 0
+        or "rankwidth.count_table_factorized" not in rankwidth_stats.stderr
+        or "join_pairs: 0" not in rankwidth_stats.stdout
+        or "rankwidth_join_pair_forecast: 0" not in rankwidth_stats.stdout
+        or "max_table_entries: 16" not in rankwidth_stats.stdout
+    ):
+        raise AssertionError(
+            f"large rankwidth count-table factorized stats failed\n"
+            f"{rankwidth_stats.stdout}\n{rankwidth_stats.stderr}"
+        )
+
     components = subprocess.run(
         [str(exe), "--backend", "components", "--max-vars", "64", "-"],
         input=qsop,
@@ -422,6 +453,7 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         rankwidth_fourier_stats.returncode != 0
         or "rankwidth.fourier_factorized" not in rankwidth_fourier_stats.stderr
         or "join_pairs: 0" not in rankwidth_fourier_stats.stdout
+        or "rankwidth_join_pair_forecast: 0" not in rankwidth_fourier_stats.stdout
         or "max_table_entries: 16" not in rankwidth_fourier_stats.stdout
     ):
         raise AssertionError(
