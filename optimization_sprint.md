@@ -335,3 +335,24 @@ Validation:
 - `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
 - `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
 - `meson test -C build --print-errorlogs`
+
+### 2026-06-29: Generator-Overhead Experiment Split
+
+Release-build timing on the bounded-rankwidth family showed that the `best` rankwidth
+generator can be slower than `from-treewidth` even when it finds width 1 instead of
+width 2. The separation study now records both generator families:
+
+- `rankwidth:from-treewidth`
+- `rankwidth:best`
+- `rankwidth:from-treewidth:fourier`
+- `rankwidth:best:fourier`
+
+This keeps the scoreboard from collapsing two different effects: decomposition quality
+and generator/scoring overhead.
+
+Release smoke with `build-bench/sop-solve` before the driver change:
+
+- `rankwidth:from-treewidth`: 7/7 ok, geomean 0.795 ms, max width 2.
+- `rankwidth:best`: 7/7 ok, geomean 1.996 ms, max width 1.
+- `rankwidth:from-treewidth:fourier`: 7/7 ok, geomean 0.721 ms, max width 2.
+- `rankwidth:best:fourier`: 7/7 ok, geomean 1.998 ms, max width 1.
