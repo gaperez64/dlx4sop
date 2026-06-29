@@ -171,12 +171,115 @@ time-to-solution.
 
 ## Suggested Sprint Order
 
-1. Finish current scoreboard refresh and keep the generated status/error rows.
-2. Add a small benchmark/report section for solver error statuses so OOM/refusal rows are
-   visible.
-3. Implement streaming Fourier rankwidth joins.
-4. Add the bounded-rank-width synthetic corpus generator and manifest.
-5. Run a targeted rankwidth crossover benchmark.
-6. Implement dense even-mode Fourier joins with FWHT.
-7. Add dense odd-mode blocked twisted joins.
-8. Add SIMD only after dense layout and scalar dense kernels are correct.
+1. Done: finish current scoreboard refresh and keep the generated status/error rows.
+2. Done: preserve solver status/error rows in the scoreboard data path so OOM/refusal rows
+   remain visible.
+3. Done: implement streaming Fourier rankwidth joins.
+4. Done: add the bounded-rank-width synthetic corpus generator and manifest.
+5. Done: add a targeted rankwidth crossover benchmark path.
+6. Later: implement dense even-mode Fourier joins with FWHT.
+7. Later: add dense odd-mode blocked twisted joins.
+8. Later: add SIMD only after dense layout and scalar dense kernels are correct.
+
+## Sprint Log
+
+### 2026-06-29: Streaming Fourier Join
+
+Implemented the first kernel optimization in `src/solve/rankwidth.c`:
+
+- Fourier rankwidth joins no longer allocate a full `rw_join_map_t` for
+  `left->len * right->len` signature pairs.
+- Parent signatures and sign-edge residue shifts are computed on demand with the same
+  transition helper used by the count-table sign-edge path.
+- The parent Fourier table now has an open-addressing signature index, replacing the
+  old linear scan in `fourier_table_signature_index`.
+- Existing trace labels are preserved: `rankwidth.fourier_join_map` now records the
+  pair forecast, and `rankwidth.fourier_join` records the streamed join execution.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop_solve.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_bench_qasm_corpus.py tools/bench_qasm_corpus.py`
+- `meson test -C build --print-errorlogs`
+
+### 2026-06-29: Bounded-Rankwidth Experiment Path
+
+Added the Corollary 3-style synthetic family:
+
+- New generator: `tools/gen_rankwidth_family.py`.
+- New committed corpus: `benchmarks/corpus/sop/synthetic/rankwidth/`.
+- Corpus shape: complete binary tree vertices blown up to twin cliques, with complete
+  bipartite sign edges across tree edges.
+- Manifest: `benchmarks/corpus/sop/synthetic/rankwidth/manifest.jsonl`.
+- Benchmark path: `tools/run_corpus_benchmarks.py` now emits
+  `rankwidth-separation-current.jsonl`.
+- Scoreboard path: `tools/refresh_scoreboard.py` now renders a text summary when that
+  artifact exists.
+
+Initial smoke signal with a 5s cap:
+
+- `btclique-h01-t16-r8-all-t` timed out in treewidth but solved in both rankwidth modes.
+- All 7 committed rows solved in `rankwidth:best` and `rankwidth:best:fourier`.
+- The rankwidth summaries stayed at cutrank width 1 with max table 16 on the smoke run.
+
+Validation:
+
+- `python3 tests/test_gen_rankwidth_family.py tools/gen_rankwidth_family.py`
+- `meson test -C build 'rankwidth family generator smoke' 'rankwidth family benchmark smoke' --print-errorlogs`
+- `python3 tools/run_corpus_benchmarks.py --skip-solver --skip-wmc --skip-native --skip-scaling --skip-scoreboard --artifact-dir /tmp/dlx4sop-rw-study-smoke --sop-solve build/sop-solve --rankwidth-study-timeout 5`
+
+### 2026-06-29: Sign-Edge Fourier Twist Specialization
+
+Optimized the streaming Fourier join for sign-edge QSOPs:
+
+- Removed root-power lookup and a modular multiply from the Fourier join twist.
+- The sign-edge quadratic phase contributes `+1` on even Fourier modes and a sign flip
+  on odd modes when the cross parity is one.
+- This is the scalar specialization that should precede SIMD: the mode loop now has
+  simpler contiguous arithmetic and no root-power table dependency.
+
+Added benchmark-visible dense Fourier diagnostics:
+
+- `rankwidth_dense_table_forecast`
+- `rankwidth_dense_even_join_forecast`
+
+These fields estimate the dense signature slots and even-mode FWHT butterfly work for
+the observed cutrank width. They are emitted by `sop-solve --format stats`, promoted by
+the benchmark runners, and shown in scoreboard row details.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop_solve.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_bench_qasm_corpus.py tools/bench_qasm_corpus.py`
+
+### 2026-06-29: Verdict/Amplitude Cross-Checks and Scalar Hot-Path Tightening
+
+Added solver and benchmark cross-check coverage before continuing optimization:
+
+- New Meson test: `rankwidth family crosscheck smoke`.
+- The test materializes a tiny bounded-rankwidth corpus on the fly.
+- It checks exact residue-count agreement across treewidth, rankwidth count-table, and
+  rankwidth Fourier.
+- It computes amplitudes from the counts and checks `result_probability = |amplitude|^2`.
+- It runs `tools/bench_sop_local.py` over the same corpus and checks that JSONL rows have
+  matching `counts_hash`, `amplitude_real`, and `amplitude_imag`.
+- `tools/bench_sop_local.py` now promotes amplitude coordinates, matching the QASM benchmark
+  runner and scoreboard comparison path.
+
+Continued scalar rankwidth optimization:
+
+- `cross_parity_bitsets()` now iterates set bits from the smaller side of the join instead
+  of scanning every variable in the instance.
+- The Fourier join accumulation loop is split into twist-free even modes and sign-flipped
+  odd modes, keeping the even-mode path closer to the intended dense/FWHT kernel.
+
+Validation:
+
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build --print-errorlogs`

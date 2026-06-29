@@ -537,6 +537,26 @@ if python3.found()
     ],
   )
   test(
+    'rankwidth family generator smoke',
+    python3,
+    args: [
+      files('tests/test_gen_rankwidth_family.py'),
+      files('tools/gen_rankwidth_family.py'),
+    ],
+  )
+  test(
+    'rankwidth family crosscheck smoke',
+    python3,
+    args: [
+      files('tests/test_rankwidth_family_crosscheck.py'),
+      files('tools/gen_rankwidth_family.py'),
+      files('tools/bench_sop_local.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 90,
+  )
+  test(
     'analyze branch regressions smoke',
     python3,
     args: [
@@ -623,6 +643,23 @@ if python3.found()
     ],
     depends: sop_solve,
     timeout: 120,
+  )
+  test(
+    'rankwidth family benchmark smoke',
+    python3,
+    args: [
+      files('tools/bench_sop_local.py'),
+      '--sop-solve', sop_solve.full_path(),
+      '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'rankwidth',
+      '--tier', 'tier-rankwidth',
+      '--backend', 'rankwidth:best',
+      '--backend', 'rankwidth:best:fourier',
+      '--timeout', '5',
+      '--max-vars', '128',
+      '--quiet',
+    ],
+    depends: sop_solve,
+    timeout: 60,
   )
   test(
     'qasm native compatibility smoke',

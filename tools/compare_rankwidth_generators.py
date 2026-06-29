@@ -19,6 +19,11 @@ RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
 )
 
 
+def is_rankwidth_backend(record: dict) -> bool:
+    backend = str(record.get("backend") or "")
+    return backend == "rankwidth" or backend.startswith("rankwidth:")
+
+
 def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
     return (
         str(record.get("source") or "unknown"),
@@ -31,8 +36,15 @@ def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
 
 
 def rankwidth_config(record: dict) -> str:
-    generator = record.get("rankwidth_decomposition") or "left-deep"
-    mode = record.get("rankwidth_mode") or "count-table"
+    config = record.get("backend_config")
+    config = config if isinstance(config, dict) else {}
+    generator = (
+        record.get("rankwidth_decomposition")
+        or config.get("rankwidth_decomposition")
+        or config.get("rankwidth_generate")
+        or "left-deep"
+    )
+    mode = record.get("rankwidth_mode") or config.get("rankwidth_mode") or "count-table"
     return f"{generator}:{mode}"
 
 
@@ -62,7 +74,7 @@ def load_records(named_paths: Iterable[tuple[str, pathlib.Path]]) -> list[dict]:
     rows: list[dict] = []
     for tier, path in named_paths:
         for record in read_jsonl(path):
-            if record.get("backend") != "rankwidth":
+            if not is_rankwidth_backend(record):
                 continue
             copied = dict(record)
             copied["_tier"] = tier

@@ -351,6 +351,7 @@ def run_mqt_native_jobs(
 
 
 SCALING_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "synthetic" / "scaling"
+RANKWIDTH_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "synthetic" / "rankwidth"
 
 
 def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
@@ -397,6 +398,31 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
         run_to_jsonl(cmd, wmc_out, args.verbose)
 
 
+def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    """Targeted RQ2 study on the bounded-rankwidth clique-blowup tree family."""
+    if not RANKWIDTH_CORPUS.exists():
+        print(f"warning: rankwidth corpus missing: {RANKWIDTH_CORPUS}", file=sys.stderr)
+        return
+    output = artifact_dir / "rankwidth-separation-current.jsonl"
+    sop_local = TOOLS_DIR / "bench_sop_local.py"
+    cmd = [
+        sys.executable, str(sop_local),
+        "--sop-solve", str(args.sop_solve),
+        "--corpus-dir", str(RANKWIDTH_CORPUS),
+        "--tier", "tier-rankwidth",
+        "--backend", "treewidth",
+        "--backend", "rankwidth:best",
+        "--backend", "rankwidth:best:fourier",
+        "--timeout", str(args.rankwidth_study_timeout),
+        "--max-vars", "128",
+        "--out", str(output),
+    ]
+    print("\n--- rankwidth separation study ---", file=sys.stderr)
+    result = subprocess.run([str(a) for a in cmd])
+    if result.returncode not in (0, 1):
+        print(f"warning: rankwidth separation study exited {result.returncode}", file=sys.stderr)
+
+
 def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
     bench = TOOLS_DIR / "bench.py"
     timeout_s = int(args.timeout) if args.timeout else 30
@@ -437,9 +463,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--memory-limit-mib", type=int, default=4096)
     parser.add_argument("--skip-scaling", action="store_true",
                         help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
+    parser.add_argument("--skip-rankwidth-study", action="store_true",
+                        help="skip the bounded-rankwidth synthetic separation study")
     parser.add_argument("--scaling-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) for the scaling study backends "
                              "(CI uses a small cap)")
+    parser.add_argument("--rankwidth-study-timeout", type=float, default=30.0,
+                        help="per-instance timeout (s) for the bounded-rankwidth study")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -465,6 +495,8 @@ def main(argv: list[str]) -> int:
         run_mqt_native_jobs(args, manifests_dir, artifact_dir)
     if not args.skip_scaling:
         run_scaling_study(args, artifact_dir)
+    if not args.skip_rankwidth_study:
+        run_rankwidth_separation_study(args, artifact_dir)
     if not args.skip_scoreboard:
         run_scoreboard(args, artifact_dir)
     return 0

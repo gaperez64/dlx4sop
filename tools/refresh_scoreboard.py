@@ -268,6 +268,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"rw table forecast {format_count(stats['rankwidth_table_forecast'])}")
     if "rankwidth_join_pair_forecast" in stats:
         parts.append(f"rw join forecast {format_count(stats['rankwidth_join_pair_forecast'])}")
+    if "rankwidth_dense_table_forecast" in stats:
+        parts.append(f"dense table forecast {format_count(stats['rankwidth_dense_table_forecast'])}")
+    if "rankwidth_dense_even_join_forecast" in stats:
+        parts.append(
+            f"dense even forecast {format_count(stats['rankwidth_dense_even_join_forecast'])}"
+        )
     signatures = max(
         stats.get("rankwidth_max_signature_entries", 0),
         stats.get("max_signature_entries", 0),
@@ -779,6 +785,70 @@ def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str,
     print(f"![WMC vs solver scaling]({assets_subdir}/wmc-vs-solver-scaling.svg)\n", file=file)
 
 
+def _rankwidth_study_records(artifact_dir: pathlib.Path | None) -> list[dict]:
+    if artifact_dir is None:
+        return []
+    path = artifact_dir / "rankwidth-separation-current.jsonl"
+    if not path.exists():
+        return []
+    records = []
+    for record in read_jsonl(path):
+        copied = dict(record)
+        copied["_tier"] = str(record.get("tier") or "tier-rankwidth")
+        records.append(copied)
+    return records
+
+
+def write_rankwidth_separation_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Targeted RQ2 section for the bounded-rankwidth clique-blowup tree family."""
+    print("## Rankwidth Separation Study\n", file=file)
+    print(
+        "Synthetic sign-edge QSOPs under "
+        "`benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree "
+        "clique-blowup family from the rankwidth note. The intended signal is not broad "
+        "corpus coverage: it is whether the rankwidth backend stays at constant cutrank "
+        "while treewidth tables grow with the clique blow-up parameter.\n",
+        file=file,
+    )
+    records = _rankwidth_study_records(artifact_dir)
+    if not records:
+        print(
+            "No `rankwidth-separation-current.jsonl` artifact was found for this refresh.\n",
+            file=file,
+        )
+        return
+
+    summary = compare_rankwidth_backends.backend_summary(records)
+    print("| Config | OK / rows | Time | Kernel time | Max width | Max table | Forecast pressure |", file=file)
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    for row in summary:
+        print(
+            f"| `{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
+            f"{format_ns(row['elapsed_ns'])} | {format_ns(row['rankwidth_kernel_elapsed_ns'])} | "
+            f"{format_count(row['max_width'])} | {format_count(row['max_table'])} | "
+            f"{format_count(row['table_forecast_pressure'])} |",
+            file=file,
+        )
+    print("", file=file)
+
+    comparisons = compare_rankwidth_backends.comparison_summary(
+        records, "rankwidth:best:fourier"
+    )
+    if comparisons:
+        row = comparisons[0]
+        tree_common = row.get("treewidth_common_rows", 0)
+        faster = row.get("rankwidth_faster_than_treewidth", 0)
+        lower_tables = row.get("table_comparison", {}).get("lower", 0)
+        print(
+            f"`rankwidth:best:fourier` was faster than treewidth on {faster} / "
+            f"{tree_common} common solved rows, with lower/equal table size on "
+            f"{lower_tables} / {tree_common} rows. This is the targeted RQ2 check: "
+            "the table pressure separates even when total wall time still includes "
+            "rank-decomposition and prototype overhead.\n",
+            file=file,
+        )
+
+
 def write_mode_scoreboard(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
@@ -916,6 +986,7 @@ def write_mode_scoreboard(
     # Scaling study is mode-agnostic (synthetic sign family); show it on the sign scoreboard.
     if mode == "sign":
         write_scaling_section(artifact_dir, assets_subdir, file)
+        write_rankwidth_separation_section(artifact_dir, file)
 
     write_condensed_solver_table(filtered_solver, file)
     write_condensed_competitor_table(filtered_solver, native_records, file)

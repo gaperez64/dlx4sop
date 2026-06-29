@@ -134,8 +134,10 @@ typedef struct rw_fourier_table {
   uint32_t *signatures;
   uint64_t *assignments;
   uint64_t *values;
+  uint32_t *signature_slots;
   size_t len;
   size_t cap;
+  size_t signature_slots_mask;
 } rw_fourier_table_t;
 
 /* Open-addressing hash table for signature pool fast lookup.
@@ -500,6 +502,34 @@ static bool rep_slots_rehash(rw_table_t *table, qsop_error_t *error) {
   free(table->rep_slots);
   table->rep_slots = slots;
   table->rep_slots_mask = mask;
+  return true;
+}
+
+static bool fourier_slots_rehash(rw_fourier_table_t *table, qsop_error_t *error) {
+  size_t new_cap = table->signature_slots_mask != 0
+                       ? (table->signature_slots_mask + 1U) * 2U
+                       : 16U;
+  const size_t need = (table->len + 1U) * 2U;
+  while (new_cap < need) {
+    new_cap *= 2U;
+  }
+  uint32_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    set_error(error, "out of memory while growing rankwidth Fourier signature index");
+    return false;
+  }
+  memset(slots, 0xFF, new_cap * sizeof(*slots));
+  const size_t mask = new_cap - 1U;
+  for (size_t i = 0; i < table->len; i++) {
+    size_t s = rep_hash(table->signatures[i]) & mask;
+    while (slots[s] != UINT32_MAX) {
+      s = (s + 1U) & mask;
+    }
+    slots[s] = (uint32_t)i;
+  }
+  free(table->signature_slots);
+  table->signature_slots = slots;
+  table->signature_slots_mask = mask;
   return true;
 }
 
@@ -874,6 +904,7 @@ static void fourier_table_free(rw_fourier_table_t *table) {
   free(table->signatures);
   free(table->assignments);
   free(table->values);
+  free(table->signature_slots);
   *table = (rw_fourier_table_t){0};
 }
 
@@ -2444,6 +2475,29 @@ static uint64_t binary_signature_bound(uint32_t width) {
   return UINT64_C(1) << width;
 }
 
+static void rankwidth_dense_fourier_forecast(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t cutrank_width, uint64_t *dense_table_out, uint64_t *dense_even_join_out) {
+  const uint64_t dense_signatures = binary_signature_bound(cutrank_width);
+  const uint64_t dense_table = saturating_mul_u64(dense_signatures, qsop->r);
+  uint64_t join_nodes = 0;
+  for (uint32_t i = 0; i < decomposition->nnodes; i++) {
+    if (decomposition->nodes[i].kind == RW_NODE_JOIN) {
+      join_nodes++;
+    }
+  }
+  const uint64_t even_modes = qsop->r / 2U;
+  const uint64_t width_work = saturating_mul_u64(cutrank_width, dense_signatures);
+  const uint64_t per_join =
+      saturating_mul_u64(saturating_mul_u64(3U, even_modes), width_work);
+  if (dense_table_out != NULL) {
+    *dense_table_out = dense_table;
+  }
+  if (dense_even_join_out != NULL) {
+    *dense_even_join_out = saturating_mul_u64(join_nodes, per_join);
+  }
+}
+
 static uint64_t min_u64(uint64_t left, uint64_t right) {
   return left < right ? left : right;
 }
@@ -2577,26 +2631,69 @@ static bool rankwidth_record_decomposition_diagnostics(
     stats->rankwidth_cutrank_width = score.cutrank_width;
     stats->rankwidth_table_forecast = score.table_forecast;
     stats->rankwidth_join_pair_forecast = score.join_pair_forecast;
+    rankwidth_dense_fourier_forecast(qsop, decomposition, score.cutrank_width,
+                                     &stats->rankwidth_dense_table_forecast,
+                                     &stats->rankwidth_dense_even_join_forecast);
   }
   qsop_trace_emit_elapsed(trace, "rankwidth.width_probe", 0, score.cutrank_width, start);
   qsop_trace_emit(trace, "rankwidth.cutrank_width_probe", 0, score.cutrank_width, 0);
   qsop_trace_emit(trace, "rankwidth.table_forecast", 0, score.table_forecast, 0);
   qsop_trace_emit(trace, "rankwidth.join_pair_forecast", 0, score.join_pair_forecast, 0);
+  if (stats != NULL) {
+    qsop_trace_emit(trace, "rankwidth.dense_table_forecast", 0,
+                    stats->rankwidth_dense_table_forecast, 0);
+    qsop_trace_emit(trace, "rankwidth.dense_even_join_forecast", 0,
+                    stats->rankwidth_dense_even_join_forecast, 0);
+  }
   return true;
+}
+
+static uint32_t rw_ctz_u64(uint64_t value) {
+#if defined(__GNUC__) || defined(__clang__)
+  return (uint32_t)__builtin_ctzll((unsigned long long)value);
+#else
+  uint32_t count = 0;
+  while ((value & UINT64_C(1)) == 0) {
+    value >>= 1U;
+    count++;
+  }
+  return count;
+#endif
+}
+
+static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
+                                           const uint64_t *selected_assignment,
+                                           const uint64_t *other_assignment, size_t words) {
+  uint32_t parity = 0;
+  for (size_t w = 0; w < words; w++) {
+    uint64_t bits = selected_assignment[w];
+    while (bits != 0) {
+      const uint32_t bit = rw_ctz_u64(bits);
+      const size_t v = w * 64U + bit;
+      if (v >= nvars) {
+        break;
+      }
+      parity ^= qsop_bitset_popcount_intersection(
+                    qsop_bitset_const_row(adj, words, (uint32_t)v), other_assignment, words) &
+                1U;
+      bits &= bits - 1U;
+    }
+  }
+  return parity;
 }
 
 static uint32_t cross_parity_bitsets(uint32_t nvars, const uint64_t *adj,
                                      const uint64_t *left_assignment,
                                      const uint64_t *right_assignment, size_t words) {
-  uint32_t parity = 0;
-  for (uint32_t v = 0; v < nvars; v++) {
-    if (qsop_bitset_get(left_assignment, v)) {
-      parity ^= qsop_bitset_popcount_intersection(qsop_bitset_const_row(adj, words, v),
-                                                  right_assignment, words) &
-                1U;
-    }
+  const uint32_t left_count = qsop_bitset_popcount(left_assignment, words);
+  const uint32_t right_count = qsop_bitset_popcount(right_assignment, words);
+  if (left_count == 0 || right_count == 0) {
+    return 0;
   }
-  return parity;
+  if (right_count < left_count) {
+    return cross_parity_selected_rows(nvars, adj, right_assignment, left_assignment, words);
+  }
+  return cross_parity_selected_rows(nvars, adj, left_assignment, right_assignment, words);
 }
 
 /* D2.1: Pure transition helper for sign-edge joins.
@@ -3444,11 +3541,22 @@ static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t 
 static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t signature,
                                           const uint64_t *assignment, uint32_t r, size_t words,
                                           size_t *out, qsop_error_t *error) {
-  for (size_t i = 0; i < table->len; i++) {
-    if (table->signatures[i] == signature) {
-      *out = i;
+  if (table->signature_slots == NULL ||
+      (table->len + 1U) * 2U > (table->signature_slots_mask + 1U)) {
+    if (!fourier_slots_rehash(table, error)) {
+      return false;
+    }
+  }
+
+  const size_t mask = table->signature_slots_mask;
+  size_t slot = rep_hash(signature) & mask;
+  while (table->signature_slots[slot] != UINT32_MAX) {
+    const uint32_t index = table->signature_slots[slot];
+    if (table->signatures[index] == signature) {
+      *out = index;
       return true;
     }
+    slot = (slot + 1U) & mask;
   }
   if (!reserve_fourier_table(table, table->len + 1U, r, words, error)) {
     return false;
@@ -3457,6 +3565,7 @@ static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t si
   table->signatures[index] = signature;
   qsop_bitset_copy(fourier_assignment(table, index, words), assignment, words);
   memset(&table->values[index * (size_t)r], 0, (size_t)r * sizeof(*table->values));
+  table->signature_slots[slot] = (uint32_t)index;
   *out = index;
   return true;
 }
@@ -3507,96 +3616,79 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
   return true;
 }
 
-static bool build_fourier_join_map(const qsop_instance_t *qsop,
-                                   const qsop_rankwidth_decomposition_t *decomposition,
-                                   uint32_t node_id, const uint64_t *adj,
-                                   rw_signature_pool_t *pool, const rw_fourier_table_t *left,
-                                   const rw_fourier_table_t *right, rw_join_map_t *map,
-                                   qsop_error_t *error) {
-  const uint32_t sign = qsop->r / 2U;
-  if (left->len > 0 && right->len > SIZE_MAX / left->len) {
-    set_error(error, "rankwidth Fourier join map is too large");
-    return false;
-  }
-  const size_t words = decomposition->words;
-  if (!reserve_join_map(map, left->len * right->len, words, error)) {
-    return false;
-  }
-  uint64_t *outside = calloc(words == 0 ? 1U : words, sizeof(*outside));
-  uint64_t *signature = calloc(words == 0 ? 1U : words, sizeof(*signature));
-  if (outside == NULL || signature == NULL) {
-    free(outside);
-    free(signature);
-    set_error(error, "out of memory while building rankwidth Fourier join map");
-    return false;
-  }
-  for (uint32_t v = 0; v < decomposition->nvars; v++) {
-    qsop_bitset_set(outside, v);
-  }
-  qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), words);
-
+static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint64_t *adj,
+                                         rw_signature_pool_t *pool,
+                                         const rw_fourier_table_t *left,
+                                         const rw_fourier_table_t *right,
+                                         uint64_t prime, rw_fourier_table_t *out,
+                                         const uint64_t *outside,
+                                         uint64_t *scratch_sig,
+                                         uint64_t *parent_assignment, size_t words,
+                                         uint64_t *join_signature_pairs,
+                                         qsop_error_t *error) {
+  const uint32_t r = qsop->r;
   for (size_t i = 0; i < left->len; i++) {
+    const uint64_t *left_rep = fourier_assignment(left, i, words);
+    const uint64_t *left_values = &left->values[i * (size_t)r];
     for (size_t j = 0; j < right->len; j++) {
-      const uint64_t *left_rep = fourier_assignment(left, i, words);
       const uint64_t *right_rep = fourier_assignment(right, j, words);
-      const uint32_t parity =
-          cross_parity_bitsets(qsop->nvars, adj, left_rep, right_rep, words);
-      qsop_bitset_copy(signature, signature_bits(pool, left->signatures[i]), words);
-      qsop_bitset_xor(signature, signature_bits(pool, right->signatures[j]), words);
-      qsop_bitset_and(signature, outside, words);
-      uint32_t parent_signature = 0;
-      if (!signature_pool_intern(pool, signature, &parent_signature, error)) {
-        free(outside);
-        free(signature);
+      rw_transition_eval_t eval;
+      if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
+                                           left->signatures[i], left_rep,
+                                           right->signatures[j], right_rep,
+                                           scratch_sig, &eval, error)) {
         return false;
       }
-      const size_t index = map->len++;
-      uint64_t *assignment = join_map_assignment(map, index, words);
-      qsop_bitset_copy(assignment, left_rep, words);
-      qsop_bitset_or(assignment, right_rep, words);
-      map->entries[index] = (rw_join_map_entry_t){
-          .left_signature = left->signatures[i],
-          .right_signature = right->signatures[j],
-          .parent_signature = parent_signature,
-          .residue_shift = (uint32_t)(((uint64_t)sign * parity) % qsop->r),
-      };
-    }
-  }
-  free(outside);
-  free(signature);
-  return true;
-}
+      if (!eval.valid) {
+        continue;
+      }
 
-static bool solve_fourier_join(const qsop_instance_t *qsop, const rw_join_map_t *map,
-                               const rw_fourier_table_t *left,
-                               const rw_fourier_table_t *right, const uint64_t *powers,
-                               uint64_t prime, rw_fourier_table_t *out,
-                               size_t words, uint64_t *join_signature_pairs,
-                               qsop_error_t *error) {
-  for (size_t i = 0; i < left->len; i++) {
-    for (size_t j = 0; j < right->len; j++) {
-      size_t map_index = 0;
-      const rw_join_map_entry_t *mapped =
-          join_map_get(map, left->signatures[i], right->signatures[j], &map_index);
-      if (mapped == NULL) {
-        set_error(error, "internal error: missing rankwidth Fourier join-map entry");
-        return false;
-      }
+      qsop_bitset_copy(parent_assignment, left_rep, words);
+      qsop_bitset_or(parent_assignment, right_rep, words);
       size_t out_index = 0;
-      if (!fourier_table_signature_index(out, mapped->parent_signature,
-                                         join_map_assignment(map, map_index, words), qsop->r,
-                                         words, &out_index, error)) {
+      if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment, r, words,
+                                         &out_index, error)) {
         return false;
       }
-      for (uint32_t mode = 0; mode < qsop->r; mode++) {
-        const uint64_t left_value = left->values[i * (size_t)qsop->r + mode];
-        const uint64_t right_value = right->values[j * (size_t)qsop->r + mode];
-        uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
-        value = qsop_mod_mul_u64(value, powers[(size_t)mode * qsop->r + mapped->residue_shift], prime);
-        out->values[out_index * (size_t)qsop->r + mode] =
-            qsop_mod_add_u64(out->values[out_index * (size_t)qsop->r + mode], value, prime);
+      const uint64_t *right_values = &right->values[j * (size_t)r];
+      uint64_t *out_values = &out->values[out_index * (size_t)r];
+      const bool negate_odd_modes = eval.residue_shift != 0;
+      if (!negate_odd_modes) {
+        for (uint32_t mode = 0; mode < r; mode++) {
+          const uint64_t left_value = left_values[mode];
+          const uint64_t right_value = right_values[mode];
+          if (left_value == 0 || right_value == 0) {
+            continue;
+          }
+          const uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
+          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
+        }
+      } else {
+        for (uint32_t mode = 0; mode < r; mode += 2U) {
+          const uint64_t left_value = left_values[mode];
+          const uint64_t right_value = right_values[mode];
+          if (left_value == 0 || right_value == 0) {
+            continue;
+          }
+          const uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
+          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
+        }
+        for (uint32_t mode = 1; mode < r; mode += 2U) {
+          const uint64_t left_value = left_values[mode];
+          const uint64_t right_value = right_values[mode];
+          if (left_value == 0 || right_value == 0) {
+            continue;
+          }
+          uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
+          if (value != 0) {
+            value = prime - value;
+          }
+          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
+        }
       }
-      (*join_signature_pairs)++;
+      if (join_signature_pairs != NULL) {
+        (*join_signature_pairs)++;
+      }
     }
   }
   return true;
@@ -4211,6 +4303,8 @@ static void rankwidth_constant_stats(const qsop_instance_t *qsop, qsop_solve_sta
   stats->join_signature_pairs = 0;
   stats->rankwidth_table_forecast = 1;
   stats->rankwidth_join_pair_forecast = 0;
+  stats->rankwidth_dense_table_forecast = qsop->r;
+  stats->rankwidth_dense_even_join_forecast = 0;
   stats->decomposition_width = 0;
   stats->rankwidth_cutrank_width = 0;
   (void)qsop;
@@ -4342,6 +4436,18 @@ static bool solve_rankwidth_fourier_mod_once(
     return false;
   }
 
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  uint64_t *scratch = calloc(3U * w, sizeof(*scratch));
+  if (scratch == NULL) {
+    free(tables);
+    signature_pool_free(&pool);
+    set_error(error, "out of memory while allocating rankwidth Fourier scratch");
+    return false;
+  }
+  uint64_t *outside = scratch;
+  uint64_t *scratch_sig = scratch + w;
+  uint64_t *parent_assignment = scratch + 2U * w;
+
   uint64_t join_signature_pairs = 0;
   uint64_t table_entries = 0;
   uint64_t signature_entries = 0;
@@ -4357,24 +4463,35 @@ static bool solve_rankwidth_fourier_mod_once(
                               &tables[node_id], error);
       qsop_trace_emit_elapsed(trace, "rankwidth.fourier_leaf", 0, tables[node_id].len, start);
     } else {
-      rw_join_map_t map = {0};
-      ok = build_fourier_join_map(qsop, decomposition, node_id, adj, &pool, &tables[node->left],
-                                  &tables[node->right], &map, error);
-      if (ok) {
-        qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join_map", 0, map.len, start);
+      const size_t left_len = tables[node->left].len;
+      const size_t right_len = tables[node->right].len;
+      if (left_len > 0 && right_len > UINT64_MAX / left_len) {
+        set_error(error, "rankwidth Fourier streaming join is too large");
+        ok = false;
+      } else {
+        const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
+        memset(outside, 0, w * sizeof(*outside));
+        for (uint32_t v = 0; v < decomposition->nvars; v++) {
+          qsop_bitset_set(outside, v);
+        }
+        qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id),
+                            decomposition->words);
+        qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join_map", 0, pair_forecast, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_fourier_join(qsop, &map, &tables[node->left], &tables[node->right], powers,
-                                prime, &tables[node_id], decomposition->words,
-                                &join_signature_pairs, error);
+        ok = solve_fourier_join_streaming(qsop, adj, &pool, &tables[node->left],
+                                          &tables[node->right], prime, &tables[node_id],
+                                          outside, scratch_sig,
+                                          parent_assignment, decomposition->words,
+                                          &join_signature_pairs, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join", 0, tables[node_id].len,
                                 join_start);
       }
-      join_map_free(&map);
     }
     if (!ok) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         fourier_table_free(&tables[t]);
       }
+      free(scratch);
       free(tables);
       signature_pool_free(&pool);
       return false;
@@ -4395,6 +4512,7 @@ static bool solve_rankwidth_fourier_mod_once(
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
     }
+    free(scratch);
     free(tables);
     signature_pool_free(&pool);
     return false;
@@ -4412,6 +4530,7 @@ static bool solve_rankwidth_fourier_mod_once(
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         fourier_table_free(&tables[t]);
       }
+      free(scratch);
       free(tables);
       signature_pool_free(&pool);
       return false;
@@ -4421,6 +4540,7 @@ static bool solve_rankwidth_fourier_mod_once(
   for (uint32_t t = 0; t < decomposition->nnodes; t++) {
     fourier_table_free(&tables[t]);
   }
+  free(scratch);
   free(tables);
   signature_pool_free(&pool);
   return true;

@@ -358,6 +358,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "rankwidth_max_table_entries",
                 "rankwidth_table_forecast",
                 "rankwidth_join_pair_forecast",
+                "rankwidth_dense_table_forecast",
+                "rankwidth_dense_even_join_forecast",
                 "rankwidth_max_signature_entries",
                 "cache_entries",
                 "cache_canonical_entries",

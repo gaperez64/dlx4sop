@@ -24,8 +24,11 @@ Backend variants:
 from __future__ import annotations
 
 import argparse
+import cmath
+import math
 import pathlib
 import sys
+from typing import Any
 
 from bench_common import (
     REPO_ROOT,
@@ -39,6 +42,13 @@ from bench_common import (
     tier_label,
     tier_sort_key,
     write_jsonl_record,
+)
+
+RANKWIDTH_KERNEL_TRACE_GROUPS = (
+    (("rankwidth.join_map", "rankwidth.crt_join_map"), "rankwidth_join_map"),
+    (("rankwidth.join", "rankwidth.crt_join"), "rankwidth_join"),
+    (("rankwidth.fourier_join_map",), "rankwidth_fourier_join_map"),
+    (("rankwidth.fourier_join",), "rankwidth_fourier_join"),
 )
 
 # ---------------------------------------------------------------------------
@@ -67,6 +77,18 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
     "rankwidth:best": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "best",
+        "--max-vars", "256",
+    ],
+    "rankwidth:from-treewidth:fourier": [
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "from-treewidth",
+        "--rankwidth-mode", "fourier",
+        "--max-vars", "256",
+    ],
+    "rankwidth:best:fourier": [
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "best",
+        "--rankwidth-mode", "fourier",
         "--max-vars", "256",
     ],
     "branch:auto": [
@@ -105,6 +127,8 @@ BACKEND_MAX_VARS: dict[str, int] = {
     "rankwidth":         256,  # family fallback
     "rankwidth:from-treewidth": 256,
     "rankwidth:best":    256,
+    "rankwidth:from-treewidth:fourier": 256,
+    "rankwidth:best:fourier": 256,
     "rankwidth:validate": 256,
     "branch":             64,  # family fallback
     "branch:auto":        64,
@@ -154,7 +178,12 @@ def run_backend(
         }
 
     # Apply user extra_args after config (allows --max-vars override etc.)
-    cmd = [str(sop_solve)] + BACKEND_CONFIGS[cfg_key] + extra_args + [str(case.qsop_path)]
+    cmd = (
+        [str(sop_solve)]
+        + BACKEND_CONFIGS[cfg_key]
+        + extra_args
+        + ["--format", "stats", "--include-result", "--trace", "csv", str(case.qsop_path)]
+    )
     result = run_command(cmd, timeout_seconds=timeout)
 
     if result.returncode == -1 and result.stderr == "timeout":
@@ -165,11 +194,180 @@ def run_backend(
             "elapsed_ns": result.elapsed_ns,
             "stderr": result.stderr[:300],
         }
+    stats, result_hash, amplitude = parse_stats_result_and_amplitude(result.stdout)
+    trace = parse_trace_csv(result.stderr)
+    fields: dict[str, Any] = {}
+    fields.update(backend_stat_aliases(stats))
+    fields.update(trace_record_metrics(trace))
+    fields.update(rankwidth_kernel_metrics(trace))
     return {
         "status": "ok",
         "elapsed_ns": result.elapsed_ns,
-        "counts_hash": counts_hash(result.stdout),
+        "counts_hash": result_hash,
+        "stats": stats,
+        **amplitude,
+        **fields,
     }
+
+
+def amplitude_metrics(modulus: int, norm_h: int, counts: list[int]) -> dict[str, float]:
+    omega = cmath.exp(2j * math.pi / modulus)
+    if modulus % 2 == 0 and len(counts) == modulus:
+        half = modulus // 2
+        total = sum(
+            (counts[residue] - counts[residue + half]) * (omega**residue)
+            for residue in range(half)
+        )
+    else:
+        total = sum(count * (omega**residue) for residue, count in enumerate(counts))
+    amplitude = total * (2.0 ** (-norm_h / 2.0))
+    return {
+        "amplitude_real": amplitude.real,
+        "amplitude_imag": amplitude.imag,
+    }
+
+
+def parse_stats_result_and_amplitude(
+    text: str,
+) -> tuple[dict[str, int | str], str, dict[str, float]]:
+    stats: dict[str, int | str] = {}
+    result_counts = ""
+    result_count_values: list[int] | None = None
+    result_modulus: int | None = None
+    result_norm_h: int | None = None
+    string_keys = {
+        "backend",
+        "branch_heuristic",
+        "rankwidth_mode",
+        "rankwidth_decomposition",
+        "treewidth_order",
+        "solve_mode",
+        "solve_mode_kernel",
+    }
+    for line in text.splitlines():
+        if ": " not in line:
+            continue
+        key, value = line.split(": ", 1)
+        if key == "result_counts":
+            result_counts = value
+            result_count_values = [int(part) for part in value.split()]
+            continue
+        if key == "result_modulus":
+            result_modulus = int(value)
+            continue
+        if key == "result_norm_h":
+            result_norm_h = int(value)
+            continue
+        if key == "result_probability":
+            continue
+        stats[key] = value if key in string_keys else int(value)
+    amplitude: dict[str, float] = {}
+    if (
+        result_modulus is not None
+        and result_norm_h is not None
+        and result_count_values is not None
+    ):
+        amplitude = amplitude_metrics(result_modulus, result_norm_h, result_count_values)
+    result_hash = counts_hash(f"counts {result_counts}") if result_counts else ""
+    return stats, result_hash, amplitude
+
+
+def parse_trace_csv(text: str) -> dict[str, dict[str, int]]:
+    rows = [line.strip() for line in text.splitlines() if line.strip()]
+    if not rows or rows[0] != "phase,depth,items,elapsed_ns":
+        return {}
+    summary: dict[str, dict[str, int]] = {}
+    for row in rows[1:]:
+        parts = row.split(",", 3)
+        if len(parts) != 4:
+            continue
+        phase, _depth, items, elapsed_ns = parts
+        try:
+            item_count = int(items)
+            elapsed = int(elapsed_ns)
+        except ValueError:
+            continue
+        entry = summary.setdefault(phase, {"events": 0, "items": 0, "max_items": 0, "elapsed_ns": 0})
+        entry["events"] += 1
+        entry["items"] += item_count
+        entry["max_items"] = max(entry["max_items"], item_count)
+        entry["elapsed_ns"] += elapsed
+    return summary
+
+
+def trace_record_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int | str]:
+    total = sum(values["elapsed_ns"] for values in trace.values())
+    if total <= 0:
+        return {}
+    phase, values = sorted(trace.items(), key=lambda item: (-item[1]["elapsed_ns"], item[0]))[0]
+    elapsed = values["elapsed_ns"]
+    return {
+        "trace_elapsed_ns": total,
+        "trace_top_phase": phase,
+        "trace_top_elapsed_ns": elapsed,
+        "trace_top_share_ppm": (elapsed * 1_000_000) // total,
+    }
+
+
+def rankwidth_kernel_metrics(trace: dict[str, dict[str, int]]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for phases, prefix in RANKWIDTH_KERNEL_TRACE_GROUPS:
+        matching = [trace[phase] for phase in phases if phase in trace]
+        if not matching:
+            continue
+        metrics[f"{prefix}_events"] = sum(values["events"] for values in matching)
+        metrics[f"{prefix}_elapsed_ns"] = sum(values["elapsed_ns"] for values in matching)
+        metrics[f"{prefix}_max_items"] = max(values["max_items"] for values in matching)
+    return metrics
+
+
+def backend_stat_aliases(stats: dict[str, int | str]) -> dict[str, int | str]:
+    backend = str(stats.get("backend", ""))
+    aliases: dict[str, int | str] = {}
+    for key in ("rankwidth_mode", "rankwidth_decomposition", "treewidth_order"):
+        if key in stats:
+            aliases[key] = stats[key]
+    width = stats.get("decomposition_width")
+    if isinstance(width, int):
+        aliases["decomposition_width"] = width
+        if backend == "rankwidth":
+            aliases["rankwidth_width"] = width
+        elif backend == "treewidth":
+            aliases["treewidth_width"] = width
+    table_entries = stats.get("table_entries")
+    max_table_entries = stats.get("max_table_entries")
+    if isinstance(table_entries, int):
+        aliases["table_entries"] = table_entries
+        if backend == "rankwidth":
+            aliases["rankwidth_table_entries"] = table_entries
+        elif backend == "treewidth":
+            aliases["treewidth_table_entries"] = table_entries
+    if isinstance(max_table_entries, int):
+        aliases["max_table_entries"] = max_table_entries
+        if backend == "rankwidth":
+            aliases["rankwidth_max_table_entries"] = max_table_entries
+        elif backend == "treewidth":
+            aliases["treewidth_max_table_entries"] = max_table_entries
+    for key in (
+        "rankwidth_cutrank_width",
+        "rankwidth_table_forecast",
+        "rankwidth_join_pair_forecast",
+        "rankwidth_dense_table_forecast",
+        "rankwidth_dense_even_join_forecast",
+        "signature_entries",
+        "max_signature_entries",
+        "join_pairs",
+        "join_signature_pairs",
+    ):
+        value = stats.get(key)
+        if isinstance(value, int):
+            aliases[key] = value
+    if backend == "rankwidth":
+        if isinstance(stats.get("signature_entries"), int):
+            aliases["rankwidth_signature_entries"] = stats["signature_entries"]
+        if isinstance(stats.get("max_signature_entries"), int):
+            aliases["rankwidth_max_signature_entries"] = stats["max_signature_entries"]
+    return aliases
 
 
 def bench_case(
@@ -253,6 +451,8 @@ def _make_record(
     counts_hash: str = "",
     stderr: str = "",
     skip_reason: str = "",
+    stats: dict[str, int | str] | None = None,
+    **fields: Any,
 ) -> dict:
     meta = case.meta
     meta_source = meta.get("source", "local-synthetic")
@@ -304,12 +504,13 @@ def _make_record(
         "r": r,
         "counts_hash": counts_hash,
         "amplitude_hash": "",
-        "stats": {},
+        "stats": stats or {},
     }
     if stderr:
         rec["error_detail"] = stderr
     if skip_reason:
         rec["skip_reason"] = skip_reason
+    rec.update(fields)
     return rec
 
 

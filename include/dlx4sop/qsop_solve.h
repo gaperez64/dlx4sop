@@ -44,6 +44,8 @@ typedef struct qsop_solve_stats {
   /* Rankwidth-specific */
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
+  uint64_t rankwidth_dense_table_forecast;
+  uint64_t rankwidth_dense_even_join_forecast;
   uint64_t rankwidth_transition_bytes;
   uint64_t rankwidth_transition_layout_u16_events;
   uint64_t rankwidth_transition_layout_u32_events;

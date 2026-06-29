@@ -295,6 +295,10 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_table_forecast);
     fprintf(file, "rankwidth_join_pair_forecast: %" PRIu64 "\n",
             stats->rankwidth_join_pair_forecast);
+    fprintf(file, "rankwidth_dense_table_forecast: %" PRIu64 "\n",
+            stats->rankwidth_dense_table_forecast);
+    fprintf(file, "rankwidth_dense_even_join_forecast: %" PRIu64 "\n",
+            stats->rankwidth_dense_even_join_forecast);
     fprintf(file, "rankwidth_transition_bytes: %" PRIu64 "\n",
             stats->rankwidth_transition_bytes);
     fprintf(file, "rankwidth_transition_layout_u16_events: %" PRIu64 "\n",
