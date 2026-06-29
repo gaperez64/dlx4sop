@@ -30,6 +30,7 @@
  */
 
 #define WMC_MAX_WIDTH 31U /* r must fit in 31 bits so 1<<(w+1) stays in uint64 */
+#define WMC_ROOT_CACHE_MAX 256U
 
 typedef struct wmc_builder {
   int *lits;         /* base clauses, each terminated by a 0 literal */
@@ -465,9 +466,23 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
   *fg = (wmc_factor_graph_t){0};
   fg->nvars = qsop->nvars;
 
+  double root_re[WMC_ROOT_CACHE_MAX];
+  double root_im[WMC_ROOT_CACHE_MAX];
+  const bool cache_roots = r <= WMC_ROOT_CACHE_MAX;
+  if (cache_roots) {
+    for (uint32_t k = 0; k < r; k++) {
+      omega_power(k, r, &root_re[k], &root_im[k]);
+    }
+  }
+
   /* Global factor: omega^(t*c0 mod r). */
-  omega_power((uint32_t)((t * (uint64_t)(qsop->constant % r)) % r), r,
-              &fg->global_re, &fg->global_im);
+  const uint32_t global_coeff = (uint32_t)((t * (uint64_t)(qsop->constant % r)) % r);
+  if (cache_roots) {
+    fg->global_re = root_re[global_coeff];
+    fg->global_im = root_im[global_coeff];
+  } else {
+    omega_power(global_coeff, r, &fg->global_re, &fg->global_im);
+  }
 
   /* Per-variable true-weights: omega^(t*a_v mod r). w_false[v] = 1 (implicit). */
   if (qsop->nvars > 0) {
@@ -482,26 +497,31 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
       const uint32_t coeff = (uint32_t)((t * (uint64_t)(qsop->unary[v] % r)) % r);
-      omega_power(coeff, r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      if (cache_roots) {
+        fg->w_true_re[v] = root_re[coeff];
+        fg->w_true_im[v] = root_im[coeff];
+      } else {
+        omega_power(coeff, r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      }
       fg->var_active[v] = true;
     }
   }
 
   /* Pair factors: only odd Fourier modes see sign edges; even modes have multiplier 1. */
   if (qsop->nedges > 0) {
+    if ((t & 1U) == 0U) {
+      return true;
+    }
     if (!fg_reserve_pairs(fg, qsop->nedges, error)) {
       fg_free(fg);
       return false;
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
-      const uint32_t coeff = (t & 1U) == 0U ? 0U : r / 2U;
-      if (coeff == 0U) {
-        continue;
-      }
       wmc_pair_t *p = &fg->pairs[fg->npairs];
       p->u = qsop->edge_u[e];
       p->v = qsop->edge_v[e];
-      omega_power(coeff, r, &p->R_re, &p->R_im);
+      p->R_re = -1.0;
+      p->R_im = 0.0;
       fg->pair_active[fg->npairs] = true;
       fg->npairs++;
     }

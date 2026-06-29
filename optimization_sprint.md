@@ -577,3 +577,28 @@ Validation:
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Signed WMC Factor-Graph Phase Specialization
+
+Removed avoidable phase work from the signed WMC factor-graph builder:
+
+- Small finite moduli now precompute one Fourier-root table per exported mode and reuse it
+  for the global and unary weights, avoiding a `cos/sin` call per variable on the common
+  `r = 8` path.
+- Odd Fourier-mode sign-edge factors are emitted as the exact constant `-1+0i` instead
+  of recomputing `omega^(r/2)` for every edge.
+- Even Fourier modes return before allocating pair-factor storage, since sign edges
+  contribute multiplier `1` there.
+
+The dense rankwidth item remains intentionally unsupported: the current note's improvement
+requires building the `P/Q/B` vector-space join and applying the Bravyi-Fattal-Gottesman
+normal-form path for odd modes. The signed-only solver has already removed even-mode DP
+with a closed form, so enabling a dense flag without the odd normal-form kernel would be
+misleading.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
