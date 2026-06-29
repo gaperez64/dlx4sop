@@ -242,7 +242,7 @@ def run_tests(sop_solve):
         else:
             print(f"    OK: {f.name} fourier+streaming matches count-table")
 
-    # 9. Fourier kernel selector is visible, and unimplemented dense kernels refuse clearly.
+    # 9. Fourier kernel selector is visible; dense-reference matches streaming; FWHT remains retired.
     print("  test: rankwidth Fourier kernel selector")
     r_stream_stats = _run_rankwidth_stdin(
         sop_solve,
@@ -261,6 +261,33 @@ def run_tests(sop_solve):
         else:
             print("    OK: streaming kernel recorded in stats")
 
+    r_dense_stats = _run_rankwidth_stdin(
+        sop_solve,
+        _SIGN_EDGE_4CYCLE,
+        ["--rankwidth-mode", "fourier", "--rankwidth-fourier-kernel", "dense-reference"],
+        format_stats=True,
+    )
+    if r_dense_stats.returncode != 0:
+        print(f"    FAIL: dense-reference Fourier kernel failed: {r_dense_stats.stderr.decode()[:120]}")
+        all_passed = False
+    else:
+        dense_text = r_dense_stats.stdout.decode(errors="replace")
+        stream_text = r_stream_stats.stdout.decode(errors="replace")
+        dense_counts = [
+            line for line in dense_text.splitlines() if line.startswith("result_counts:")
+        ]
+        stream_counts = [
+            line for line in stream_text.splitlines() if line.startswith("result_counts:")
+        ]
+        if "rankwidth_fourier_kernel: dense-reference" not in dense_text:
+            print("    FAIL: missing rankwidth_fourier_kernel: dense-reference in stats")
+            all_passed = False
+        elif dense_counts != stream_counts:
+            print("    FAIL: dense-reference counts differ from streaming")
+            all_passed = False
+        else:
+            print("    OK: dense-reference kernel matches streaming")
+
     r_dense = _run_rankwidth_stdin(
         sop_solve,
         _SIGN_EDGE_4CYCLE,
@@ -270,7 +297,7 @@ def run_tests(sop_solve):
         print(f"    FAIL: hybrid-even-fwht should refuse clearly, got rc={r_dense.returncode}")
         all_passed = False
     else:
-        print("    OK: unimplemented hybrid-even-fwht refuses clearly")
+        print("    OK: retired hybrid-even-fwht refuses clearly")
 
     # 10. D2.2: streaming join on sign-edge instance records streaming_join_events > 0.
     print("  test: D2.2 streaming join on sign-edge records streaming_join_events > 0")

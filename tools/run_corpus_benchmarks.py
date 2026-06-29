@@ -190,6 +190,7 @@ def run_solver_jobs(
                 str(qasm2sop), str(sop_solve),
                 "--manifest", str(mf),
                 "--solver-timeout", timeout,
+                "--memory-limit-mib", str(args.memory_limit_mib),
                 "--max-vars", max_vars,
                 "--trace",
                 "--format", "jsonl",
@@ -228,6 +229,7 @@ def run_wmc_jobs(
             "--sop-solve-backend", "treewidth",
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
+            "--memory-limit-mib", str(args.memory_limit_mib),
         ]
         common_wmc_extra = wmc_sop2wmc_extra_args(args)
         block_wmc_extra = wmc_sop2wmc_extra_args(args, block=True)
@@ -327,6 +329,7 @@ def run_mqt_solver_jobs(
                 "--corpus-dir", str(mqt_root),
                 "--tier", f"tier-{tier}",
                 "--timeout", timeout,
+                "--memory-limit-mib", str(args.memory_limit_mib),
                 "--max-vars", max_vars,
                 "--out", str(output),
                 *extra_args,
@@ -397,6 +400,7 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
             "--tier", "tier-scaling",
             "--backend", backend_arg,
             "--timeout", timeout,
+            "--memory-limit-mib", str(args.memory_limit_mib),
             "--max-vars", "4096",
             "--out", str(output),
         ]
@@ -411,7 +415,9 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
         cmd = [
             sys.executable, str(TOOLS_DIR / "bench_wmc_ganak.py"),
             "--ganak", str(args.ganak), "--sop2wmc", str(args.sop2wmc),
+            "--sop-solve", str(args.sop_solve),
             "--ganak-timeout", timeout, "--format", "jsonl",
+            "--memory-limit-mib", str(args.memory_limit_mib),
             "--encoding", "amp-block",
             *wmc_sop2wmc_extra_args(args, block=True),
             *[str(p) for p in instances],
@@ -437,7 +443,10 @@ def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathl
         "--backend", "rankwidth:best",
         "--backend", "rankwidth:from-treewidth:fourier",
         "--backend", "rankwidth:best:fourier",
+        "--backend", "rankwidth:from-treewidth:fourier:dense-reference",
+        "--backend", "rankwidth:best:fourier:dense-reference",
         "--timeout", str(args.rankwidth_study_timeout),
+        "--memory-limit-mib", str(args.memory_limit_mib),
         "--max-vars", "128",
         "--out", str(output),
     ]
@@ -484,7 +493,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="qubit cap for the stabilizer (qiskit-clifford) engine; it scales "
                              "far past the dense-statevector cap")
     parser.add_argument("--native-timeout", type=float, default=10.0)
-    parser.add_argument("--memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--memory-limit-mib", type=int, default=2048)
     parser.add_argument("--skip-scaling", action="store_true",
                         help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
     parser.add_argument("--skip-rankwidth-study", action="store_true",
@@ -510,6 +519,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.memory_limit_mib <= 0:
+        raise SystemExit("--memory-limit-mib must be positive")
     artifact_dir = args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir = args.manifests

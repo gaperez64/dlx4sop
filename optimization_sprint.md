@@ -184,14 +184,16 @@ shape.
 3. Done: implement streaming Fourier rankwidth joins.
 4. Done: add the bounded-rank-width synthetic corpus generator and manifest.
 5. Done: add a targeted rankwidth crossover benchmark path.
-6. Now: add rankwidth Fourier kernel selection and keep unsupported dense kernels as
-   explicit refusals until the scalar dense implementation is reference-checked.
+6. Done: add rankwidth Fourier kernel selection and a guarded scalar
+   `dense-reference` join for signed odd modes; keep the retired even-FWHT selector as
+   an explicit refusal.
 7. Now: optimize the WMC/Ganak backend for signed QSOPs, especially single Fourier-mode
    export and block-heavy sign-edge instances.
 8. Done/retired: dense even-mode FWHT is no longer the signed-only first target; even
    Fourier modes factor in closed form, and edge-free count-table rows now factor too.
-9. Next: implement odd twisted dense joins only through the normal-form route described in
-   the note; do not add an ad hoc blocked odd join and call it the matrix kernel.
+9. Next: implement the asymptotic odd twisted dense join only through the normal-form
+   route described in the note; do not call the scalar dense-reference path the matrix
+   kernel.
 10. Later: add SIMD only after dense layout and scalar dense kernels are correct.
 
 ## Sprint Log
@@ -602,3 +604,44 @@ Validation:
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Dense-Reference Rankwidth Kernel and Resource Caps
+
+Implemented the scalar dense reference path needed before any SIMD or matrix-kernel work:
+
+- `--rankwidth-fourier-kernel dense-reference` now builds GF(2) bases for the two child
+  signature spaces at each Fourier join and packs odd-mode values into dense coordinates.
+- The dense-reference join uses the same signed transition semantics as the streaming
+  odd-mode kernel and is guarded by dense-dimension/value-slot limits so it refuses instead
+  of allocating unbounded tables.
+- The streaming Fourier join now avoids reconstructing a parent representative when the
+  parent signature is already present in the output table.
+- `bench_sop_local.py` exposes
+  `rankwidth:{from-treewidth,best}:fourier:dense-reference`, and the bounded-rankwidth
+  study records those rows separately from the default streaming Fourier rows.
+- `tools/run_corpus_benchmarks.py` now forwards a per-child `--memory-limit-mib` to solver,
+  WMC, scaling, and rankwidth-study runners, with a tighter default of 2048 MiB.
+- `tools/bench_wmc_ganak.py`, `tools/bench_qasm_corpus.py`, and `tools/bench_sop_local.py`
+  apply that cap to their spawned `qasm2sop`, `sop2wmc`, `sop-solve`, and Ganak children.
+
+This is deliberately not the Theorem 5 matrix-multiplication kernel: the BFG normal-form
+implementation for generic odd twisted joins remains a separate item. The new dense row
+is a correctness-checked scalar baseline for deciding whether the dense layout is worth
+vectorizing.
+
+Validation:
+
+- `python3 -m py_compile tools/bench_common.py tools/bench_qasm_corpus.py tools/bench_sop_local.py tools/bench_wmc_ganak.py tools/run_corpus_benchmarks.py tools/compare_rankwidth_backends.py tools/refresh_scoreboard.py`
+- `ninja -C build`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `python3 tests/test_wmc_runner_options.py tools/run_corpus_benchmarks.py tools/bench.py`
+- `python3 tests/test_bench_wmc_ganak.py tools/bench_wmc_ganak.py`
+- `python3 tests/test_sop_solve.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_bench_qasm_corpus.py tools/bench_qasm_corpus.py`
+- `meson test -C build 'rankwidth join strategy smoke' 'rankwidth family crosscheck smoke' 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+- `python3 tests/test_compare_rankwidth_backends.py tools/compare_rankwidth_backends.py`
+- `python3 tools/bench_sop_local.py --sop-solve build/sop-solve --corpus-dir benchmarks/corpus/sop --tier tier-1-8 --backend rankwidth:best:fourier:dense-reference --timeout 5 --memory-limit-mib 512 --max-vars 64 --out /tmp/dlx4sop-rw-dense-memory-smoke.jsonl`
+- `python3 tools/run_corpus_benchmarks.py --skip-solver --skip-wmc --skip-native --skip-scaling --skip-scoreboard --artifact-dir /tmp/dlx4sop-rw-study-dense-smoke --sop-solve build/sop-solve --rankwidth-study-timeout 5 --memory-limit-mib 512`

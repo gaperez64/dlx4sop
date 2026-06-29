@@ -91,6 +91,20 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
         "--rankwidth-mode", "fourier",
         "--max-vars", "256",
     ],
+    "rankwidth:from-treewidth:fourier:dense-reference": [
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "from-treewidth",
+        "--rankwidth-mode", "fourier",
+        "--rankwidth-fourier-kernel", "dense-reference",
+        "--max-vars", "256",
+    ],
+    "rankwidth:best:fourier:dense-reference": [
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "best",
+        "--rankwidth-mode", "fourier",
+        "--rankwidth-fourier-kernel", "dense-reference",
+        "--max-vars", "256",
+    ],
     "branch:auto": [
         "--backend", "branch",
         "--branch-heuristic", "split",
@@ -129,6 +143,8 @@ BACKEND_MAX_VARS: dict[str, int] = {
     "rankwidth:best":    256,
     "rankwidth:from-treewidth:fourier": 256,
     "rankwidth:best:fourier": 256,
+    "rankwidth:from-treewidth:fourier:dense-reference": 256,
+    "rankwidth:best:fourier:dense-reference": 256,
     "rankwidth:validate": 256,
     "branch":             64,  # family fallback
     "branch:auto":        64,
@@ -167,6 +183,7 @@ def run_backend(
     backend: str,
     extra_args: list[str],
     timeout: float,
+    memory_limit_mib: int | None,
 ) -> dict:
     """Run sop-solve for a single (instance, backend) pair; return a result dict."""
     cfg_key = _backend_config_key(backend)
@@ -184,7 +201,7 @@ def run_backend(
         + extra_args
         + ["--format", "stats", "--include-result", "--trace", "csv", str(case.qsop_path)]
     )
-    result = run_command(cmd, timeout_seconds=timeout)
+    result = run_command(cmd, timeout_seconds=timeout, memory_limit_mib=memory_limit_mib)
 
     if result.returncode == -1 and result.stderr == "timeout":
         return {"status": "timeout", "elapsed_ns": result.elapsed_ns}
@@ -378,6 +395,7 @@ def bench_case(
     backends: list[str],
     timeout: float,
     extra_args: list[str],
+    memory_limit_mib: int | None,
     max_vars_override: int | None = None,
 ) -> list[dict]:
     meta = case.meta
@@ -416,7 +434,7 @@ def bench_case(
             ))
             continue
 
-        result = run_backend(sop_solve, case, backend, extra_args, timeout)
+        result = run_backend(sop_solve, case, backend, extra_args, timeout, memory_limit_mib)
         rec = _make_record(case, backend, nvars, nedges, r, **result)
         records.append(rec)
 
@@ -640,6 +658,12 @@ def main() -> int:
         help="override --max-vars for all backends",
     )
     parser.add_argument(
+        "--memory-limit-mib",
+        type=int,
+        default=None,
+        help="per-run address-space cap in MiB; exceeded rows are reported as errors",
+    )
+    parser.add_argument(
         "--out",
         type=pathlib.Path,
         default=None,
@@ -663,6 +687,9 @@ def main() -> int:
     extra_args: list[str] = []
     if args.max_vars is not None:
         extra_args = ["--max-vars", str(args.max_vars)]
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        print("error: --memory-limit-mib must be positive", file=sys.stderr)
+        return 1
 
     # Validate backends
     unknown = [b for b in backends if b not in BACKEND_CONFIGS]
@@ -682,7 +709,7 @@ def main() -> int:
             for case in iter_qsop_corpus(corpus_dir, tiers=tiers_filter):
                 records = bench_case(
                     args.sop_solve, case, backends, args.timeout, extra_args,
-                    max_vars_override=args.max_vars,
+                    args.memory_limit_mib, max_vars_override=args.max_vars,
                 )
                 for rec in records:
                     write_jsonl_record(out_stream, rec)

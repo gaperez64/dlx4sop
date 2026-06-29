@@ -14,7 +14,7 @@ from typing import TextIO
 
 # Allow sibling-module imports when loaded by path (tests load this via spec_from_file_location).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from bench_common import case_qasm  # noqa: E402
+from bench_common import case_qasm, memory_limited_preexec  # noqa: E402
 
 
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
@@ -323,7 +323,8 @@ def sha256_text(text: str) -> str:
 
 
 def run_command(
-    cmd: list[str], *, input_text: str | None = None, timeout_seconds: float | None = None
+    cmd: list[str], *, input_text: str | None = None, timeout_seconds: float | None = None,
+    memory_limit_mib: int | None = None
 ) -> tuple[str, str, int]:
     start = time.perf_counter_ns()
     try:
@@ -335,6 +336,7 @@ def run_command(
             stderr=subprocess.PIPE,
             text=True,
             timeout=timeout_seconds,
+            preexec_fn=memory_limited_preexec(memory_limit_mib),
         )
         elapsed = time.perf_counter_ns() - start
     except subprocess.TimeoutExpired as exc:
@@ -1047,7 +1049,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 cmd.append("-")
                 try:
                     stats_text, trace_text, solve_elapsed_ns = run_command(
-                        cmd, input_text=qsop, timeout_seconds=args.solver_timeout
+                        cmd, input_text=qsop, timeout_seconds=args.solver_timeout,
+                        memory_limit_mib=args.memory_limit_mib,
                     )
                 except CommandTimeout as exc:
                     metadata["timed_out_records"] += 1
@@ -1842,6 +1845,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Only solve imported QSOP rows with this mode. Imports still count in summary metadata.",
     )
     parser.add_argument("--solver-timeout", type=float, help="Per-solve timeout in seconds.")
+    parser.add_argument(
+        "--memory-limit-mib",
+        type=int,
+        default=None,
+        help="Per-solve address-space cap in MiB; exceeded rows are reported as errors.",
+    )
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
         "--timeout-top",
@@ -1927,6 +1936,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--max-vars must be non-negative")
     if args.solver_timeout is not None and args.solver_timeout <= 0.0:
         parser.error("--solver-timeout must be positive")
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        parser.error("--memory-limit-mib must be positive")
     if args.top < 0:
         parser.error("--top must be non-negative")
     if args.timeout_top < 0:

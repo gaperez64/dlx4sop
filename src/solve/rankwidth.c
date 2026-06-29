@@ -12,6 +12,8 @@
 
 #define RW_JOIN_MAP_INITIAL_CAP 1024U
 #define RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT UINT64_C(1000000)
+#define RW_DENSE_REFERENCE_MAX_DIM 22U
+#define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 
 typedef enum rw_node_kind {
   RW_NODE_UNDEFINED,
@@ -141,6 +143,14 @@ typedef struct rw_fourier_table {
   size_t cap;
   size_t signature_slots_mask;
 } rw_fourier_table_t;
+
+typedef struct rw_dense_basis {
+  uint64_t *pivot_rows;
+  uint64_t *pivot_coords;
+  uint32_t nbits;
+  size_t words;
+  uint32_t dim;
+} rw_dense_basis_t;
 
 /* Open-addressing hash table for signature pool fast lookup.
  * Slot value UINT32_MAX means empty; no deletions so no tombstones. */
@@ -3670,6 +3680,337 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
   return true;
 }
 
+static bool fourier_table_find_signature(const rw_fourier_table_t *table, uint32_t signature,
+                                         size_t *out);
+
+static bool bitset_first_set_limited(const uint64_t *bits, size_t words, uint32_t nbits,
+                                     uint32_t *out) {
+  for (size_t w = 0; w < words; w++) {
+    uint64_t value = bits[w];
+    while (value != 0) {
+      const uint32_t bit = rw_ctz_u64(value);
+      const uint32_t index = (uint32_t)(w * 64U + bit);
+      if (index < nbits) {
+        *out = index;
+        return true;
+      }
+      value &= value - 1U;
+    }
+  }
+  return false;
+}
+
+static bool dense_basis_init(rw_dense_basis_t *basis, uint32_t nbits, size_t words,
+                             qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  basis->pivot_rows = calloc((nbits == 0 ? 1U : (size_t)nbits) * w,
+                             sizeof(*basis->pivot_rows));
+  basis->pivot_coords = calloc(nbits == 0 ? 1U : (size_t)nbits, sizeof(*basis->pivot_coords));
+  if (basis->pivot_rows == NULL || basis->pivot_coords == NULL) {
+    free(basis->pivot_rows);
+    free(basis->pivot_coords);
+    *basis = (rw_dense_basis_t){0};
+    set_error(error, "out of memory while allocating dense rankwidth basis");
+    return false;
+  }
+  basis->nbits = nbits;
+  basis->words = words;
+  basis->dim = 0;
+  return true;
+}
+
+static void dense_basis_free(rw_dense_basis_t *basis) {
+  if (basis == NULL) {
+    return;
+  }
+  free(basis->pivot_rows);
+  free(basis->pivot_coords);
+  *basis = (rw_dense_basis_t){0};
+}
+
+static uint64_t *dense_basis_pivot_row(const rw_dense_basis_t *basis, uint32_t pivot) {
+  return basis->pivot_rows + (size_t)pivot * (basis->words == 0 ? 1U : basis->words);
+}
+
+static bool dense_basis_reduce(const rw_dense_basis_t *basis, const uint64_t *bits,
+                               uint64_t *scratch, uint64_t *coord_out) {
+  const size_t w = basis->words == 0 ? 1U : basis->words;
+  memcpy(scratch, bits, w * sizeof(*scratch));
+  uint64_t coord = 0;
+  uint32_t pivot = 0;
+  while (bitset_first_set_limited(scratch, basis->words, basis->nbits, &pivot)) {
+    const uint64_t pivot_coord = basis->pivot_coords[pivot];
+    if (pivot_coord == 0) {
+      *coord_out = coord;
+      return false;
+    }
+    qsop_bitset_xor(scratch, dense_basis_pivot_row(basis, pivot), basis->words);
+    coord ^= pivot_coord;
+  }
+  *coord_out = coord;
+  return true;
+}
+
+static bool dense_basis_add(rw_dense_basis_t *basis, const uint64_t *bits, uint64_t *scratch,
+                            qsop_error_t *error) {
+  uint64_t coord = 0;
+  if (dense_basis_reduce(basis, bits, scratch, &coord)) {
+    (void)coord;
+    return true;
+  }
+
+  uint32_t pivot = 0;
+  if (!bitset_first_set_limited(scratch, basis->words, basis->nbits, &pivot)) {
+    return true;
+  }
+  if (basis->dim >= RW_DENSE_REFERENCE_MAX_DIM) {
+    set_error(error, "rankwidth dense-reference basis dimension exceeds %" PRIu32,
+              (uint32_t)RW_DENSE_REFERENCE_MAX_DIM);
+    return false;
+  }
+  const uint64_t coord_bit = UINT64_C(1) << basis->dim;
+  qsop_bitset_copy(dense_basis_pivot_row(basis, pivot), scratch, basis->words);
+  basis->pivot_coords[pivot] = coord ^ coord_bit;
+  basis->dim++;
+  return true;
+}
+
+static bool dense_basis_from_fourier_table(const rw_fourier_table_t *table,
+                                           const rw_signature_pool_t *pool,
+                                           uint32_t nbits, rw_dense_basis_t *basis,
+                                           uint64_t *scratch, qsop_error_t *error) {
+  if (!dense_basis_init(basis, nbits, pool->words, error)) {
+    return false;
+  }
+  for (size_t i = 0; i < table->len; i++) {
+    if (!dense_basis_add(basis, signature_bits(pool, table->signatures[i]), scratch, error)) {
+      dense_basis_free(basis);
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool dense_basis_coord(const rw_dense_basis_t *basis, const uint64_t *bits,
+                              uint64_t *scratch, uint64_t *coord_out,
+                              qsop_error_t *error) {
+  if (!dense_basis_reduce(basis, bits, scratch, coord_out)) {
+    set_error(error, "rankwidth dense-reference signature is outside its dense basis");
+    return false;
+  }
+  return true;
+}
+
+static bool dense_reference_value_count(uint32_t dim, uint32_t slots_per_signature,
+                                        size_t *out, qsop_error_t *error) {
+  if (dim >= sizeof(size_t) * CHAR_BIT) {
+    set_error(error, "rankwidth dense-reference dimension is too large for this platform");
+    return false;
+  }
+  const size_t signatures = (size_t)1U << dim;
+  if (slots_per_signature != 0 && signatures > SIZE_MAX / (size_t)slots_per_signature) {
+    set_error(error, "rankwidth dense-reference table is too large");
+    return false;
+  }
+  const size_t values = signatures * (size_t)slots_per_signature;
+  if (values > RW_DENSE_REFERENCE_MAX_VALUES) {
+    set_error(error, "rankwidth dense-reference table exceeds %" PRIu64 " value slots",
+              (uint64_t)RW_DENSE_REFERENCE_MAX_VALUES);
+    return false;
+  }
+  *out = values;
+  return true;
+}
+
+static bool fourier_values_nonzero(const uint64_t *values, uint32_t slots) {
+  for (uint32_t i = 0; i < slots; i++) {
+    if (values[i] != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool solve_fourier_join_dense_reference(
+    const qsop_instance_t *qsop, const uint64_t *adj, rw_signature_pool_t *pool,
+    const rw_fourier_table_t *left, const rw_fourier_table_t *right,
+    uint64_t prime, rw_fourier_table_t *out, const uint64_t *outside,
+    uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words,
+    uint64_t *join_signature_pairs, qsop_error_t *error) {
+  const uint32_t odd_modes = fourier_odd_mode_count(qsop->r);
+  const size_t w = words == 0 ? 1U : words;
+  uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
+  if (basis_scratch == NULL) {
+    set_error(error, "out of memory while allocating dense rankwidth scratch");
+    return false;
+  }
+
+  rw_dense_basis_t left_basis = {0};
+  rw_dense_basis_t right_basis = {0};
+  if (!dense_basis_from_fourier_table(left, pool, qsop->nvars, &left_basis, basis_scratch,
+                                      error) ||
+      !dense_basis_from_fourier_table(right, pool, qsop->nvars, &right_basis, basis_scratch,
+                                      error)) {
+    dense_basis_free(&left_basis);
+    dense_basis_free(&right_basis);
+    free(basis_scratch);
+    return false;
+  }
+
+  size_t left_value_count = 0;
+  size_t right_value_count = 0;
+  if (!dense_reference_value_count(left_basis.dim, odd_modes, &left_value_count, error) ||
+      !dense_reference_value_count(right_basis.dim, odd_modes, &right_value_count, error)) {
+    dense_basis_free(&left_basis);
+    dense_basis_free(&right_basis);
+    free(basis_scratch);
+    return false;
+  }
+  const size_t left_signatures = (size_t)1U << left_basis.dim;
+  const size_t right_signatures = (size_t)1U << right_basis.dim;
+
+  uint64_t *left_dense = calloc(left_value_count == 0 ? 1U : left_value_count,
+                               sizeof(*left_dense));
+  uint64_t *right_dense = calloc(right_value_count == 0 ? 1U : right_value_count,
+                                sizeof(*right_dense));
+  uint32_t *left_index = malloc(left_signatures * sizeof(*left_index));
+  uint32_t *right_index = malloc(right_signatures * sizeof(*right_index));
+  if (left_dense == NULL || right_dense == NULL || left_index == NULL || right_index == NULL) {
+    free(left_dense);
+    free(right_dense);
+    free(left_index);
+    free(right_index);
+    dense_basis_free(&left_basis);
+    dense_basis_free(&right_basis);
+    free(basis_scratch);
+    set_error(error, "out of memory while allocating dense-reference rankwidth tables");
+    return false;
+  }
+  memset(left_index, 0xFF, left_signatures * sizeof(*left_index));
+  memset(right_index, 0xFF, right_signatures * sizeof(*right_index));
+
+  for (size_t i = 0; i < left->len; i++) {
+    uint64_t coord = 0;
+    if (!dense_basis_coord(&left_basis, signature_bits(pool, left->signatures[i]),
+                           basis_scratch, &coord, error)) {
+      free(left_dense);
+      free(right_dense);
+      free(left_index);
+      free(right_index);
+      dense_basis_free(&left_basis);
+      dense_basis_free(&right_basis);
+      free(basis_scratch);
+      return false;
+    }
+    left_index[coord] = (uint32_t)i;
+    memcpy(&left_dense[(size_t)coord * odd_modes], &left->values[i * (size_t)odd_modes],
+           (size_t)odd_modes * sizeof(*left_dense));
+  }
+  for (size_t i = 0; i < right->len; i++) {
+    uint64_t coord = 0;
+    if (!dense_basis_coord(&right_basis, signature_bits(pool, right->signatures[i]),
+                           basis_scratch, &coord, error)) {
+      free(left_dense);
+      free(right_dense);
+      free(left_index);
+      free(right_index);
+      dense_basis_free(&left_basis);
+      dense_basis_free(&right_basis);
+      free(basis_scratch);
+      return false;
+    }
+    right_index[coord] = (uint32_t)i;
+    memcpy(&right_dense[(size_t)coord * odd_modes], &right->values[i * (size_t)odd_modes],
+           (size_t)odd_modes * sizeof(*right_dense));
+  }
+
+  for (size_t lc = 0; lc < left_signatures; lc++) {
+    const uint32_t li = left_index[lc];
+    if (li == UINT32_MAX) {
+      continue;
+    }
+    const uint64_t *left_values = &left_dense[lc * (size_t)odd_modes];
+    if (!fourier_values_nonzero(left_values, odd_modes)) {
+      continue;
+    }
+    const uint64_t *left_rep = fourier_assignment(left, li, words);
+    for (size_t rc = 0; rc < right_signatures; rc++) {
+      const uint32_t ri = right_index[rc];
+      if (ri == UINT32_MAX) {
+        continue;
+      }
+      const uint64_t *right_values = &right_dense[rc * (size_t)odd_modes];
+      if (!fourier_values_nonzero(right_values, odd_modes)) {
+        continue;
+      }
+
+      const uint64_t *right_rep = fourier_assignment(right, ri, words);
+      rw_transition_eval_t eval;
+      if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, qsop->r,
+                                           left->signatures[li], left_rep,
+                                           left->assignment_weights[li],
+                                           right->signatures[ri], right_rep,
+                                           right->assignment_weights[ri],
+                                           scratch_sig, &eval, error)) {
+        free(left_dense);
+        free(right_dense);
+        free(left_index);
+        free(right_index);
+        dense_basis_free(&left_basis);
+        dense_basis_free(&right_basis);
+        free(basis_scratch);
+        return false;
+      }
+      if (!eval.valid) {
+        continue;
+      }
+
+      size_t out_index = 0;
+      if (!fourier_table_find_signature(out, eval.parent_signature, &out_index)) {
+        qsop_bitset_copy(parent_assignment, left_rep, words);
+        qsop_bitset_or(parent_assignment, right_rep, words);
+        if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment,
+                                           odd_modes, words, &out_index, error)) {
+          free(left_dense);
+          free(right_dense);
+          free(left_index);
+          free(right_index);
+          dense_basis_free(&left_basis);
+          dense_basis_free(&right_basis);
+          free(basis_scratch);
+          return false;
+        }
+      }
+      uint64_t *out_values = &out->values[out_index * (size_t)odd_modes];
+      const bool negate_odd_modes = eval.residue_shift != 0;
+      for (uint32_t odd = 0; odd < odd_modes; odd++) {
+        const uint64_t left_value = left_values[odd];
+        const uint64_t right_value = right_values[odd];
+        if (left_value == 0 || right_value == 0) {
+          continue;
+        }
+        uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
+        if (negate_odd_modes && value != 0) {
+          value = prime - value;
+        }
+        out_values[odd] = qsop_mod_add_u64(out_values[odd], value, prime);
+      }
+      if (join_signature_pairs != NULL) {
+        (*join_signature_pairs)++;
+      }
+    }
+  }
+
+  free(left_dense);
+  free(right_dense);
+  free(left_index);
+  free(right_index);
+  dense_basis_free(&left_basis);
+  dense_basis_free(&right_basis);
+  free(basis_scratch);
+  return true;
+}
+
 static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint64_t *adj,
                                          rw_signature_pool_t *pool,
                                          const rw_fourier_table_t *left,
@@ -3700,12 +4041,14 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
         continue;
       }
 
-      qsop_bitset_copy(parent_assignment, left_rep, words);
-      qsop_bitset_or(parent_assignment, right_rep, words);
       size_t out_index = 0;
-      if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment,
-                                         odd_modes, words, &out_index, error)) {
-        return false;
+      if (!fourier_table_find_signature(out, eval.parent_signature, &out_index)) {
+        qsop_bitset_copy(parent_assignment, left_rep, words);
+        qsop_bitset_or(parent_assignment, right_rep, words);
+        if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment,
+                                           odd_modes, words, &out_index, error)) {
+          return false;
+        }
       }
       const uint64_t *right_values = &right->values[j * (size_t)odd_modes];
       uint64_t *out_values = &out->values[out_index * (size_t)odd_modes];
@@ -3729,9 +4072,6 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
   }
   return true;
 }
-
-static bool fourier_table_find_signature(const rw_fourier_table_t *table, uint32_t signature,
-                                         size_t *out);
 
 static uint64_t fourier_factorized_mode_value(const qsop_instance_t *qsop,
                                               const uint64_t *powers, uint64_t prime,
@@ -4804,15 +5144,20 @@ static bool solve_rankwidth_fourier_mod_once(
                             decomposition->words);
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join_map", 0, pair_forecast, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        if (kernel != QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING) {
-          set_error(error, "rankwidth Fourier kernel is not implemented for this join");
-          ok = false;
-        } else {
+        if (kernel == QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING) {
           ok = solve_fourier_join_streaming(qsop, adj, &pool, &tables[node->left],
                                             &tables[node->right], prime, &tables[node_id],
                                             outside, scratch_sig,
                                             parent_assignment, decomposition->words,
                                             &join_signature_pairs, error);
+        } else if (kernel == QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE) {
+          ok = solve_fourier_join_dense_reference(
+              qsop, adj, &pool, &tables[node->left], &tables[node->right], prime,
+              &tables[node_id], outside, scratch_sig, parent_assignment, decomposition->words,
+              &join_signature_pairs, error);
+        } else {
+          set_error(error, "rankwidth Fourier kernel is not implemented for this join");
+          ok = false;
         }
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join", 0, tables[node_id].len,
                                 join_start);
@@ -4920,6 +5265,10 @@ static bool rankwidth_fourier_kernel_resolve(qsop_rankwidth_fourier_kernel_t req
     return true;
   }
   if (requested == QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING) {
+    *resolved = requested;
+    return true;
+  }
+  if (requested == QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE) {
     *resolved = requested;
     return true;
   }

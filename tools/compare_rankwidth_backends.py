@@ -53,7 +53,9 @@ def backend_config(record: dict) -> str:
             or "left-deep"
         )
         mode = record.get("rankwidth_mode") or config.get("rankwidth_mode") or "count-table"
-        return f"rankwidth:{generator}:{mode}"
+        kernel = record.get("rankwidth_fourier_kernel") or config.get("rankwidth_fourier_kernel")
+        kernel_suffix = f":{kernel}" if mode == "fourier" and kernel and kernel != "streaming" else ""
+        return f"rankwidth:{generator}:{mode}{kernel_suffix}"
     if backend == "treewidth":
         order = record.get("treewidth_order") or config.get("treewidth_order") or "min-fill"
         return f"treewidth:{order}{solve_mode_suffix}"
