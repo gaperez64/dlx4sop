@@ -544,42 +544,73 @@ static bool cdiv(double a_re, double a_im, double b_re, double b_im,
   return true;
 }
 
+static void fg_degree2_record(uint32_t var, uint32_t neighbor, size_t pair_index,
+                              uint32_t *degree, size_t *pair_idx, uint32_t *nbr) {
+  const uint32_t deg = degree[var];
+  if (deg < 2U) {
+    const size_t slot = 2U * (size_t)var + deg;
+    pair_idx[slot] = pair_index;
+    nbr[slot] = neighbor;
+    degree[var] = deg + 1U;
+  } else if (deg == 2U) {
+    degree[var] = 3U;
+  }
+}
+
 static bool fg_peel2_once(wmc_factor_graph_t *fg, uint32_t *fill_used,
                           uint32_t fill_budget, bool *changed_out,
                           qsop_error_t *error) {
   *changed_out = false;
+  const uint32_t n = fg->nvars;
+  if (n == 0) {
+    return true;
+  }
+
+  uint32_t *degree = calloc(n, sizeof(*degree));
+  size_t *pair_idx = calloc(2U * (size_t)n, sizeof(*pair_idx));
+  uint32_t *nbr = calloc(2U * (size_t)n, sizeof(*nbr));
+  if (degree == NULL || pair_idx == NULL || nbr == NULL) {
+    free(degree);
+    free(pair_idx);
+    free(nbr);
+    set_error(error, "out of memory while indexing WMC peel2 degrees");
+    return false;
+  }
+
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
+    const uint32_t u = fg->pairs[p].u;
+    const uint32_t v = fg->pairs[p].v;
+    if (fg->var_active[u]) {
+      fg_degree2_record(u, v, p, degree, pair_idx, nbr);
+    }
+    if (fg->var_active[v]) {
+      fg_degree2_record(v, u, p, degree, pair_idx, nbr);
+    }
+  }
+
   for (uint32_t v = 0; v < fg->nvars && !fg->is_zero; v++) {
     if (!fg->var_active[v] || fg->var_forced[v] != 0) {
       continue;
     }
 
-    size_t pair_idx[2] = {0, 0};
-    uint32_t nbr[2] = {0, 0};
-    uint32_t deg = 0;
-    for (size_t p = 0; p < fg->npairs; p++) {
-      if (!fg->pair_active[p]) {
-        continue;
-      }
-      if (fg->pairs[p].u != v && fg->pairs[p].v != v) {
-        continue;
-      }
-      if (deg >= 2U) {
-        deg++;
-        break;
-      }
-      pair_idx[deg] = p;
-      nbr[deg] = fg->pairs[p].u == v ? fg->pairs[p].v : fg->pairs[p].u;
-      deg++;
+    if (degree[v] != 2U) {
+      continue;
     }
-    if (deg != 2U || nbr[0] == nbr[1] ||
-        !fg->var_active[nbr[0]] || !fg->var_active[nbr[1]]) {
+    const size_t pair0 = pair_idx[2U * (size_t)v];
+    const size_t pair1 = pair_idx[2U * (size_t)v + 1U];
+    const uint32_t nbr0 = nbr[2U * (size_t)v];
+    const uint32_t nbr1 = nbr[2U * (size_t)v + 1U];
+    if (nbr0 == nbr1 || !fg->var_active[nbr0] || !fg->var_active[nbr1]) {
       continue;
     }
 
     double u_re = fg->w_true_re[v];
     double u_im = fg->w_true_im[v];
-    const wmc_pair_t *p0 = &fg->pairs[pair_idx[0]];
-    const wmc_pair_t *p1 = &fg->pairs[pair_idx[1]];
+    const wmc_pair_t *p0 = &fg->pairs[pair0];
+    const wmc_pair_t *p1 = &fg->pairs[pair1];
 
     const double r0_re = p0->R_re;
     const double r0_im = p0->R_im;
@@ -629,26 +660,35 @@ static bool fg_peel2_once(wmc_factor_graph_t *fg, uint32_t *fill_used,
 
     const bool creates_fill =
         !complex_near(pair_re, pair_im, 1.0, 0.0) &&
-        !fg_find_active_pair(fg, nbr[0], nbr[1], NULL);
+        !fg_find_active_pair(fg, nbr0, nbr1, NULL);
     if (creates_fill && fill_budget != 0 && *fill_used >= fill_budget) {
       continue;
     }
 
     cmul_ip(&fg->global_re, &fg->global_im, f00_re, f00_im);
-    cmul_ip(&fg->w_true_re[nbr[0]], &fg->w_true_im[nbr[0]], wy_re, wy_im);
-    cmul_ip(&fg->w_true_re[nbr[1]], &fg->w_true_im[nbr[1]], wz_re, wz_im);
-    fg->pair_active[pair_idx[0]] = false;
-    fg->pair_active[pair_idx[1]] = false;
+    cmul_ip(&fg->w_true_re[nbr0], &fg->w_true_im[nbr0], wy_re, wy_im);
+    cmul_ip(&fg->w_true_re[nbr1], &fg->w_true_im[nbr1], wz_re, wz_im);
+    fg->pair_active[pair0] = false;
+    fg->pair_active[pair1] = false;
     fg->var_active[v] = false;
     if (creates_fill) {
       (*fill_used)++;
     }
-    if (!fg_multiply_pair(fg, nbr[0], nbr[1], pair_re, pair_im, error)) {
+    if (!fg_multiply_pair(fg, nbr0, nbr1, pair_re, pair_im, error)) {
+      free(degree);
+      free(pair_idx);
+      free(nbr);
       return false;
     }
     *changed_out = true;
+    free(degree);
+    free(pair_idx);
+    free(nbr);
     return true;
   }
+  free(degree);
+  free(pair_idx);
+  free(nbr);
   return true;
 }
 

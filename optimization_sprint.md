@@ -508,3 +508,20 @@ Validation:
 - `ninja -C build`
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
+
+### 2026-06-29: Peel2 Degree-Index Scan
+
+Reduced a WMC preprocessing hot path while preserving the `peel2-safe` rule:
+
+- `fg_peel2_once` now builds a one-pass degree-two index over active factor-graph pairs.
+- Candidate selection still scans variables in order and eliminates the first valid
+  degree-2 variable, so preprocessing semantics remain unchanged.
+- The candidate scan drops from walking all pairs for every variable to one pair pass plus
+  one variable pass per peel attempt.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' 'wmc runner options smoke' --print-errorlogs`
