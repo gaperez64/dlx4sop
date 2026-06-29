@@ -696,6 +696,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "rankwidth.fourier_leaf",
         "rankwidth.fourier_join_map",
         "rankwidth.fourier_join",
+        "rankwidth.fourier_even_closed_form",
     }
     if not expected_fourier_trace.issubset(fourier_trace_phases):
         raise AssertionError(
@@ -749,6 +750,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "rankwidth.fourier_leaf",
         "rankwidth.fourier_join_map",
         "rankwidth.fourier_join",
+        "rankwidth.fourier_even_closed_form",
     }
     if not expected_signed_trace.issubset(signed_trace_phases):
         raise AssertionError(
@@ -1329,6 +1331,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "rankwidth.fourier_leaf" not in fourier_traced.stderr
         or "rankwidth.fourier_join_map" not in fourier_traced.stderr
         or "rankwidth.fourier_join" not in fourier_traced.stderr
+        or "rankwidth.fourier_even_closed_form" not in fourier_traced.stderr
     ):
         raise AssertionError(f"rankwidth Fourier trace failed\n{fourier_traced.stdout}\n{fourier_traced.stderr}")
 
@@ -1629,6 +1632,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "rankwidth.fourier_leaf" not in signed_fourier_trace.stderr
         or "rankwidth.fourier_join_map" not in signed_fourier_trace.stderr
         or "rankwidth.fourier_join" not in signed_fourier_trace.stderr
+        or "rankwidth.fourier_even_closed_form" not in signed_fourier_trace.stderr
     ):
         raise AssertionError(
             f"signed rankwidth Fourier trace failed\n"

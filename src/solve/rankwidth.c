@@ -3630,7 +3630,7 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
                                      error)) {
     return false;
   }
-  for (uint32_t mode = 0; mode < qsop->r; mode++) {
+  for (uint32_t mode = 1; mode < qsop->r; mode += 2U) {
     table->values[zero * (size_t)qsop->r + mode] =
         qsop_mod_add_u64(table->values[zero * (size_t)qsop->r + mode], 1, prime);
     table->values[one * (size_t)qsop->r + mode] = qsop_mod_add_u64(
@@ -3679,43 +3679,47 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
       const uint64_t *right_values = &right->values[j * (size_t)r];
       uint64_t *out_values = &out->values[out_index * (size_t)r];
       const bool negate_odd_modes = eval.residue_shift != 0;
-      if (!negate_odd_modes) {
-        for (uint32_t mode = 0; mode < r; mode++) {
-          const uint64_t left_value = left_values[mode];
-          const uint64_t right_value = right_values[mode];
-          if (left_value == 0 || right_value == 0) {
-            continue;
-          }
-          const uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
-          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
+      for (uint32_t mode = 1; mode < r; mode += 2U) {
+        const uint64_t left_value = left_values[mode];
+        const uint64_t right_value = right_values[mode];
+        if (left_value == 0 || right_value == 0) {
+          continue;
         }
-      } else {
-        for (uint32_t mode = 0; mode < r; mode += 2U) {
-          const uint64_t left_value = left_values[mode];
-          const uint64_t right_value = right_values[mode];
-          if (left_value == 0 || right_value == 0) {
-            continue;
-          }
-          const uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
-          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
+        uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
+        if (negate_odd_modes && value != 0) {
+          value = prime - value;
         }
-        for (uint32_t mode = 1; mode < r; mode += 2U) {
-          const uint64_t left_value = left_values[mode];
-          const uint64_t right_value = right_values[mode];
-          if (left_value == 0 || right_value == 0) {
-            continue;
-          }
-          uint64_t value = qsop_mod_mul_u64(left_value, right_value, prime);
-          if (value != 0) {
-            value = prime - value;
-          }
-          out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
-        }
+        out_values[mode] = qsop_mod_add_u64(out_values[mode], value, prime);
       }
       if (join_signature_pairs != NULL) {
         (*join_signature_pairs)++;
       }
     }
+  }
+  return true;
+}
+
+static bool fourier_table_fill_even_modes_closed_form(
+    const qsop_instance_t *qsop, const uint64_t *powers, uint64_t prime,
+    rw_fourier_table_t *root_table, uint64_t *zero_assignment, size_t words,
+    qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  memset(zero_assignment, 0, w * sizeof(*zero_assignment));
+  size_t root_index = 0;
+  if (!fourier_table_signature_index(root_table, 0, zero_assignment, qsop->r, words,
+                                     &root_index, error)) {
+    return false;
+  }
+  uint64_t *values = &root_table->values[root_index * (size_t)qsop->r];
+  for (uint32_t mode = 0; mode < qsop->r; mode += 2U) {
+    uint64_t acc = 1;
+    for (uint32_t v = 0; v < qsop->nvars; v++) {
+      const uint32_t residue = qsop->unary[v] % qsop->r;
+      const uint64_t term =
+          qsop_mod_add_u64(1, powers[(size_t)mode * qsop->r + residue], prime);
+      acc = qsop_mod_mul_u64(acc, term, prime);
+    }
+    values[mode] = acc;
   }
   return true;
 }
@@ -4552,7 +4556,21 @@ static bool solve_rankwidth_fourier_mod_once(
     }
   }
 
-  const rw_fourier_table_t *root_table = &tables[decomposition->root];
+  rw_fourier_table_t *root_table = &tables[decomposition->root];
+  const uint64_t even_start = qsop_trace_begin(trace);
+  if (!fourier_table_fill_even_modes_closed_form(qsop, powers, prime, root_table, outside,
+                                                 decomposition->words, error)) {
+    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+      fourier_table_free(&tables[t]);
+    }
+    free(scratch);
+    free(tables);
+    signature_pool_free(&pool);
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, "rankwidth.fourier_even_closed_form", 0,
+                          (qsop->r + 1U) / 2U, even_start);
+
   if (!fourier_root_counts_to_result(qsop, root_table, powers, inv_powers, prime, counts, error)) {
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
@@ -4568,7 +4586,7 @@ static bool solve_rankwidth_fourier_mod_once(
     stats->max_table_entries = max_table_entries;
     stats->signature_entries = signature_entries;
     stats->max_signature_entries = max_signature_entries;
-    stats->join_pairs = join_signature_pairs * qsop->r;
+    stats->join_pairs = saturating_mul_u64(join_signature_pairs, qsop->r / 2U);
     stats->join_signature_pairs = join_signature_pairs;
     stats->rankwidth_fourier_kernel = (uint32_t)kernel;
     stats->decomposition_width = decomposition_width(decomposition, adj, error);

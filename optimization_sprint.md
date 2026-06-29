@@ -432,3 +432,29 @@ Validation:
 - `ninja -C build`
 - `python3 tests/test_sop2wmc.py build/sop2wmc build/sop-solve /home/gperez/GIT-repos/dlx4sop`
 - `meson test -C build 'wmc unit' 'sop2wmc golden' 'wmc ganak benchmark metadata smoke' --print-errorlogs`
+
+### 2026-06-29: Rankwidth Fourier Even-Mode Closed Form
+
+Exploited the signed-QSOP invariant before attempting dense/FWHT joins:
+
+- Even Fourier modes ignore every sign edge because `t * (r/2) = 0 mod r` for even `t`.
+- Rankwidth Fourier leaves and joins now compute only odd modes through the streaming
+  boundary-signature DP.
+- The root table fills even modes with the closed form
+  `prod_v (1 + omega^(t * a_v))`; the constant shift remains handled by the inverse DFT.
+- Added a `rankwidth.fourier_even_closed_form` trace phase.
+- `join_pairs` on rankwidth Fourier rows now reflects actual odd-mode pair work
+  (`join_signature_pairs * r/2`) instead of charging the skipped even modes.
+
+This is not the dense/FWHT kernel from the note; it is the smaller signed-QSOP
+specialization that removes even-mode DP work while keeping the proven odd-mode streaming
+join.
+
+Validation:
+
+- `ninja -C build`
+- `python3 tests/test_sop_solve.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_differential_backends.py build/sop-solve /home/gperez/GIT-repos/dlx4sop`
+- `python3 tests/test_rankwidth_join_strategy.py build/sop-solve`
+- `python3 tests/test_rankwidth_family_crosscheck.py tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve`
+- `meson test -C build 'sop-solve golden' 'rankwidth join strategy smoke' 'differential backends' 'rankwidth family crosscheck smoke' --print-errorlogs`
