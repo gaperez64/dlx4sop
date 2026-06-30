@@ -51,6 +51,15 @@ c amplitude_factor 1+0i
         raise AssertionError(f"bad fallback metadata: {fallback}")
     if fallback.get("wmc_block_count") != 0 or fallback.get("wmc_block_edges") != 0:
         raise AssertionError(f"fallback should have zero block counters: {fallback}")
+
+    zero_residual = tool.parse_wmc_metadata(
+        "c sop2wmc encoding=amp-and r=16 nvars=40 nedges=37 format=qsop-sign norm_h=60\n"
+        "c preprocess nvars_after=0 pairs_after=0\n"
+    )
+    if not tool.is_zero_residual_wmc(zero_residual):
+        raise AssertionError(f"zero-residual WMC row not detected: {zero_residual}")
+    if tool.is_zero_residual_wmc(expected):
+        raise AssertionError(f"nonzero active WMC row misdetected: {expected}")
     return 0
 
 

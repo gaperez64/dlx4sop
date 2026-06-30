@@ -193,6 +193,10 @@ def parse_wmc_metadata(cnf_text: str) -> dict[str, int | str]:
     return meta
 
 
+def is_zero_residual_wmc(metadata: dict[str, int | str]) -> bool:
+    return metadata.get("wmc_active_vars") == 0 and metadata.get("wmc_residual_edges", 0) == 0
+
+
 def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path,
                   extra_args: list | None = None, timeout: float | None = None,
                   memory_limit_mib: int | None = None):
@@ -220,7 +224,8 @@ def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path,
 
 
 def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path, r: int,
-                  timeout: float | None, memory_limit_mib: int | None = None):
+                  timeout: float | None, memory_limit_mib: int | None = None,
+                  ganak_memory_limit_mib: int | None = None):
     """Run residue encoding: r separate CNF files, plain #SAT each."""
     counts, export_s, count_s = [], 0.0, 0.0
     with tempfile.TemporaryDirectory() as tmp:
@@ -242,7 +247,7 @@ def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=timeout,
-                    preexec_fn=memory_limited_preexec(memory_limit_mib),
+                    preexec_fn=memory_limited_preexec(ganak_memory_limit_mib),
                 )
             except subprocess.TimeoutExpired:
                 count_s += (timeout or 0.0)
@@ -260,7 +265,8 @@ def ganak_residue(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path
 def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path,
                     timeout: float | None, enc: str = "amplitude",
                     sop2wmc_extra: list[str] | None = None,
-                    memory_limit_mib: int | None = None):
+                    memory_limit_mib: int | None = None,
+                    ganak_memory_limit_mib: int | None = None):
     """Run a single-WPCNF amplitude encoding (amp-and, amp-soft, amp-block): Ganak --mode 6."""
     with tempfile.TemporaryDirectory() as tmp:
         cnf_path = pathlib.Path(tmp) / "amp.cnf"
@@ -279,6 +285,8 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
         factor = parse_amplitude_factor(cnf_text)
         if factor == 0j:
             return 0j, export_s, 0.0, "ok", metadata
+        if is_zero_residual_wmc(metadata):
+            return factor, export_s, 0.0, "ok", metadata
 
         start = time.perf_counter()
         try:
@@ -289,7 +297,7 @@ def ganak_amplitude(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Pa
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=timeout,
-                preexec_fn=memory_limited_preexec(memory_limit_mib),
+                preexec_fn=memory_limited_preexec(ganak_memory_limit_mib),
             )
         except subprocess.TimeoutExpired:
             count_s = timeout or 0.0
@@ -336,7 +344,8 @@ def _parse_z0_log2(cnf_text: str) -> int | None:
 def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: pathlib.Path,
                           r: int, timeout: float | None,
                           sop2wmc_extra: list[str] | None = None,
-                          memory_limit_mib: int | None = None):
+                          memory_limit_mib: int | None = None,
+                          ganak_memory_limit_mib: int | None = None):
     """Run residue-fourier amplitude encoding for Fourier mode 1 only."""
     export_s, count_s = 0.0, 0.0
     with tempfile.TemporaryDirectory() as tmp:
@@ -362,6 +371,8 @@ def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: path
             factor = parse_amplitude_factor(cnf_text)
             if factor == 0j:
                 return 0j, export_s, count_s, "ok", metadata
+            if is_zero_residual_wmc(metadata):
+                return factor, export_s, count_s, "ok", metadata
             cnf_path = pathlib.Path(tmp) / f"t{t}.cnf"
             cnf_path.write_text(cnf_text)
             start = time.perf_counter()
@@ -370,7 +381,7 @@ def ganak_residue_fourier(sop2wmc: pathlib.Path, ganak: pathlib.Path, qsop: path
                     [str(ganak), "--mode", "6", "--verb", "0", str(cnf_path)],
                     check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, timeout=timeout,
-                    preexec_fn=memory_limited_preexec(memory_limit_mib),
+                    preexec_fn=memory_limited_preexec(ganak_memory_limit_mib),
                 )
             except subprocess.TimeoutExpired:
                 count_s += (timeout or 0.0)
@@ -419,7 +430,8 @@ def check_amplitude(got: complex, ref: complex, tol: float = 2e-5) -> bool:
 
 def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
           sop_solve_extra=None, sop_solve_timeout=None, sop2wmc_extra=None,
-          memory_limit_mib: int | None = None):
+          memory_limit_mib: int | None = None,
+          ganak_memory_limit_mib: int | None = None):
     r, nvars, nedges = read_header(qsop)
     qsop_mode = read_qsop_mode(qsop)
     try:
@@ -446,7 +458,8 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
     if encoding == "residue-fourier":
         amplitude, export_s, count_s, status, metadata = ganak_residue_fourier(
             sop2wmc, ganak, qsop, r, timeout, sop2wmc_extra=sop2wmc_extra,
-            memory_limit_mib=memory_limit_mib
+            memory_limit_mib=memory_limit_mib,
+            ganak_memory_limit_mib=ganak_memory_limit_mib
         )
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
@@ -464,7 +477,8 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
                 "mismatches": mismatches, "amplitude_real": amplitude.real, "amplitude_imag": amplitude.imag}
     elif encoding == "residue":
         result, export_s, count_s, status = ganak_residue(
-            sop2wmc, ganak, qsop, r, timeout, memory_limit_mib=memory_limit_mib
+            sop2wmc, ganak, qsop, r, timeout, memory_limit_mib=memory_limit_mib,
+            ganak_memory_limit_mib=ganak_memory_limit_mib
         )
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
@@ -503,7 +517,8 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
     else:
         amplitude, export_s, count_s, status, metadata = ganak_amplitude(
             sop2wmc, ganak, qsop, timeout, enc=encoding, sop2wmc_extra=sop2wmc_extra,
-            memory_limit_mib=memory_limit_mib
+            memory_limit_mib=memory_limit_mib,
+            ganak_memory_limit_mib=ganak_memory_limit_mib
         )
         export_ns = int(export_s * 1e9)
         ganak_ns = int(count_s * 1e9)
@@ -595,7 +610,9 @@ def main() -> int:
     parser.add_argument("--sop-solve-timeout", type=float, default=None,
                         help="timeout in seconds for sop-solve reference computation (default: no timeout)")
     parser.add_argument("--memory-limit-mib", type=int, default=None,
-                        help="per-child address-space cap in MiB for qasm2sop, sop2wmc, sop-solve, and Ganak")
+                        help="per-child address-space cap in MiB for qasm2sop, sop2wmc, and sop-solve")
+    parser.add_argument("--ganak-memory-limit-mib", type=int, default=None,
+                        help="optional Ganak address-space cap in MiB; disabled by default because Ganak may reserve large virtual memory")
     parser.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
                         default=None, help="sop2wmc preprocessing mode")
     parser.add_argument("--wmc-peel2-fill-budget", type=int, default=None,
@@ -614,6 +631,8 @@ def main() -> int:
     sop_solve_timeout = args.sop_solve_timeout if args.sop_solve_timeout and args.sop_solve_timeout > 0 else None
     if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
         parser.error("--memory-limit-mib must be positive")
+    if args.ganak_memory_limit_mib is not None and args.ganak_memory_limit_mib <= 0:
+        parser.error("--ganak-memory-limit-mib must be positive")
 
     _all_encodings = ["residue", "amplitude", "amp-soft", "amp-block", "residue-fourier"]
     if args.encoding in ("both", "all"):
@@ -659,7 +678,8 @@ def main() -> int:
                 row = bench(sop2wmc, sop_solve, ganak, instance, enc, timeout, provenance,
                             sop_solve_extra or None, sop_solve_timeout=sop_solve_timeout,
                             sop2wmc_extra=sop2wmc_extra or None,
-                            memory_limit_mib=args.memory_limit_mib)
+                            memory_limit_mib=args.memory_limit_mib,
+                            ganak_memory_limit_mib=args.ganak_memory_limit_mib)
                 # Add "instance" key for backward-compat markdown mode
                 row["instance"] = instance.name
                 rows.append(row)

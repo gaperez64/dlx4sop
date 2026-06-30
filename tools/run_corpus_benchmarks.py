@@ -129,6 +129,14 @@ def tier_slug(tier: str) -> str:
     return tier.replace(" ", "-")
 
 
+def optional_memory_args(value: int | None) -> list[str]:
+    return ["--memory-limit-mib", str(value)] if value is not None else []
+
+
+def optional_ganak_memory_args(value: int | None) -> list[str]:
+    return ["--ganak-memory-limit-mib", str(value)] if value is not None else []
+
+
 def manifest_path(manifests_dir: pathlib.Path, tier: str) -> pathlib.Path:
     return manifests_dir / f"dlx4sop-tier-{tier_slug(tier)}-manifest.json"
 
@@ -190,7 +198,7 @@ def run_solver_jobs(
                 str(qasm2sop), str(sop_solve),
                 "--manifest", str(mf),
                 "--solver-timeout", timeout,
-                "--memory-limit-mib", str(args.memory_limit_mib),
+                *optional_memory_args(args.solver_memory_limit_mib),
                 "--max-vars", max_vars,
                 "--trace",
                 "--format", "jsonl",
@@ -229,7 +237,8 @@ def run_wmc_jobs(
             "--sop-solve-backend", "treewidth",
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
-            "--memory-limit-mib", str(args.memory_limit_mib),
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_ganak_memory_args(args.ganak_memory_limit_mib),
         ]
         common_wmc_extra = wmc_sop2wmc_extra_args(args)
         block_wmc_extra = wmc_sop2wmc_extra_args(args, block=True)
@@ -329,7 +338,7 @@ def run_mqt_solver_jobs(
                 "--corpus-dir", str(mqt_root),
                 "--tier", f"tier-{tier}",
                 "--timeout", timeout,
-                "--memory-limit-mib", str(args.memory_limit_mib),
+                *optional_memory_args(args.solver_memory_limit_mib),
                 "--max-vars", max_vars,
                 "--out", str(output),
                 *extra_args,
@@ -400,7 +409,7 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
             "--tier", "tier-scaling",
             "--backend", backend_arg,
             "--timeout", timeout,
-            "--memory-limit-mib", str(args.memory_limit_mib),
+            *optional_memory_args(args.solver_memory_limit_mib),
             "--max-vars", "4096",
             "--out", str(output),
         ]
@@ -417,7 +426,8 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
             "--ganak", str(args.ganak), "--sop2wmc", str(args.sop2wmc),
             "--sop-solve", str(args.sop_solve),
             "--ganak-timeout", timeout, "--format", "jsonl",
-            "--memory-limit-mib", str(args.memory_limit_mib),
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_ganak_memory_args(args.ganak_memory_limit_mib),
             "--encoding", "amp-block",
             *wmc_sop2wmc_extra_args(args, block=True),
             *[str(p) for p in instances],
@@ -446,7 +456,7 @@ def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathl
         "--backend", "rankwidth:from-treewidth:fourier:dense-reference",
         "--backend", "rankwidth:best:fourier:dense-reference",
         "--timeout", str(args.rankwidth_study_timeout),
-        "--memory-limit-mib", str(args.memory_limit_mib),
+        *optional_memory_args(args.solver_memory_limit_mib),
         "--max-vars", "128",
         "--out", str(output),
     ]
@@ -493,7 +503,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="qubit cap for the stabilizer (qiskit-clifford) engine; it scales "
                              "far past the dense-statevector cap")
     parser.add_argument("--native-timeout", type=float, default=10.0)
-    parser.add_argument("--memory-limit-mib", type=int, default=2048)
+    parser.add_argument("--memory-limit-mib", type=int, default=2048,
+                        help="per-child address-space cap for importer/exporter/reference tools; "
+                             "direct solver timing jobs use --solver-memory-limit-mib")
+    parser.add_argument("--solver-memory-limit-mib", type=int, default=None,
+                        help="optional address-space cap for direct sop-solve benchmark jobs; "
+                             "disabled by default to keep scoreboard timing comparable")
+    parser.add_argument("--ganak-memory-limit-mib", type=int, default=None,
+                        help="optional Ganak address-space cap; disabled by default because Ganak "
+                             "may reserve large virtual memory even on small WPCNF rows")
     parser.add_argument("--skip-scaling", action="store_true",
                         help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
     parser.add_argument("--skip-rankwidth-study", action="store_true",
@@ -521,6 +539,10 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.memory_limit_mib <= 0:
         raise SystemExit("--memory-limit-mib must be positive")
+    if args.solver_memory_limit_mib is not None and args.solver_memory_limit_mib <= 0:
+        raise SystemExit("--solver-memory-limit-mib must be positive")
+    if args.ganak_memory_limit_mib is not None and args.ganak_memory_limit_mib <= 0:
+        raise SystemExit("--ganak-memory-limit-mib must be positive")
     artifact_dir = args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir = args.manifests
