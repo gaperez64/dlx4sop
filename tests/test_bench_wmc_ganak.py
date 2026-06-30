@@ -58,8 +58,15 @@ c amplitude_factor 1+0i
     )
     if not tool.is_zero_residual_wmc(zero_residual):
         raise AssertionError(f"zero-residual WMC row not detected: {zero_residual}")
+    naturally_empty = tool.parse_wmc_metadata(
+        "c sop2wmc encoding=amp-and r=8 nvars=0 nedges=0 format=qsop-sign norm_h=4\n"
+    )
+    if not tool.is_zero_residual_wmc(naturally_empty):
+        raise AssertionError(f"empty WMC row not detected: {naturally_empty}")
     if tool.is_zero_residual_wmc(expected):
         raise AssertionError(f"nonzero active WMC row misdetected: {expected}")
+    if tool.normalize_amplitude(16 + 0j, 8) != 1 + 0j:
+        raise AssertionError("WMC amplitude normalization mismatch")
     return 0
 
 

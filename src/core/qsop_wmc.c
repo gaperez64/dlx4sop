@@ -831,15 +831,23 @@ static void fg_peel1(wmc_factor_graph_t *fg) {
           fg->is_zero = true;
         } else if (mag2_F0 < FG_ZERO_EPS * FG_ZERO_EPS) {
           /* F0=0: force y=1. Absorb F1 into w_true[y] (= old_w_true[y] * F1). */
-          cmul_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im);
-          fg->var_forced[y] = +1;
+          if (fg->var_forced[y] == -1) {
+            fg->is_zero = true;
+          } else {
+            cmul_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im);
+            fg->var_forced[y] = +1;
+          }
           fg->var_active[v] = false;
           fg->pair_active[single_p] = false;
           changed = true;
         } else if (mag2_F1 < FG_ZERO_EPS * FG_ZERO_EPS) {
           /* F1=0: force y=0. Absorb F0 into global. */
-          cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
-          fg->var_forced[y] = -1;
+          if (fg->var_forced[y] == +1) {
+            fg->is_zero = true;
+          } else {
+            cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
+            fg->var_forced[y] = -1;
+          }
           fg->var_active[v] = false;
           fg->pair_active[single_p] = false;
           changed = true;

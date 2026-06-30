@@ -708,6 +708,7 @@ def main() -> int:
         verify_residue_fourier(sop2wmc, sop_solve, qsop)
         verify_residue_fourier_mode_one(sop2wmc, sop_solve, qsop)
         verify_preprocess(sop2wmc, sop_solve, qsop)
+    verify_preprocess(sop2wmc, sop_solve, source_root / "tests" / "golden" / "wmc_forced_conflict.qsop")
     test_amp_block(sop2wmc, sop_solve)
     test_amp_block_threshold(sop2wmc, sop_solve)
     test_amp_block_multi(sop2wmc, sop_solve)

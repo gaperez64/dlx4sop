@@ -136,6 +136,13 @@ def read_header(qsop: pathlib.Path):
     raise ValueError(f"{qsop}: no 'p qsop-sign' header")
 
 
+def read_norm_h(qsop: pathlib.Path) -> int:
+    for line in qsop.read_text().splitlines():
+        if line.startswith("n "):
+            return int(line.split()[1])
+    raise ValueError(f"{qsop}: no normalization line")
+
+
 def read_qsop_mode(qsop: pathlib.Path) -> str:
     read_header(qsop)
     return "sign"
@@ -237,7 +244,9 @@ def parse_wmc_metadata(cnf_text: str) -> dict[str, int | str]:
 
 
 def is_zero_residual_wmc(metadata: dict[str, int | str]) -> bool:
-    return metadata.get("wmc_active_vars") == 0 and metadata.get("wmc_residual_edges", 0) == 0
+    active_vars = metadata.get("wmc_active_vars", metadata.get("wmc_original_nvars"))
+    residual_edges = metadata.get("wmc_residual_edges", metadata.get("wmc_original_edges"))
+    return active_vars == 0 and residual_edges == 0
 
 
 def solver_counts(sop_solve: pathlib.Path, qsop: pathlib.Path,
@@ -488,6 +497,10 @@ def counts_to_amplitude(counts: list, r: int) -> complex:
     return sum(c * omega ** k for k, c in enumerate(counts))
 
 
+def normalize_amplitude(amplitude: complex, norm_h: int) -> complex:
+    return amplitude * (2.0 ** (-norm_h / 2.0))
+
+
 def check_amplitude(got: complex, ref: complex, tol: float = 2e-5) -> bool:
     return abs(got - ref) <= tol * max(1.0, abs(ref))
 
@@ -498,16 +511,17 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
           ganak_memory_limit_mib: int | None = None,
           cgroup_memory_limit_mib: int | None = None):
     r, nvars, nedges = read_header(qsop)
+    norm_h = read_norm_h(qsop)
     qsop_mode = read_qsop_mode(qsop)
     try:
         reference, solve_s = solver_counts(sop_solve, qsop, sop_solve_extra,
                                            timeout=sop_solve_timeout,
                                            memory_limit_mib=memory_limit_mib,
                                            cgroup_memory_limit_mib=cgroup_memory_limit_mib)
-        ref_amplitude = counts_to_amplitude(reference, r)
+        ref_raw_amplitude = counts_to_amplitude(reference, r)
     except RuntimeError:
         reference = None
-        ref_amplitude = None
+        ref_raw_amplitude = None
         solve_s = 0.0
 
     base = {
@@ -539,12 +553,18 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
                     "wmc_export_elapsed_ns": export_ns, "wmc_ganak_elapsed_ns": ganak_ns,
                     "export_ms": round(export_s * 1e3, 3), "ganak_ms": round(count_s * 1e3, 3),
                     "ganak_total_ms": round((export_s + count_s) * 1e3, 3), "mismatches": 0}
-        mismatches = (0 if check_amplitude(amplitude, ref_amplitude) else 1) if ref_amplitude is not None else -1
+        mismatches = (
+            0 if check_amplitude(amplitude, ref_raw_amplitude) else 1
+        ) if ref_raw_amplitude is not None else -1
+        normalized = normalize_amplitude(amplitude, norm_h)
         return {**base, **metadata, "status": "ok", "solve_elapsed_ns": solve_ns,
                 "wmc_export_elapsed_ns": export_ns, "wmc_ganak_elapsed_ns": ganak_ns,
                 "export_ms": round(export_s * 1e3, 3), "ganak_ms": round(count_s * 1e3, 3),
                 "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
-                "mismatches": mismatches, "amplitude_real": amplitude.real, "amplitude_imag": amplitude.imag}
+                "mismatches": mismatches, "amplitude_real": normalized.real,
+                "amplitude_imag": normalized.imag,
+                "wmc_raw_amplitude_real": amplitude.real,
+                "wmc_raw_amplitude_imag": amplitude.imag}
     elif encoding == "residue":
         result, export_s, count_s, status = ganak_residue(
             sop2wmc, ganak, qsop, r, timeout, memory_limit_mib=memory_limit_mib,
@@ -572,6 +592,7 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
         else:
             mismatches = -1
         amp = counts_to_amplitude(result, r)
+        normalized = normalize_amplitude(amp, norm_h)
         row = {
             **base,
             "status": "ok",
@@ -582,8 +603,10 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
             "ganak_ms": round(count_s * 1e3, 3),
             "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
             "mismatches": mismatches,
-            "amplitude_real": amp.real,
-            "amplitude_imag": amp.imag,
+            "amplitude_real": normalized.real,
+            "amplitude_imag": normalized.imag,
+            "wmc_raw_amplitude_real": amp.real,
+            "wmc_raw_amplitude_imag": amp.imag,
         }
         return row
     else:
@@ -610,26 +633,27 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
                 "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
                 "mismatches": 0,
             }
-        if ref_amplitude is not None and reference is not None:
+        if ref_raw_amplitude is not None and reference is not None:
             count_scale = max(abs(c) for c in reference)
             r_terms = len(reference)
             # Estimated double-precision error in the DFT reference.
             # When this dominates the reference value, the cross-check is unreliable.
             est_dp_err = r_terms * count_scale * 2.2e-16
-            if ref_amplitude == 0j:
+            if ref_raw_amplitude == 0j:
                 # Reference is exactly 0 from integer/symmetry arithmetic.
                 # Ganak's MPFR residual scales with circuit size; accept if well below count scale.
                 ok = abs(amplitude) <= max(2e-5, count_scale * 1e-13)
-            elif est_dp_err > abs(ref_amplitude):
+            elif est_dp_err > abs(ref_raw_amplitude):
                 # Reference dominated by DP rounding; skip check (mismatches=-1).
                 ok = None
             else:
                 # Standard check with tolerance scaled to DP reference precision.
-                eff_tol = max(2e-5, est_dp_err / abs(ref_amplitude))
-                ok = check_amplitude(amplitude, ref_amplitude, tol=eff_tol)
+                eff_tol = max(2e-5, est_dp_err / abs(ref_raw_amplitude))
+                ok = check_amplitude(amplitude, ref_raw_amplitude, tol=eff_tol)
             mismatches = (0 if ok else 1) if ok is not None else -1
         else:
             mismatches = -1
+        normalized = normalize_amplitude(amplitude, norm_h)
         row = {
             **base,
             **metadata,
@@ -641,8 +665,10 @@ def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
             "ganak_ms": round(count_s * 1e3, 3),
             "ganak_total_ms": round((export_s + count_s) * 1e3, 3),
             "mismatches": mismatches,
-            "amplitude_real": amplitude.real,
-            "amplitude_imag": amplitude.imag,
+            "amplitude_real": normalized.real,
+            "amplitude_imag": normalized.imag,
+            "wmc_raw_amplitude_real": amplitude.real,
+            "wmc_raw_amplitude_imag": amplitude.imag,
         }
         return row
 
