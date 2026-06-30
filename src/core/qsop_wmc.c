@@ -1,4 +1,5 @@
 #include "dlx4sop/qsop_wmc.h"
+#include "dlx4sop/bitset.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -29,6 +30,7 @@
  */
 
 #define WMC_MAX_WIDTH 31U /* r must fit in 31 bits so 1<<(w+1) stays in uint64 */
+#define WMC_ROOT_CACHE_MAX 256U
 
 typedef struct wmc_builder {
   int *lits;         /* base clauses, each terminated by a 0 literal */
@@ -291,6 +293,8 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   options.preprocess = QSOP_WMC_PREPROCESS_NONE;
   options.peel2_fill_budget = 0;
   options.fourier_inner = QSOP_WMC_ENCODING_AMP_SOFT;
+  options.fourier_all_modes = true;
+  options.fourier_mode = 0;
   options.stats_out = NULL;
   options.block_min_side = 4;
   options.block_min_savings = 0;
@@ -333,6 +337,7 @@ typedef struct wmc_factor_graph {
   double *w_true_im;
   wmc_pair_t *pairs;  /* pairs with R_uv != 1 at construction time (length npairs_alloc) */
   size_t npairs;      /* original pair count (includes deactivated pairs) */
+  size_t npairs_cap;
   bool *var_active;   /* length nvars: variable remains in the WPCNF after preprocessing */
   int8_t *var_forced; /* length nvars: 0=not forced, +1=force true, -1=force false */
   bool *pair_active;  /* length npairs: pair remains in the WPCNF after preprocessing */
@@ -340,6 +345,7 @@ typedef struct wmc_factor_graph {
 } wmc_factor_graph_t;
 
 #define FG_CMAG2(re, im) ((re) * (re) + (im) * (im))
+#define FG_ZERO_EPS 1e-12
 
 static void fg_free(wmc_factor_graph_t *fg) {
   if (fg == NULL) {
@@ -357,6 +363,100 @@ static void fg_free(wmc_factor_graph_t *fg) {
   fg->var_active = NULL;
   fg->var_forced = NULL;
   fg->pair_active = NULL;
+  fg->npairs = 0;
+  fg->npairs_cap = 0;
+}
+
+static bool complex_near(double re, double im, double target_re, double target_im) {
+  return fabs(re - target_re) <= FG_ZERO_EPS && fabs(im - target_im) <= FG_ZERO_EPS;
+}
+
+static bool fg_reserve_pairs(wmc_factor_graph_t *fg, size_t needed, qsop_error_t *error) {
+  if (needed <= fg->npairs_cap) {
+    return true;
+  }
+  size_t new_cap = fg->npairs_cap == 0 ? 8U : fg->npairs_cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "WMC factor graph pair table is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  wmc_pair_t *pairs = calloc(new_cap, sizeof(*pairs));
+  bool *pair_active = calloc(new_cap, sizeof(*pair_active));
+  if (pairs == NULL || pair_active == NULL) {
+    free(pairs);
+    free(pair_active);
+    set_error(error, "out of memory growing WMC factor graph");
+    return false;
+  }
+  if (fg->npairs != 0) {
+    memcpy(pairs, fg->pairs, fg->npairs * sizeof(*pairs));
+    memcpy(pair_active, fg->pair_active, fg->npairs * sizeof(*pair_active));
+  }
+  free(fg->pairs);
+  free(fg->pair_active);
+  fg->pairs = pairs;
+  fg->pair_active = pair_active;
+  fg->npairs_cap = new_cap;
+  return true;
+}
+
+static bool fg_find_active_pair(const wmc_factor_graph_t *fg, uint32_t u, uint32_t v,
+                                size_t *out) {
+  if (u > v) {
+    const uint32_t tmp = u;
+    u = v;
+    v = tmp;
+  }
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
+    const uint32_t a = fg->pairs[p].u < fg->pairs[p].v ? fg->pairs[p].u : fg->pairs[p].v;
+    const uint32_t b = fg->pairs[p].u < fg->pairs[p].v ? fg->pairs[p].v : fg->pairs[p].u;
+    if (a == u && b == v) {
+      if (out != NULL) {
+        *out = p;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool fg_multiply_pair(wmc_factor_graph_t *fg, uint32_t u, uint32_t v,
+                             double r_re, double r_im, qsop_error_t *error) {
+  if (u == v || complex_near(r_re, r_im, 1.0, 0.0)) {
+    return true;
+  }
+  size_t existing = 0;
+  if (fg_find_active_pair(fg, u, v, &existing)) {
+    const double old_re = fg->pairs[existing].R_re;
+    const double old_im = fg->pairs[existing].R_im;
+    const double next_re = old_re * r_re - old_im * r_im;
+    const double next_im = old_re * r_im + old_im * r_re;
+    if (complex_near(next_re, next_im, 1.0, 0.0)) {
+      fg->pair_active[existing] = false;
+    } else {
+      fg->pairs[existing].R_re = next_re;
+      fg->pairs[existing].R_im = next_im;
+    }
+    return true;
+  }
+  if (!fg_reserve_pairs(fg, fg->npairs + 1U, error)) {
+    return false;
+  }
+  fg->pairs[fg->npairs] = (wmc_pair_t){
+      .u = u < v ? u : v,
+      .v = u < v ? v : u,
+      .R_re = r_re,
+      .R_im = r_im,
+  };
+  fg->pair_active[fg->npairs] = true;
+  fg->npairs++;
+  return true;
 }
 
 /* Build a factor graph for Fourier exponent t: weights become omega^(t*label mod r). */
@@ -366,9 +466,23 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
   *fg = (wmc_factor_graph_t){0};
   fg->nvars = qsop->nvars;
 
+  double root_re[WMC_ROOT_CACHE_MAX];
+  double root_im[WMC_ROOT_CACHE_MAX];
+  const bool cache_roots = r <= WMC_ROOT_CACHE_MAX;
+  if (cache_roots) {
+    for (uint32_t k = 0; k < r; k++) {
+      omega_power(k, r, &root_re[k], &root_im[k]);
+    }
+  }
+
   /* Global factor: omega^(t*c0 mod r). */
-  omega_power((uint32_t)((t * (uint64_t)(qsop->constant % r)) % r), r,
-              &fg->global_re, &fg->global_im);
+  const uint32_t global_coeff = (uint32_t)((t * (uint64_t)(qsop->constant % r)) % r);
+  if (cache_roots) {
+    fg->global_re = root_re[global_coeff];
+    fg->global_im = root_im[global_coeff];
+  } else {
+    omega_power(global_coeff, r, &fg->global_re, &fg->global_im);
+  }
 
   /* Per-variable true-weights: omega^(t*a_v mod r). w_false[v] = 1 (implicit). */
   if (qsop->nvars > 0) {
@@ -383,30 +497,31 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
       const uint32_t coeff = (uint32_t)((t * (uint64_t)(qsop->unary[v] % r)) % r);
-      omega_power(coeff, r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      if (cache_roots) {
+        fg->w_true_re[v] = root_re[coeff];
+        fg->w_true_im[v] = root_im[coeff];
+      } else {
+        omega_power(coeff, r, &fg->w_true_re[v], &fg->w_true_im[v]);
+      }
       fg->var_active[v] = true;
     }
   }
 
   /* Pair factors: only odd Fourier modes see sign edges; even modes have multiplier 1. */
   if (qsop->nedges > 0) {
-    fg->pairs = malloc(qsop->nedges * sizeof(*fg->pairs));
-    fg->pair_active = malloc(qsop->nedges * sizeof(*fg->pair_active));
-    if (!fg->pairs || !fg->pair_active) {
-      set_error(error, "out of memory building WMC factor graph");
+    if ((t & 1U) == 0U) {
+      return true;
+    }
+    if (!fg_reserve_pairs(fg, qsop->nedges, error)) {
       fg_free(fg);
       return false;
     }
-    fg->npairs = 0;
     for (uint32_t e = 0; e < qsop->nedges; e++) {
-      const uint32_t coeff = (t & 1U) == 0U ? 0U : r / 2U;
-      if (coeff == 0U) {
-        continue;
-      }
       wmc_pair_t *p = &fg->pairs[fg->npairs];
       p->u = qsop->edge_u[e];
       p->v = qsop->edge_v[e];
-      omega_power(coeff, r, &p->R_re, &p->R_im);
+      p->R_re = -1.0;
+      p->R_im = 0.0;
       fg->pair_active[fg->npairs] = true;
       fg->npairs++;
     }
@@ -423,6 +538,8 @@ static void cmul_ip(double *a_re, double *a_im, double b_re, double b_im) {
   *a_im = im;
 }
 
+static void fg_peel1(wmc_factor_graph_t *fg);
+
 /* Complex multiply-then-divide: a *= (b / c) in-place. Assumes |c| > 0. */
 static void cmul_div_ip(double *a_re, double *a_im, double b_re, double b_im, double c_re,
                         double c_im) {
@@ -436,7 +553,186 @@ static void cmul_div_ip(double *a_re, double *a_im, double b_re, double b_im, do
   *a_im = ab_im / mag2;
 }
 
-#define FG_ZERO_EPS 1e-12
+static bool cdiv(double a_re, double a_im, double b_re, double b_im,
+                 double *out_re, double *out_im) {
+  const double mag2 = FG_CMAG2(b_re, b_im);
+  if (mag2 < FG_ZERO_EPS * FG_ZERO_EPS) {
+    return false;
+  }
+  *out_re = (a_re * b_re + a_im * b_im) / mag2;
+  *out_im = (a_im * b_re - a_re * b_im) / mag2;
+  return true;
+}
+
+static void fg_degree2_record(uint32_t var, uint32_t neighbor, size_t pair_index,
+                              uint32_t *degree, size_t *pair_idx, uint32_t *nbr) {
+  const uint32_t deg = degree[var];
+  if (deg < 2U) {
+    const size_t slot = 2U * (size_t)var + deg;
+    pair_idx[slot] = pair_index;
+    nbr[slot] = neighbor;
+    degree[var] = deg + 1U;
+  } else if (deg == 2U) {
+    degree[var] = 3U;
+  }
+}
+
+static bool fg_peel2_once(wmc_factor_graph_t *fg, uint32_t *fill_used,
+                          uint32_t fill_budget, bool *changed_out,
+                          qsop_error_t *error) {
+  *changed_out = false;
+  const uint32_t n = fg->nvars;
+  if (n == 0) {
+    return true;
+  }
+
+  uint32_t *degree = calloc(n, sizeof(*degree));
+  size_t *pair_idx = calloc(2U * (size_t)n, sizeof(*pair_idx));
+  uint32_t *nbr = calloc(2U * (size_t)n, sizeof(*nbr));
+  if (degree == NULL || pair_idx == NULL || nbr == NULL) {
+    free(degree);
+    free(pair_idx);
+    free(nbr);
+    set_error(error, "out of memory while indexing WMC peel2 degrees");
+    return false;
+  }
+
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
+    const uint32_t u = fg->pairs[p].u;
+    const uint32_t v = fg->pairs[p].v;
+    if (fg->var_active[u]) {
+      fg_degree2_record(u, v, p, degree, pair_idx, nbr);
+    }
+    if (fg->var_active[v]) {
+      fg_degree2_record(v, u, p, degree, pair_idx, nbr);
+    }
+  }
+
+  for (uint32_t v = 0; v < fg->nvars && !fg->is_zero; v++) {
+    if (!fg->var_active[v] || fg->var_forced[v] != 0) {
+      continue;
+    }
+
+    if (degree[v] != 2U) {
+      continue;
+    }
+    const size_t pair0 = pair_idx[2U * (size_t)v];
+    const size_t pair1 = pair_idx[2U * (size_t)v + 1U];
+    const uint32_t nbr0 = nbr[2U * (size_t)v];
+    const uint32_t nbr1 = nbr[2U * (size_t)v + 1U];
+    if (nbr0 == nbr1 || !fg->var_active[nbr0] || !fg->var_active[nbr1]) {
+      continue;
+    }
+
+    double u_re = fg->w_true_re[v];
+    double u_im = fg->w_true_im[v];
+    const wmc_pair_t *p0 = &fg->pairs[pair0];
+    const wmc_pair_t *p1 = &fg->pairs[pair1];
+
+    const double r0_re = p0->R_re;
+    const double r0_im = p0->R_im;
+    const double r1_re = p1->R_re;
+    const double r1_im = p1->R_im;
+
+    const double ur0_re = u_re * r0_re - u_im * r0_im;
+    const double ur0_im = u_re * r0_im + u_im * r0_re;
+    const double ur1_re = u_re * r1_re - u_im * r1_im;
+    const double ur1_im = u_re * r1_im + u_im * r1_re;
+    const double r01_re = r0_re * r1_re - r0_im * r1_im;
+    const double r01_im = r0_re * r1_im + r0_im * r1_re;
+    const double ur01_re = u_re * r01_re - u_im * r01_im;
+    const double ur01_im = u_re * r01_im + u_im * r01_re;
+
+    const double f00_re = 1.0 + u_re;
+    const double f00_im = u_im;
+    const double f10_re = 1.0 + ur0_re;
+    const double f10_im = ur0_im;
+    const double f01_re = 1.0 + ur1_re;
+    const double f01_im = ur1_im;
+    const double f11_re = 1.0 + ur01_re;
+    const double f11_im = ur01_im;
+
+    if (FG_CMAG2(f00_re, f00_im) < FG_ZERO_EPS * FG_ZERO_EPS ||
+        FG_CMAG2(f10_re, f10_im) < FG_ZERO_EPS * FG_ZERO_EPS ||
+        FG_CMAG2(f01_re, f01_im) < FG_ZERO_EPS * FG_ZERO_EPS) {
+      continue;
+    }
+
+    double wy_re = 0.0, wy_im = 0.0;
+    double wz_re = 0.0, wz_im = 0.0;
+    if (!cdiv(f10_re, f10_im, f00_re, f00_im, &wy_re, &wy_im) ||
+        !cdiv(f01_re, f01_im, f00_re, f00_im, &wz_re, &wz_im)) {
+      continue;
+    }
+
+    const double numerator_re = f11_re * f00_re - f11_im * f00_im;
+    const double numerator_im = f11_re * f00_im + f11_im * f00_re;
+    const double denominator_re = f10_re * f01_re - f10_im * f01_im;
+    const double denominator_im = f10_re * f01_im + f10_im * f01_re;
+    double pair_re = 0.0, pair_im = 0.0;
+    if (!cdiv(numerator_re, numerator_im, denominator_re, denominator_im,
+              &pair_re, &pair_im)) {
+      continue;
+    }
+
+    const bool creates_fill =
+        !complex_near(pair_re, pair_im, 1.0, 0.0) &&
+        !fg_find_active_pair(fg, nbr0, nbr1, NULL);
+    if (creates_fill && fill_budget != 0 && *fill_used >= fill_budget) {
+      continue;
+    }
+
+    cmul_ip(&fg->global_re, &fg->global_im, f00_re, f00_im);
+    cmul_ip(&fg->w_true_re[nbr0], &fg->w_true_im[nbr0], wy_re, wy_im);
+    cmul_ip(&fg->w_true_re[nbr1], &fg->w_true_im[nbr1], wz_re, wz_im);
+    fg->pair_active[pair0] = false;
+    fg->pair_active[pair1] = false;
+    fg->var_active[v] = false;
+    if (creates_fill) {
+      (*fill_used)++;
+    }
+    if (!fg_multiply_pair(fg, nbr0, nbr1, pair_re, pair_im, error)) {
+      free(degree);
+      free(pair_idx);
+      free(nbr);
+      return false;
+    }
+    *changed_out = true;
+    free(degree);
+    free(pair_idx);
+    free(nbr);
+    return true;
+  }
+  free(degree);
+  free(pair_idx);
+  free(nbr);
+  return true;
+}
+
+static bool fg_preprocess(wmc_factor_graph_t *fg, qsop_wmc_preprocess_t preprocess,
+                          uint32_t peel2_fill_budget, qsop_error_t *error) {
+  if (preprocess == QSOP_WMC_PREPROCESS_NONE) {
+    return true;
+  }
+  fg_peel1(fg);
+  if (preprocess != QSOP_WMC_PREPROCESS_PEEL2_SAFE) {
+    return true;
+  }
+  uint32_t fill_used = 0;
+  bool changed = true;
+  while (changed && !fg->is_zero) {
+    if (!fg_peel2_once(fg, &fill_used, peel2_fill_budget, &changed, error)) {
+      return false;
+    }
+    if (changed) {
+      fg_peel1(fg);
+    }
+  }
+  return true;
+}
 
 /*
  * Peel1: analytical degree-0 and degree-1 variable elimination.
@@ -535,15 +831,23 @@ static void fg_peel1(wmc_factor_graph_t *fg) {
           fg->is_zero = true;
         } else if (mag2_F0 < FG_ZERO_EPS * FG_ZERO_EPS) {
           /* F0=0: force y=1. Absorb F1 into w_true[y] (= old_w_true[y] * F1). */
-          cmul_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im);
-          fg->var_forced[y] = +1;
+          if (fg->var_forced[y] == -1) {
+            fg->is_zero = true;
+          } else {
+            cmul_ip(&fg->w_true_re[y], &fg->w_true_im[y], F1_re, F1_im);
+            fg->var_forced[y] = +1;
+          }
           fg->var_active[v] = false;
           fg->pair_active[single_p] = false;
           changed = true;
         } else if (mag2_F1 < FG_ZERO_EPS * FG_ZERO_EPS) {
           /* F1=0: force y=0. Absorb F0 into global. */
-          cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
-          fg->var_forced[y] = -1;
+          if (fg->var_forced[y] == +1) {
+            fg->is_zero = true;
+          } else {
+            cmul_ip(&fg->global_re, &fg->global_im, F0_re, F0_im);
+            fg->var_forced[y] = -1;
+          }
           fg->var_active[v] = false;
           fg->pair_active[single_p] = false;
           changed = true;
@@ -601,6 +905,21 @@ static int *fg_build_var_map(const wmc_factor_graph_t *fg, uint32_t *n_active_ou
   return var_dimacs;
 }
 
+static uint32_t fg_count_active_mapped_pairs(const wmc_factor_graph_t *fg,
+                                             const int *var_dimacs) {
+  uint32_t count = 0;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
+    }
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    count++;
+  }
+  return count;
+}
+
 /* amp-and: Tseitin AND auxiliary per encoded edge.
  * W(y=1) = omega^b, W(y=0) = 1. Three clauses per edge (2 binary + 1 ternary). */
 static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
@@ -613,33 +932,11 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
     return false;
   }
 
-  /* Count active pairs and build Tseitin AND clauses. */
-  wmc_builder_t b = {0};
-  b.nvars = n_active_vars;
+  const uint32_t encoded_edges = fg_count_active_mapped_pairs(fg, var_dimacs);
+  const uint32_t nvars_total = n_active_vars + encoded_edges;
+  const uint64_t nclauses = 3U * (uint64_t)encoded_edges;
 
-  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
-  if (fg->npairs > 0 && pair_var == NULL) {
-    set_error(error, "out of memory while building amplitude CNF");
-    free(var_dimacs);
-    return false;
-  }
-  uint32_t encoded_edges = 0;
-  for (size_t p = 0; p < fg->npairs; p++) {
-    if (!fg->pair_active[p]) {
-      continue;
-    }
-    pair_var[p] = gate_and(&b, var_dimacs[fg->pairs[p].u], var_dimacs[fg->pairs[p].v]);
-    encoded_edges++;
-  }
-  if (b.failed) {
-    set_error(error, "out of memory while building amplitude CNF");
-    free(pair_var);
-    free(var_dimacs);
-    builder_free(&b);
-    return false;
-  }
-
-  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", nvars_total, nclauses);
   if (emit_metadata) {
     write_amp_metadata(file, qsop, fg, "amp-and", n_active_vars, encoded_edges);
     for (uint32_t v = 0; v < fg->nvars; v++) {
@@ -662,34 +959,48 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
   }
 
   /* Literal weights for Tseitin AND variables: W(y=1) = R_uv, W(y=0) = 1. */
+  int aux = (int)n_active_vars + 1;
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p]) {
       continue;
     }
-    write_weight(file, pair_var[p], fg->pairs[p].R_re, fg->pairs[p].R_im);
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    write_weight(file, aux, fg->pairs[p].R_re, fg->pairs[p].R_im);
+    aux++;
   }
 
-  /* Buffered Tseitin biconditional clauses. */
-  for (size_t i = 0; i < b.len; i++) {
-    if (b.lits[i] == 0) {
-      fputs("0\n", file);
-    } else {
-      fprintf(file, "%d ", b.lits[i]);
+  aux = (int)n_active_vars + 1;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -aux, u);
+    fprintf(file, "%d %d 0\n", -aux, v);
+    fprintf(file, "%d %d %d 0\n", aux, -u, -v);
+    aux++;
   }
 
   if (stats_out != NULL) {
+    *stats_out = (qsop_wmc_stats_t){0};
     stats_out->aux_vars = encoded_edges;
     stats_out->clauses_unit = 0;
     stats_out->clauses_binary = 2U * encoded_edges;
     stats_out->clauses_ternary = encoded_edges;
     stats_out->encoded_edges = encoded_edges;
     stats_out->skipped_edges = qsop->nedges - encoded_edges;
+    stats_out->residual_edges = encoded_edges;
+    stats_out->active_vars = n_active_vars;
+    stats_out->eliminated_vars = qsop->nvars - n_active_vars;
   }
 
-  free(pair_var);
   free(var_dimacs);
-  builder_free(&b);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
@@ -711,35 +1022,11 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
     return false;
   }
 
-  wmc_builder_t b = {0};
-  b.nvars = n_active_vars;
+  const uint32_t encoded_edges = fg_count_active_mapped_pairs(fg, var_dimacs);
+  const uint32_t nvars_total = n_active_vars + encoded_edges;
+  const uint64_t nclauses = 2U * (uint64_t)encoded_edges;
 
-  int *pair_var = fg->npairs > 0 ? calloc(fg->npairs, sizeof(*pair_var)) : NULL;
-  if (fg->npairs > 0 && pair_var == NULL) {
-    set_error(error, "out of memory while building amp-soft CNF");
-    free(var_dimacs);
-    return false;
-  }
-  uint32_t encoded_edges = 0;
-  for (size_t p = 0; p < fg->npairs; p++) {
-    if (!fg->pair_active[p]) {
-      continue;
-    }
-    const int y = new_var(&b);
-    pair_var[p] = y;
-    add_clause2(&b, -y, var_dimacs[fg->pairs[p].u]);  /* y -> x_u */
-    add_clause2(&b, -y, var_dimacs[fg->pairs[p].v]);  /* y -> x_v */
-    encoded_edges++;
-  }
-  if (b.failed) {
-    set_error(error, "out of memory while building amp-soft CNF");
-    free(pair_var);
-    free(var_dimacs);
-    builder_free(&b);
-    return false;
-  }
-
-  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
+  fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", nvars_total, nclauses);
   if (emit_metadata) {
     write_amp_metadata(file, qsop, fg, "amp-soft", n_active_vars, encoded_edges);
     for (uint32_t v = 0; v < fg->nvars; v++) {
@@ -762,36 +1049,49 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
   }
 
   /* Literal weights for soft auxiliaries: W(y=1) = R_uv - 1, W(y=0) = 1. */
+  int aux = (int)n_active_vars + 1;
   for (size_t p = 0; p < fg->npairs; p++) {
     if (!fg->pair_active[p]) {
       continue;
     }
-    write_weight(file, pair_var[p], fg->pairs[p].R_re - 1.0, fg->pairs[p].R_im);
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    write_weight(file, aux, fg->pairs[p].R_re - 1.0, fg->pairs[p].R_im);
+    aux++;
   }
 
-  /* Binary implication clauses — no ternary backward clauses. */
-  for (size_t i = 0; i < b.len; i++) {
-    if (b.lits[i] == 0) {
-      fputs("0\n", file);
-    } else {
-      fprintf(file, "%d ", b.lits[i]);
+  aux = (int)n_active_vars + 1;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p]) {
+      continue;
     }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -aux, u);  /* y -> x_u */
+    fprintf(file, "%d %d 0\n", -aux, v);  /* y -> x_v */
+    aux++;
   }
 
   if (stats_out != NULL) {
     const uint32_t total_skipped = qsop->nedges - (uint32_t)fg->npairs + (uint32_t)fg->npairs -
                                     encoded_edges;
+    *stats_out = (qsop_wmc_stats_t){0};
     stats_out->aux_vars = encoded_edges;
     stats_out->clauses_unit = 0;
     stats_out->clauses_binary = 2U * encoded_edges;
     stats_out->clauses_ternary = 0;
     stats_out->encoded_edges = encoded_edges;
     stats_out->skipped_edges = total_skipped;
+    stats_out->residual_edges = encoded_edges;
+    stats_out->active_vars = n_active_vars;
+    stats_out->eliminated_vars = qsop->nvars - n_active_vars;
   }
 
-  free(pair_var);
   free(var_dimacs);
-  builder_free(&b);
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
@@ -823,6 +1123,61 @@ static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool e
   return true;
 }
 
+typedef struct wmc_sign_block {
+  uint32_t *a;
+  uint32_t *b;
+  uint32_t a_len;
+  uint32_t b_len;
+  uint32_t edge_count;
+} wmc_sign_block_t;
+
+typedef struct wmc_sign_blocks {
+  wmc_sign_block_t *items;
+  size_t len;
+  size_t cap;
+} wmc_sign_blocks_t;
+
+static void sign_block_free(wmc_sign_block_t *block) {
+  if (block == NULL) {
+    return;
+  }
+  free(block->a);
+  free(block->b);
+  *block = (wmc_sign_block_t){0};
+}
+
+static void sign_blocks_free(wmc_sign_blocks_t *blocks) {
+  if (blocks == NULL) {
+    return;
+  }
+  for (size_t i = 0; i < blocks->len; i++) {
+    sign_block_free(&blocks->items[i]);
+  }
+  free(blocks->items);
+  *blocks = (wmc_sign_blocks_t){0};
+}
+
+static bool sign_blocks_push(wmc_sign_blocks_t *blocks, wmc_sign_block_t *block,
+                             qsop_error_t *error) {
+  if (blocks->len == blocks->cap) {
+    const size_t new_cap = blocks->cap == 0 ? 4U : blocks->cap * 2U;
+    wmc_sign_block_t *items = realloc(blocks->items, new_cap * sizeof(*items));
+    if (items == NULL) {
+      set_error(error, "out of memory storing amp-block parity blocks");
+      return false;
+    }
+    blocks->items = items;
+    blocks->cap = new_cap;
+  }
+  blocks->items[blocks->len++] = *block;
+  *block = (wmc_sign_block_t){0};
+  return true;
+}
+
+static bool fg_pair_is_sign(const wmc_pair_t *pair) {
+  return pair != NULL && complex_near(pair->R_re, pair->R_im, -1.0, 0.0);
+}
+
 /* Estimated auxiliaries for a sign-edge block: side parity XOR chains + one soft factor. */
 static int64_t block_cost(uint32_t a, uint32_t b) {
   const uint32_t a_xor = a > 0U ? a - 1U : 0U;
@@ -830,67 +1185,65 @@ static int64_t block_cost(uint32_t a, uint32_t b) {
   return (int64_t)a_xor + (int64_t)b_xor + 1;
 }
 
-/*
- * Find the best uniform-label complete bipartite block in qsop.
- * Returns true and fills *a_out and *b_out (caller must free) if a block
- * with savings >= min_savings and both sides >= min_side is found.
- */
-static bool find_block(const qsop_instance_t *qsop,
-                       uint32_t min_side, int64_t min_savings,
-                       uint32_t **a_out, uint32_t *a_len_out,
-                       uint32_t **b_out, uint32_t *b_len_out,
-                       uint32_t *label_out) {
-  const uint32_t n = qsop->nvars;
-  const uint32_t r = qsop->r;
-
-  if (n == 0 || qsop->nedges == 0) return false;
-  if (min_side == 0U) min_side = 1U;
-
-  /* Build adjacency matrix for sign edges. */
-  bool *adj = calloc((size_t)n * n, sizeof(*adj));
-  if (adj == NULL) return false;
-  const uint32_t sign_label = r / 2U;
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    const uint32_t u = qsop->edge_u[e];
-    const uint32_t v = qsop->edge_v[e];
-    adj[u * n + v] = true;
-    adj[v * n + u] = true;
+static bool bitset_contains_all(const uint64_t *set, const uint64_t *subset, size_t words) {
+  for (size_t w = 0; w < words; w++) {
+    if ((set[w] & subset[w]) != subset[w]) {
+      return false;
+    }
   }
+  return true;
+}
+
+/*
+ * Find the best uncovered complete bipartite sign block in the active factor graph.
+ * The search is bitset-based and greedy; callers repeat it while marking covered
+ * sign-pair indices to extract edge-disjoint blocks.
+ */
+static bool find_best_sign_block(const wmc_factor_graph_t *fg, const uint64_t *adj,
+                                 const uint64_t *active_bits, size_t words,
+                                 uint64_t *b_bits, uint32_t *a_tmp, uint32_t *b_tmp,
+                                 uint32_t min_side, int64_t min_savings,
+                                 wmc_sign_block_t *out, bool *found_out,
+                                 qsop_error_t *error) {
+  const uint32_t n = fg->nvars;
+  if (found_out != NULL) {
+    *found_out = false;
+  }
+  if (n == 0 || fg->npairs == 0) return true;
+  if (min_side == 0U) min_side = 1U;
 
   uint32_t best_score = 0;
   uint32_t *best_a = NULL, *best_b = NULL;
   uint32_t best_a_len = 0, best_b_len = 0;
-  uint32_t best_label = sign_label;
-
-  uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
-  uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
-  if (!b_tmp || !a_tmp) {
-    free(b_tmp); free(a_tmp); free(adj);
-    return false;
-  }
 
   for (uint32_t u = 0; u < n; u++) {
-    /* B = sign neighbours of u. */
-    uint32_t b_len = 0;
-    for (uint32_t v = 0; v < n; v++) {
-      if (adj[u * n + v]) b_tmp[b_len++] = v;
+    if (!fg->var_active[u]) {
+      continue;
     }
-    if (b_len < min_side) continue;
+    const uint64_t *u_adj = qsop_bitset_const_row(adj, words, u);
 
-    /* A = vertices not in B whose whole sign-neighbourhood contains B. */
+    /* B = uncovered sign neighbours of u. */
+    qsop_bitset_copy(b_bits, u_adj, words);
+    qsop_bitset_and(b_bits, active_bits, words);
+    const uint32_t b_len = qsop_bitset_popcount(b_bits, words);
+    if (b_len < min_side) continue;
+    uint32_t b_written = 0;
+    for (uint32_t v = 0; v < n; v++) {
+      if (qsop_bitset_get(b_bits, v)) {
+        b_tmp[b_written++] = v;
+      }
+    }
+
+    /* A = vertices not in B whose uncovered sign-neighbourhood contains B. */
     uint32_t a_len = 0;
     for (uint32_t up = 0; up < n; up++) {
-      bool in_b = false;
-      for (uint32_t bi = 0; bi < b_len; bi++) {
-        if (b_tmp[bi] == up) { in_b = true; break; }
+      if (!fg->var_active[up]) {
+        continue;
       }
-      if (in_b) continue;
+      if (qsop_bitset_get(b_bits, up)) continue;
 
-      bool covers_b = true;
-      for (uint32_t bi = 0; bi < b_len; bi++) {
-        if (!adj[up * n + b_tmp[bi]]) { covers_b = false; break; }
-      }
-      if (covers_b) a_tmp[a_len++] = up;
+      const uint64_t *up_adj = qsop_bitset_const_row(adj, words, up);
+      if (bitset_contains_all(up_adj, b_bits, words)) a_tmp[a_len++] = up;
     }
     if (a_len < min_side) continue;
 
@@ -906,7 +1259,7 @@ static bool find_block(const qsop_instance_t *qsop,
       best_b = malloc(b_len * sizeof(*best_b));
       if (!best_a || !best_b) {
         free(best_a); free(best_b);
-        free(a_tmp); free(b_tmp); free(adj);
+        set_error(error, "out of memory searching amp-block parity blocks");
         return false;
       }
       memcpy(best_a, a_tmp, a_len * sizeof(*best_a));
@@ -914,12 +1267,141 @@ static bool find_block(const qsop_instance_t *qsop,
     }
   }
 
-  free(a_tmp); free(b_tmp); free(adj);
+  if (best_score == 0) return true;
+  out->a = best_a;
+  out->a_len = best_a_len;
+  out->b = best_b;
+  out->b_len = best_b_len;
+  out->edge_count = best_a_len * best_b_len;
+  if (found_out != NULL) {
+    *found_out = true;
+  }
+  return true;
+}
 
-  if (best_score == 0) return false;
-  *a_out = best_a; *a_len_out = best_a_len;
-  *b_out = best_b; *b_len_out = best_b_len;
-  *label_out = best_label;
+static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
+                                int64_t min_savings, wmc_sign_blocks_t *blocks,
+                                bool **covered_out, qsop_error_t *error) {
+  bool *covered = calloc(fg->npairs == 0 ? 1U : fg->npairs, sizeof(*covered));
+  if (covered == NULL) {
+    set_error(error, "out of memory extracting amp-block parity blocks");
+    return false;
+  }
+  if (fg->nvars == 0 || fg->npairs == 0) {
+    *covered_out = covered;
+    return true;
+  }
+
+  const uint32_t n = fg->nvars;
+  const size_t words = qsop_bitset_words(n);
+  uint64_t *adj = calloc((size_t)n * words, sizeof(*adj));
+  uint64_t *active_bits = calloc(words, sizeof(*active_bits));
+  uint64_t *b_bits = calloc(words, sizeof(*b_bits));
+  uint32_t *b_tmp = malloc(n * sizeof(*b_tmp));
+  uint32_t *a_tmp = malloc(n * sizeof(*a_tmp));
+  uint32_t *mark_a = calloc(n, sizeof(*mark_a));
+  uint32_t *mark_b = calloc(n, sizeof(*mark_b));
+  if (adj == NULL || active_bits == NULL || b_bits == NULL || b_tmp == NULL ||
+      a_tmp == NULL || mark_a == NULL || mark_b == NULL) {
+    free(adj);
+    free(active_bits);
+    free(b_bits);
+    free(b_tmp);
+    free(a_tmp);
+    free(mark_a);
+    free(mark_b);
+    free(covered);
+    set_error(error, "out of memory extracting amp-block parity blocks");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < n; v++) {
+    if (fg->var_active[v]) {
+      qsop_bitset_set(active_bits, v);
+    }
+  }
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || !fg_pair_is_sign(&fg->pairs[p])) {
+      continue;
+    }
+    const uint32_t u = fg->pairs[p].u;
+    const uint32_t v = fg->pairs[p].v;
+    if (!fg->var_active[u] || !fg->var_active[v]) {
+      continue;
+    }
+    qsop_bitset_set(qsop_bitset_row(adj, words, u), v);
+    qsop_bitset_set(qsop_bitset_row(adj, words, v), u);
+  }
+
+  uint32_t marker_stamp = 0;
+  for (;;) {
+    wmc_sign_block_t block = {0};
+    bool found = false;
+    if (!find_best_sign_block(fg, adj, active_bits, words, b_bits, a_tmp, b_tmp,
+                              min_side, min_savings, &block, &found, error)) {
+      sign_blocks_free(blocks);
+      free(adj);
+      free(active_bits);
+      free(b_bits);
+      free(b_tmp);
+      free(a_tmp);
+      free(mark_a);
+      free(mark_b);
+      free(covered);
+      return false;
+    }
+    if (!found) {
+      break;
+    }
+    marker_stamp++;
+    if (marker_stamp == 0) {
+      memset(mark_a, 0, (size_t)n * sizeof(*mark_a));
+      memset(mark_b, 0, (size_t)n * sizeof(*mark_b));
+      marker_stamp = 1;
+    }
+    for (uint32_t i = 0; i < block.a_len; i++) mark_a[block.a[i]] = marker_stamp;
+    for (uint32_t i = 0; i < block.b_len; i++) mark_b[block.b[i]] = marker_stamp;
+    uint32_t marked = 0;
+    for (size_t p = 0; p < fg->npairs; p++) {
+      if (!fg->pair_active[p] || covered[p] || !fg_pair_is_sign(&fg->pairs[p])) {
+        continue;
+      }
+      const uint32_t u = fg->pairs[p].u;
+      const uint32_t v = fg->pairs[p].v;
+      if ((mark_a[u] == marker_stamp && mark_b[v] == marker_stamp) ||
+          (mark_a[v] == marker_stamp && mark_b[u] == marker_stamp)) {
+        covered[p] = true;
+        qsop_bitset_clear(qsop_bitset_row(adj, words, u), v);
+        qsop_bitset_clear(qsop_bitset_row(adj, words, v), u);
+        marked++;
+      }
+    }
+    if (marked != block.edge_count) {
+      sign_block_free(&block);
+      continue;
+    }
+    if (!sign_blocks_push(blocks, &block, error)) {
+      sign_block_free(&block);
+      sign_blocks_free(blocks);
+      free(adj);
+      free(active_bits);
+      free(b_bits);
+      free(b_tmp);
+      free(a_tmp);
+      free(mark_a);
+      free(mark_b);
+      free(covered);
+      return false;
+    }
+  }
+  free(adj);
+  free(active_bits);
+  free(b_bits);
+  free(b_tmp);
+  free(a_tmp);
+  free(mark_a);
+  free(mark_b);
+  *covered_out = covered;
   return true;
 }
 
@@ -933,147 +1415,153 @@ static int build_parity_lit(wmc_builder_t *b, const int *vars, uint32_t n_vars) 
 }
 
 static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
-                             bool emit_metadata,
+                             const wmc_factor_graph_t *fg, bool emit_metadata,
                              uint32_t min_side, int64_t min_savings,
                              qsop_wmc_stats_t *stats_out,
                              qsop_error_t *error) {
-  uint32_t *a_verts = NULL, *b_verts = NULL;
-  uint32_t a_len = 0, b_len = 0, block_label = 0;
-  const bool has_block = find_block(qsop, min_side, min_savings,
-                                     &a_verts, &a_len, &b_verts, &b_len, &block_label);
-
-  if (!has_block) {
-    /* Fallback: amp-soft on the full instance */
-    wmc_factor_graph_t fg = {0};
-    if (!fg_from_qsop(qsop, 1U, &fg, error)) return false;
-    const bool ok = write_amp_soft(file, qsop, &fg, emit_metadata, stats_out, error);
-    fg_free(&fg);
-    return ok;
+  wmc_sign_blocks_t blocks = {0};
+  bool *covered = NULL;
+  if (!extract_sign_blocks(fg, min_side, min_savings, &blocks, &covered, error)) {
+    return false;
+  }
+  if (blocks.len == 0) {
+    free(covered);
+    sign_blocks_free(&blocks);
+    return write_amp_soft(file, qsop, fg, emit_metadata, stats_out, error);
   }
 
-  const uint32_t r = qsop->r;
-
-  /* Build a mark set for vertices in A and B. */
-  bool *in_a = calloc(qsop->nvars, sizeof(*in_a));
-  bool *in_b = calloc(qsop->nvars, sizeof(*in_b));
-  if (!in_a || !in_b) {
-    free(in_a); free(in_b); free(a_verts); free(b_verts);
+  uint32_t n_active_vars = 0;
+  int *var_dimacs = fg_build_var_map(fg, &n_active_vars);
+  if (fg->nvars > 0 && var_dimacs == NULL) {
+    free(covered);
+    sign_blocks_free(&blocks);
     set_error(error, "out of memory building amp-block CNF");
     return false;
   }
-  for (uint32_t i = 0; i < a_len; i++) in_a[a_verts[i]] = true;
-  for (uint32_t i = 0; i < b_len; i++) in_b[b_verts[i]] = true;
-
-  /* Build a mark of block edges (u in A, v in B, label == block_label). */
-  bool *is_block_edge = calloc(qsop->nedges, sizeof(*is_block_edge));
-  if (!is_block_edge) {
-    free(in_a); free(in_b); free(a_verts); free(b_verts);
-    set_error(error, "out of memory building amp-block CNF");
-    return false;
-  }
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    const uint32_t u = qsop->edge_u[e], v = qsop->edge_v[e];
-    const uint32_t lbl = r / 2U;
-    if (lbl == block_label &&
-        ((in_a[u] && in_b[v]) || (in_a[v] && in_b[u]))) {
-      is_block_edge[e] = true;
-    }
-  }
-
-  /* Global factor from constant phase: omega^(constant mod r) */
-  double global_re, global_im;
-  omega_power((uint32_t)(qsop->constant % r), r, &global_re, &global_im);
 
   wmc_builder_t b = {0};
-  b.nvars = qsop->nvars;
+  b.nvars = n_active_vars;
 
-  /* Build parity literals for each side. For sign edges,
-     (r/2) * |A_true| * |B_true| is non-zero iff both parities are odd. */
-  int *a_dimacs = malloc(a_len * sizeof(*a_dimacs));
-  int *b_dimacs = malloc(b_len * sizeof(*b_dimacs));
-  if (!a_dimacs || !b_dimacs) {
-    free(a_dimacs); free(b_dimacs);
-    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
-    builder_free(&b);
+  int *block_var = calloc(blocks.len, sizeof(*block_var));
+  uint32_t parity_aux = 0;
+  uint32_t covered_edges = 0;
+  if (block_var == NULL) {
+    free(var_dimacs);
+    free(covered);
+    sign_blocks_free(&blocks);
     set_error(error, "out of memory building amp-block CNF");
     return false;
   }
-  for (uint32_t i = 0; i < a_len; i++) a_dimacs[i] = (int)(a_verts[i] + 1U);
-  for (uint32_t i = 0; i < b_len; i++) b_dimacs[i] = (int)(b_verts[i] + 1U);
 
-  const uint32_t parity_aux = (a_len > 0U ? a_len - 1U : 0U) +
-                              (b_len > 0U ? b_len - 1U : 0U);
-  const int parity_a = build_parity_lit(&b, a_dimacs, a_len);
-  const int parity_b = build_parity_lit(&b, b_dimacs, b_len);
-  const int block_var = new_var(&b);
-  add_clause2(&b, -block_var, parity_a);
-  add_clause2(&b, -block_var, parity_b);
+  for (size_t bi = 0; bi < blocks.len; bi++) {
+    const wmc_sign_block_t *block = &blocks.items[bi];
+    int *a_dimacs = malloc(block->a_len * sizeof(*a_dimacs));
+    int *b_dimacs = malloc(block->b_len * sizeof(*b_dimacs));
+    if (a_dimacs == NULL || b_dimacs == NULL) {
+      free(a_dimacs);
+      free(b_dimacs);
+      free(block_var);
+      free(var_dimacs);
+      free(covered);
+      sign_blocks_free(&blocks);
+      builder_free(&b);
+      set_error(error, "out of memory building amp-block CNF");
+      return false;
+    }
+    for (uint32_t i = 0; i < block->a_len; i++) {
+      a_dimacs[i] = var_dimacs[block->a[i]];
+    }
+    for (uint32_t i = 0; i < block->b_len; i++) {
+      b_dimacs[i] = var_dimacs[block->b[i]];
+    }
+    parity_aux += (block->a_len > 0U ? block->a_len - 1U : 0U) +
+                  (block->b_len > 0U ? block->b_len - 1U : 0U);
+    const int parity_a = build_parity_lit(&b, a_dimacs, block->a_len);
+    const int parity_b = build_parity_lit(&b, b_dimacs, block->b_len);
+    block_var[bi] = new_var(&b);
+    add_clause2(&b, -block_var[bi], parity_a);
+    add_clause2(&b, -block_var[bi], parity_b);
+    covered_edges += block->edge_count;
+    free(a_dimacs);
+    free(b_dimacs);
+  }
 
-  /* Non-block pair auxiliaries (amp-soft style) */
   uint32_t n_extra = 0;
-  int *extra_var = malloc(qsop->nedges * sizeof(*extra_var));
-  if (!extra_var) {
-    free(extra_var);
-    free(a_dimacs); free(b_dimacs);
-    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
-    builder_free(&b);
-    set_error(error, "out of memory building amp-block CNF");
-    return false;
-  }
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (is_block_edge[e]) continue;
-    const int y = new_var(&b);
-    add_clause2(&b, -y, (int)(qsop->edge_u[e] + 1U));
-    add_clause2(&b, -y, (int)(qsop->edge_v[e] + 1U));
-    extra_var[n_extra] = y;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || covered[p]) {
+      continue;
+    }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
     n_extra++;
   }
+  const int extra_first_var = (int)b.nvars + 1;
+  b.nvars += n_extra;
+  b.nclauses += 2U * (uint64_t)n_extra;
 
   if (b.failed) {
-    free(extra_var);
-    free(a_dimacs); free(b_dimacs);
-    free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+    free(block_var);
+    free(var_dimacs);
+    free(covered);
+    sign_blocks_free(&blocks);
     builder_free(&b);
     set_error(error, "out of memory building amp-block CNF");
     return false;
   }
 
-  /* Write WPCNF */
   fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
   if (emit_metadata) {
     fprintf(file,
             "c sop2wmc encoding=amp-block r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
             " format=qsop-sign norm_h=%" PRIu64 "\n",
-            r, qsop->nvars, qsop->nedges, qsop->norm_h);
-    fprintf(file, "c block sign-parity label=%" PRIu32 " a_size=%" PRIu32 " b_size=%" PRIu32 "\n",
-            block_label, a_len, b_len);
-    fprintf(file, "c amplitude_factor %.17g+%.17gi\n", global_re, global_im);
+            qsop->r, qsop->nvars, qsop->nedges, qsop->norm_h);
+    fprintf(file,
+            "c block count=%zu covered_edges=%" PRIu32 " residual_edges=%" PRIu32
+            " nvars_after=%" PRIu32 "\n",
+            blocks.len, covered_edges, n_extra, n_active_vars);
+    for (size_t bi = 0; bi < blocks.len; bi++) {
+      fprintf(file, "c block sign-parity index=%zu a_size=%" PRIu32 " b_size=%" PRIu32 "\n",
+              bi, blocks.items[bi].a_len, blocks.items[bi].b_len);
+    }
+    fprintf(file, "c amplitude_factor %.17g+%.17gi\n", fg->global_re, fg->global_im);
     fputs("c amplitude = ganak_output * amplitude_factor\n", file);
     fputs("c invoke: ganak --mode 6 --verb 0 <this-file>\n", file);
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      fprintf(file, "c xvar %" PRIu32 " %" PRIu32 "\n", v, v + 1U);
+    for (uint32_t v = 0; v < fg->nvars; v++) {
+      if (var_dimacs[v] != 0) {
+        fprintf(file, "c xvar %" PRIu32 " %d\n", v, var_dimacs[v]);
+      }
     }
   }
 
-  /* Unary weights */
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    const uint32_t coeff = qsop->unary[v] % r;
-    if (coeff != 0) {
-      double re, im;
-      omega_power(coeff, r, &re, &im);
-      write_weight(file, (int)(v + 1U), re, im);
+  for (uint32_t v = 0; v < fg->nvars; v++) {
+    if (var_dimacs[v] == 0) {
+      continue;
+    }
+    const double re = fg->w_true_re[v];
+    const double im = fg->w_true_im[v];
+    if (fabs(re - 1.0) > 1e-12 || fabs(im) > 1e-12) {
+      write_weight(file, var_dimacs[v], re, im);
     }
   }
-
-  /* Sign block factor: when both side parities are odd, 1 + W(block_var=1) = -1. */
-  write_weight(file, block_var, -2.0, 0.0);
-
-  /* Non-block sign edge factors. */
-  for (uint32_t i = 0; i < n_extra; i++) {
-    write_weight(file, extra_var[i], -2.0, 0.0);
+  for (size_t bi = 0; bi < blocks.len; bi++) {
+    write_weight(file, block_var[bi], -2.0, 0.0);
+  }
+  int extra_var = extra_first_var;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || covered[p]) {
+      continue;
+    }
+    if (var_dimacs[fg->pairs[p].u] == 0 || var_dimacs[fg->pairs[p].v] == 0) {
+      continue;
+    }
+    const wmc_pair_t *pair = &fg->pairs[p];
+    write_weight(file, extra_var, pair->R_re - 1.0, pair->R_im);
+    extra_var++;
   }
 
-  /* Clauses */
   for (size_t ci = 0; ci < b.len; ci++) {
     if (b.lits[ci] == 0) {
       fputs("0\n", file);
@@ -1081,19 +1569,41 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
       fprintf(file, "%d ", b.lits[ci]);
     }
   }
-
-  if (stats_out != NULL) {
-    stats_out->aux_vars = b.nvars - qsop->nvars;
-    stats_out->clauses_unit = 0;
-    stats_out->clauses_binary = 2U * (1U + n_extra);
-    stats_out->clauses_ternary = 4U * parity_aux;
-    stats_out->encoded_edges = (uint32_t)(a_len * b_len) + n_extra;
-    stats_out->skipped_edges = 0;
+  extra_var = extra_first_var;
+  for (size_t p = 0; p < fg->npairs; p++) {
+    if (!fg->pair_active[p] || covered[p]) {
+      continue;
+    }
+    const int u = var_dimacs[fg->pairs[p].u];
+    const int v = var_dimacs[fg->pairs[p].v];
+    if (u == 0 || v == 0) {
+      continue;
+    }
+    fprintf(file, "%d %d 0\n", -extra_var, u);
+    fprintf(file, "%d %d 0\n", -extra_var, v);
+    extra_var++;
   }
 
-  free(extra_var);
-  free(a_dimacs); free(b_dimacs);
-  free(in_a); free(in_b); free(a_verts); free(b_verts); free(is_block_edge);
+  if (stats_out != NULL) {
+    *stats_out = (qsop_wmc_stats_t){0};
+    stats_out->aux_vars = b.nvars - n_active_vars;
+    stats_out->clauses_binary = 2U * ((uint32_t)blocks.len + n_extra);
+    stats_out->clauses_ternary = 4U * parity_aux;
+    stats_out->encoded_edges = covered_edges + n_extra;
+    stats_out->skipped_edges = qsop->nedges >= stats_out->encoded_edges
+                                   ? qsop->nedges - stats_out->encoded_edges
+                                   : 0U;
+    stats_out->block_count = (uint32_t)blocks.len;
+    stats_out->block_edges = covered_edges;
+    stats_out->residual_edges = n_extra;
+    stats_out->active_vars = n_active_vars;
+    stats_out->eliminated_vars = qsop->nvars - n_active_vars;
+  }
+
+  free(block_var);
+  free(var_dimacs);
+  free(covered);
+  sign_blocks_free(&blocks);
   builder_free(&b);
 
   if (ferror(file)) {
@@ -1115,9 +1625,24 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   }
 
   if (options->encoding == QSOP_WMC_ENCODING_AMP_BLOCK) {
-    return write_amp_block(file, qsop, options->emit_metadata,
+    wmc_factor_graph_t fg = {0};
+    if (!fg_from_qsop(qsop, 1U, &fg, error)) {
+      return false;
+    }
+    if (!fg_preprocess(&fg, options->preprocess, options->peel2_fill_budget, error)) {
+      fg_free(&fg);
+      return false;
+    }
+    bool ok;
+    if (fg.is_zero) {
+      ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+    } else {
+      ok = write_amp_block(file, qsop, &fg, options->emit_metadata,
                            options->block_min_side, options->block_min_savings,
                            options->stats_out, error);
+    }
+    fg_free(&fg);
+    return ok;
   }
 
   if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE ||
@@ -1127,9 +1652,9 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
       return false;
     }
 
-    if (options->preprocess == QSOP_WMC_PREPROCESS_PEEL1 ||
-        options->preprocess == QSOP_WMC_PREPROCESS_PEEL2_SAFE) {
-      fg_peel1(&fg);
+    if (!fg_preprocess(&fg, options->preprocess, options->peel2_fill_budget, error)) {
+      fg_free(&fg);
+      return false;
     }
 
     bool ok;
@@ -1146,13 +1671,20 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
 
   if (options->encoding == QSOP_WMC_ENCODING_RESIDUE_FOURIER) {
     const uint32_t r = qsop->r;
+    if (!options->fourier_all_modes && options->fourier_mode >= r) {
+      set_error(error, "Fourier mode %" PRIu32 " is out of range for modulus %" PRIu32,
+                options->fourier_mode, r);
+      return false;
+    }
     qsop_wmc_encoding_t inner = options->fourier_inner;
     /* Default inner encoding: amp-soft. */
     if (inner != QSOP_WMC_ENCODING_AMPLITUDE && inner != QSOP_WMC_ENCODING_AMP_SOFT) {
       inner = QSOP_WMC_ENCODING_AMP_SOFT;
     }
 
-    for (uint32_t t = 0; t < r; t++) {
+    const uint32_t begin_t = options->fourier_all_modes ? 0U : options->fourier_mode;
+    const uint32_t end_t = options->fourier_all_modes ? r : options->fourier_mode + 1U;
+    for (uint32_t t = begin_t; t < end_t; t++) {
       if (options->emit_metadata) {
         fprintf(file, "c --- fourier t=%" PRIu32 " r=%" PRIu32 " ---\n", t, r);
       }
@@ -1180,9 +1712,9 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
         return false;
       }
 
-      if (options->preprocess == QSOP_WMC_PREPROCESS_PEEL1 ||
-          options->preprocess == QSOP_WMC_PREPROCESS_PEEL2_SAFE) {
-        fg_peel1(&fg);
+      if (!fg_preprocess(&fg, options->preprocess, options->peel2_fill_budget, error)) {
+        fg_free(&fg);
+        return false;
       }
 
       bool ok;

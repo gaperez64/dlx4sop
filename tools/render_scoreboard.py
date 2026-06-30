@@ -282,6 +282,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                     "records": 0,
                     "ok": 0,
                     "timeouts": 0,
+                    "memouts": 0,
                     "errors": 0,
                     "elapsed_ns": 0,
                     "sources": collections.Counter(),
@@ -294,6 +295,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 entry["ok"] += 1
             elif status == "timeout":
                 entry["timeouts"] += 1
+            elif status == "memout":
+                entry["memouts"] += 1
             else:
                 entry["errors"] += 1
             entry["elapsed_ns"] += int(record.get("solve_elapsed_ns") or 0)
@@ -358,6 +361,8 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "rankwidth_max_table_entries",
                 "rankwidth_table_forecast",
                 "rankwidth_join_pair_forecast",
+                "rankwidth_dense_table_forecast",
+                "rankwidth_dense_even_join_forecast",
                 "rankwidth_max_signature_entries",
                 "cache_entries",
                 "cache_canonical_entries",
@@ -405,6 +410,14 @@ def cap_value(record: dict, key: str) -> str:
         return "not recorded"
     value = record.get(key)
     return "none" if value is None else str(value)
+
+
+def memory_cap_value(record: dict) -> str:
+    cgroup = record.get("cgroup_memory_limit_mib")
+    if cgroup is not None:
+        return f"cgroup {cgroup}"
+    value = record.get("memory_limit_mib")
+    return "none" if value is None else f"rlimit {value}"
 
 
 def has_comparison_identity(record: dict) -> bool:
@@ -477,7 +490,7 @@ def summarize_native_comparison_records(
                 entry["matched"] += 1
                 entry["qubit_caps"][cap_value(native, "qubit_cap")] += 1
                 entry["timeouts"][cap_value(native, "timeout_seconds")] += 1
-                entry["memory_caps"][cap_value(native, "memory_limit_mib")] += 1
+                entry["memory_caps"][memory_cap_value(native)] += 1
                 if isinstance(native.get("qubits"), int):
                     entry["max_boundary_qubits"] = max(
                         entry["max_boundary_qubits"], int(native["qubits"])

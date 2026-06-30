@@ -1,0 +1,24 @@
+{
+  "name": "btclique-h02-t02-r8-all-t",
+  "source": "Synthetic",
+  "source_url": "tools/gen_rankwidth_family.py",
+  "source_relative_path": "tier-rankwidth/btclique-h02-t02-r8-all-t.qsop",
+  "family": "binary-tree-clique-blowup",
+  "height": 2,
+  "blowup": 2,
+  "tree_vertices": 7,
+  "r": 8,
+  "nvars": 14,
+  "nedges": 31,
+  "unary_pattern": "all-t",
+  "qsop_mode": "sign",
+  "theoretical_rankwidth": "O(1)",
+  "treewidth_lower_bound": 1,
+  "linear_rankwidth_pressure": "Omega(height)",
+  "benchmark_roles": [
+    "rankwidth-separation",
+    "rq2"
+  ],
+  "solvable_without_external_tools": true,
+  "qsop_sha256": "439f5ffa79a9857589be2cfd08af4668ec66f3de99843fe57d7b79c5ae8c538c"
+}

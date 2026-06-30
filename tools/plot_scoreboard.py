@@ -751,7 +751,7 @@ def plot_wmc_time_svg(
 
     tier_data: dict[str, dict[str, int]] = collections.defaultdict(lambda: {"ganak_ns": 0, "export_ns": 0})
     for r in wmc_records:
-        if r.get("status") not in ("ok", "timeout"):
+        if r.get("status") not in ("ok", "timeout", "memout"):
             continue
         tier = r.get("tier", "")
         stats = r.get("stats", {})
@@ -839,7 +839,7 @@ def _scaling_series(path: pathlib.Path, time_key_ns: str, time_key_ms: str) -> d
                 per_q[q].append(float(rec[time_key_ms]))
             elif rec.get(time_key_ns) is not None:
                 per_q[q].append(float(rec[time_key_ns]) / 1e6)
-        elif rec.get("status") in ("timeout", "error"):
+        elif rec.get("status") in ("timeout", "memout", "error"):
             timed_out[q] = True
     out: dict[int, dict] = {}
     for q in set(per_q) | set(timed_out):

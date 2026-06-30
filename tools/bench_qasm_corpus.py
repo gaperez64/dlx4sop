@@ -14,12 +14,13 @@ from typing import TextIO
 
 # Allow sibling-module imports when loaded by path (tests load this via spec_from_file_location).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from bench_common import case_qasm  # noqa: E402
+from bench_common import case_qasm, cgroup_limited_command, command_memout, memory_limited_preexec  # noqa: E402
 
 
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
+BRANCH_RW_SOURCES = ("native", "from-treewidth", "both", "auto", "none")
 RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut", "min-fill-search", "best")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
@@ -78,6 +79,8 @@ BACKEND_ALIAS_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
+    "rankwidth_dense_table_forecast",
+    "rankwidth_dense_even_join_forecast",
     "rankwidth_cutrank_width",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
@@ -153,6 +156,8 @@ TOP_METRICS = (
     "rankwidth_max_table_entries",
     "rankwidth_table_forecast",
     "rankwidth_join_pair_forecast",
+    "rankwidth_dense_table_forecast",
+    "rankwidth_dense_even_join_forecast",
     "rankwidth_cutrank_width",
     "treewidth_table_entries",
     "treewidth_max_table_entries",
@@ -189,14 +194,17 @@ CSV_FIELDS = [
     "backend",
     "branch_heuristic",
     "rankwidth_mode",
+    "rankwidth_fourier_kernel",
     "rankwidth_decomposition",
     "treewidth_order",
     "status",
     "error",
+    "memout",
     "qsop_mode",
     "r",
     "nvars",
     "nedges",
+    "cgroup_memory_limit_mib",
     "import_elapsed_ns",
     "solve_elapsed_ns",
     "trace_elapsed_ns",
@@ -313,28 +321,49 @@ class CommandFailed(RuntimeError):
         self.elapsed_ns = elapsed_ns
 
 
+class CommandMemout(CommandFailed):
+    def __init__(self, cmd: list[str], returncode: int, stdout: str, stderr: str, elapsed_ns: int):
+        super().__init__(cmd, returncode, stdout, stderr or "cgroup memory limit exceeded", elapsed_ns)
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
 def run_command(
-    cmd: list[str], *, input_text: str | None = None, timeout_seconds: float | None = None
+    cmd: list[str], *, input_text: str | None = None, timeout_seconds: float | None = None,
+    memory_limit_mib: int | None = None,
+    cgroup_memory_limit_mib: int | None = None,
 ) -> tuple[str, str, int]:
     start = time.perf_counter_ns()
+    wrapped_cmd = cgroup_limited_command(cmd, cgroup_memory_limit_mib)
     try:
         completed = subprocess.run(
-            cmd,
+            wrapped_cmd,
             input=input_text,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=timeout_seconds,
+            preexec_fn=memory_limited_preexec(memory_limit_mib),
         )
         elapsed = time.perf_counter_ns() - start
     except subprocess.TimeoutExpired as exc:
         elapsed = time.perf_counter_ns() - start
         raise CommandTimeout(cmd, timeout_seconds or 0.0, elapsed) from exc
+    if command_memout(
+        completed.returncode,
+        completed.stderr,
+        cgroup_limited=cgroup_memory_limit_mib is not None,
+    ):
+        raise CommandMemout(
+            cmd,
+            completed.returncode,
+            completed.stdout,
+            completed.stderr,
+            elapsed,
+        )
     if completed.returncode != 0:
         raise CommandFailed(
             cmd,
@@ -429,6 +458,7 @@ def parse_stats_and_amplitude(text: str) -> tuple[dict[str, int | str], dict[str
                 "solve_mode",
                 "solve_mode_kernel",
                 "rankwidth_mode",
+                "rankwidth_fourier_kernel",
                 "rankwidth_decomposition",
                 "treewidth_order",
             }
@@ -453,7 +483,10 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
             "max_table_entries": "rankwidth_max_table_entries",
             "rankwidth_table_forecast": "rankwidth_table_forecast",
             "rankwidth_join_pair_forecast": "rankwidth_join_pair_forecast",
+            "rankwidth_dense_table_forecast": "rankwidth_dense_table_forecast",
+            "rankwidth_dense_even_join_forecast": "rankwidth_dense_even_join_forecast",
             "rankwidth_cutrank_width": "rankwidth_cutrank_width",
+            "rankwidth_fourier_kernel": "rankwidth_fourier_kernel",
             "signature_entries": "rankwidth_signature_entries",
             "max_signature_entries": "rankwidth_max_signature_entries",
         }
@@ -468,7 +501,7 @@ def backend_stat_aliases(backend: str, stats: dict[str, int | str]) -> dict[str,
 
     for source, target in mapping.items():
         value = stats.get(source)
-        if isinstance(value, int):
+        if isinstance(value, (int, str)):
             aliases[target] = value
     return aliases
 
@@ -974,6 +1007,29 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
         }
 
 
+def append_optional_branch_arg(cmd: list[str], flag: str, value: object | None) -> None:
+    if value is not None:
+        cmd.extend([flag, str(value)])
+
+
+def append_branch_policy_args(cmd: list[str], args: argparse.Namespace) -> None:
+    append_optional_branch_arg(cmd, "--branch-rw-source", args.branch_rw_source)
+    append_optional_branch_arg(
+        cmd, "--branch-rw-min-treewidth-width", args.branch_rw_min_treewidth_width
+    )
+    append_optional_branch_arg(
+        cmd,
+        "--branch-rw-min-treewidth-forecast",
+        args.branch_rw_min_treewidth_forecast,
+    )
+    append_optional_branch_arg(cmd, "--branch-rw-min-residual-vars", args.branch_rw_min_residual_vars)
+    append_optional_branch_arg(cmd, "--branch-rw-low-rank-bypass", args.branch_rw_low_rank_bypass)
+    append_optional_branch_arg(cmd, "--branch-rw-min-speedup", args.branch_rw_min_speedup)
+    append_optional_branch_arg(cmd, "--branch-rw-fixed-overhead-ns", args.branch_rw_fixed_overhead_ns)
+    append_optional_branch_arg(cmd, "--branch-tw-fixed-overhead-ns", args.branch_tw_fixed_overhead_ns)
+    append_optional_branch_arg(cmd, "--branch-rw-memory-penalty-ns", args.branch_rw_memory_penalty_ns)
+
+
 def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
     cases = load_cases(args.manifest)
     backends = args.backends or list(DEFAULT_BACKENDS)
@@ -984,6 +1040,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
         "skipped_import_records": 0,
         "skipped_rankwidth_records": 0,
         "timed_out_records": 0,
+        "memout_records": 0,
+        "memout_import_records": 0,
         "skipped_qsop_mode_records": 0,
         "source_boundaries": {},
     }
@@ -999,7 +1057,11 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
             qsop, _stderr, import_elapsed_ns = run_command(
                 [str(args.qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
                 input_text=qasm,
+                cgroup_memory_limit_mib=args.cgroup_memory_limit_mib,
             )
+        except CommandMemout:
+            metadata["memout_import_records"] += 1
+            continue
         except CommandFailed:
             metadata["skipped_import_records"] += 1
             continue
@@ -1024,6 +1086,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                     cmd += ["--trace", "csv"]
                 if backend == "branch" and config["branch_heuristic"] != "split":
                     cmd += ["--branch-heuristic", config["branch_heuristic"]]
+                if backend == "branch":
+                    append_branch_policy_args(cmd, args)
                 if backend == "rankwidth":
                     cmd += [
                         "--rankwidth-generate",
@@ -1038,7 +1102,9 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                 cmd.append("-")
                 try:
                     stats_text, trace_text, solve_elapsed_ns = run_command(
-                        cmd, input_text=qsop, timeout_seconds=args.solver_timeout
+                        cmd, input_text=qsop, timeout_seconds=args.solver_timeout,
+                        memory_limit_mib=args.memory_limit_mib,
+                        cgroup_memory_limit_mib=args.cgroup_memory_limit_mib,
                     )
                 except CommandTimeout as exc:
                     metadata["timed_out_records"] += 1
@@ -1060,6 +1126,38 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                             "status": "timeout",
                             "error": str(exc),
                             **header,
+                            "cgroup_memory_limit_mib": args.cgroup_memory_limit_mib,
+                            "import_elapsed_ns": import_elapsed_ns,
+                            "solve_elapsed_ns": exc.elapsed_ns,
+                            "qasm_sha256": sha256_text(qasm),
+                            "qsop_sha256": sha256_text(qsop),
+                            "stats": {},
+                            "trace": {},
+                        }
+                    )
+                    continue
+                except CommandMemout as exc:
+                    metadata["memout_records"] += 1
+                    records.append(
+                        {
+                            "case": case_name,
+                            "source": source,
+                            "source_url": source_url,
+                            "source_relative_path": source_relative_path,
+                            "boundary": f"{input_bits}->{output_bits}",
+                            "input": input_bits,
+                            "output": output_bits,
+                            "backend": backend,
+                            "solve_mode": config["solve_mode"],
+                            "branch_heuristic": config["branch_heuristic"],
+                            "rankwidth_mode": config["rankwidth_mode"],
+                            "rankwidth_decomposition": config["rankwidth_generate"],
+                            "treewidth_order": config["treewidth_order"],
+                            "status": "memout",
+                            "error": summarize_command_error(exc),
+                            "memout": True,
+                            **header,
+                            "cgroup_memory_limit_mib": args.cgroup_memory_limit_mib,
                             "import_elapsed_ns": import_elapsed_ns,
                             "solve_elapsed_ns": exc.elapsed_ns,
                             "qasm_sha256": sha256_text(qasm),
@@ -1102,6 +1200,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                             "status": "error",
                             "error": summarize_command_error(exc),
                             **header,
+                            "cgroup_memory_limit_mib": args.cgroup_memory_limit_mib,
                             "import_elapsed_ns": import_elapsed_ns,
                             "solve_elapsed_ns": exc.elapsed_ns,
                             "qasm_sha256": sha256_text(qasm),
@@ -1156,6 +1255,7 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                         "status": "ok",
                         "error": "",
                         **header,
+                        "cgroup_memory_limit_mib": args.cgroup_memory_limit_mib,
                         "import_elapsed_ns": import_elapsed_ns,
                         "solve_elapsed_ns": solve_elapsed_ns,
                         **amplitude,
@@ -1833,6 +1933,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Only solve imported QSOP rows with this mode. Imports still count in summary metadata.",
     )
     parser.add_argument("--solver-timeout", type=float, help="Per-solve timeout in seconds.")
+    parser.add_argument(
+        "--memory-limit-mib",
+        type=int,
+        default=None,
+        help="Per-solve address-space cap in MiB; exceeded rows are reported as errors.",
+    )
+    parser.add_argument(
+        "--cgroup-memory-limit-mib",
+        type=int,
+        default=None,
+        help="Per-child cgroup physical-memory cap in MiB; exceeded rows are reported as memout.",
+    )
     parser.add_argument("--trace", action="store_true", help="Collect and summarize sop-solve CSV trace rows.")
     parser.add_argument(
         "--timeout-top",
@@ -1860,6 +1972,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="split",
         help="Variable-choice heuristic used by the branch backend.",
     )
+    parser.add_argument(
+        "--branch-rw-source",
+        choices=BRANCH_RW_SOURCES,
+        default=None,
+        help="override the branch backend rankwidth-decomposition source",
+    )
+    parser.add_argument("--branch-rw-min-treewidth-width", type=int, default=None)
+    parser.add_argument("--branch-rw-min-treewidth-forecast", type=int, default=None)
+    parser.add_argument("--branch-rw-min-residual-vars", type=int, default=None)
+    parser.add_argument("--branch-rw-low-rank-bypass", type=int, default=None)
+    parser.add_argument("--branch-rw-min-speedup", type=float, default=None)
+    parser.add_argument("--branch-rw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-tw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-rw-memory-penalty-ns", type=int, default=None)
     parser.add_argument(
         "--rankwidth-generate",
         dest="rankwidth_generators",
@@ -1918,10 +2044,28 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--max-vars must be non-negative")
     if args.solver_timeout is not None and args.solver_timeout <= 0.0:
         parser.error("--solver-timeout must be positive")
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        parser.error("--memory-limit-mib must be positive")
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        parser.error("--cgroup-memory-limit-mib must be positive")
     if args.top < 0:
         parser.error("--top must be non-negative")
     if args.timeout_top < 0:
         parser.error("--timeout-top must be non-negative")
+    for attr in (
+        "branch_rw_min_treewidth_width",
+        "branch_rw_min_treewidth_forecast",
+        "branch_rw_min_residual_vars",
+        "branch_rw_low_rank_bypass",
+        "branch_rw_fixed_overhead_ns",
+        "branch_tw_fixed_overhead_ns",
+        "branch_rw_memory_penalty_ns",
+    ):
+        value = getattr(args, attr)
+        if value is not None and value <= 0:
+            parser.error(f"--{attr.replace('_', '-')} must be positive")
+    if args.branch_rw_min_speedup is not None and args.branch_rw_min_speedup <= 0.0:
+        parser.error("--branch-rw-min-speedup must be positive")
     if args.solve_mode is not None and args.rankwidth_modes is not None:
         if any(mode != args.solve_mode for mode in args.rankwidth_modes):
             parser.error("--solve-mode conflicts with --rankwidth-mode")

@@ -47,6 +47,11 @@ typedef struct qsop_wmc_stats {
   uint64_t clauses_ternary;  /* ternary clauses */
   uint32_t encoded_edges;    /* edges with non-trivial auxiliary */
   uint32_t skipped_edges;    /* sign edges absorbed or canceled before export */
+  uint32_t block_count;      /* AMP_BLOCK: parity blocks emitted */
+  uint32_t block_edges;      /* AMP_BLOCK: sign edges covered by parity blocks */
+  uint32_t residual_edges;   /* AMP_BLOCK/preprocess: pair edges emitted individually */
+  uint32_t active_vars;      /* variables remaining after preprocessing/export filtering */
+  uint32_t eliminated_vars;  /* variables analytically eliminated by preprocessing */
 } qsop_wmc_stats_t;
 
 /*
@@ -79,6 +84,8 @@ typedef struct qsop_wmc_options {
   /* RESIDUE_FOURIER: inner amplitude encoding for each Fourier exponent block.
    * Accepts AMPLITUDE (amp-and) or AMP_SOFT. Defaults to AMP_SOFT. */
   qsop_wmc_encoding_t fourier_inner;
+  bool fourier_all_modes;   /* RESIDUE_FOURIER: emit every t when true */
+  uint32_t fourier_mode;    /* RESIDUE_FOURIER: single t when !fourier_all_modes */
   qsop_wmc_stats_t *stats_out; /* if non-NULL, filled with structural stats */
   uint32_t block_min_side;    /* AMP_BLOCK: min |A|, |B| for a block to qualify (default 4) */
   int64_t  block_min_savings; /* AMP_BLOCK: min (|A|*|B| - est_block_cost) to trigger (default 0) */

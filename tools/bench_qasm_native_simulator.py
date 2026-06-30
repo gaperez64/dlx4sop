@@ -35,6 +35,7 @@ CSV_FIELDS = [
     "qubit_cap",
     "timeout_seconds",
     "memory_limit_mib",
+    "cgroup_memory_limit_mib",
     "elapsed_ns",
     "amplitude_real",
     "amplitude_imag",
@@ -287,6 +288,7 @@ def annotate_limits(record: dict, args: argparse.Namespace) -> dict:
     record["qubit_cap"] = effective_max_qubits(args, str(record["engine"]))
     record["timeout_seconds"] = args.timeout
     record["memory_limit_mib"] = args.memory_limit_mib
+    record["cgroup_memory_limit_mib"] = args.cgroup_memory_limit_mib
     return record
 
 
@@ -399,11 +401,12 @@ def write_summary(records: list[dict], file: TextIO) -> None:
             record.get("qubit_cap"),
             record.get("timeout_seconds"),
             record.get("memory_limit_mib"),
+            record.get("cgroup_memory_limit_mib"),
         )
         for record in records
     }
     if len(limit_rows) == 1:
-        qubit_cap, timeout_seconds, memory_limit_mib = next(iter(limit_rows))
+        qubit_cap, timeout_seconds, memory_limit_mib, cgroup_memory_limit_mib = next(iter(limit_rows))
         print(f"qubit_cap: {qubit_cap if qubit_cap is not None else 'none'}", file=file)
         print(
             f"timeout_seconds: {timeout_seconds if timeout_seconds is not None else 'none'}",
@@ -411,6 +414,11 @@ def write_summary(records: list[dict], file: TextIO) -> None:
         )
         print(
             f"memory_limit_mib: {memory_limit_mib if memory_limit_mib is not None else 'none'}",
+            file=file,
+        )
+        print(
+            "cgroup_memory_limit_mib: "
+            f"{cgroup_memory_limit_mib if cgroup_memory_limit_mib is not None else 'none'}",
             file=file,
         )
     for engine in sorted({record["engine"] for record in records}):
@@ -463,6 +471,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=float, help="per-boundary native simulator timeout in seconds")
     parser.add_argument("--memory-limit-mib", type=int, help="process address-space cap for native simulator runs")
+    parser.add_argument("--cgroup-memory-limit-mib", type=int,
+                        help="cgroup physical-memory cap applied by the orchestrator and recorded in output rows")
     parser.add_argument("--skip-unsupported", action="store_true")
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit < 0:
@@ -478,6 +488,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--timeout must be positive")
     if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
         parser.error("--memory-limit-mib must be positive")
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        parser.error("--cgroup-memory-limit-mib must be positive")
     return args
 
 

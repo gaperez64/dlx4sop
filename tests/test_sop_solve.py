@@ -236,6 +236,37 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if completed.returncode != 0 or completed.stdout != expected:
         raise AssertionError(f"large rankwidth CRT solve failed\n{completed.stdout}\n{completed.stderr}")
 
+    rankwidth_stats = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--max-vars",
+            "64",
+            "--format",
+            "stats",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        rankwidth_stats.returncode != 0
+        or "rankwidth.count_table_factorized" not in rankwidth_stats.stderr
+        or "join_pairs: 0" not in rankwidth_stats.stdout
+        or "rankwidth_join_pair_forecast: 0" not in rankwidth_stats.stdout
+        or "max_table_entries: 16" not in rankwidth_stats.stdout
+    ):
+        raise AssertionError(
+            f"large rankwidth count-table factorized stats failed\n"
+            f"{rankwidth_stats.stdout}\n{rankwidth_stats.stderr}"
+        )
+
     components = subprocess.run(
         [str(exe), "--backend", "components", "--max-vars", "64", "-"],
         input=qsop,
@@ -395,6 +426,39 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         raise AssertionError(
             f"large rankwidth Fourier CRT solve failed\n"
             f"{rankwidth_fourier.stdout}\n{rankwidth_fourier.stderr}"
+        )
+
+    rankwidth_fourier_stats = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "--format",
+            "stats",
+            "--trace",
+            "csv",
+            "-",
+        ],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        rankwidth_fourier_stats.returncode != 0
+        or "rankwidth.fourier_factorized" not in rankwidth_fourier_stats.stderr
+        or "join_pairs: 0" not in rankwidth_fourier_stats.stdout
+        or "rankwidth_join_pair_forecast: 0" not in rankwidth_fourier_stats.stdout
+        or "max_table_entries: 16" not in rankwidth_fourier_stats.stdout
+    ):
+        raise AssertionError(
+            f"large rankwidth Fourier factorized stats failed\n"
+            f"{rankwidth_fourier_stats.stdout}\n{rankwidth_fourier_stats.stderr}"
         )
 
     signed_rankwidth_fourier = subprocess.run(
@@ -696,6 +760,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "rankwidth.fourier_leaf",
         "rankwidth.fourier_join_map",
         "rankwidth.fourier_join",
+        "rankwidth.fourier_even_closed_form",
     }
     if not expected_fourier_trace.issubset(fourier_trace_phases):
         raise AssertionError(
@@ -749,6 +814,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         "rankwidth.fourier_leaf",
         "rankwidth.fourier_join_map",
         "rankwidth.fourier_join",
+        "rankwidth.fourier_even_closed_form",
     }
     if not expected_signed_trace.issubset(signed_trace_phases):
         raise AssertionError(
@@ -1140,6 +1206,35 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill-cut")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "from-treewidth")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
+
+    disconnected = """p qsop-sign 8 4 0
+n 4
+cst 0
+u 0 1
+u 1 2
+u 2 3
+u 3 4
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        disconnected_qsop = pathlib.Path(tmp) / "disconnected.qsop"
+        disconnected_qsop.write_text(disconnected)
+        disconnected_expected = subprocess.run(
+            [str(exe), "--backend", "brute-force", str(disconnected_qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if disconnected_expected.returncode != 0:
+            raise AssertionError(f"brute force disconnected solve failed\n{disconnected_expected.stderr}")
+        assert_rankwidth_matches(
+            exe,
+            disconnected_qsop,
+            disconnected_expected.stdout,
+            "--rankwidth-generate",
+            "from-treewidth",
+        )
+
     assert_rankwidth_matches(
         exe,
         qsop,
@@ -1329,6 +1424,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "rankwidth.fourier_leaf" not in fourier_traced.stderr
         or "rankwidth.fourier_join_map" not in fourier_traced.stderr
         or "rankwidth.fourier_join" not in fourier_traced.stderr
+        or "rankwidth.fourier_even_closed_form" not in fourier_traced.stderr
     ):
         raise AssertionError(f"rankwidth Fourier trace failed\n{fourier_traced.stdout}\n{fourier_traced.stderr}")
 
@@ -1629,6 +1725,7 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         or "rankwidth.fourier_leaf" not in signed_fourier_trace.stderr
         or "rankwidth.fourier_join_map" not in signed_fourier_trace.stderr
         or "rankwidth.fourier_join" not in signed_fourier_trace.stderr
+        or "rankwidth.fourier_even_closed_form" not in signed_fourier_trace.stderr
     ):
         raise AssertionError(
             f"signed rankwidth Fourier trace failed\n"

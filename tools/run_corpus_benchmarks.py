@@ -24,6 +24,8 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_DIR = REPO_ROOT / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+from bench_common import cgroup_limited_command, command_memout  # noqa: E402
 
 def _default_binary(name: str) -> pathlib.Path:
     """Prefer the optimized build-bench binary for benchmarking; fall back to the debug build."""
@@ -129,27 +131,67 @@ def tier_slug(tier: str) -> str:
     return tier.replace(" ", "-")
 
 
+def optional_memory_args(value: int | None) -> list[str]:
+    return ["--memory-limit-mib", str(value)] if value is not None else []
+
+
+def optional_ganak_memory_args(value: int | None) -> list[str]:
+    return ["--ganak-memory-limit-mib", str(value)] if value is not None else []
+
+
+def optional_cgroup_memory_args(value: int | None) -> list[str]:
+    return ["--cgroup-memory-limit-mib", str(value)] if value is not None else []
+
+
 def manifest_path(manifests_dir: pathlib.Path, tier: str) -> pathlib.Path:
     return manifests_dir / f"dlx4sop-tier-{tier_slug(tier)}-manifest.json"
 
 
-def run_to_jsonl(cmd: list, output: pathlib.Path, verbose: bool) -> None:
+def run_to_jsonl(
+    cmd: list,
+    output: pathlib.Path,
+    verbose: bool,
+    *,
+    cgroup_memory_limit_mib: int | None = None,
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    wrapped_cmd = cgroup_limited_command([str(a) for a in cmd], cgroup_memory_limit_mib)
     if verbose:
-        print(f"+ {' '.join(str(a) for a in cmd)} > {output}", file=sys.stderr)
+        print(f"+ {' '.join(str(a) for a in wrapped_cmd)} > {output}", file=sys.stderr)
     with output.open("w", encoding="utf-8") as stream:
         result = subprocess.run(
-            [str(a) for a in cmd],
+            wrapped_cmd,
             stdout=stream,
             stderr=None if verbose else subprocess.PIPE,
             text=True,
         )
     if result.returncode != 0:
         message = result.stderr.strip() if result.stderr else ""
+        if command_memout(
+            result.returncode,
+            result.stderr or "",
+            cgroup_limited=cgroup_memory_limit_mib is not None,
+        ):
+            message = message or "cgroup memory limit exceeded"
         raise RuntimeError(
             f"command exited {result.returncode}: {' '.join(str(a) for a in cmd)}"
             + (f"\n{message}" if message else "")
         )
+
+
+def wmc_sop2wmc_extra_args(args: argparse.Namespace, *, block: bool = False) -> list[str]:
+    """sop2wmc tuning flags shared by WMC refresh jobs."""
+    extra: list[str] = []
+    if args.wmc_preprocess is not None:
+        extra += ["--wmc-preprocess", args.wmc_preprocess]
+    if args.wmc_peel2_fill_budget is not None:
+        extra += ["--wmc-peel2-fill-budget", str(args.wmc_peel2_fill_budget)]
+    if block:
+        if args.wmc_block_min_side is not None:
+            extra += ["--wmc-block-min-side", str(args.wmc_block_min_side)]
+        if args.wmc_block_min_savings is not None:
+            extra += ["--wmc-block-min-savings", str(args.wmc_block_min_savings)]
+    return extra
 
 
 def run_solver_jobs(
@@ -175,6 +217,8 @@ def run_solver_jobs(
                 str(qasm2sop), str(sop_solve),
                 "--manifest", str(mf),
                 "--solver-timeout", timeout,
+                *optional_memory_args(args.solver_memory_limit_mib),
+                *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
                 "--max-vars", max_vars,
                 "--trace",
                 "--format", "jsonl",
@@ -213,27 +257,37 @@ def run_wmc_jobs(
             "--sop-solve-backend", "treewidth",
             "--sop-solve-max-vars", str(max_vars),
             "--sop-solve-timeout", sop_timeout,
+            "--qasm2sop-timeout", str(args.wmc_qasm2sop_timeout),
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_ganak_memory_args(args.ganak_memory_limit_mib),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
         ]
+        common_wmc_extra = wmc_sop2wmc_extra_args(args)
+        block_wmc_extra = wmc_sop2wmc_extra_args(args, block=True)
         # amp-and (amplitude): all tiers
         amp_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amplitude-current.jsonl"
         print(f"\n--- WMC amp-and: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amplitude"], amp_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amplitude", *common_wmc_extra],
+                     amp_output, args.verbose)
 
         # amp-soft: all tiers
         amp_soft_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-soft-current.jsonl"
         print(f"\n--- WMC amp-soft: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amp-soft"], amp_soft_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-soft", *common_wmc_extra],
+                     amp_soft_output, args.verbose)
 
         # amp-block: all tiers
         amp_block_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-amp-block-current.jsonl"
         print(f"\n--- WMC amp-block: {tier} ---", file=sys.stderr)
-        run_to_jsonl([*base_cmd, "--encoding", "amp-block"], amp_block_output, args.verbose)
+        run_to_jsonl([*base_cmd, "--encoding", "amp-block", *block_wmc_extra],
+                     amp_block_output, args.verbose)
 
-        # residue-fourier: small tiers only (r calls per instance, expensive)
+        # residue-fourier: mode-1 amplitude encoding, still WPCNF/Ganak heavy.
         if tier in WMC_RESIDUE_TIERS:
             res_fourier_output = artifact_dir / f"dlx4sop-tier-{slug}-wmc-residue-fourier-current.jsonl"
             print(f"\n--- WMC residue-fourier: {tier} ---", file=sys.stderr)
-            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier"], res_fourier_output, args.verbose)
+            run_to_jsonl([*base_cmd, "--encoding", "residue-fourier", *common_wmc_extra],
+                         res_fourier_output, args.verbose)
 
         # residue (plain #SAT): small tiers only
         if tier in WMC_RESIDUE_TIERS:
@@ -266,12 +320,13 @@ def run_native_jobs(
             # dense-statevector cap so large Clifford circuits still get a native baseline.
             "--engine-qubit-cap", f"qiskit-clifford={args.clifford_max_qubits}",
             "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
-            "--memory-limit-mib", str(args.memory_limit_mib),
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
             "--skip-unsupported",
             "--format", "jsonl",
         ]
         print(f"\n--- native: {tier} ---", file=sys.stderr)
-        run_to_jsonl(cmd, output, args.verbose)
+        run_to_jsonl(cmd, output, args.verbose, cgroup_memory_limit_mib=args.cgroup_memory_limit_mib)
 
 
 def run_mqt_solver_jobs(
@@ -285,6 +340,8 @@ def run_mqt_solver_jobs(
     mqt_jobs = [
         ("treewidth", ["--backend", "treewidth"]),
         ("branch-hybrid", ["--backend", "branch:auto"]),
+        ("rankwidth-from-treewidth", ["--backend", "rankwidth:from-treewidth"]),
+        ("rankwidth-best", ["--backend", "rankwidth:best"]),
     ]
     if not mqt_root.exists():
         print(f"warning: MQT corpus root missing: {mqt_root}", file=sys.stderr)
@@ -306,6 +363,8 @@ def run_mqt_solver_jobs(
                 "--corpus-dir", str(mqt_root),
                 "--tier", f"tier-{tier}",
                 "--timeout", timeout,
+                *optional_memory_args(args.solver_memory_limit_mib),
+                *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
                 "--max-vars", max_vars,
                 "--out", str(output),
                 *extra_args,
@@ -342,15 +401,17 @@ def run_mqt_native_jobs(
             # statevector engines cannot reach, so clifford is the native baseline here.
             "--engine-qubit-cap", f"qiskit-clifford={args.clifford_max_qubits}",
             "--timeout", str(args.timeout if args.timeout is not None else args.native_timeout),
-            "--memory-limit-mib", str(args.memory_limit_mib),
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
             "--skip-unsupported",
             "--format", "jsonl",
         ]
         print(f"\n--- MQT native: {tier} ---", file=sys.stderr)
-        run_to_jsonl(cmd, output, args.verbose)
+        run_to_jsonl(cmd, output, args.verbose, cgroup_memory_limit_mib=args.cgroup_memory_limit_mib)
 
 
 SCALING_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "synthetic" / "scaling"
+RANKWIDTH_CORPUS = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "synthetic" / "rankwidth"
 
 
 def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
@@ -375,6 +436,8 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
             "--tier", "tier-scaling",
             "--backend", backend_arg,
             "--timeout", timeout,
+            *optional_memory_args(args.solver_memory_limit_mib),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
             "--max-vars", "4096",
             "--out", str(output),
         ]
@@ -389,12 +452,67 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
         cmd = [
             sys.executable, str(TOOLS_DIR / "bench_wmc_ganak.py"),
             "--ganak", str(args.ganak), "--sop2wmc", str(args.sop2wmc),
+            "--sop-solve", str(args.sop_solve),
             "--ganak-timeout", timeout, "--format", "jsonl",
-            "--encoding", "amp-soft",
+            *optional_memory_args(args.memory_limit_mib),
+            *optional_ganak_memory_args(args.ganak_memory_limit_mib),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
+            "--encoding", "amp-block",
+            *wmc_sop2wmc_extra_args(args, block=True),
             *[str(p) for p in instances],
         ]
         print("\n--- scaling WMC: ganak ---", file=sys.stderr)
         run_to_jsonl(cmd, wmc_out, args.verbose)
+
+
+def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    """Targeted RQ2 study on the bounded-rankwidth clique-blowup tree family."""
+    if not RANKWIDTH_CORPUS.exists():
+        print(f"warning: rankwidth corpus missing: {RANKWIDTH_CORPUS}", file=sys.stderr)
+        return
+    output = artifact_dir / "rankwidth-separation-current.jsonl"
+    sop_local = TOOLS_DIR / "bench_sop_local.py"
+    cmd = [
+        sys.executable, str(sop_local),
+        "--sop-solve", str(args.sop_solve),
+        "--corpus-dir", str(RANKWIDTH_CORPUS),
+        "--tier", "tier-rankwidth",
+        "--backend", "treewidth",
+        "--backend", "rankwidth:from-treewidth",
+        "--backend", "rankwidth:best",
+        "--backend", "rankwidth:from-treewidth:fourier",
+        "--backend", "rankwidth:best:fourier",
+        "--backend", "rankwidth:from-treewidth:fourier:dense-reference",
+        "--backend", "rankwidth:best:fourier:dense-reference",
+        "--timeout", str(args.rankwidth_study_timeout),
+        *optional_memory_args(args.solver_memory_limit_mib),
+        *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
+        "--max-vars", "128",
+        "--out", str(output),
+    ]
+    print("\n--- rankwidth separation study ---", file=sys.stderr)
+    result = subprocess.run([str(a) for a in cmd])
+    if result.returncode not in (0, 1):
+        print(f"warning: rankwidth separation study exited {result.returncode}", file=sys.stderr)
+
+
+def run_rankwidth_matrix_join_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    """Theorem-5/Proposition-1 dense matrix-join experiment from the rankwidth note."""
+    output = artifact_dir / "rankwidth-matrix-join-current.jsonl"
+    cmd = [
+        sys.executable,
+        str(TOOLS_DIR / "bench_rankwidth_matrix_join.py"),
+        "--out",
+        str(output),
+        "--max-m",
+        str(args.matrix_join_max_m),
+        "--max-direct-m",
+        str(args.matrix_join_max_direct_m),
+    ]
+    print("\n--- rankwidth matrix-join study ---", file=sys.stderr)
+    result = subprocess.run([str(a) for a in cmd])
+    if result.returncode != 0:
+        print(f"warning: rankwidth matrix-join study exited {result.returncode}", file=sys.stderr)
 
 
 def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
@@ -434,18 +552,65 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="qubit cap for the stabilizer (qiskit-clifford) engine; it scales "
                              "far past the dense-statevector cap")
     parser.add_argument("--native-timeout", type=float, default=10.0)
-    parser.add_argument("--memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--cgroup-memory-limit-mib", type=int, default=2048,
+                        help="per-child cgroup physical-memory cap shared by solver, WMC, Ganak, "
+                             "and native jobs; exceeded rows are reported as memout where possible")
+    parser.add_argument("--memory-limit-mib", type=int, default=None,
+                        help="optional address-space cap for importer/exporter/reference/native tools; "
+                             "disabled by default to avoid virtual-memory bias")
+    parser.add_argument("--solver-memory-limit-mib", type=int, default=None,
+                        help="optional address-space cap for direct sop-solve benchmark jobs; "
+                             "disabled by default to keep scoreboard timing comparable")
+    parser.add_argument("--ganak-memory-limit-mib", type=int, default=None,
+                        help="optional Ganak address-space cap; disabled by default because Ganak "
+                             "may reserve large virtual memory even on small WPCNF rows")
     parser.add_argument("--skip-scaling", action="store_true",
                         help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
+    parser.add_argument("--skip-rankwidth-study", action="store_true",
+                        help="skip the bounded-rankwidth synthetic separation study")
+    parser.add_argument("--skip-matrix-join-study", action="store_true",
+                        help="skip the rankwidth dense matrix-join experiment")
     parser.add_argument("--scaling-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) for the scaling study backends "
                              "(CI uses a small cap)")
+    parser.add_argument("--rankwidth-study-timeout", type=float, default=30.0,
+                        help="per-instance timeout (s) for the bounded-rankwidth study")
+    parser.add_argument("--matrix-join-max-m", type=int, default=10,
+                        help="largest m for the rankwidth matrix-join experiment")
+    parser.add_argument("--matrix-join-max-direct-m", type=int, default=5,
+                        help="largest m with direct pair-enumeration timing in the matrix-join experiment")
+    parser.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
+                        default="peel2-safe",
+                        help="sop2wmc preprocessing for amplitude-style WMC jobs "
+                             "(default: peel2-safe; use none for ablations)")
+    parser.add_argument("--wmc-peel2-fill-budget", type=int, default=None,
+                        help="sop2wmc peel2-safe fill budget (default: exporter default)")
+    parser.add_argument("--wmc-block-min-side", type=int, default=2,
+                        help="amp-block minimum side size for optimized WMC rows")
+    parser.add_argument("--wmc-block-min-savings", type=int, default=1,
+                        help="amp-block minimum positive savings threshold")
+    parser.add_argument("--wmc-qasm2sop-timeout", type=float, default=30.0,
+                        help="per-boundary qasm2sop timeout for manifest-backed WMC jobs")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        raise SystemExit("--cgroup-memory-limit-mib must be positive")
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        raise SystemExit("--memory-limit-mib must be positive")
+    if args.solver_memory_limit_mib is not None and args.solver_memory_limit_mib <= 0:
+        raise SystemExit("--solver-memory-limit-mib must be positive")
+    if args.ganak_memory_limit_mib is not None and args.ganak_memory_limit_mib <= 0:
+        raise SystemExit("--ganak-memory-limit-mib must be positive")
+    if args.wmc_qasm2sop_timeout <= 0:
+        raise SystemExit("--wmc-qasm2sop-timeout must be positive")
+    if args.matrix_join_max_m <= 0:
+        raise SystemExit("--matrix-join-max-m must be positive")
+    if args.matrix_join_max_direct_m < 0:
+        raise SystemExit("--matrix-join-max-direct-m must be non-negative")
     artifact_dir = args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir = args.manifests
@@ -465,6 +630,10 @@ def main(argv: list[str]) -> int:
         run_mqt_native_jobs(args, manifests_dir, artifact_dir)
     if not args.skip_scaling:
         run_scaling_study(args, artifact_dir)
+    if not args.skip_matrix_join_study:
+        run_rankwidth_matrix_join_study(args, artifact_dir)
+    if not args.skip_rankwidth_study:
+        run_rankwidth_separation_study(args, artifact_dir)
     if not args.skip_scoreboard:
         run_scoreboard(args, artifact_dir)
     return 0

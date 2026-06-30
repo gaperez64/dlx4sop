@@ -14,18 +14,18 @@
 /* ---------------------------------------------------------------------------
  * Private policy defaults (kept out of the public header).
  * --------------------------------------------------------------------------- */
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH       4U
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST    4096UL
-#define BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS  32U
-#define BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS    3U
-#define BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS  50000UL
+#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH       2U
+#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST    512UL
+#define BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS  16U
+#define BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS    4U
+#define BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS  20000UL
 #define BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS  10000UL
 #define BRANCH_POLICY_DEFAULT_C_RW_TABLE             80UL
 #define BRANCH_POLICY_DEFAULT_C_RW_JOIN              40UL
 #define BRANCH_POLICY_DEFAULT_C_RW_SIG             2000UL
 #define BRANCH_POLICY_DEFAULT_C_TW_TABLE             20UL
 #define BRANCH_POLICY_DEFAULT_C_TW_JOIN              10UL
-#define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.4
+#define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.1
 
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {

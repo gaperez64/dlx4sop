@@ -44,6 +44,8 @@ typedef struct qsop_solve_stats {
   /* Rankwidth-specific */
   uint64_t rankwidth_table_forecast;
   uint64_t rankwidth_join_pair_forecast;
+  uint64_t rankwidth_dense_table_forecast;
+  uint64_t rankwidth_dense_even_join_forecast;
   uint64_t rankwidth_transition_bytes;
   uint64_t rankwidth_transition_layout_u16_events;
   uint64_t rankwidth_transition_layout_u32_events;
@@ -52,6 +54,7 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
   uint64_t rankwidth_table_assignment_bytes;
+  uint32_t rankwidth_fourier_kernel;
 
   /* Branch dispatch counters */
   uint64_t treewidth_delegations;
@@ -97,6 +100,13 @@ typedef enum qsop_rankwidth_solve_mode {
   QSOP_RANKWIDTH_SOLVE_FOURIER,
 } qsop_rankwidth_solve_mode_t;
 
+typedef enum qsop_rankwidth_fourier_kernel {
+  QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_STREAMING,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_HYBRID_EVEN_FWHT,
+  QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE,
+} qsop_rankwidth_fourier_kernel_t;
+
 typedef enum qsop_treewidth_order {
   QSOP_TREEWIDTH_ORDER_MIN_FILL,
   QSOP_TREEWIDTH_ORDER_MIN_DEGREE,
@@ -119,15 +129,16 @@ typedef enum qsop_rankwidth_join_strategy {
 typedef struct qsop_rankwidth_solve_options {
   qsop_rankwidth_join_strategy_t join_strategy; /* default AUTO */
   uint64_t materialize_join_max_pairs;           /* 0 = use built-in default */
+  qsop_rankwidth_fourier_kernel_t fourier_kernel; /* default AUTO */
 } qsop_rankwidth_solve_options_t;
 
 /* Policy for how the branch solver sources a rank decomposition when considering
  * rankwidth delegation. */
 typedef enum qsop_branch_rw_source {
+  QSOP_BRANCH_RW_SOURCE_AUTO,           /* default: derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_NATIVE,         /* use min-fill-cut (original behavior) */
   QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
-  QSOP_BRANCH_RW_SOURCE_AUTO,           /* from-treewidth by default (alias) */
   QSOP_BRANCH_RW_SOURCE_NONE,           /* never attempt rankwidth delegation */
 } qsop_branch_rw_source_t;
 
@@ -299,29 +310,29 @@ typedef struct qsop_backend_stats_sink {
  * Pass NULL to use built-in defaults.  All zero fields take their defaults. */
 typedef struct qsop_branch_policy {
   /* Early cheap-treewidth veto: skip rankwidth probe when treewidth is obviously cheap. */
-  uint32_t rw_min_treewidth_width;    /* veto when tw_width <= this (default 4) */
-  uint64_t rw_min_treewidth_forecast; /* veto when tw_table_forecast <= this (default 4096) */
-  uint32_t rw_min_residual_vars;      /* veto small-residual when tw_width <= 5 (default 32) */
-  uint32_t rw_low_rank_bypass;        /* bypass cheap-tw veto when prefix_cut_rank <= this (default 3) */
+  uint32_t rw_min_treewidth_width;    /* veto when tw_width <= this (default 2) */
+  uint64_t rw_min_treewidth_forecast; /* veto when tw_table_forecast <= this (default 512) */
+  uint32_t rw_min_residual_vars;      /* veto small-residual when tw_width <= 5 (default 16) */
+  uint32_t rw_low_rank_bypass;        /* bypass cheap-tw veto when prefix_cut_rank <= this (default 4) */
 
   /* Cost-model coefficients for choosing rw vs tw. */
-  uint64_t rw_fixed_overhead_ns;  /* fixed rw overhead (default 50000) */
+  uint64_t rw_fixed_overhead_ns;  /* fixed rw overhead (default 20000) */
   uint64_t tw_fixed_overhead_ns;  /* fixed tw overhead (default 10000) */
   uint64_t C_rw_table;            /* ns per rw table entry (default 80) */
   uint64_t C_rw_join;             /* ns per rw join pair (default 40) */
   uint64_t C_rw_sig;              /* ns per rw signature (default 2000) */
   uint64_t C_tw_table;            /* ns per tw table entry (default 20) */
   uint64_t C_tw_join;             /* ns per tw join pair (default 10) */
-  double   rw_min_speedup;        /* select rw only when rw_est * speedup < tw_est (default 1.4) */
+  double   rw_min_speedup;        /* select rw only when rw_est * speedup < tw_est (default 1.1) */
   uint64_t rw_memory_penalty_ns;  /* extra cost added to rw estimate for memory risk (default 0) */
 } qsop_branch_policy_t;
 
 /* Per-solve options for the branch solver.  Zero-initialize for defaults:
- * heuristic=split, rw_source=native, mode=count-table, zero policy (all defaults),
- * no sink, no trace. */
+ * heuristic=split, rw_source=auto/from-treewidth, mode=count-table,
+ * zero policy (all defaults), no sink, no trace. */
 typedef struct qsop_branch_solve_options {
   qsop_branch_heuristic_t heuristic;    /* default SPLIT (0) */
-  qsop_branch_rw_source_t rw_source;   /* default NATIVE (0) */
+  qsop_branch_rw_source_t rw_source;   /* default AUTO (0) */
   qsop_solve_mode_t mode;              /* default COUNT_TABLE (0) */
   qsop_branch_policy_t policy;         /* all-zero fields take built-in defaults */
   qsop_backend_stats_sink_t *sink;     /* NULL to disable JSONL sink */

@@ -19,6 +19,11 @@ RANKWIDTH_KERNEL_ELAPSED_FIELDS = (
 )
 
 
+def is_rankwidth_backend(record: dict) -> bool:
+    backend = str(record.get("backend") or "")
+    return backend == "rankwidth" or backend.startswith("rankwidth:")
+
+
 def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
     return (
         str(record.get("source") or "unknown"),
@@ -32,20 +37,31 @@ def record_key(record: dict) -> tuple[str, str, str, str, str, str]:
 
 def backend_config(record: dict) -> str:
     backend = str(record.get("backend") or "unknown")
+    config = record.get("backend_config")
+    config = config if isinstance(config, dict) else {}
     solve_mode = record.get("solve_mode")
     solve_mode_suffix = (
         f":{solve_mode}"
         if isinstance(solve_mode, str) and solve_mode and solve_mode != "count-table"
         else ""
     )
-    if backend == "rankwidth":
-        generator = record.get("rankwidth_decomposition") or "left-deep"
-        mode = record.get("rankwidth_mode") or "count-table"
-        return f"rankwidth:{generator}:{mode}"
+    if is_rankwidth_backend(record):
+        generator = (
+            record.get("rankwidth_decomposition")
+            or config.get("rankwidth_decomposition")
+            or config.get("rankwidth_generate")
+            or "left-deep"
+        )
+        mode = record.get("rankwidth_mode") or config.get("rankwidth_mode") or "count-table"
+        kernel = record.get("rankwidth_fourier_kernel") or config.get("rankwidth_fourier_kernel")
+        kernel_suffix = f":{kernel}" if mode == "fourier" and kernel and kernel != "streaming" else ""
+        return f"rankwidth:{generator}:{mode}{kernel_suffix}"
     if backend == "treewidth":
-        return f"treewidth:{record.get('treewidth_order') or 'min-fill'}{solve_mode_suffix}"
+        order = record.get("treewidth_order") or config.get("treewidth_order") or "min-fill"
+        return f"treewidth:{order}{solve_mode_suffix}"
     if backend == "branch":
-        return f"branch:{record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
+        heuristic = record.get("branch_heuristic") or config.get("branch_heuristic") or "split"
+        return f"branch:{heuristic}{solve_mode_suffix}"
     return backend + solve_mode_suffix
 
 
@@ -72,8 +88,8 @@ def rankwidth_width(record: dict) -> int:
 
 
 def max_table(record: dict) -> int:
-    backend = record.get("backend")
-    if backend == "rankwidth":
+    backend = str(record.get("backend") or "")
+    if is_rankwidth_backend(record):
         return metric_or_zero(record, "rankwidth_max_table_entries") or metric_or_zero(
             record, "max_table_entries"
         )
@@ -111,6 +127,7 @@ def backend_summary(records: list[dict]) -> list[dict]:
                 "records": 0,
                 "ok": 0,
                 "timeouts": 0,
+                "memouts": 0,
                 "elapsed_ns": 0,
                 "rankwidth_kernel_elapsed_ns": 0,
                 "max_width": 0,
@@ -126,8 +143,7 @@ def backend_summary(records: list[dict]) -> list[dict]:
             entry["rankwidth_kernel_elapsed_ns"] += rankwidth_kernel_elapsed_ns(record)
             entry["max_width"] = max(
                 entry["max_width"],
-                rankwidth_width(record)
-                if record.get("backend") == "rankwidth"
+                rankwidth_width(record) if is_rankwidth_backend(record)
                 else metric_or_zero(record, "decomposition_width"),
             )
             entry["max_table"] = max(entry["max_table"], max_table(record))
@@ -137,6 +153,8 @@ def backend_summary(records: list[dict]) -> list[dict]:
             )
         elif status(record) == "timeout":
             entry["timeouts"] += 1
+        elif status(record) == "memout":
+            entry["memouts"] += 1
     return [grouped[key] for key in sorted(grouped)]
 
 
@@ -363,7 +381,7 @@ def rankwidth_configs(records: list[dict]) -> list[str]:
     configs = {
         backend_config(record)
         for record in records
-        if record.get("backend") == "rankwidth" and status(record) == "ok"
+        if is_rankwidth_backend(record) and status(record) == "ok"
     }
     return sorted(configs)
 

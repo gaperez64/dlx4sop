@@ -92,12 +92,12 @@ def test_new_policy_options_parse(sop_solve, tmp):
     if qsop is None:
         return
     policy_args = [
-        "--branch-rw-min-treewidth-width", "4",
-        "--branch-rw-min-treewidth-forecast", "4096",
-        "--branch-rw-min-residual-vars", "32",
-        "--branch-rw-low-rank-bypass", "3",
-        "--branch-rw-min-speedup", "1.4",
-        "--branch-rw-fixed-overhead-ns", "50000",
+        "--branch-rw-min-treewidth-width", "2",
+        "--branch-rw-min-treewidth-forecast", "512",
+        "--branch-rw-min-residual-vars", "16",
+        "--branch-rw-low-rank-bypass", "4",
+        "--branch-rw-min-speedup", "1.1",
+        "--branch-rw-fixed-overhead-ns", "20000",
         "--branch-tw-fixed-overhead-ns", "10000",
         "--branch-rw-memory-penalty-ns", "0",
     ]

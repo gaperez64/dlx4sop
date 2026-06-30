@@ -12,6 +12,7 @@ static void print_usage(FILE *file) {
   fputs("usage: sop2wmc [--encoding amp-and|amp-soft|amp-block|residue-fourier|residue-accumulator] "
         "[--wmc-fourier-inner amp-and|amp-soft] "
         "[--wmc-preprocess none|peel1|peel2-safe] [--residue K|all] "
+        "[--wmc-fourier-mode all|T] [--wmc-peel2-fill-budget N] "
         "[--wmc-block-min-side N] [--wmc-block-min-savings N] "
         "[-o PATH] [--no-metadata] [PATH|-]\n",
         file);
@@ -124,6 +125,42 @@ int main(int argc, char **argv) {
         fputs("error: --wmc-preprocess must be 'none', 'peel1', or 'peel2-safe'\n", stderr);
         return 2;
       }
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-fourier-mode") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-fourier-mode requires 'all' or a non-negative integer\n", stderr);
+        return 2;
+      }
+      const char *mode = argv[++i];
+      if (strcmp(mode, "all") == 0) {
+        options.fourier_all_modes = true;
+      } else {
+        char *end = NULL;
+        errno = 0;
+        const unsigned long parsed = strtoul(mode, &end, 10);
+        if (errno != 0 || end == mode || *end != '\0' || parsed > UINT32_MAX) {
+          fputs("error: --wmc-fourier-mode must be 'all' or a non-negative integer\n", stderr);
+          return 2;
+        }
+        options.fourier_all_modes = false;
+        options.fourier_mode = (uint32_t)parsed;
+      }
+      continue;
+    }
+    if (strcmp(argv[i], "--wmc-peel2-fill-budget") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --wmc-peel2-fill-budget requires a non-negative integer\n", stderr);
+        return 2;
+      }
+      char *end = NULL;
+      errno = 0;
+      const unsigned long parsed = strtoul(argv[++i], &end, 10);
+      if (errno != 0 || end == argv[i] || *end != '\0' || parsed > UINT32_MAX) {
+        fputs("error: --wmc-peel2-fill-budget must be a non-negative integer\n", stderr);
+        return 2;
+      }
+      options.peel2_fill_budget = (uint32_t)parsed;
       continue;
     }
     if (strcmp(argv[i], "--wmc-block-min-side") == 0) {

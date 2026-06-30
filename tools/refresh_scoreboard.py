@@ -3,12 +3,14 @@
 import argparse
 import collections
 import datetime as _datetime
+import json
 import pathlib
 import subprocess
 import sys
 from typing import Iterable, TextIO
 
 import compare_rankwidth_backends
+from bench_common import cgroup_limited_command, command_memout
 from render_scoreboard import (
     BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
     BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
@@ -80,8 +82,12 @@ DEFAULT_SOLVER_ARTIFACTS = (
     # MQT Bench materialized corpus (tiers 33-64 and 65-128, GHZ/BV/QFT families)
     ("33-64", "mqt-bench-tier-33-64-treewidth-current.jsonl"),
     ("33-64", "mqt-bench-tier-33-64-branch-hybrid-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-rankwidth-from-treewidth-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-rankwidth-best-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-treewidth-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-branch-hybrid-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-rankwidth-from-treewidth-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-rankwidth-best-current.jsonl"),
 )
 
 DEFAULT_NATIVE_ARTIFACTS = tuple(
@@ -268,6 +274,12 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"rw table forecast {format_count(stats['rankwidth_table_forecast'])}")
     if "rankwidth_join_pair_forecast" in stats:
         parts.append(f"rw join forecast {format_count(stats['rankwidth_join_pair_forecast'])}")
+    if "rankwidth_dense_table_forecast" in stats:
+        parts.append(f"dense table forecast {format_count(stats['rankwidth_dense_table_forecast'])}")
+    if "rankwidth_dense_even_join_forecast" in stats:
+        parts.append(
+            f"dense even forecast {format_count(stats['rankwidth_dense_even_join_forecast'])}"
+        )
     signatures = max(
         stats.get("rankwidth_max_signature_entries", 0),
         stats.get("max_signature_entries", 0),
@@ -355,6 +367,8 @@ def public_solver_status_stats(row: dict) -> str:
     parts = [public_key_stats(row["stats"])]
     if row.get("timeouts"):
         parts.append(f"{row['timeouts']} timeouts")
+    if row.get("memouts"):
+        parts.append(f"{row['memouts']} memouts")
     if row.get("errors"):
         parts.append(f"{row['errors']} errors")
     return "; ".join(part for part in parts if part)
@@ -376,9 +390,10 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
     low_bucket = f"Solved, width <= {threshold}"
     high_bucket = f"Solved, width > {threshold}"
     buckets = {
-        low_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
-        high_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
-        "Timeouts": {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
+        low_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        high_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        "Timeouts": {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        "Memory outs": {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
     }
     for record in records:
         status = str(record.get("status") or "ok")
@@ -386,6 +401,8 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
         table = record.get("treewidth_max_table_entries")
         if status == "timeout":
             bucket = buckets["Timeouts"]
+        elif status == "memout":
+            bucket = buckets["Memory outs"]
         elif isinstance(width, int) and width <= threshold:
             bucket = buckets[low_bucket]
         else:
@@ -395,6 +412,8 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
             bucket["solved"] += 1
         elif status == "timeout":
             bucket["timeouts"] += 1
+        elif status == "memout":
+            bucket["memouts"] += 1
         if isinstance(width, int):
             bucket["max_width"] = max(bucket["max_width"], width)
         if isinstance(table, int):
@@ -478,12 +497,12 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
             f"candidates; timeouts remain the separate high-width residue.",
             file=file,
         )
-        print("| Bucket | Rows | Solved | Timeouts | Max width | Max table |", file=file)
-        print("| --- | ---: | ---: | ---: | ---: | ---: |", file=file)
+        print("| Bucket | Rows | Solved | Timeouts | Memouts | Max width | Max table |", file=file)
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
         for row in rows:
             print(
                 f"| {markdown_escape(row['bucket'])} | {row['rows']} | {row['solved']} | "
-                f"{row['timeouts']} | {row['max_width']} | {row['max_table']} |",
+                f"{row['timeouts']} | {row['memouts']} | {row['max_width']} | {row['max_table']} |",
                 file=file,
             )
 
@@ -779,6 +798,167 @@ def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str,
     print(f"![WMC vs solver scaling]({assets_subdir}/wmc-vs-solver-scaling.svg)\n", file=file)
 
 
+def _rankwidth_study_records(artifact_dir: pathlib.Path | None) -> list[dict]:
+    if artifact_dir is None:
+        return []
+    path = artifact_dir / "rankwidth-separation-current.jsonl"
+    if not path.exists():
+        return []
+    records = []
+    for record in read_jsonl(path):
+        copied = dict(record)
+        copied["_tier"] = str(record.get("tier") or "tier-rankwidth")
+        records.append(copied)
+    return records
+
+
+def write_rankwidth_separation_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Targeted RQ2 section for the bounded-rankwidth clique-blowup tree family."""
+    print("## Rankwidth Separation Study\n", file=file)
+    print(
+        "Synthetic sign-edge QSOPs under "
+        "`benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree "
+        "clique-blowup family from the rankwidth note. The intended signal is not broad "
+        "corpus coverage: it is whether the rankwidth backend stays at constant cutrank "
+        "while treewidth tables grow with the clique blow-up parameter.\n",
+        file=file,
+    )
+    records = _rankwidth_study_records(artifact_dir)
+    if not records:
+        print(
+            "No `rankwidth-separation-current.jsonl` artifact was found for this refresh.\n",
+            file=file,
+        )
+        return
+
+    summary = compare_rankwidth_backends.backend_summary(records)
+    print("| Config | OK / rows | Time | Kernel time | Max width | Max table | Forecast pressure |", file=file)
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
+    for row in summary:
+        print(
+            f"| `{markdown_escape(row['config'])}` | {row['ok']} / {row['records']} | "
+            f"{format_ns(row['elapsed_ns'])} | {format_ns(row['rankwidth_kernel_elapsed_ns'])} | "
+            f"{format_count(row['max_width'])} | {format_count(row['max_table'])} | "
+            f"{format_count(row['table_forecast_pressure'])} |",
+            file=file,
+        )
+    print("", file=file)
+
+    comparisons = compare_rankwidth_backends.comparison_summary(
+        records, "rankwidth:best:fourier"
+    )
+    if comparisons:
+        row = comparisons[0]
+        tree_common = row.get("treewidth_common_rows", 0)
+        faster = row.get("rankwidth_faster_than_treewidth", 0)
+        lower_tables = row.get("table_comparison", {}).get("lower", 0)
+        print(
+            f"`rankwidth:best:fourier` was faster than treewidth on {faster} / "
+            f"{tree_common} common solved rows, with lower/equal table size on "
+            f"{lower_tables} / {tree_common} rows. This is the targeted RQ2 check: "
+            "the table pressure separates even when total wall time still includes "
+            "rank-decomposition and prototype overhead.\n",
+            file=file,
+        )
+
+
+def _branch_retune_summary(artifact_dir: pathlib.Path | None) -> dict:
+    if artifact_dir is None:
+        return {}
+    path = artifact_dir / "branch-retune-summary.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_branch_retune_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Summarize the branch policy sweep used before rerunning branch artifacts."""
+    summary = _branch_retune_summary(artifact_dir)
+    rows = summary.get("rows") if isinstance(summary, dict) else None
+    if not rows:
+        return
+    winner = str(summary.get("winner", ""))
+    winner_args = " ".join(str(arg) for arg in summary.get("winner_args", []))
+    print("## Branch Policy Retune\n", file=file)
+    print(
+        "Focused sweep over local SOP, MQT materialized, and bounded-rankwidth rows. "
+        "Profiles are scored by maximum solved coverage first and total successful solve "
+        "time second; timeout or memory failures lose coverage. The winning profile is "
+        f"`{markdown_escape(winner)}`"
+        + (f" (`{markdown_escape(winner_args)}`)" if winner_args else "")
+        + ".\n",
+        file=file,
+    )
+    print(
+        "| Profile | OK / rows | Total solve time | TW delegations | RW delegations | Fallthroughs |",
+        file=file,
+    )
+    print("| --- | ---: | ---: | ---: | ---: | ---: |", file=file)
+    for row in sorted(rows, key=lambda item: (-int(item.get("ok", 0)), int(item.get("score_ns", 0)), str(item.get("profile", "")))):
+        profile = str(row.get("profile", ""))
+        label = f"**{markdown_escape(profile)}**" if profile == winner else markdown_escape(profile)
+        print(
+            f"| {label} | {format_count(int(row.get('ok', 0)))} / "
+            f"{format_count(int(row.get('records', 0)))} | "
+            f"{format_ns(int(row.get('solve_elapsed_ns', 0)))} | "
+            f"{format_count(int(row.get('treewidth_delegations', 0)))} | "
+            f"{format_count(int(row.get('rankwidth_delegations', 0)))} | "
+            f"{format_count(int(row.get('branch_fallthroughs', 0)))} |",
+            file=file,
+        )
+    print("", file=file)
+
+
+def _matrix_join_records(artifact_dir: pathlib.Path | None) -> list[dict]:
+    if artifact_dir is None:
+        return []
+    path = artifact_dir / "rankwidth-matrix-join-current.jsonl"
+    if not path.exists():
+        return []
+    return read_jsonl(path)
+
+
+def write_rankwidth_matrix_join_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Report the Theorem-5 matrix-multiplication join experiment."""
+    records = _matrix_join_records(artifact_dir)
+    if not records:
+        return
+    print("## Rankwidth Matrix-Join Experiment\n", file=file)
+    print(
+        "This is the missing dense-join experiment from the note's matrix-multiplication "
+        "section. It instantiates the twisted join that exactly realizes an `N x N` matrix "
+        "product with rankwidth parameter `k = 2 log2 N`. The direct rankwidth join has "
+        "`N^4 = 2^(2k)` pair pressure; the dense route is ordinary matrix multiplication "
+        "(`N^3 = 2^(3k/2)` with the classical kernel used here). This is a kernel experiment, "
+        "not a claim that the full solver has a production Theorem-5 implementation.\n",
+        file=file,
+    )
+    print(
+        "| k | N | Direct pairs | Dense mult proxy | Direct time | Dense time | Direct/dense | Verified |",
+        file=file,
+    )
+    print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+    for record in sorted(records, key=lambda row: int(row.get("rankwidth_k", 0))):
+        direct_ns = int(record.get("direct_elapsed_ns", 0) or 0)
+        dense_ns = int(record.get("dense_elapsed_ns", 0) or 0)
+        speedup = record.get("direct_vs_dense_speedup")
+        if isinstance(speedup, (int, float)):
+            speedup_text = f"{speedup:.2f}x"
+        else:
+            speedup_text = "—"
+        verified = record.get("verified")
+        verified_text = "yes" if verified is True else "skipped" if verified is None else "no"
+        print(
+            f"| {int(record.get('rankwidth_k', 0))} | {format_count(int(record.get('N', 0)))} | "
+            f"{format_count(int(record.get('direct_pair_count', 0)))} | "
+            f"{format_count(int(record.get('dense_classical_mul_count', 0)))} | "
+            f"{format_ns(direct_ns) if direct_ns else 'skipped'} | "
+            f"{format_ns(dense_ns)} | {speedup_text} | {verified_text} |",
+            file=file,
+        )
+    print("", file=file)
+
+
 def write_mode_scoreboard(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
@@ -908,6 +1088,8 @@ def write_mode_scoreboard(
         file=file,
     )
     print(f"![Branch dispatch by tier]({assets_subdir}/branch-dispatch-by-tier.svg)\n", file=file)
+    if mode == "sign":
+        write_branch_retune_section(artifact_dir, file)
 
     print("## WMC Solve Time Breakdown\n", file=file)
     print("Export time vs Ganak time per WMC encoding and tier.\n", file=file)
@@ -916,6 +1098,8 @@ def write_mode_scoreboard(
     # Scaling study is mode-agnostic (synthetic sign family); show it on the sign scoreboard.
     if mode == "sign":
         write_scaling_section(artifact_dir, assets_subdir, file)
+        write_rankwidth_matrix_join_section(artifact_dir, file)
+        write_rankwidth_separation_section(artifact_dir, file)
 
     write_condensed_solver_table(filtered_solver, file)
     write_condensed_competitor_table(filtered_solver, native_records, file)
@@ -1008,14 +1192,35 @@ def read_rankwidth_comparison_records(
     return records
 
 
-def run_to_jsonl(command: list[str], output: pathlib.Path) -> None:
+def optional_memory_args(value: int | None) -> list[str]:
+    return ["--memory-limit-mib", str(value)] if value is not None else []
+
+
+def optional_cgroup_memory_args(value: int | None) -> list[str]:
+    return ["--cgroup-memory-limit-mib", str(value)] if value is not None else []
+
+
+def run_to_jsonl(
+    command: list[str],
+    output: pathlib.Path,
+    *,
+    cgroup_memory_limit_mib: int | None = None,
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    wrapped_command = cgroup_limited_command(command, cgroup_memory_limit_mib)
     with output.open("w", encoding="utf-8") as stream:
-        completed = subprocess.run(command, stdout=stream, stderr=subprocess.PIPE, text=True)
+        completed = subprocess.run(wrapped_command, stdout=stream, stderr=subprocess.PIPE, text=True)
     if completed.returncode != 0:
+        detail = completed.stderr
+        if command_memout(
+            completed.returncode,
+            detail,
+            cgroup_limited=cgroup_memory_limit_mib is not None,
+        ):
+            detail = detail or "cgroup memory limit exceeded"
         raise RuntimeError(
             f"command failed with status {completed.returncode}: {' '.join(command)}\n"
-            f"{completed.stderr}"
+            f"{detail}"
         )
 
 
@@ -1043,13 +1248,13 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
                 f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
                 "--timeout",
                 str(args.timeout),
-                "--memory-limit-mib",
-                str(args.memory_limit_mib),
+                *optional_memory_args(args.memory_limit_mib),
+                *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
                 "--skip-unsupported",
                 "--format",
                 "jsonl",
             ]
-            run_to_jsonl(command, output)
+            run_to_jsonl(command, output, cgroup_memory_limit_mib=args.cgroup_memory_limit_mib)
     if args.run_large_sample:
         manifest = artifact_dir / "dlx4sop-tier-257-512-sample-manifest.json"
         if not manifest.exists():
@@ -1072,6 +1277,7 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
             "512",
             "--solver-timeout",
             str(args.large_sample_timeout),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
             "--trace",
             "--format",
             "jsonl",
@@ -1177,7 +1383,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--native-max-qubits", type=int, default=16)
     parser.add_argument("--pyzx-matrix-max-qubits", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=10.0)
-    parser.add_argument("--memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--cgroup-memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--memory-limit-mib", type=int, default=None)
     parser.add_argument("--large-sample-timeout", type=float, default=3.0)
     parser.add_argument("--timeout-note", default="", metavar="TEXT",
                         help="note the per-instance timeout in the mode scoreboard header (e.g. '120 s')")
@@ -1188,6 +1395,12 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.rankwidth_comparison_top < 0:
         print("error: --rankwidth-comparison-top must be non-negative", file=sys.stderr)
+        return 2
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        print("error: --cgroup-memory-limit-mib must be positive", file=sys.stderr)
+        return 2
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        print("error: --memory-limit-mib must be positive", file=sys.stderr)
         return 2
     try:
         run_selected_jobs(args)

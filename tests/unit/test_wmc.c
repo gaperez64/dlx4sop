@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out);
+
 static int run_ok(const char *name, const qsop_instance_t *qsop,
                   const qsop_wmc_options_t *options) {
   FILE *out = tmpfile();
@@ -39,6 +41,44 @@ static int run_fail(const char *name, FILE *out, const qsop_instance_t *qsop,
     fprintf(stderr, "%s: unexpected error: %s\n", name, error.message);
     return 1;
   }
+  return 0;
+}
+
+static int run_contains(const char *name, const qsop_instance_t *qsop,
+                        const qsop_wmc_options_t *options, const char *expected) {
+  FILE *out = tmpfile();
+  if (out == NULL) {
+    return 0; /* no temp file available; skip rather than fail */
+  }
+  qsop_error_t error = {0};
+  const bool ok = qsop_wmc_write(out, qsop, options, &error);
+  if (!ok) {
+    fprintf(stderr, "%s: qsop_wmc_write failed: %s\n", name, error.message);
+    fclose(out);
+    return 1;
+  }
+  const long size = ftell(out);
+  if (size <= 0) {
+    fprintf(stderr, "%s: qsop_wmc_write produced no output\n", name);
+    fclose(out);
+    return 1;
+  }
+  rewind(out);
+  char *text = malloc((size_t)size + 1U);
+  if (text == NULL) {
+    fclose(out);
+    return 0; /* skip on test-host allocation failure */
+  }
+  const size_t nread = fread(text, 1U, (size_t)size, out);
+  fclose(out);
+  text[nread] = '\0';
+  const bool found = strstr(text, expected) != NULL;
+  if (!found) {
+    fprintf(stderr, "%s: expected output to contain %s\n", name, expected);
+    free(text);
+    return 1;
+  }
+  free(text);
   return 0;
 }
 
@@ -126,6 +166,38 @@ static int test_amp_soft_stats(void) {
   }
 
   return 0;
+}
+
+static int test_peel_forced_conflict_zero(void) {
+  uint32_t unary[] = {0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0};
+  uint32_t eu[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  uint32_t ev[] = {6, 8, 10, 4, 5, 6, 7, 8, 9, 10};
+  qsop_instance_t qsop = {.r = 8, .nvars = 11, .norm_h = 15, .constant = 0,
+                          .unary = unary, .nedges = 10, .edge_u = eu, .edge_v = ev};
+  double ref_re = 0.0, ref_im = 0.0;
+  brute_force_amplitude(&qsop, &ref_re, &ref_im);
+  if (fabs(ref_re) > 1e-10 || fabs(ref_im) > 1e-10) {
+    fprintf(stderr, "forced-conflict: expected brute force zero, got %.6g+%.6gi\n",
+            ref_re, ref_im);
+    return 1;
+  }
+
+  int rc = 0;
+  qsop_wmc_options_t amp = qsop_wmc_options_default();
+  amp.encoding = QSOP_WMC_ENCODING_AMPLITUDE;
+  amp.preprocess = QSOP_WMC_PREPROCESS_PEEL1;
+  rc |= run_contains("forced-conflict-amp-peel1", &qsop, &amp, "encoding=zero");
+
+  qsop_wmc_options_t soft = qsop_wmc_options_default();
+  soft.encoding = QSOP_WMC_ENCODING_AMP_SOFT;
+  soft.preprocess = QSOP_WMC_PREPROCESS_PEEL2_SAFE;
+  rc |= run_contains("forced-conflict-soft-peel2", &qsop, &soft, "amplitude_factor 0+0i");
+
+  qsop_wmc_options_t block = qsop_wmc_options_default();
+  block.encoding = QSOP_WMC_ENCODING_AMP_BLOCK;
+  block.preprocess = QSOP_WMC_PREPROCESS_PEEL2_SAFE;
+  rc |= run_contains("forced-conflict-block-peel2", &qsop, &block, "encoding=zero");
+  return rc;
 }
 
 static int test_export_shapes(void) {
@@ -387,6 +459,9 @@ int main(void) {
     return 1;
   }
   if (test_peel1() != 0) {
+    return 1;
+  }
+  if (test_peel_forced_conflict_zero() != 0) {
     return 1;
   }
   if (test_export_shapes() != 0) {
