@@ -9,6 +9,7 @@ import sys
 from typing import Iterable, TextIO
 
 import compare_rankwidth_backends
+from bench_common import cgroup_limited_command, command_memout
 from render_scoreboard import (
     BRANCH_RANKWIDTH_SKIP_REASON_FIELDS,
     BRANCH_TREEWIDTH_SKIP_REASON_FIELDS,
@@ -361,6 +362,8 @@ def public_solver_status_stats(row: dict) -> str:
     parts = [public_key_stats(row["stats"])]
     if row.get("timeouts"):
         parts.append(f"{row['timeouts']} timeouts")
+    if row.get("memouts"):
+        parts.append(f"{row['memouts']} memouts")
     if row.get("errors"):
         parts.append(f"{row['errors']} errors")
     return "; ".join(part for part in parts if part)
@@ -382,9 +385,10 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
     low_bucket = f"Solved, width <= {threshold}"
     high_bucket = f"Solved, width > {threshold}"
     buckets = {
-        low_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
-        high_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
-        "Timeouts": {"rows": 0, "solved": 0, "timeouts": 0, "max_width": 0, "max_table": 0},
+        low_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        high_bucket: {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        "Timeouts": {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
+        "Memory outs": {"rows": 0, "solved": 0, "timeouts": 0, "memouts": 0, "max_width": 0, "max_table": 0},
     }
     for record in records:
         status = str(record.get("status") or "ok")
@@ -392,6 +396,8 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
         table = record.get("treewidth_max_table_entries")
         if status == "timeout":
             bucket = buckets["Timeouts"]
+        elif status == "memout":
+            bucket = buckets["Memory outs"]
         elif isinstance(width, int) and width <= threshold:
             bucket = buckets[low_bucket]
         else:
@@ -401,6 +407,8 @@ def stratify_large_sample(records: list[dict]) -> tuple[int, list[dict]]:
             bucket["solved"] += 1
         elif status == "timeout":
             bucket["timeouts"] += 1
+        elif status == "memout":
+            bucket["memouts"] += 1
         if isinstance(width, int):
             bucket["max_width"] = max(bucket["max_width"], width)
         if isinstance(table, int):
@@ -484,12 +492,12 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
             f"candidates; timeouts remain the separate high-width residue.",
             file=file,
         )
-        print("| Bucket | Rows | Solved | Timeouts | Max width | Max table |", file=file)
-        print("| --- | ---: | ---: | ---: | ---: | ---: |", file=file)
+        print("| Bucket | Rows | Solved | Timeouts | Memouts | Max width | Max table |", file=file)
+        print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
         for row in rows:
             print(
                 f"| {markdown_escape(row['bucket'])} | {row['rows']} | {row['solved']} | "
-                f"{row['timeouts']} | {row['max_width']} | {row['max_table']} |",
+                f"{row['timeouts']} | {row['memouts']} | {row['max_width']} | {row['max_table']} |",
                 file=file,
             )
 
@@ -1079,14 +1087,35 @@ def read_rankwidth_comparison_records(
     return records
 
 
-def run_to_jsonl(command: list[str], output: pathlib.Path) -> None:
+def optional_memory_args(value: int | None) -> list[str]:
+    return ["--memory-limit-mib", str(value)] if value is not None else []
+
+
+def optional_cgroup_memory_args(value: int | None) -> list[str]:
+    return ["--cgroup-memory-limit-mib", str(value)] if value is not None else []
+
+
+def run_to_jsonl(
+    command: list[str],
+    output: pathlib.Path,
+    *,
+    cgroup_memory_limit_mib: int | None = None,
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    wrapped_command = cgroup_limited_command(command, cgroup_memory_limit_mib)
     with output.open("w", encoding="utf-8") as stream:
-        completed = subprocess.run(command, stdout=stream, stderr=subprocess.PIPE, text=True)
+        completed = subprocess.run(wrapped_command, stdout=stream, stderr=subprocess.PIPE, text=True)
     if completed.returncode != 0:
+        detail = completed.stderr
+        if command_memout(
+            completed.returncode,
+            detail,
+            cgroup_limited=cgroup_memory_limit_mib is not None,
+        ):
+            detail = detail or "cgroup memory limit exceeded"
         raise RuntimeError(
             f"command failed with status {completed.returncode}: {' '.join(command)}\n"
-            f"{completed.stderr}"
+            f"{detail}"
         )
 
 
@@ -1114,13 +1143,13 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
                 f"pyzx-matrix={args.pyzx_matrix_max_qubits}",
                 "--timeout",
                 str(args.timeout),
-                "--memory-limit-mib",
-                str(args.memory_limit_mib),
+                *optional_memory_args(args.memory_limit_mib),
+                *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
                 "--skip-unsupported",
                 "--format",
                 "jsonl",
             ]
-            run_to_jsonl(command, output)
+            run_to_jsonl(command, output, cgroup_memory_limit_mib=args.cgroup_memory_limit_mib)
     if args.run_large_sample:
         manifest = artifact_dir / "dlx4sop-tier-257-512-sample-manifest.json"
         if not manifest.exists():
@@ -1143,6 +1172,7 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
             "512",
             "--solver-timeout",
             str(args.large_sample_timeout),
+            *optional_cgroup_memory_args(args.cgroup_memory_limit_mib),
             "--trace",
             "--format",
             "jsonl",
@@ -1248,7 +1278,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--native-max-qubits", type=int, default=16)
     parser.add_argument("--pyzx-matrix-max-qubits", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=10.0)
-    parser.add_argument("--memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--cgroup-memory-limit-mib", type=int, default=4096)
+    parser.add_argument("--memory-limit-mib", type=int, default=None)
     parser.add_argument("--large-sample-timeout", type=float, default=3.0)
     parser.add_argument("--timeout-note", default="", metavar="TEXT",
                         help="note the per-instance timeout in the mode scoreboard header (e.g. '120 s')")
@@ -1259,6 +1290,12 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.rankwidth_comparison_top < 0:
         print("error: --rankwidth-comparison-top must be non-negative", file=sys.stderr)
+        return 2
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        print("error: --cgroup-memory-limit-mib must be positive", file=sys.stderr)
+        return 2
+    if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
+        print("error: --memory-limit-mib must be positive", file=sys.stderr)
         return 2
     try:
         run_selected_jobs(args)

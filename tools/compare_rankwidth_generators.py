@@ -95,6 +95,7 @@ def config_summary(records: list[dict]) -> list[dict]:
                 "records": 0,
                 "ok": 0,
                 "timeouts": 0,
+                "memouts": 0,
                 "elapsed_ns": 0,
                 "kernel_elapsed_ns": 0,
                 "max_width": 0,
@@ -142,6 +143,8 @@ def config_summary(records: list[dict]) -> list[dict]:
             entry["join_signature_pressure"] += join_signature_pairs
         elif status(record) == "timeout":
             entry["timeouts"] += 1
+        elif status(record) == "memout":
+            entry["memouts"] += 1
     return [grouped[key] for key in sorted(grouped)]
 
 

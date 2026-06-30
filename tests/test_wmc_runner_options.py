@@ -26,8 +26,10 @@ def main() -> int:
     args = run_corpus.parse_args(["--skip-scoreboard"])
     if args.wmc_preprocess != "peel2-safe":
         raise AssertionError(f"unexpected WMC preprocess default: {args.wmc_preprocess!r}")
-    if args.memory_limit_mib != 2048:
-        raise AssertionError(f"unexpected tool memory cap default: {args.memory_limit_mib!r}")
+    if args.cgroup_memory_limit_mib != 2048:
+        raise AssertionError(f"unexpected cgroup memory cap default: {args.cgroup_memory_limit_mib!r}")
+    if args.memory_limit_mib is not None:
+        raise AssertionError(f"address-space cap should be opt-in, got {args.memory_limit_mib!r}")
     if args.solver_memory_limit_mib is not None:
         raise AssertionError(
             f"direct solver cap should be opt-in, got {args.solver_memory_limit_mib!r}"
@@ -36,6 +38,8 @@ def main() -> int:
         raise AssertionError(
             f"Ganak cap should be opt-in, got {args.ganak_memory_limit_mib!r}"
         )
+    if args.wmc_qasm2sop_timeout != 30.0:
+        raise AssertionError(f"unexpected WMC qasm2sop timeout: {args.wmc_qasm2sop_timeout!r}")
     if args.wmc_block_min_side != 2 or args.wmc_block_min_savings != 1:
         raise AssertionError(
             f"unexpected amp-block defaults: {args.wmc_block_min_side}, "

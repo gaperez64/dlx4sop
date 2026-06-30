@@ -184,6 +184,7 @@ def run_backend(
     extra_args: list[str],
     timeout: float,
     memory_limit_mib: int | None,
+    cgroup_memory_limit_mib: int | None,
 ) -> dict:
     """Run sop-solve for a single (instance, backend) pair; return a result dict."""
     cfg_key = _backend_config_key(backend)
@@ -201,10 +202,23 @@ def run_backend(
         + extra_args
         + ["--format", "stats", "--include-result", "--trace", "csv", str(case.qsop_path)]
     )
-    result = run_command(cmd, timeout_seconds=timeout, memory_limit_mib=memory_limit_mib)
+    result = run_command(
+        cmd,
+        timeout_seconds=timeout,
+        memory_limit_mib=memory_limit_mib,
+        cgroup_memory_limit_mib=cgroup_memory_limit_mib,
+    )
 
     if result.returncode == -1 and result.stderr == "timeout":
         return {"status": "timeout", "elapsed_ns": result.elapsed_ns}
+    if result.memout:
+        return {
+            "status": "memout",
+            "elapsed_ns": result.elapsed_ns,
+            "stderr": result.stderr[:300] or "cgroup memory limit exceeded",
+            "memout": True,
+            "cgroup_memory_limit_mib": cgroup_memory_limit_mib,
+        }
     if result.returncode != 0:
         return {
             "status": "error",
@@ -396,6 +410,7 @@ def bench_case(
     timeout: float,
     extra_args: list[str],
     memory_limit_mib: int | None,
+    cgroup_memory_limit_mib: int | None,
     max_vars_override: int | None = None,
 ) -> list[dict]:
     meta = case.meta
@@ -434,7 +449,15 @@ def bench_case(
             ))
             continue
 
-        result = run_backend(sop_solve, case, backend, extra_args, timeout, memory_limit_mib)
+        result = run_backend(
+            sop_solve,
+            case,
+            backend,
+            extra_args,
+            timeout,
+            memory_limit_mib,
+            cgroup_memory_limit_mib,
+        )
         rec = _make_record(case, backend, nvars, nedges, r, **result)
         records.append(rec)
 
@@ -599,7 +622,7 @@ def summarize(all_records: list[dict]) -> None:
                 n_err = sum(
                     1 for r in all_records
                     if r["tier"] == tier and r["backend"] == bk
-                    and r.get("status") in ("error", "timeout")
+                    and r.get("status") in ("error", "timeout", "memout")
                 )
                 note = f"skip={n_skip}" if n_skip else f"err/to={n_err}" if n_err else "—"
                 print(f"  {bk:35s} {note}", file=sys.stderr)
@@ -664,6 +687,12 @@ def main() -> int:
         help="per-run address-space cap in MiB; exceeded rows are reported as errors",
     )
     parser.add_argument(
+        "--cgroup-memory-limit-mib",
+        type=int,
+        default=None,
+        help="per-run cgroup physical-memory cap in MiB; exceeded rows are reported as memout",
+    )
+    parser.add_argument(
         "--out",
         type=pathlib.Path,
         default=None,
@@ -690,6 +719,9 @@ def main() -> int:
     if args.memory_limit_mib is not None and args.memory_limit_mib <= 0:
         print("error: --memory-limit-mib must be positive", file=sys.stderr)
         return 1
+    if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
+        print("error: --cgroup-memory-limit-mib must be positive", file=sys.stderr)
+        return 1
 
     # Validate backends
     unknown = [b for b in backends if b not in BACKEND_CONFIGS]
@@ -709,7 +741,8 @@ def main() -> int:
             for case in iter_qsop_corpus(corpus_dir, tiers=tiers_filter):
                 records = bench_case(
                     args.sop_solve, case, backends, args.timeout, extra_args,
-                    args.memory_limit_mib, max_vars_override=args.max_vars,
+                    args.memory_limit_mib, args.cgroup_memory_limit_mib,
+                    max_vars_override=args.max_vars,
                 )
                 for rec in records:
                     write_jsonl_record(out_stream, rec)

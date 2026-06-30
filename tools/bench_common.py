@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import pathlib
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -33,6 +34,7 @@ class CommandResult:
     stderr: str
     returncode: int
     elapsed_ns: int
+    memout: bool = False
 
 
 @dataclasses.dataclass
@@ -121,11 +123,13 @@ def run_command(
     input_text: str | None = None,
     timeout_seconds: float | None = None,
     memory_limit_mib: int | None = None,
+    cgroup_memory_limit_mib: int | None = None,
 ) -> CommandResult:
+    wrapped_cmd = cgroup_limited_command(cmd, cgroup_memory_limit_mib)
     t0 = time.monotonic_ns()
     try:
         result = subprocess.run(
-            cmd,
+            wrapped_cmd,
             input=input_text,
             capture_output=True,
             text=True,
@@ -133,11 +137,17 @@ def run_command(
             preexec_fn=memory_limited_preexec(memory_limit_mib),
         )
         elapsed_ns = time.monotonic_ns() - t0
+        memout = command_memout(
+            result.returncode,
+            result.stderr,
+            cgroup_limited=cgroup_memory_limit_mib is not None,
+        )
         return CommandResult(
             stdout=result.stdout,
             stderr=result.stderr,
             returncode=result.returncode,
             elapsed_ns=elapsed_ns,
+            memout=memout,
         )
     except subprocess.TimeoutExpired:
         elapsed_ns = time.monotonic_ns() - t0
@@ -147,6 +157,30 @@ def run_command(
             returncode=-1,
             elapsed_ns=elapsed_ns,
         )
+
+
+def cgroup_limited_command(cmd: list[str], cgroup_memory_limit_mib: int | None) -> list[str]:
+    if cgroup_memory_limit_mib is None or cgroup_memory_limit_mib <= 0:
+        return [str(arg) for arg in cmd]
+    return [
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        "-p",
+        f"MemoryMax={int(cgroup_memory_limit_mib)}M",
+        "--",
+        *[str(arg) for arg in cmd],
+    ]
+
+
+def command_memout(returncode: int, stderr: str, *, cgroup_limited: bool = False) -> bool:
+    text = stderr.lower()
+    if any(marker in text for marker in ("oom-kill", "out of memory", "memory cgroup", "memory.max")):
+        return True
+    if cgroup_limited and returncode in (-signal.SIGKILL, 128 + signal.SIGKILL):
+        return True
+    return False
 
 
 def memory_limited_preexec(memory_limit_mib: int | None) -> Callable[[], None] | None:

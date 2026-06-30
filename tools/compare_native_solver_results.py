@@ -78,6 +78,14 @@ def cap_value(record: dict, key: str) -> str:
     return "none" if value is None else str(value)
 
 
+def memory_cap_value(record: dict) -> str:
+    cgroup = record.get("cgroup_memory_limit_mib")
+    if cgroup is not None:
+        return f"cgroup {cgroup}"
+    value = record.get("memory_limit_mib")
+    return "none" if value is None else f"rlimit {value}"
+
+
 def speedup_text(native_ns: int, solver_ns: int) -> str:
     if native_ns <= 0 or solver_ns <= 0:
         return "n/a"
@@ -137,7 +145,7 @@ def summarize(
                 entry["matched"] += 1
                 entry["qubit_caps"][cap_value(native, "qubit_cap")] += 1
                 entry["timeouts"][cap_value(native, "timeout_seconds")] += 1
-                entry["memory_caps"][cap_value(native, "memory_limit_mib")] += 1
+                entry["memory_caps"][memory_cap_value(native)] += 1
                 if isinstance(native.get("qubits"), int):
                     entry["max_boundary_qubits"] = max(entry["max_boundary_qubits"], int(native["qubits"]))
                 if solver_ok and native_ok:
