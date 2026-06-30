@@ -51,6 +51,12 @@ c amplitude_factor 1+0i
         raise AssertionError(f"bad fallback metadata: {fallback}")
     if fallback.get("wmc_block_count") != 0 or fallback.get("wmc_block_edges") != 0:
         raise AssertionError(f"fallback should have zero block counters: {fallback}")
+    factor = tool.parse_amplitude_factor(
+        "c amplitude_factor -1.9101208718814254e+18+-6.7007993025121802e+17i\n"
+    )
+    expected_factor = complex(-1.9101208718814254e18, -6.7007993025121802e17)
+    if factor != expected_factor:
+        raise AssertionError(f"bad large amplitude factor parse: {factor!r}")
 
     zero_residual = tool.parse_wmc_metadata(
         "c sop2wmc encoding=amp-and r=16 nvars=40 nedges=37 format=qsop-sign norm_h=60\n"

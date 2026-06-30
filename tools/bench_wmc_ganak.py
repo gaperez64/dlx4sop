@@ -171,10 +171,12 @@ def parse_amplitude_factor(cnf_text: str) -> complex:
     for line in cnf_text.splitlines():
         if line.startswith("c amplitude_factor "):
             val = line.split(None, 2)[2]
-            # parse "a+bi" or "a+-bi" format
-            m = re.match(r"([+-]?[\d.e+-]+)\+([+-]?[\d.e+-]+)i", val)
-            if m:
-                return complex(float(m.group(1)), float(m.group(2)))
+            if not val.endswith("i"):
+                break
+            body = val[:-1]
+            for pos in range(len(body) - 1, 0, -1):
+                if body[pos] == "+" and body[pos - 1] not in "eE":
+                    return complex(float(body[:pos]), float(body[pos + 1:]))
     raise ValueError("no c amplitude_factor line in CNF metadata")
 
 
