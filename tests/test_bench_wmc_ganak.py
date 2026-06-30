@@ -67,6 +67,10 @@ c amplitude_factor 1+0i
         raise AssertionError(f"nonzero active WMC row misdetected: {expected}")
     if tool.normalize_amplitude(16 + 0j, 8) != 1 + 0j:
         raise AssertionError("WMC amplitude normalization mismatch")
+    if tool.row_has_hard_mismatch({"mismatches": -1}):
+        raise AssertionError("skipped WMC cross-check should not be fatal")
+    if not tool.row_has_hard_mismatch({"mismatches": 1}):
+        raise AssertionError("positive WMC mismatch should be fatal")
     return 0
 
 

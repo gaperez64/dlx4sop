@@ -505,6 +505,10 @@ def check_amplitude(got: complex, ref: complex, tol: float = 2e-5) -> bool:
     return abs(got - ref) <= tol * max(1.0, abs(ref))
 
 
+def row_has_hard_mismatch(row: dict) -> bool:
+    return int(row.get("mismatches") or 0) > 0
+
+
 def bench(sop2wmc, sop_solve, ganak, qsop, encoding, timeout, provenance,
           sop_solve_extra=None, sop_solve_timeout=None, sop2wmc_extra=None,
           memory_limit_mib: int | None = None,
@@ -773,7 +777,7 @@ def main() -> int:
     def emit_row(row: dict) -> None:
         nonlocal row_count, had_mismatch
         row_count += 1
-        had_mismatch = had_mismatch or bool(row.get("mismatches"))
+        had_mismatch = had_mismatch or row_has_hard_mismatch(row)
         if args.format == "jsonl":
             print(json.dumps(row), flush=True)
         else:
