@@ -20,6 +20,7 @@ from bench_common import case_qasm, cgroup_limited_command, command_memout, memo
 BACKENDS = ("components", "brute-force", "branch", "rankwidth", "treewidth")
 DEFAULT_BACKENDS = ("components", "brute-force", "branch")
 BRANCH_HEURISTICS = ("split", "treewidth", "cutrank-proxy")
+BRANCH_RW_SOURCES = ("native", "from-treewidth", "both", "auto", "none")
 RANKWIDTH_GENERATORS = ("left-deep", "balanced", "min-fill", "min-fill-cut", "min-fill-search", "best")
 RANKWIDTH_MODES = ("count-table", "fourier")
 TREEWIDTH_ORDERS = ("min-fill", "min-degree", "min-fill-max-degree")
@@ -1006,6 +1007,29 @@ def iter_backend_configs(args: argparse.Namespace, backend: str):
         }
 
 
+def append_optional_branch_arg(cmd: list[str], flag: str, value: object | None) -> None:
+    if value is not None:
+        cmd.extend([flag, str(value)])
+
+
+def append_branch_policy_args(cmd: list[str], args: argparse.Namespace) -> None:
+    append_optional_branch_arg(cmd, "--branch-rw-source", args.branch_rw_source)
+    append_optional_branch_arg(
+        cmd, "--branch-rw-min-treewidth-width", args.branch_rw_min_treewidth_width
+    )
+    append_optional_branch_arg(
+        cmd,
+        "--branch-rw-min-treewidth-forecast",
+        args.branch_rw_min_treewidth_forecast,
+    )
+    append_optional_branch_arg(cmd, "--branch-rw-min-residual-vars", args.branch_rw_min_residual_vars)
+    append_optional_branch_arg(cmd, "--branch-rw-low-rank-bypass", args.branch_rw_low_rank_bypass)
+    append_optional_branch_arg(cmd, "--branch-rw-min-speedup", args.branch_rw_min_speedup)
+    append_optional_branch_arg(cmd, "--branch-rw-fixed-overhead-ns", args.branch_rw_fixed_overhead_ns)
+    append_optional_branch_arg(cmd, "--branch-tw-fixed-overhead-ns", args.branch_tw_fixed_overhead_ns)
+    append_optional_branch_arg(cmd, "--branch-rw-memory-penalty-ns", args.branch_rw_memory_penalty_ns)
+
+
 def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
     cases = load_cases(args.manifest)
     backends = args.backends or list(DEFAULT_BACKENDS)
@@ -1062,6 +1086,8 @@ def benchmark(args: argparse.Namespace) -> tuple[list[dict], dict]:
                     cmd += ["--trace", "csv"]
                 if backend == "branch" and config["branch_heuristic"] != "split":
                     cmd += ["--branch-heuristic", config["branch_heuristic"]]
+                if backend == "branch":
+                    append_branch_policy_args(cmd, args)
                 if backend == "rankwidth":
                     cmd += [
                         "--rankwidth-generate",
@@ -1947,6 +1973,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Variable-choice heuristic used by the branch backend.",
     )
     parser.add_argument(
+        "--branch-rw-source",
+        choices=BRANCH_RW_SOURCES,
+        default=None,
+        help="override the branch backend rankwidth-decomposition source",
+    )
+    parser.add_argument("--branch-rw-min-treewidth-width", type=int, default=None)
+    parser.add_argument("--branch-rw-min-treewidth-forecast", type=int, default=None)
+    parser.add_argument("--branch-rw-min-residual-vars", type=int, default=None)
+    parser.add_argument("--branch-rw-low-rank-bypass", type=int, default=None)
+    parser.add_argument("--branch-rw-min-speedup", type=float, default=None)
+    parser.add_argument("--branch-rw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-tw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-rw-memory-penalty-ns", type=int, default=None)
+    parser.add_argument(
         "--rankwidth-generate",
         dest="rankwidth_generators",
         action="append",
@@ -2012,6 +2052,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--top must be non-negative")
     if args.timeout_top < 0:
         parser.error("--timeout-top must be non-negative")
+    for attr in (
+        "branch_rw_min_treewidth_width",
+        "branch_rw_min_treewidth_forecast",
+        "branch_rw_min_residual_vars",
+        "branch_rw_low_rank_bypass",
+        "branch_rw_fixed_overhead_ns",
+        "branch_tw_fixed_overhead_ns",
+        "branch_rw_memory_penalty_ns",
+    ):
+        value = getattr(args, attr)
+        if value is not None and value <= 0:
+            parser.error(f"--{attr.replace('_', '-')} must be positive")
+    if args.branch_rw_min_speedup is not None and args.branch_rw_min_speedup <= 0.0:
+        parser.error("--branch-rw-min-speedup must be positive")
     if args.solve_mode is not None and args.rankwidth_modes is not None:
         if any(mode != args.solve_mode for mode in args.rankwidth_modes):
             parser.error("--solve-mode conflicts with --rankwidth-mode")

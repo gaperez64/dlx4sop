@@ -23,7 +23,7 @@ static qsop_instance_t make_tiny(void) {
   };
 }
 
-/* qsop_solve_branch with NULL options — zero-init defaults (split, native, count-table). */
+/* qsop_solve_branch with NULL options — zero-init defaults (split, auto, count-table). */
 static int test_null_options(void) {
   qsop_instance_t inst = make_tiny();
   qsop_result_t  *res  = NULL;

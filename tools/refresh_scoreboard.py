@@ -3,6 +3,7 @@
 import argparse
 import collections
 import datetime as _datetime
+import json
 import pathlib
 import subprocess
 import sys
@@ -81,8 +82,12 @@ DEFAULT_SOLVER_ARTIFACTS = (
     # MQT Bench materialized corpus (tiers 33-64 and 65-128, GHZ/BV/QFT families)
     ("33-64", "mqt-bench-tier-33-64-treewidth-current.jsonl"),
     ("33-64", "mqt-bench-tier-33-64-branch-hybrid-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-rankwidth-from-treewidth-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-rankwidth-best-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-treewidth-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-branch-hybrid-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-rankwidth-from-treewidth-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-rankwidth-best-current.jsonl"),
 )
 
 DEFAULT_NATIVE_ARTIFACTS = tuple(
@@ -857,6 +862,103 @@ def write_rankwidth_separation_section(artifact_dir: pathlib.Path | None, file: 
         )
 
 
+def _branch_retune_summary(artifact_dir: pathlib.Path | None) -> dict:
+    if artifact_dir is None:
+        return {}
+    path = artifact_dir / "branch-retune-summary.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_branch_retune_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Summarize the branch policy sweep used before rerunning branch artifacts."""
+    summary = _branch_retune_summary(artifact_dir)
+    rows = summary.get("rows") if isinstance(summary, dict) else None
+    if not rows:
+        return
+    winner = str(summary.get("winner", ""))
+    winner_args = " ".join(str(arg) for arg in summary.get("winner_args", []))
+    print("## Branch Policy Retune\n", file=file)
+    print(
+        "Focused sweep over local SOP, MQT materialized, and bounded-rankwidth rows. "
+        "Profiles are scored by maximum solved coverage first and total successful solve "
+        "time second; timeout or memory failures lose coverage. The winning profile is "
+        f"`{markdown_escape(winner)}`"
+        + (f" (`{markdown_escape(winner_args)}`)" if winner_args else "")
+        + ".\n",
+        file=file,
+    )
+    print(
+        "| Profile | OK / rows | Total solve time | TW delegations | RW delegations | Fallthroughs |",
+        file=file,
+    )
+    print("| --- | ---: | ---: | ---: | ---: | ---: |", file=file)
+    for row in sorted(rows, key=lambda item: (-int(item.get("ok", 0)), int(item.get("score_ns", 0)), str(item.get("profile", "")))):
+        profile = str(row.get("profile", ""))
+        label = f"**{markdown_escape(profile)}**" if profile == winner else markdown_escape(profile)
+        print(
+            f"| {label} | {format_count(int(row.get('ok', 0)))} / "
+            f"{format_count(int(row.get('records', 0)))} | "
+            f"{format_ns(int(row.get('solve_elapsed_ns', 0)))} | "
+            f"{format_count(int(row.get('treewidth_delegations', 0)))} | "
+            f"{format_count(int(row.get('rankwidth_delegations', 0)))} | "
+            f"{format_count(int(row.get('branch_fallthroughs', 0)))} |",
+            file=file,
+        )
+    print("", file=file)
+
+
+def _matrix_join_records(artifact_dir: pathlib.Path | None) -> list[dict]:
+    if artifact_dir is None:
+        return []
+    path = artifact_dir / "rankwidth-matrix-join-current.jsonl"
+    if not path.exists():
+        return []
+    return read_jsonl(path)
+
+
+def write_rankwidth_matrix_join_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Report the Theorem-5 matrix-multiplication join experiment."""
+    records = _matrix_join_records(artifact_dir)
+    if not records:
+        return
+    print("## Rankwidth Matrix-Join Experiment\n", file=file)
+    print(
+        "This is the missing dense-join experiment from the note's matrix-multiplication "
+        "section. It instantiates the twisted join that exactly realizes an `N x N` matrix "
+        "product with rankwidth parameter `k = 2 log2 N`. The direct rankwidth join has "
+        "`N^4 = 2^(2k)` pair pressure; the dense route is ordinary matrix multiplication "
+        "(`N^3 = 2^(3k/2)` with the classical kernel used here). This is a kernel experiment, "
+        "not a claim that the full solver has a production Theorem-5 implementation.\n",
+        file=file,
+    )
+    print(
+        "| k | N | Direct pairs | Dense mult proxy | Direct time | Dense time | Direct/dense | Verified |",
+        file=file,
+    )
+    print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+    for record in sorted(records, key=lambda row: int(row.get("rankwidth_k", 0))):
+        direct_ns = int(record.get("direct_elapsed_ns", 0) or 0)
+        dense_ns = int(record.get("dense_elapsed_ns", 0) or 0)
+        speedup = record.get("direct_vs_dense_speedup")
+        if isinstance(speedup, (int, float)):
+            speedup_text = f"{speedup:.2f}x"
+        else:
+            speedup_text = "—"
+        verified = record.get("verified")
+        verified_text = "yes" if verified is True else "skipped" if verified is None else "no"
+        print(
+            f"| {int(record.get('rankwidth_k', 0))} | {format_count(int(record.get('N', 0)))} | "
+            f"{format_count(int(record.get('direct_pair_count', 0)))} | "
+            f"{format_count(int(record.get('dense_classical_mul_count', 0)))} | "
+            f"{format_ns(direct_ns) if direct_ns else 'skipped'} | "
+            f"{format_ns(dense_ns)} | {speedup_text} | {verified_text} |",
+            file=file,
+        )
+    print("", file=file)
+
+
 def write_mode_scoreboard(
     solver_records: list[tuple[str, list[dict]]],
     native_records: list[tuple[str, list[dict]]],
@@ -986,6 +1088,8 @@ def write_mode_scoreboard(
         file=file,
     )
     print(f"![Branch dispatch by tier]({assets_subdir}/branch-dispatch-by-tier.svg)\n", file=file)
+    if mode == "sign":
+        write_branch_retune_section(artifact_dir, file)
 
     print("## WMC Solve Time Breakdown\n", file=file)
     print("Export time vs Ganak time per WMC encoding and tier.\n", file=file)
@@ -994,6 +1098,7 @@ def write_mode_scoreboard(
     # Scaling study is mode-agnostic (synthetic sign family); show it on the sign scoreboard.
     if mode == "sign":
         write_scaling_section(artifact_dir, assets_subdir, file)
+        write_rankwidth_matrix_join_section(artifact_dir, file)
         write_rankwidth_separation_section(artifact_dir, file)
 
     write_condensed_solver_table(filtered_solver, file)

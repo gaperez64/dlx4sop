@@ -340,6 +340,8 @@ def run_mqt_solver_jobs(
     mqt_jobs = [
         ("treewidth", ["--backend", "treewidth"]),
         ("branch-hybrid", ["--backend", "branch:auto"]),
+        ("rankwidth-from-treewidth", ["--backend", "rankwidth:from-treewidth"]),
+        ("rankwidth-best", ["--backend", "rankwidth:best"]),
     ]
     if not mqt_root.exists():
         print(f"warning: MQT corpus root missing: {mqt_root}", file=sys.stderr)
@@ -494,6 +496,25 @@ def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathl
         print(f"warning: rankwidth separation study exited {result.returncode}", file=sys.stderr)
 
 
+def run_rankwidth_matrix_join_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
+    """Theorem-5/Proposition-1 dense matrix-join experiment from the rankwidth note."""
+    output = artifact_dir / "rankwidth-matrix-join-current.jsonl"
+    cmd = [
+        sys.executable,
+        str(TOOLS_DIR / "bench_rankwidth_matrix_join.py"),
+        "--out",
+        str(output),
+        "--max-m",
+        str(args.matrix_join_max_m),
+        "--max-direct-m",
+        str(args.matrix_join_max_direct_m),
+    ]
+    print("\n--- rankwidth matrix-join study ---", file=sys.stderr)
+    result = subprocess.run([str(a) for a in cmd])
+    if result.returncode != 0:
+        print(f"warning: rankwidth matrix-join study exited {result.returncode}", file=sys.stderr)
+
+
 def run_scoreboard(args: argparse.Namespace, artifact_dir: pathlib.Path) -> None:
     bench = TOOLS_DIR / "bench.py"
     timeout_s = int(args.timeout) if args.timeout else 30
@@ -547,11 +568,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="skip the WMC-vs-solver scaling study on the committed synthetic corpus")
     parser.add_argument("--skip-rankwidth-study", action="store_true",
                         help="skip the bounded-rankwidth synthetic separation study")
+    parser.add_argument("--skip-matrix-join-study", action="store_true",
+                        help="skip the rankwidth dense matrix-join experiment")
     parser.add_argument("--scaling-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) for the scaling study backends "
                              "(CI uses a small cap)")
     parser.add_argument("--rankwidth-study-timeout", type=float, default=30.0,
                         help="per-instance timeout (s) for the bounded-rankwidth study")
+    parser.add_argument("--matrix-join-max-m", type=int, default=10,
+                        help="largest m for the rankwidth matrix-join experiment")
+    parser.add_argument("--matrix-join-max-direct-m", type=int, default=5,
+                        help="largest m with direct pair-enumeration timing in the matrix-join experiment")
     parser.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"],
                         default="peel2-safe",
                         help="sop2wmc preprocessing for amplitude-style WMC jobs "
@@ -580,6 +607,10 @@ def main(argv: list[str]) -> int:
         raise SystemExit("--ganak-memory-limit-mib must be positive")
     if args.wmc_qasm2sop_timeout <= 0:
         raise SystemExit("--wmc-qasm2sop-timeout must be positive")
+    if args.matrix_join_max_m <= 0:
+        raise SystemExit("--matrix-join-max-m must be positive")
+    if args.matrix_join_max_direct_m < 0:
+        raise SystemExit("--matrix-join-max-direct-m must be non-negative")
     artifact_dir = args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir = args.manifests
@@ -599,6 +630,8 @@ def main(argv: list[str]) -> int:
         run_mqt_native_jobs(args, manifests_dir, artifact_dir)
     if not args.skip_scaling:
         run_scaling_study(args, artifact_dir)
+    if not args.skip_matrix_join_study:
+        run_rankwidth_matrix_join_study(args, artifact_dir)
     if not args.skip_rankwidth_study:
         run_rankwidth_separation_study(args, artifact_dir)
     if not args.skip_scoreboard:

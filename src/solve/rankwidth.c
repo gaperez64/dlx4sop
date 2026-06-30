@@ -1858,10 +1858,20 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     return false;
   }
 
-  uint32_t root_pos = 0;
+  uint32_t *root_positions = calloc(n == 0 ? 1U : n, sizeof(*root_positions));
+  if (root_positions == NULL) {
+    free(order);
+    free(parent_pos);
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    set_error(error, "out of memory building elimination tree roots");
+    return false;
+  }
+  uint32_t root_count = 0;
   for (uint32_t pos = 0; pos < n; pos++) {
     if (parent_pos[pos] == UINT32_MAX) {
-      root_pos = pos;
+      root_positions[root_count++] = pos;
     } else {
       children_cnt[parent_pos[pos]]++;
     }
@@ -1886,6 +1896,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
   if (decomposition == NULL) {
     free(order);
+    free(root_positions);
     free(children_flat);
     free(children_arr);
     free(children_cnt);
@@ -1902,6 +1913,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
   if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
       decomposition->postorder == NULL) {
     free(order);
+    free(root_positions);
     free(children_flat);
     free(children_arr);
     free(children_cnt);
@@ -1920,18 +1932,34 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     decomposition->root = 0;
   } else {
     uint32_t next_join = n;
-    uint32_t subtree_root = 0;
-    if (!build_etree_subtrees(decomposition, root_pos, children_arr, children_cnt,
-                              &subtree_root, n, &next_join, error)) {
-      free(children_flat);
-      free(children_arr);
-      free(children_cnt);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
+    uint32_t combined_root = UINT32_MAX;
+    for (uint32_t i = 0; i < root_count; i++) {
+      uint32_t subtree_root = 0;
+      if (!build_etree_subtrees(decomposition, root_positions[i], children_arr, children_cnt,
+                                &subtree_root, n, &next_join, error)) {
+        free(root_positions);
+        free(children_flat);
+        free(children_arr);
+        free(children_cnt);
+        qsop_rankwidth_decomposition_free(decomposition);
+        return false;
+      }
+      if (combined_root == UINT32_MAX) {
+        combined_root = subtree_root;
+      } else {
+        const uint32_t node = next_join++;
+        decomposition->nodes[node] = (rw_node_t){
+            .kind = RW_NODE_JOIN,
+            .left = combined_root,
+            .right = subtree_root,
+        };
+        combined_root = node;
+      }
     }
-    decomposition->root = subtree_root;
+    decomposition->root = combined_root;
   }
 
+  free(root_positions);
   free(children_flat);
   free(children_arr);
   free(children_cnt);
@@ -2035,10 +2063,20 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
   }
 
   /* Build children lists from parent_pos (same logic as make_from_treewidth_decomposition). */
-  uint32_t root_pos = 0;
+  uint32_t *root_positions = calloc(n, sizeof(*root_positions));
+  if (root_positions == NULL) {
+    free(children_flat);
+    free(children_arr);
+    free(children_cnt);
+    free(parent_pos);
+    qsop_rankwidth_decomposition_free(decomposition);
+    set_error(error, "out of memory in from-order root allocation");
+    return false;
+  }
+  uint32_t root_count = 0;
   for (uint32_t pos = 0; pos < n; pos++) {
     if (parent_pos[pos] == UINT32_MAX) {
-      root_pos = pos;
+      root_positions[root_count++] = pos;
     } else {
       children_cnt[parent_pos[pos]]++;
     }
@@ -2064,17 +2102,33 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
     decomposition->root = 0;
   } else {
     uint32_t next_join = n;
-    uint32_t subtree_root = 0;
-    if (!build_etree_subtrees(decomposition, root_pos, children_arr, children_cnt,
-                              &subtree_root, n, &next_join, error)) {
-      free(children_flat);
-      free(children_arr);
-      free(children_cnt);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
+    uint32_t combined_root = UINT32_MAX;
+    for (uint32_t i = 0; i < root_count; i++) {
+      uint32_t subtree_root = 0;
+      if (!build_etree_subtrees(decomposition, root_positions[i], children_arr, children_cnt,
+                                &subtree_root, n, &next_join, error)) {
+        free(root_positions);
+        free(children_flat);
+        free(children_arr);
+        free(children_cnt);
+        qsop_rankwidth_decomposition_free(decomposition);
+        return false;
+      }
+      if (combined_root == UINT32_MAX) {
+        combined_root = subtree_root;
+      } else {
+        const uint32_t node = next_join++;
+        decomposition->nodes[node] = (rw_node_t){
+            .kind = RW_NODE_JOIN,
+            .left = combined_root,
+            .right = subtree_root,
+        };
+        combined_root = node;
+      }
     }
-    decomposition->root = subtree_root;
+    decomposition->root = combined_root;
   }
+  free(root_positions);
   free(children_flat);
   free(children_arr);
   free(children_cnt);

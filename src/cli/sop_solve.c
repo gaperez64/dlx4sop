@@ -534,7 +534,7 @@ int main(int argc, char **argv) {
   solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
-  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NATIVE;
+  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
   qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;

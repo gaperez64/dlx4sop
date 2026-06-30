@@ -1206,6 +1206,35 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill-cut")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "from-treewidth")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-mode", "fourier")
+
+    disconnected = """p qsop-sign 8 4 0
+n 4
+cst 0
+u 0 1
+u 1 2
+u 2 3
+u 3 4
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        disconnected_qsop = pathlib.Path(tmp) / "disconnected.qsop"
+        disconnected_qsop.write_text(disconnected)
+        disconnected_expected = subprocess.run(
+            [str(exe), "--backend", "brute-force", str(disconnected_qsop)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if disconnected_expected.returncode != 0:
+            raise AssertionError(f"brute force disconnected solve failed\n{disconnected_expected.stderr}")
+        assert_rankwidth_matches(
+            exe,
+            disconnected_qsop,
+            disconnected_expected.stdout,
+            "--rankwidth-generate",
+            "from-treewidth",
+        )
+
     assert_rankwidth_matches(
         exe,
         qsop,

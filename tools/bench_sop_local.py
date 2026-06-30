@@ -162,6 +162,8 @@ DEFAULT_BACKENDS = [
     "branch:no-rankwidth",
 ]
 
+BRANCH_RW_SOURCES = ("native", "from-treewidth", "both", "auto", "none")
+
 
 def _backend_config_key(backend: str) -> str:
     """Return the key in BACKEND_CONFIGS for a backend name (handles user overrides)."""
@@ -182,6 +184,7 @@ def run_backend(
     case: CorpusCase,
     backend: str,
     extra_args: list[str],
+    branch_args: list[str],
     timeout: float,
     memory_limit_mib: int | None,
     cgroup_memory_limit_mib: int | None,
@@ -200,6 +203,7 @@ def run_backend(
         [str(sop_solve)]
         + BACKEND_CONFIGS[cfg_key]
         + extra_args
+        + (branch_args if backend.split(":")[0] == "branch" else [])
         + ["--format", "stats", "--include-result", "--trace", "csv", str(case.qsop_path)]
     )
     result = run_command(
@@ -409,6 +413,7 @@ def bench_case(
     backends: list[str],
     timeout: float,
     extra_args: list[str],
+    branch_args: list[str],
     memory_limit_mib: int | None,
     cgroup_memory_limit_mib: int | None,
     max_vars_override: int | None = None,
@@ -454,6 +459,7 @@ def bench_case(
             case,
             backend,
             extra_args,
+            branch_args,
             timeout,
             memory_limit_mib,
             cgroup_memory_limit_mib,
@@ -571,6 +577,41 @@ def _backend_config_dict(backend: str) -> dict:
             except StopIteration:
                 d[k] = True
     return d
+
+
+def append_optional_branch_arg(args: list[str], flag: str, value: object | None) -> None:
+    if value is not None:
+        args.extend([flag, str(value)])
+
+
+def branch_policy_args(args: argparse.Namespace) -> list[str]:
+    branch_args: list[str] = []
+    append_optional_branch_arg(branch_args, "--branch-rw-source", args.branch_rw_source)
+    append_optional_branch_arg(
+        branch_args, "--branch-rw-min-treewidth-width", args.branch_rw_min_treewidth_width
+    )
+    append_optional_branch_arg(
+        branch_args,
+        "--branch-rw-min-treewidth-forecast",
+        args.branch_rw_min_treewidth_forecast,
+    )
+    append_optional_branch_arg(
+        branch_args, "--branch-rw-min-residual-vars", args.branch_rw_min_residual_vars
+    )
+    append_optional_branch_arg(
+        branch_args, "--branch-rw-low-rank-bypass", args.branch_rw_low_rank_bypass
+    )
+    append_optional_branch_arg(branch_args, "--branch-rw-min-speedup", args.branch_rw_min_speedup)
+    append_optional_branch_arg(
+        branch_args, "--branch-rw-fixed-overhead-ns", args.branch_rw_fixed_overhead_ns
+    )
+    append_optional_branch_arg(
+        branch_args, "--branch-tw-fixed-overhead-ns", args.branch_tw_fixed_overhead_ns
+    )
+    append_optional_branch_arg(
+        branch_args, "--branch-rw-memory-penalty-ns", args.branch_rw_memory_penalty_ns
+    )
+    return branch_args
 
 
 # ---------------------------------------------------------------------------
@@ -703,6 +744,20 @@ def main() -> int:
         action="store_true",
         help="suppress per-run progress output",
     )
+    parser.add_argument(
+        "--branch-rw-source",
+        choices=BRANCH_RW_SOURCES,
+        default=None,
+        help="override the branch backend rankwidth-decomposition source",
+    )
+    parser.add_argument("--branch-rw-min-treewidth-width", type=int, default=None)
+    parser.add_argument("--branch-rw-min-treewidth-forecast", type=int, default=None)
+    parser.add_argument("--branch-rw-min-residual-vars", type=int, default=None)
+    parser.add_argument("--branch-rw-low-rank-bypass", type=int, default=None)
+    parser.add_argument("--branch-rw-min-speedup", type=float, default=None)
+    parser.add_argument("--branch-rw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-tw-fixed-overhead-ns", type=int, default=None)
+    parser.add_argument("--branch-rw-memory-penalty-ns", type=int, default=None)
     args = parser.parse_args()
 
     if not args.sop_solve.exists():
@@ -722,6 +777,23 @@ def main() -> int:
     if args.cgroup_memory_limit_mib is not None and args.cgroup_memory_limit_mib <= 0:
         print("error: --cgroup-memory-limit-mib must be positive", file=sys.stderr)
         return 1
+    for attr in (
+        "branch_rw_min_treewidth_width",
+        "branch_rw_min_treewidth_forecast",
+        "branch_rw_min_residual_vars",
+        "branch_rw_low_rank_bypass",
+        "branch_rw_fixed_overhead_ns",
+        "branch_tw_fixed_overhead_ns",
+        "branch_rw_memory_penalty_ns",
+    ):
+        value = getattr(args, attr)
+        if value is not None and value <= 0:
+            print(f"error: --{attr.replace('_', '-')} must be positive", file=sys.stderr)
+            return 1
+    if args.branch_rw_min_speedup is not None and args.branch_rw_min_speedup <= 0.0:
+        print("error: --branch-rw-min-speedup must be positive", file=sys.stderr)
+        return 1
+    branch_args = branch_policy_args(args)
 
     # Validate backends
     unknown = [b for b in backends if b not in BACKEND_CONFIGS]
@@ -741,7 +813,7 @@ def main() -> int:
             for case in iter_qsop_corpus(corpus_dir, tiers=tiers_filter):
                 records = bench_case(
                     args.sop_solve, case, backends, args.timeout, extra_args,
-                    args.memory_limit_mib, args.cgroup_memory_limit_mib,
+                    branch_args, args.memory_limit_mib, args.cgroup_memory_limit_mib,
                     max_vars_override=args.max_vars,
                 )
                 for rec in records:

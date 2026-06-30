@@ -36,7 +36,7 @@
 <polyline points="60.0,286.1 115.6,165.2 171.1,54.2 226.7,54.2 282.2,54.2 337.8,54.2 393.3,54.2 448.9,54.2 504.4,54.2 560.0,54.2" stroke="#7f7f7f" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="41.0" width="12.0" height="9.0" fill="#7f7f7f" opacity="1.00"/>
 <text x="585.0" y="50.0" text-anchor="start" fill="#333" font-size="10">best native — 95.7%</text>
-<polyline points="60.0,345.4 115.6,173.0 171.1,76.9 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>
+<polyline points="60.0,357.7 115.6,168.1 171.1,81.9 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#ff7f0e" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="59.0" width="12.0" height="9.0" fill="#ff7f0e" opacity="1.00"/>
 <text x="585.0" y="68.0" text-anchor="start" fill="#333" font-size="10">branch:auto — 100.0%</text>
 <polyline points="60.0,360.1 115.6,227.2 171.1,175.4 226.7,133.6 282.2,94.2 337.8,54.8 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#8c564b" stroke-width="2.0" fill="none"/>
