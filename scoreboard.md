@@ -1,6 +1,6 @@
 # Scoreboard — sign QSOPs
 
-Last updated: 2026-06-29. Per-instance timeout: 30 s.
+Last updated: 2026-06-30. Per-instance timeout: 30 s.
 
 This tracks progress toward a competitive exact strong simulator based on signed quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
 
@@ -68,9 +68,25 @@ Export time vs Ganak time per WMC encoding and tier.
 
 ## WMC vs Solver Scaling
 
-Synthetic phase-polynomial circuits (committed under `benchmarks/corpus/sop/synthetic/scaling/`) whose QSOP treewidth grows with the qubit count. Real benchmark families cannot show this: the scalable MQT families use continuous-angle gates the finite-modulus importer rejects, and the importable ones are Clifford with trivial treewidth. As treewidth grows the branch backend collapses first. Across the sizes both solve, the treewidth DP stays ahead of ganak (WMC) — the DP's lead narrows as treewidth grows, so any crossover lies past the point where ganak itself stays tractable. Largest size solved under the current cap: branch 16q, treewidth 24q, ganak 20q.
+Synthetic phase-polynomial circuits (committed under `benchmarks/corpus/sop/synthetic/scaling/`) whose QSOP treewidth grows with the qubit count. Real benchmark families cannot show this: the scalable MQT families use continuous-angle gates the finite-modulus importer rejects, and the importable ones are Clifford with trivial treewidth. As treewidth grows the branch backend collapses first. Across the sizes both solve, the treewidth DP stays ahead of ganak (WMC) — the DP's lead narrows as treewidth grows, so any crossover lies past the point where ganak itself stays tractable. Largest size solved under the current cap: branch 16q, treewidth 24q, ganak 24q.
 
 ![WMC vs solver scaling](scoreboard-assets/wmc-vs-solver-scaling.svg)
+
+## Rankwidth Separation Study
+
+Synthetic sign-edge QSOPs under `benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree clique-blowup family from the rankwidth note. The intended signal is not broad corpus coverage: it is whether the rankwidth backend stays at constant cutrank while treewidth tables grow with the clique blow-up parameter.
+
+| Config | OK / rows | Time | Kernel time | Max width | Max table | Forecast pressure |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `rankwidth:best:count-table` | 7 / 7 | 46.8 ms | 435.2 us | 1 | 16 | 112 |
+| `rankwidth:best:fourier` | 7 / 7 | 46.3 ms | 153.8 us | 1 | 8 | 112 |
+| `rankwidth:best:fourier:dense-reference` | 7 / 7 | 46.9 ms | 204.7 us | 1 | 8 | 112 |
+| `rankwidth:from-treewidth:count-table` | 7 / 7 | 62.0 ms | 558.6 us | 2 | 32 | 224 |
+| `rankwidth:from-treewidth:fourier` | 7 / 7 | 34.0 ms | 210.6 us | 2 | 16 | 224 |
+| `rankwidth:from-treewidth:fourier:dense-reference` | 7 / 7 | 33.4 ms | 266.1 us | 2 | 16 | 224 |
+| `treewidth:min-fill-max-degree` | 6 / 7 | 252.1 ms | 0 ns | 15 | 524,288 | 0 |
+
+`rankwidth:best:fourier` was faster than treewidth on 3 / 6 common solved rows, with lower/equal table size on 6 / 6 rows. This is the targeted RQ2 check: the table pressure separates even when total wall time still includes rank-decomposition and prototype overhead.
 
 ## Internal Solver Configurations
 
@@ -78,42 +94,40 @@ Best configuration per tier at a glance.
 
 | Tier | Configuration | Solved | Total solve time |
 | --- | --- | ---: | ---: |
-| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 132 / 132 | 53.0 ms |
-| 0-32 | `branch --branch-heuristic split` | 132 / 132 | 59.5 ms |
-| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 132 / 132 | 426.6 ms |
-| 0-32 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 121 / 132 | 2.71 s |
-| 0-32 | `sop2wmc --encoding amp-block + ganak --mode 6` | 121 / 132 | 2.72 s |
-| 0-32 | `sop2wmc --encoding amplitude + ganak --mode 6` | 121 / 132 | 3.03 s |
-| 0-32 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 121 / 132 | 11.18 s |
-| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 132 / 132 | 470.75 s |
-| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 38 / 38 | 21.9 ms |
-| 33-64 | `branch:auto` | 72 / 72 | 27.7 ms |
-| 33-64 | `branch --branch-heuristic split` | 38 / 38 | 31.1 ms |
-| 33-64 | `treewidth --treewidth-order min-fill` | 72 / 72 | 34.2 ms |
-| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 38 / 38 | 47.1 ms |
-| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 38 / 38 | 1.88 s |
-| 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 38 / 38 | 1.89 s |
-| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 38 / 38 | 2.61 s |
-| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 38 / 38 | 10.37 s |
-| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 17 / 38 | 1478.01 s |
-| 65-128 | `branch:auto` | 42 / 42 | 16.6 ms |
-| 65-128 | `treewidth --treewidth-order min-fill` | 42 / 42 | 36.1 ms |
-| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 202 / 202 | 348.2 ms |
-| 65-128 | `branch --branch-heuristic split` | 202 / 202 | 435.0 ms |
-| 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 202 / 202 | 38.52 s |
-| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 39.24 s |
-| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 202 / 202 | 44.48 s |
-| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 114 / 202 | 2119.62 s |
-| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 82 / 82 | 599.3 ms |
-| 129-256 | `branch --branch-heuristic split` | 82 / 82 | 605.2 ms |
-| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 82 / 82 | 35.17 s |
-| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 82 / 82 | 35.60 s |
-| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 82 / 82 | 38.46 s |
-| 129-256 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 40 / 82 | 1285.11 s |
-| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 60 / 60 | 65.13 s |
-| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 56 / 60 | 214.83 s |
-| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 56 / 60 | 215.48 s |
-| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 56 / 60 | 216.41 s |
+| 0-32 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 132 / 132 | 76.7 ms |
+| 0-32 | `sop2wmc --encoding amp-block + ganak --mode 6` | 132 / 132 | 81.0 ms |
+| 0-32 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 132 / 132 | 81.3 ms |
+| 0-32 | `sop2wmc --encoding amplitude + ganak --mode 6` | 132 / 132 | 87.8 ms |
+| 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 132 / 132 | 143.8 ms |
+| 0-32 | `branch --branch-heuristic split` | 132 / 132 | 144.7 ms |
+| 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 132 / 132 | 459.1 ms |
+| 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 132 / 132 | 466.66 s |
+| 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 38 / 38 | 27.7 ms |
+| 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 38 / 38 | 29.5 ms |
+| 33-64 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 38 / 38 | 30.0 ms |
+| 33-64 | `sop2wmc --encoding amp-block + ganak --mode 6` | 38 / 38 | 30.2 ms |
+| 33-64 | `branch --branch-heuristic split` | 38 / 38 | 55.3 ms |
+| 33-64 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 38 / 38 | 68.5 ms |
+| 33-64 | `branch:auto` | 72 / 72 | 75.8 ms |
+| 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 110 / 110 | 129.9 ms |
+| 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 17 / 38 | 1462.60 s |
+| 65-128 | `branch:auto` | 42 / 42 | 45.3 ms |
+| 65-128 | `treewidth --treewidth-order min-fill-max-degree` | 244 / 244 | 521.2 ms |
+| 65-128 | `branch --branch-heuristic split` | 202 / 202 | 533.1 ms |
+| 65-128 | `sop2wmc --encoding amplitude + ganak --mode 6` | 202 / 202 | 11.80 s |
+| 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 13.39 s |
+| 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 202 / 202 | 13.64 s |
+| 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 114 / 202 | 295.32 s |
+| 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 82 / 82 | 604.1 ms |
+| 129-256 | `branch --branch-heuristic split` | 82 / 82 | 610.0 ms |
+| 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 82 / 82 | 11.10 s |
+| 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 82 / 82 | 11.39 s |
+| 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 82 / 82 | 12.65 s |
+| 129-256 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 40 / 82 | 148.91 s |
+| 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 60 / 60 | 16.16 s |
+| 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 60 / 60 | 16.94 s |
+| 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 60 / 60 | 18.13 s |
+| 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 60 / 60 | 63.14 s |
 
 ## Competitor Comparisons
 
@@ -123,32 +137,32 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 5.7 ms | `mqt-ddsim-statevector` | 132.9 ms | **23.36x** | 14 / 14 |
+| 0-32 | 5.4 ms | `mqt-ddsim-statevector` | 126.4 ms | **23.49x** | 14 / 14 |
 
 ### FeynmanDD
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 17.1 ms | `qiskit-statevector` | 1.14 s | **66.71x** | 42 / 42 |
-| 65-128 | 8.0 ms | `pyzx-matrix` | 19.39 s | **2428.69x** | 4 / 166 |
-| 129-256 | 21.4 ms | `qiskit-clifford` | 562.2 ms | **26.31x** | 2 / 42 |
+| 0-32 | 43.8 ms | `qiskit-statevector` | 653.0 ms | **14.92x** | 42 / 42 |
+| 65-128 | 10.6 ms | `pyzx-matrix` | 17.45 s | **1652.52x** | 4 / 166 |
+| 129-256 | 9.8 ms | `qiskit-clifford` | 557.3 ms | **56.88x** | 2 / 42 |
 
 ### MQT Bench
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 12.2 ms | `pyzx-matrix` | 608.1 ms | **50.05x** | 32 / 32 |
-| 33-64 | 27.7 ms | `qiskit-clifford` | 50.32 s | **1814.47x** | 72 / 72 |
-| 65-128 | 12.8 ms | `qiskit-clifford` | 205.57 s | **16017.23x** | 34 / 42 |
+| 0-32 | 11.4 ms | `pyzx-matrix` | 450.2 ms | **39.51x** | 32 / 32 |
+| 33-64 | 75.8 ms | `qiskit-clifford` | 47.50 s | **626.91x** | 72 / 72 |
+| 65-128 | 38.6 ms | `qiskit-clifford` | 211.12 s | **5473.79x** | 36 / 42 |
 
 ### PyZX
 
 | Tier | QSOP time | Best native | Native time | Best speedup | Matched / QSOP-solved |
 | --- | ---: | --- | ---: | ---: | ---: |
-| 0-32 | 17.7 ms | `mqt-ddsim-statevector` | 366.8 ms | **20.71x** | 44 / 44 |
-| 33-64 | 8.0 ms | `pyzx-matrix` | 284.0 ms | **35.28x** | 14 / 14 |
-| 65-128 | 51.5 ms | `pyzx-matrix` | 27.58 s | **535.55x** | 34 / 36 |
-| 129-256 | 212.7 ms | `pyzx-matrix` | 40.35 s | **189.70x** | 22 / 40 |
+| 0-32 | 16.2 ms | `mqt-ddsim-statevector` | 342.7 ms | **21.18x** | 44 / 44 |
+| 33-64 | 17.1 ms | `pyzx-matrix` | 238.0 ms | **13.92x** | 14 / 14 |
+| 65-128 | 72.0 ms | `pyzx-matrix` | 25.20 s | **350.14x** | 34 / 36 |
+| 129-256 | 211.1 ms | `pyzx-matrix` | 34.35 s | **162.72x** | 22 / 40 |
 
 ## Current Takeaway
 
