@@ -42,9 +42,12 @@
 <polyline points="60.0,365.5 115.6,297.7 171.1,44.5 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#8c564b" stroke-width="2.0" fill="none"/>
 <rect x="570.0" y="77.0" width="12.0" height="9.0" fill="#8c564b" opacity="1.00"/>
 <text x="585.0" y="86.0" text-anchor="start" fill="#333" font-size="10">rankwidth:best — 100.0%</text>
+<polyline points="60.0,370.0 115.6,370.0 171.1,44.5 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#17becf" stroke-width="2.0" fill="none"/>
+<rect x="570.0" y="95.0" width="12.0" height="9.0" fill="#17becf" opacity="1.00"/>
+<text x="585.0" y="104.0" text-anchor="start" fill="#333" font-size="10">rankwidth:linear — 100.0%</text>
 <polyline points="60.0,363.2 115.6,40.0 171.1,40.0 226.7,40.0 282.2,40.0 337.8,40.0 393.3,40.0 448.9,40.0 504.4,40.0 560.0,40.0" stroke="#1f77b4" stroke-width="2.0" fill="none"/>
-<rect x="570.0" y="95.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
-<text x="585.0" y="104.0" text-anchor="start" fill="#333" font-size="10">treewidth — 100.0%</text>
+<rect x="570.0" y="113.0" width="12.0" height="9.0" fill="#1f77b4" opacity="1.00"/>
+<text x="585.0" y="122.0" text-anchor="start" fill="#333" font-size="10">treewidth — 100.0%</text>
 <text x="360.0" y="20.0" text-anchor="middle" fill="#222" font-size="13">Solved fraction by time budget — MQT Bench</text>
 <text x="360.0" y="412.0" text-anchor="middle" fill="#555" font-size="10">Time budget (log scale)</text>
 </svg>

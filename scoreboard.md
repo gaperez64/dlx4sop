@@ -1,6 +1,6 @@
 # Scoreboard — sign QSOPs
 
-Last updated: 2026-06-30. Per-instance timeout: 30 s.
+Last updated: 2026-07-01. Per-instance timeout: 30 s.
 
 This tracks progress toward a competitive exact strong simulator based on signed quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
 
@@ -114,6 +114,7 @@ Synthetic sign-edge QSOPs under `benchmarks/corpus/sop/synthetic/rankwidth/` ins
 | `rankwidth:from-treewidth:count-table` | 7 / 7 | 62.0 ms | 558.6 us | 2 | 32 | 224 |
 | `rankwidth:from-treewidth:fourier` | 7 / 7 | 34.0 ms | 210.6 us | 2 | 16 | 224 |
 | `rankwidth:from-treewidth:fourier:dense-reference` | 7 / 7 | 33.4 ms | 266.1 us | 2 | 16 | 224 |
+| `rankwidth:linear` | 7 / 7 | 50.3 ms | 643.5 us | 4 | 128 | 384 |
 | `treewidth:min-fill-max-degree` | 6 / 7 | 252.1 ms | 0 ns | 15 | 524,288 | 0 |
 
 `rankwidth:best:fourier` was faster than treewidth on 3 / 6 common solved rows, with lower/equal table size on 6 / 6 rows. This is the targeted RQ2 check: the table pressure separates even when total wall time still includes rank-decomposition and prototype overhead.
@@ -131,6 +132,7 @@ Best configuration per tier at a glance.
 | 0-32 | `treewidth --treewidth-order min-fill-max-degree` | 132 / 132 | 143.8 ms |
 | 0-32 | `branch --branch-heuristic split` | 132 / 132 | 146.7 ms |
 | 0-32 | `rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table` | 132 / 132 | 459.1 ms |
+| 0-32 | `rankwidth:linear` | 132 / 132 | 593.2 ms |
 | 0-32 | `sop2wmc --encoding residue + ganak --mode 0` | 132 / 132 | 466.66 s |
 | 33-64 | `sop2wmc --encoding amplitude + ganak --mode 6` | 38 / 38 | 27.7 ms |
 | 33-64 | `sop2wmc --encoding residue-fourier + ganak --mode 6` | 38 / 38 | 29.5 ms |
@@ -142,6 +144,7 @@ Best configuration per tier at a glance.
 | 33-64 | `treewidth --treewidth-order min-fill-max-degree` | 110 / 110 | 129.9 ms |
 | 33-64 | `rankwidth:from-treewidth` | 72 / 72 | 341.2 ms |
 | 33-64 | `rankwidth:best` | 72 / 72 | 347.5 ms |
+| 33-64 | `rankwidth:linear` | 110 / 110 | 586.0 ms |
 | 33-64 | `sop2wmc --encoding residue + ganak --mode 0` | 17 / 38 | 1462.60 s |
 | 65-128 | `branch:auto` | 42 / 42 | 46.3 ms |
 | 65-128 | `rankwidth:from-treewidth` | 42 / 42 | 203.0 ms |
@@ -152,16 +155,19 @@ Best configuration per tier at a glance.
 | 65-128 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 202 / 202 | 13.39 s |
 | 65-128 | `sop2wmc --encoding amp-block + ganak --mode 6` | 202 / 202 | 13.64 s |
 | 65-128 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 114 / 202 | 295.32 s |
+| 65-128 | `rankwidth:linear` | 108 / 244 | 4294.66 s |
 | 129-256 | `treewidth --treewidth-order min-fill-max-degree` | 82 / 82 | 604.1 ms |
 | 129-256 | `branch --branch-heuristic split` | 82 / 82 | 618.3 ms |
 | 129-256 | `sop2wmc --encoding amp-soft + ganak --mode 6` | 82 / 82 | 11.10 s |
 | 129-256 | `sop2wmc --encoding amp-block + ganak --mode 6` | 82 / 82 | 11.39 s |
 | 129-256 | `sop2wmc --encoding amplitude + ganak --mode 6` | 82 / 82 | 12.65 s |
 | 129-256 | `rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table` | 40 / 82 | 148.91 s |
+| 129-256 | `rankwidth:linear` | 8 / 82 | 2296.09 s |
 | 257-512 sample | `sop2wmc --encoding amp-soft + ganak --mode 6` | 60 / 60 | 16.16 s |
 | 257-512 sample | `sop2wmc --encoding amp-block + ganak --mode 6` | 60 / 60 | 16.94 s |
 | 257-512 sample | `sop2wmc --encoding amplitude + ganak --mode 6` | 60 / 60 | 18.13 s |
 | 257-512 sample | `treewidth --treewidth-order min-fill-max-degree` | 60 / 60 | 63.14 s |
+| 257-512 sample | `rankwidth:linear` | 4 / 60 | 1724.01 s |
 
 ## Competitor Comparisons
 
@@ -201,5 +207,5 @@ Best native simulator per source and tier. Speedup = native time / QSOP time, so
 ## Current Takeaway
 
 Best current internal configurations by tier: 0-32: `treewidth --treewidth-order min-fill-max-degree`; 33-64: `treewidth --treewidth-order min-fill-max-degree`; 65-128: `treewidth --treewidth-order min-fill-max-degree`; 129-256: `treewidth --treewidth-order min-fill-max-degree`; 257-512 sample: `treewidth --treewidth-order min-fill-max-degree`.
-The 257-512 column is an exploratory stratified sample (60 rows), not the full tier; all solve under the current timeout cap.
+The 257-512 column is an exploratory stratified sample (60 case-boundary rows), not the full tier; at least one internal non-WMC backend solves every sample row under the current timeout cap.
 Treewidth is the clean direct-DP baseline; hybrid branch is the best widened-tier configuration once component splitting and treewidth handoff trigger. Against native baselines, QSOP is consistently faster than the `pyzx-matrix` tool, while dense `aer-statevector` still wins on some low-width FeynmanDD rows.

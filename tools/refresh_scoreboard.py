@@ -608,20 +608,37 @@ def write_takeaway(named_records: list[tuple[str, list[dict]]], file: TextIO) ->
     best_parts = [f"{tier}: `{best[tier]}`" for tier in SOLVER_TIERS if tier in best]
     non_wmc = [(tier, [r for r in records if r.get("backend") != "wmc"]) for tier, records in named_records]
     sample_rows = [record for tier, records in non_wmc for record in records if tier == "257-512 sample"]
-    sample_ok = sum(1 for record in sample_rows if record.get("status", "ok") == "ok")
-    sample_total = len(sample_rows)
+    sample_keys = {
+        (
+            record.get("source"),
+            record.get("case") or record.get("instance_id") or record.get("instance"),
+            record.get("boundary"),
+        )
+        for record in sample_rows
+    }
+    sample_ok_keys = {
+        (
+            record.get("source"),
+            record.get("case") or record.get("instance_id") or record.get("instance"),
+            record.get("boundary"),
+        )
+        for record in sample_rows
+        if record.get("status", "ok") == "ok"
+    }
+    sample_ok = len(sample_ok_keys)
+    sample_total = len(sample_keys)
     print("## Current Takeaway\n", file=file)
     if best_parts:
         print("Best current internal configurations by tier: " + "; ".join(best_parts) + ".", file=file)
     if sample_total:
         all_solved = sample_ok == sample_total
         suffix = (
-            "all solve under the current timeout cap"
+            "at least one internal non-WMC backend solves every sample row under the current timeout cap"
             if all_solved
-            else f"{sample_ok} / {sample_total} of its rows solve under the current timeout cap"
+            else f"{sample_ok} / {sample_total} sample rows are solved by at least one internal non-WMC backend under the current timeout cap"
         )
         print(
-            f"The 257-512 column is an exploratory stratified sample ({sample_total} rows), "
+            f"The 257-512 column is an exploratory stratified sample ({sample_total} case-boundary rows), "
             f"not the full tier; {suffix}.",
             file=file,
         )
