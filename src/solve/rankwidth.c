@@ -720,6 +720,15 @@ typedef struct rw_join_workspace {
   size_t cap_sigs;        /* max signatures per node */
 } rw_join_workspace_t;
 
+typedef struct rw_linear_table {
+  uint32_t *signatures;
+  uint64_t *counts; /* row-major: signatures[row] x residue */
+  uint32_t *slots;  /* signature -> row index, UINT32_MAX = empty */
+  size_t len;
+  size_t cap;
+  size_t slots_mask;
+} rw_linear_table_t;
+
 static bool join_workspace_alloc(size_t cap_sigs, uint32_t r, rw_join_workspace_t *ws,
                                  qsop_error_t *error) {
   const size_t cap_entries = cap_sigs * (size_t)r;
@@ -757,6 +766,186 @@ static void join_workspace_free(rw_join_workspace_t *ws) {
   free(ws->right_starts);
   free(ws->right_ends);
   *ws = (rw_join_workspace_t){0};
+}
+
+static void linear_table_free(rw_linear_table_t *table) {
+  if (table == NULL) {
+    return;
+  }
+  free(table->signatures);
+  free(table->counts);
+  free(table->slots);
+  *table = (rw_linear_table_t){0};
+}
+
+static bool linear_table_reserve(rw_linear_table_t *table, size_t needed, uint32_t r,
+                                 qsop_error_t *error) {
+  if (needed <= table->cap) {
+    return true;
+  }
+  size_t new_cap = table->cap == 0 ? 8U : table->cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "rankwidth linear table is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  if (r != 0 && new_cap > SIZE_MAX / r / sizeof(uint64_t)) {
+    set_error(error, "rankwidth linear table is too large");
+    return false;
+  }
+  uint32_t *signatures = malloc(new_cap * sizeof(*signatures));
+  uint64_t *counts = calloc(new_cap * (size_t)r, sizeof(*counts));
+  if (signatures == NULL || counts == NULL) {
+    free(signatures);
+    free(counts);
+    set_error(error, "out of memory while growing rankwidth linear table");
+    return false;
+  }
+  if (table->signatures != NULL && table->len != 0) {
+    memcpy(signatures, table->signatures, table->len * sizeof(*signatures));
+  }
+  if (table->counts != NULL && table->len != 0) {
+    memcpy(counts, table->counts, table->len * (size_t)r * sizeof(*counts));
+  }
+  free(table->signatures);
+  free(table->counts);
+  table->signatures = signatures;
+  table->counts = counts;
+  table->cap = new_cap;
+  return true;
+}
+
+static bool linear_table_rehash(rw_linear_table_t *table, qsop_error_t *error) {
+  size_t new_cap = table->slots_mask != 0 ? (table->slots_mask + 1U) * 2U : 16U;
+  const size_t need = (table->len + 1U) * 2U;
+  while (new_cap < need) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "rankwidth linear signature index is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  uint32_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    set_error(error, "out of memory while growing rankwidth linear signature index");
+    return false;
+  }
+  memset(slots, 0xFF, new_cap * sizeof(*slots));
+  const size_t mask = new_cap - 1U;
+  for (size_t i = 0; i < table->len; i++) {
+    size_t slot = rep_hash(table->signatures[i]) & mask;
+    while (slots[slot] != UINT32_MAX) {
+      slot = (slot + 1U) & mask;
+    }
+    slots[slot] = (uint32_t)i;
+  }
+  free(table->slots);
+  table->slots = slots;
+  table->slots_mask = mask;
+  return true;
+}
+
+static void linear_table_clear(rw_linear_table_t *table, uint32_t r) {
+  if (table == NULL) {
+    return;
+  }
+  if (table->counts != NULL && table->len != 0) {
+    memset(table->counts, 0, table->len * (size_t)r * sizeof(*table->counts));
+  }
+  table->len = 0;
+  if (table->slots != NULL) {
+    memset(table->slots, 0xFF, (table->slots_mask + 1U) * sizeof(*table->slots));
+  }
+}
+
+static bool linear_table_signature_index(rw_linear_table_t *table, uint32_t signature,
+                                         uint32_t r, size_t *out, qsop_error_t *error) {
+  if (table->slots == NULL || (table->len + 1U) * 2U > (table->slots_mask + 1U)) {
+    if (!linear_table_rehash(table, error)) {
+      return false;
+    }
+  }
+  const size_t mask = table->slots_mask;
+  size_t slot = rep_hash(signature) & mask;
+  while (table->slots[slot] != UINT32_MAX) {
+    const uint32_t index = table->slots[slot];
+    if (table->signatures[index] == signature) {
+      *out = index;
+      return true;
+    }
+    slot = (slot + 1U) & mask;
+  }
+  if (table->len > UINT32_MAX) {
+    set_error(error, "rankwidth linear table exceeds uint32 rows");
+    return false;
+  }
+  if (!linear_table_reserve(table, table->len + 1U, r, error)) {
+    return false;
+  }
+  table->signatures[table->len] = signature;
+  memset(&table->counts[table->len * (size_t)r], 0, (size_t)r * sizeof(*table->counts));
+  table->slots[slot] = (uint32_t)table->len;
+  *out = table->len++;
+  return true;
+}
+
+static bool linear_table_add(uint64_t *dst, uint64_t value, uint64_t modulus,
+                             qsop_error_t *error) {
+  if (value == 0) {
+    return true;
+  }
+  if (modulus != 0) {
+    *dst = qsop_mod_add_u64(*dst, value, modulus);
+    return true;
+  }
+  return qsop_count_add(dst, value, error);
+}
+
+static uint64_t linear_table_nonzero_entries(const rw_linear_table_t *table, uint32_t r) {
+  uint64_t count = 0;
+  for (size_t i = 0; i < table->len; i++) {
+    const uint64_t *row = &table->counts[i * (size_t)r];
+    for (uint32_t residue = 0; residue < r; residue++) {
+      count += row[residue] != 0;
+    }
+  }
+  return count;
+}
+
+static bool extract_left_deep_order(const qsop_rankwidth_decomposition_t *decomposition,
+                                    uint32_t *order) {
+  if (decomposition == NULL || order == NULL) {
+    return false;
+  }
+  if (decomposition->nvars == 0) {
+    return true;
+  }
+  uint32_t pos = decomposition->nvars;
+  uint32_t node = decomposition->root;
+  for (;;) {
+    if (node >= decomposition->nnodes) {
+      return false;
+    }
+    const rw_node_t *entry = &decomposition->nodes[node];
+    if (entry->kind == RW_NODE_LEAF) {
+      if (pos != 1U) {
+        return false;
+      }
+      order[0] = entry->var;
+      return true;
+    }
+    if (entry->kind != RW_NODE_JOIN || entry->right >= decomposition->nnodes) {
+      return false;
+    }
+    const rw_node_t *right = &decomposition->nodes[entry->right];
+    if (right->kind != RW_NODE_LEAF || pos == 0) {
+      return false;
+    }
+    order[--pos] = right->var;
+    node = entry->left;
+  }
 }
 
 static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words,
@@ -2814,6 +3003,265 @@ static void rankwidth_fill_all_vars(uint64_t *bits, uint32_t nvars, size_t words
   }
 }
 
+static bool solve_rankwidth_linear_count_table_mod_once(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, const uint32_t *order, uint64_t count_modulus, uint64_t *counts,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (count_modulus == 0 && qsop->nvars >= 64U) {
+    set_error(error, "rankwidth exact linear count-table handoff requires fewer than 64 variables");
+    return false;
+  }
+
+  const uint32_t r = qsop->r;
+  const uint32_t sign = r / 2U;
+  const size_t words = decomposition->words;
+  const size_t w = words == 0 ? 1U : words;
+  rw_signature_pool_t pool = {0};
+  rw_linear_table_t current = {0};
+  rw_linear_table_t next = {0};
+  uint64_t *suffix = calloc(w, sizeof(*suffix));
+  uint64_t *zero_bits = calloc(w, sizeof(*zero_bits));
+  uint64_t *one_bits = calloc(w, sizeof(*one_bits));
+  bool ok = false;
+  if (suffix == NULL || zero_bits == NULL || one_bits == NULL ||
+      !signature_pool_init(&pool, words, error)) {
+    set_error(error, "out of memory while allocating rankwidth linear DP state");
+    goto cleanup;
+  }
+
+  uint32_t zero_signature = 0;
+  size_t zero_row = 0;
+  if (!signature_pool_intern(&pool, zero_bits, &zero_signature, error) ||
+      !linear_table_signature_index(&current, zero_signature, r, &zero_row, error)) {
+    goto cleanup;
+  }
+  current.counts[zero_row * (size_t)r] = count_modulus == 0 ? 1U : 1U % count_modulus;
+
+  rankwidth_fill_all_vars(suffix, qsop->nvars, words);
+  uint64_t table_entries = 0;
+  uint64_t signature_entries = 0;
+  uint64_t max_table_entries = 0;
+  uint64_t max_signature_entries = 0;
+  uint64_t value_transitions = 0;
+  uint64_t signature_transitions = 0;
+  const uint64_t start = qsop_trace_begin(trace);
+
+  for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
+    const uint32_t v = order[pos];
+    qsop_bitset_clear(suffix, v);
+    linear_table_clear(&next, r);
+
+    for (size_t row = 0; row < current.len; row++) {
+      const uint32_t signature = current.signatures[row];
+      const uint64_t *sig_bits = signature_bits(&pool, signature);
+      const bool incoming_odd = qsop_bitset_get(sig_bits, v);
+
+      qsop_bitset_copy(zero_bits, sig_bits, words);
+      qsop_bitset_and(zero_bits, suffix, words);
+
+      qsop_bitset_copy(one_bits, zero_bits, words);
+      const uint64_t *neighbors = qsop_bitset_const_row(adj, words, v);
+      for (size_t word = 0; word < words; word++) {
+        one_bits[word] ^= neighbors[word] & suffix[word];
+      }
+
+      uint32_t zero_sig = 0;
+      uint32_t one_sig = 0;
+      size_t zero_idx = 0;
+      size_t one_idx = 0;
+      if (!signature_pool_intern(&pool, zero_bits, &zero_sig, error) ||
+          !signature_pool_intern(&pool, one_bits, &one_sig, error) ||
+          !linear_table_signature_index(&next, zero_sig, r, &zero_idx, error) ||
+          !linear_table_signature_index(&next, one_sig, r, &one_idx, error)) {
+        goto cleanup;
+      }
+      signature_transitions += 2U;
+
+      const uint32_t select_shift =
+          (uint32_t)(((uint64_t)(qsop->unary[v] % r) +
+                      (incoming_odd ? (uint64_t)sign : 0U)) %
+                     r);
+      const uint64_t *src = &current.counts[row * (size_t)r];
+      uint64_t *zero_dst = &next.counts[zero_idx * (size_t)r];
+      uint64_t *one_dst = &next.counts[one_idx * (size_t)r];
+      for (uint32_t residue = 0; residue < r; residue++) {
+        const uint64_t value = src[residue];
+        if (value == 0) {
+          continue;
+        }
+        if (!linear_table_add(&zero_dst[residue], value, count_modulus, error)) {
+          goto cleanup;
+        }
+        uint32_t shifted = residue + select_shift;
+        if (shifted >= r) {
+          shifted -= r;
+        }
+        if (!linear_table_add(&one_dst[shifted], value, count_modulus, error)) {
+          goto cleanup;
+        }
+        value_transitions += 2U;
+      }
+    }
+
+    rw_linear_table_t tmp = current;
+    current = next;
+    next = tmp;
+
+    const uint64_t step_entries = linear_table_nonzero_entries(&current, r);
+    table_entries = saturating_add_u64(table_entries, step_entries);
+    signature_entries = saturating_add_u64(signature_entries, current.len);
+    if (step_entries > max_table_entries) {
+      max_table_entries = step_entries;
+    }
+    if (current.len > max_signature_entries) {
+      max_signature_entries = current.len;
+    }
+  }
+
+  qsop_counts_clear(r, counts);
+  for (size_t row = 0; row < current.len; row++) {
+    const uint64_t *sig_bits = signature_bits(&pool, current.signatures[row]);
+    if (!qsop_bitset_empty(sig_bits, words)) {
+      continue;
+    }
+    const uint64_t *src = &current.counts[row * (size_t)r];
+    for (uint32_t residue = 0; residue < r; residue++) {
+      if (src[residue] == 0) {
+        continue;
+      }
+      uint32_t shifted = residue + (qsop->constant % r);
+      if (shifted >= r) {
+        shifted -= r;
+      }
+      if (!linear_table_add(&counts[shifted], src[residue], count_modulus, error)) {
+        goto cleanup;
+      }
+    }
+  }
+
+  qsop_trace_emit_elapsed(trace, "rankwidth.linear_dp", 0, value_transitions, start);
+  if (stats != NULL) {
+    stats->table_entries = table_entries;
+    stats->max_table_entries = max_table_entries;
+    stats->signature_entries = signature_entries;
+    stats->max_signature_entries = max_signature_entries;
+    stats->join_pairs = value_transitions;
+    stats->join_signature_pairs = signature_transitions;
+    stats->rankwidth_linear_transition_events = value_transitions;
+    stats->rankwidth_table_assignment_bytes = 0;
+    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    if (stats->decomposition_width == UINT32_MAX) {
+      goto cleanup;
+    }
+  }
+
+  ok = true;
+
+cleanup:
+  free(suffix);
+  free(zero_bits);
+  free(one_bits);
+  linear_table_free(&current);
+  linear_table_free(&next);
+  signature_pool_free(&pool);
+  return ok;
+}
+
+static bool solve_rankwidth_linear_count_table_crt(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, const uint32_t *order, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint64_t *primes = NULL;
+  uint64_t *all_counts = NULL;
+  uint64_t *residues = NULL;
+  qsop_result_t *result = NULL;
+  size_t nprimes = 0;
+  bool ok = false;
+  if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
+    return false;
+  }
+  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+    set_error(error, "rankwidth linear CRT count table is too large");
+    goto cleanup;
+  }
+  all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
+  result = calloc(1, sizeof(*result));
+  if (all_counts == NULL || residues == NULL || result == NULL) {
+    set_error(error, "out of memory for rankwidth linear CRT state");
+    goto cleanup;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    set_error(error, "out of memory for rankwidth linear CRT result strings");
+    goto cleanup;
+  }
+
+  ok = true;
+  for (size_t p = 0; p < nprimes; p++) {
+    qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
+    qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
+    if (!solve_rankwidth_linear_count_table_mod_once(
+            qsop, decomposition, adj, order, primes[p], &all_counts[p * (size_t)qsop->r],
+            stats_for_prime, trace_for_prime, error)) {
+      ok = false;
+      break;
+    }
+  }
+  if (!ok) {
+    goto cleanup;
+  }
+
+  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (size_t p = 0; p < nprimes; p++) {
+      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+    }
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
+                                      &result->count_strings[residue], error)) {
+      ok = false;
+      goto cleanup;
+    }
+  }
+
+  *out = result;
+  result = NULL;
+
+cleanup:
+  free(primes);
+  free(all_counts);
+  free(residues);
+  qsop_result_free(result);
+  return ok;
+}
+
+static bool solve_rankwidth_linear_count_table(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, const uint32_t *order, qsop_result_t **out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop->nvars >= 64U) {
+    return solve_rankwidth_linear_count_table_crt(qsop, decomposition, adj, order, out, stats,
+                                                  trace, error);
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    qsop_result_free(result);
+    set_error(error, "out of memory while allocating rankwidth linear result");
+    return false;
+  }
+  result->r = qsop->r;
+  result->norm_h = qsop->norm_h;
+  if (!solve_rankwidth_linear_count_table_mod_once(qsop, decomposition, adj, order, 0,
+                                                   result->counts, stats, trace, error)) {
+    qsop_result_free(result);
+    return false;
+  }
+  *out = result;
+  return true;
+}
+
 /* D2.1: Pure transition helper for sign-edge joins.
  * outside must be precomputed as (all_node_vars AND NOT node_vars[node_id]).
  * scratch_sig must be a caller-provided buffer of `words` uint64_t values (overwritten).
@@ -4186,6 +4634,20 @@ static bool solve_rankwidth_count_table_mod_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t modulus, uint64_t *counts, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
+  uint32_t *linear_order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars,
+                                  sizeof(*linear_order));
+  if (linear_order == NULL) {
+    set_error(error, "out of memory while allocating rankwidth linear order");
+    return false;
+  }
+  if (extract_left_deep_order(decomposition, linear_order)) {
+    const bool ok = solve_rankwidth_linear_count_table_mod_once(
+        qsop, decomposition, adj, linear_order, modulus, counts, stats, trace, error);
+    free(linear_order);
+    return ok;
+  }
+  free(linear_order);
+
   rw_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
   rw_signature_pool_t pool = {0};
@@ -4549,6 +5011,7 @@ static void rankwidth_no_edges_stats(const qsop_instance_t *qsop, qsop_solve_sta
   stats->rankwidth_streaming_join_events = 0;
   stats->rankwidth_streaming_join_candidate_pairs = 0;
   stats->rankwidth_streaming_join_emitted_pairs = 0;
+  stats->rankwidth_linear_transition_events = 0;
   stats->rankwidth_table_assignment_bytes = 0;
   stats->decomposition_width = 0;
   stats->rankwidth_cutrank_width = 0;
@@ -4746,6 +5209,21 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     (void)join_strategy;
     (void)materialize_join_max_pairs;
     return solve_rankwidth_no_edges_count_table(qsop, out, stats, trace, error);
+  }
+  if (join_strategy == QSOP_RANKWIDTH_JOIN_AUTO) {
+    uint32_t *linear_order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars,
+                                    sizeof(*linear_order));
+    if (linear_order == NULL) {
+      set_error(error, "out of memory while allocating rankwidth linear order");
+      return false;
+    }
+    if (extract_left_deep_order(decomposition, linear_order)) {
+      const bool ok = solve_rankwidth_linear_count_table(qsop, decomposition, adj, linear_order,
+                                                         out, stats, trace, error);
+      free(linear_order);
+      return ok;
+    }
+    free(linear_order);
   }
   if (qsop->nvars >= 64U) {
     return solve_rankwidth_count_table_crt(qsop, decomposition, adj, out, stats, trace, error);
@@ -4981,6 +5459,7 @@ static void rankwidth_constant_stats(const qsop_instance_t *qsop, qsop_solve_sta
   stats->rankwidth_join_pair_forecast = 0;
   stats->rankwidth_dense_table_forecast = qsop->r;
   stats->rankwidth_dense_even_join_forecast = 0;
+  stats->rankwidth_linear_transition_events = 0;
   stats->decomposition_width = 0;
   stats->rankwidth_cutrank_width = 0;
   (void)qsop;

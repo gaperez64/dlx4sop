@@ -165,6 +165,7 @@ MQT_DEFAULT_BACKENDS = [
     "branch:auto",
     "branch:no-rankwidth",
     "branch:from-treewidth",
+    "rankwidth:linear",
     "rankwidth:from-treewidth",
     "rankwidth:best",
 ]

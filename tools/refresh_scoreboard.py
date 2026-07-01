@@ -49,6 +49,7 @@ NATIVE_TIERS = ("0-32", "33-64", "65-128", "129-256")
 DEFAULT_SOLVER_ARTIFACTS = (
     ("0-32", "dlx4sop-tier-0-32-treewidth-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-rankwidth-current.jsonl"),
+    ("0-32", "dlx4sop-tier-0-32-rankwidth-linear-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-branch-hybrid-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-wmc-amplitude-current.jsonl"),
     ("0-32", "dlx4sop-tier-0-32-wmc-amp-soft-current.jsonl"),
@@ -58,6 +59,7 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("33-64", "dlx4sop-tier-33-64-treewidth-fresh.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-branch-hybrid-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-rankwidth-min-fill-cut-current.jsonl"),
+    ("33-64", "dlx4sop-tier-33-64-rankwidth-linear-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-amplitude-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-amp-soft-current.jsonl"),
     ("33-64", "dlx4sop-tier-33-64-wmc-amp-block-current.jsonl"),
@@ -66,26 +68,31 @@ DEFAULT_SOLVER_ARTIFACTS = (
     ("65-128", "dlx4sop-tier-65-128-treewidth-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-branch-hybrid-fresh.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-rankwidth-min-fill-cut-current.jsonl"),
+    ("65-128", "dlx4sop-tier-65-128-rankwidth-linear-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-wmc-amplitude-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-wmc-amp-soft-current.jsonl"),
     ("65-128", "dlx4sop-tier-65-128-wmc-amp-block-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-branch-hybrid-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-treewidth-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-rankwidth-min-fill-cut-current.jsonl"),
+    ("129-256", "dlx4sop-tier-129-256-rankwidth-linear-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-wmc-amplitude-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-wmc-amp-soft-current.jsonl"),
     ("129-256", "dlx4sop-tier-129-256-wmc-amp-block-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-treewidth-current.jsonl"),
+    ("257-512 sample", "dlx4sop-tier-257-512-sample-rankwidth-linear-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amplitude-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amp-soft-current.jsonl"),
     ("257-512 sample", "dlx4sop-tier-257-512-sample-wmc-amp-block-current.jsonl"),
     # MQT Bench materialized corpus (tiers 33-64 and 65-128, GHZ/BV/QFT families)
     ("33-64", "mqt-bench-tier-33-64-treewidth-current.jsonl"),
     ("33-64", "mqt-bench-tier-33-64-branch-hybrid-current.jsonl"),
+    ("33-64", "mqt-bench-tier-33-64-rankwidth-linear-current.jsonl"),
     ("33-64", "mqt-bench-tier-33-64-rankwidth-from-treewidth-current.jsonl"),
     ("33-64", "mqt-bench-tier-33-64-rankwidth-best-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-treewidth-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-branch-hybrid-current.jsonl"),
+    ("65-128", "mqt-bench-tier-65-128-rankwidth-linear-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-rankwidth-from-treewidth-current.jsonl"),
     ("65-128", "mqt-bench-tier-65-128-rankwidth-best-current.jsonl"),
 )
@@ -288,6 +295,10 @@ def public_key_stats(stats: dict[str, int]) -> str:
         parts.append(f"max signatures {format_count(signatures)}")
     if "join_pairs" in stats:
         parts.append(f"{format_count(stats['join_pairs'])} join pairs")
+    if "rankwidth_linear_transition_events" in stats:
+        parts.append(
+            f"{format_count(stats['rankwidth_linear_transition_events'])} linear transitions"
+        )
     kernel_text = rankwidth_kernel_text(stats, format_count)
     if kernel_text:
         parts.append(f"rankwidth kernels {kernel_text}")
@@ -787,10 +798,20 @@ def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str,
                                      "solve_elapsed_ns", "solve_ms")
         br = _scaling_largest_solved(artifact_dir, "scaling-branch-current.jsonl",
                                      "solve_elapsed_ns", "solve_ms")
+        rw_linear = _scaling_largest_solved(artifact_dir, "scaling-rankwidth-linear-current.jsonl",
+                                            "solve_elapsed_ns", "solve_ms")
         gk = _scaling_largest_solved(artifact_dir, "scaling-wmc-current.jsonl",
                                      "wmc_ganak_elapsed_ns", "ganak_ms")
-        parts = [f"{lbl} {v}q" for lbl, v in (("branch", br), ("treewidth", tw), ("ganak", gk))
-                 if v is not None]
+        parts = [
+            f"{lbl} {v}q"
+            for lbl, v in (
+                ("branch", br),
+                ("treewidth", tw),
+                ("rankwidth:linear", rw_linear),
+                ("ganak", gk),
+            )
+            if v is not None
+        ]
         if parts:
             caption += (" Largest size solved under the current cap: "
                         + ", ".join(parts) + ".")

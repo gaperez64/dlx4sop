@@ -45,6 +45,7 @@ SOLVER_COLORS: dict[str, str] = {
     "branch:auto":       "#ff7f0e",
     "branch:no-rankwidth": "#2ca02c",
     "branch:from-treewidth": "#d62728",
+    "rankwidth:linear": "#17becf",
     "rankwidth:from-treewidth": "#9467bd",
     "rankwidth:best":    "#8c564b",
     "best Ganak":        "#e377c2",
@@ -208,7 +209,13 @@ def _canonical_backend(rec: dict) -> str:
         }
         return mapping.get(rw_source, "branch:auto")
     if backend == "rankwidth":
+        generator = str(rec.get("rankwidth_decomposition") or "")
+        mode = str(rec.get("rankwidth_mode") or "count-table")
+        if generator == "min-fill-search" and mode == "count-table":
+            return "rankwidth:linear"
         return "rankwidth:best"
+    if isinstance(backend, str) and backend.startswith("rankwidth:"):
+        return backend
     engine = rec.get("engine", "")
     if engine and not backend:
         return f"native:{engine}"
@@ -357,7 +364,7 @@ def plot_survival_svg(
     tiers: set[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["treewidth", "branch:auto", "rankwidth:best", "best native"]
+        backends = ["treewidth", "branch:auto", "rankwidth:linear", "rankwidth:best", "best native"]
 
     curves = _survival_curves(records, source, backends, tiers=tiers)
     if not curves:
@@ -446,7 +453,7 @@ def plot_solver_time_by_tier_svg(
     backends: list[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["treewidth", "branch:auto", "rankwidth:best"]
+        backends = ["treewidth", "branch:auto", "rankwidth:linear", "rankwidth:best"]
 
     # Aggregate: {tier: {backend: total_ns}}
     import re
@@ -544,7 +551,7 @@ def plot_speedup_vs_treewidth_svg(
     backends: list[str] | None = None,
 ) -> None:
     if backends is None:
-        backends = ["branch:auto", "rankwidth:best"]
+        backends = ["branch:auto", "rankwidth:linear", "rankwidth:best"]
 
     import re
     # Aggregate per tier
@@ -878,6 +885,8 @@ def plot_wmc_vs_solver_scaling_svg(
             artifact_dir / "scaling-treewidth-current.jsonl", "solve_elapsed_ns", "solve_ms")),
         "branch": ("#2ca02c", _scaling_series(
             artifact_dir / "scaling-branch-current.jsonl", "solve_elapsed_ns", "solve_ms")),
+        "rankwidth:linear": ("#17becf", _scaling_series(
+            artifact_dir / "scaling-rankwidth-linear-current.jsonl", "solve_elapsed_ns", "solve_ms")),
         "ganak (WMC)": ("#d62728", _scaling_series(
             artifact_dir / "scaling-wmc-current.jsonl", "wmc_ganak_elapsed_ns", "ganak_ms")),
     }
