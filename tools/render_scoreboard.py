@@ -131,9 +131,13 @@ def solver_config(record: dict) -> str:
     if backend == "branch":
         return f"branch --branch-heuristic {record.get('branch_heuristic') or 'split'}{solve_mode_suffix}"
     if backend == "rankwidth":
+        generator = record.get("rankwidth_decomposition") or "left-deep"
+        mode = record.get("rankwidth_mode") or "count-table"
+        if generator == "min-fill-search" and mode == "count-table":
+            return "rankwidth:linear"
         return (
-            f"rankwidth --rankwidth-generate {record.get('rankwidth_decomposition') or 'left-deep'} "
-            f"--rankwidth-mode {record.get('rankwidth_mode') or 'count-table'}"
+            f"rankwidth --rankwidth-generate {generator} "
+            f"--rankwidth-mode {mode}"
         )
     if backend == "treewidth":
         return f"treewidth --treewidth-order {record.get('treewidth_order') or 'min-fill'}{solve_mode_suffix}"
@@ -349,6 +353,7 @@ def summarize_solver_records(named_records: Iterable[tuple[str, list[dict]]]) ->
                 "branch_treewidth_order_probe_elapsed_ns",
                 "branch_root_width_probe_events",
                 "branch_root_width_probe_elapsed_ns",
+                "rankwidth_linear_transition_events",
                 *COMPONENT_KERNEL_SUM_FIELDS,
                 *RANKWIDTH_KERNEL_SUM_FIELDS,
                 *BRANCH_SKIP_REASON_FIELDS,

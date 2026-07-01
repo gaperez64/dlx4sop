@@ -652,6 +652,7 @@ if python3.found()
       '--sop-solve', sop_solve.full_path(),
       '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'rankwidth',
       '--tier', 'tier-rankwidth',
+      '--backend', 'rankwidth:linear',
       '--backend', 'rankwidth:best',
       '--backend', 'rankwidth:best:fourier',
       '--timeout', '5',

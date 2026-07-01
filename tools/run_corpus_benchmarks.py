@@ -67,6 +67,12 @@ TIER_MAX_VARS = {
     "257-512 sample": 512,
 }
 
+RANKWIDTH_LINEAR_ARGS = [
+    "--backend", "rankwidth",
+    "--rankwidth-generate", "min-fill-search",
+    "--rankwidth-mode", "count-table",
+]
+
 # Map tier → list of (output_stem, bench_qasm_corpus.py extra args)
 SOLVER_JOBS: dict[str, list[tuple[str, list[str]]]] = {
     "0-32": [
@@ -76,6 +82,7 @@ SOLVER_JOBS: dict[str, list[tuple[str, list[str]]]] = {
         ("dlx4sop-tier-0-32-rankwidth-current", [
             "--backend", "rankwidth",
         ]),
+        ("dlx4sop-tier-0-32-rankwidth-linear-current", RANKWIDTH_LINEAR_ARGS),
         ("dlx4sop-tier-0-32-branch-hybrid-current", [
             "--backend", "branch", "--branch-heuristic", "split",
         ]),
@@ -92,6 +99,7 @@ SOLVER_JOBS: dict[str, list[tuple[str, list[str]]]] = {
             "--rankwidth-generate", "min-fill-cut",
             "--rankwidth-mode", "count-table",
         ]),
+        ("dlx4sop-tier-33-64-rankwidth-linear-current", RANKWIDTH_LINEAR_ARGS),
     ],
     "65-128": [
         ("dlx4sop-tier-65-128-treewidth-fresh", [
@@ -105,6 +113,7 @@ SOLVER_JOBS: dict[str, list[tuple[str, list[str]]]] = {
             "--rankwidth-generate", "min-fill-cut",
             "--rankwidth-mode", "count-table",
         ]),
+        ("dlx4sop-tier-65-128-rankwidth-linear-current", RANKWIDTH_LINEAR_ARGS),
     ],
     "129-256": [
         ("dlx4sop-tier-129-256-treewidth-current", [
@@ -118,11 +127,13 @@ SOLVER_JOBS: dict[str, list[tuple[str, list[str]]]] = {
             "--rankwidth-generate", "min-fill-cut",
             "--rankwidth-mode", "count-table",
         ]),
+        ("dlx4sop-tier-129-256-rankwidth-linear-current", RANKWIDTH_LINEAR_ARGS),
     ],
     "257-512 sample": [
         ("dlx4sop-tier-257-512-sample-treewidth-current", [
             "--backend", "treewidth", "--treewidth-order", "min-fill-max-degree",
         ]),
+        ("dlx4sop-tier-257-512-sample-rankwidth-linear-current", RANKWIDTH_LINEAR_ARGS),
     ],
 }
 
@@ -340,6 +351,7 @@ def run_mqt_solver_jobs(
     mqt_jobs = [
         ("treewidth", ["--backend", "treewidth"]),
         ("branch-hybrid", ["--backend", "branch:auto"]),
+        ("rankwidth-linear", ["--backend", "rankwidth:linear"]),
         ("rankwidth-from-treewidth", ["--backend", "rankwidth:from-treewidth"]),
         ("rankwidth-best", ["--backend", "rankwidth:best"]),
     ]
@@ -427,7 +439,11 @@ def run_scaling_study(args: argparse.Namespace, artifact_dir: pathlib.Path) -> N
         return
     timeout = str(args.scaling_timeout)
     sop_local = TOOLS_DIR / "bench_sop_local.py"
-    for backend_arg, label in (("treewidth", "treewidth"), ("branch:auto", "branch")):
+    for backend_arg, label in (
+        ("treewidth", "treewidth"),
+        ("branch:auto", "branch"),
+        ("rankwidth:linear", "rankwidth-linear"),
+    ):
         output = artifact_dir / f"scaling-{label}-current.jsonl"
         cmd = [
             sys.executable, str(sop_local),
@@ -478,6 +494,7 @@ def run_rankwidth_separation_study(args: argparse.Namespace, artifact_dir: pathl
         "--corpus-dir", str(RANKWIDTH_CORPUS),
         "--tier", "tier-rankwidth",
         "--backend", "treewidth",
+        "--backend", "rankwidth:linear",
         "--backend", "rankwidth:from-treewidth",
         "--backend", "rankwidth:best",
         "--backend", "rankwidth:from-treewidth:fourier",

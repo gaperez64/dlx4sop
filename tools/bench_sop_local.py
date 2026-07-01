@@ -17,7 +17,7 @@ Usage:
 
 Backend variants:
     components, brute-force, treewidth
-    rankwidth:from-treewidth, rankwidth:best, rankwidth:validate
+    rankwidth:linear, rankwidth:from-treewidth, rankwidth:best, rankwidth:validate
     branch:auto, branch:native, branch:from-treewidth, branch:no-rankwidth
 """
 
@@ -77,6 +77,12 @@ BACKEND_CONFIGS: dict[str, list[str]] = {
     "rankwidth:best": [
         "--backend", "rankwidth",
         "--rankwidth-generate", "best",
+        "--max-vars", "256",
+    ],
+    "rankwidth:linear": [
+        "--backend", "rankwidth",
+        "--rankwidth-generate", "min-fill-search",
+        "--rankwidth-mode", "count-table",
         "--max-vars", "256",
     ],
     "rankwidth:from-treewidth:fourier": [
@@ -139,6 +145,7 @@ BACKEND_MAX_VARS: dict[str, int] = {
     "brute-force":        22,
     "treewidth":         256,
     "rankwidth":         256,  # family fallback
+    "rankwidth:linear":  256,
     "rankwidth:from-treewidth": 256,
     "rankwidth:best":    256,
     "rankwidth:from-treewidth:fourier": 256,
@@ -155,6 +162,7 @@ BACKEND_MAX_VARS: dict[str, int] = {
 
 DEFAULT_BACKENDS = [
     "treewidth",
+    "rankwidth:linear",
     "rankwidth:from-treewidth",
     "rankwidth:best",
     "branch:from-treewidth",
@@ -395,6 +403,7 @@ def backend_stat_aliases(stats: dict[str, int | str]) -> dict[str, int | str]:
         "max_signature_entries",
         "join_pairs",
         "join_signature_pairs",
+        "rankwidth_linear_transition_events",
     ):
         value = stats.get(key)
         if isinstance(value, int):

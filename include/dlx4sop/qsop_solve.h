@@ -53,6 +53,7 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_streaming_join_events;
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
+  uint64_t rankwidth_linear_transition_events;
   uint64_t rankwidth_table_assignment_bytes;
   uint32_t rankwidth_fourier_kernel;
 

@@ -34,6 +34,7 @@ VARIANTS = [
     "branch:no-rankwidth",
     "branch:from-treewidth",
     "branch:native",
+    "rankwidth:linear",
     "rankwidth:from-treewidth",
     "rankwidth:best",
 ]

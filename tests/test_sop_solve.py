@@ -365,6 +365,29 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     if signed.returncode != 0 or signed.stdout != signed_expected:
         raise AssertionError(f"large signed rankwidth CRT solve failed\n{signed.stdout}\n{signed.stderr}")
 
+    signed_materialized = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--max-vars",
+            "64",
+            "--rankwidth-join-strategy",
+            "materialized",
+            "-",
+        ],
+        input=signed_qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if signed_materialized.returncode != 0 or signed_materialized.stdout != signed_expected:
+        raise AssertionError(
+            f"large signed rankwidth materialized CRT solve failed\n"
+            f"{signed_materialized.stdout}\n{signed_materialized.stderr}"
+        )
+
     signed_branch = subprocess.run(
         [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
         input=signed_qsop,
@@ -1200,6 +1223,24 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         "--rankwidth-decomposition",
         str(decomposition),
     )
+    assert_rankwidth_matches(
+        exe,
+        qsop,
+        expected.stdout,
+        "--rankwidth-decomposition",
+        str(decomposition),
+        "--rankwidth-join-strategy",
+        "materialized",
+    )
+    assert_rankwidth_matches(
+        exe,
+        qsop,
+        expected.stdout,
+        "--rankwidth-decomposition",
+        str(decomposition),
+        "--rankwidth-join-strategy",
+        "streaming",
+    )
     assert_rankwidth_matches(exe, qsop, expected.stdout)
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "balanced")
     assert_rankwidth_matches(exe, qsop, expected.stdout, "--rankwidth-generate", "min-fill")
@@ -1284,6 +1325,7 @@ u 3 4
         "join_signature_pairs:",
         "rankwidth_table_forecast:",
         "rankwidth_join_pair_forecast:",
+        "rankwidth_linear_transition_events:",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"rankwidth stats failed\n{stats.stdout}\n{stats.stderr}")
@@ -1395,9 +1437,8 @@ u 3 4
     )
     if (
         traced.returncode != 0
-        or "rankwidth.leaf" not in traced.stderr
-        or "rankwidth.join_map" not in traced.stderr
-        or "rankwidth.join" not in traced.stderr
+        or "rankwidth.linear_dp" not in traced.stderr
+        or "rankwidth_linear_transition_events:" not in traced.stdout
     ):
         raise AssertionError(f"rankwidth trace failed\n{traced.stdout}\n{traced.stderr}")
 
@@ -1545,6 +1586,24 @@ u 3 4
         exe,
         signed,
         signed_expected.stdout,
+        "--rankwidth-decomposition",
+        str(signed_decomposition),
+        "--rankwidth-join-strategy",
+        "materialized",
+    )
+    assert_rankwidth_matches(
+        exe,
+        signed,
+        signed_expected.stdout,
+        "--rankwidth-decomposition",
+        str(signed_decomposition),
+        "--rankwidth-join-strategy",
+        "streaming",
+    )
+    assert_rankwidth_matches(
+        exe,
+        signed,
+        signed_expected.stdout,
         "--rankwidth-mode",
         "fourier",
         "--rankwidth-decomposition",
@@ -1575,7 +1634,7 @@ u 3 4
         or "rankwidth_mode: count-table" not in signed_stats.stdout
         or "decomposition_width: 1" not in signed_stats.stdout
         or "rankwidth_cutrank_width: 1" not in signed_stats.stdout
-        or "join_signature_pairs: 4" not in signed_stats.stdout
+        or "rankwidth_linear_transition_events: 6" not in signed_stats.stdout
     ):
         raise AssertionError(f"signed rankwidth stats failed\n{signed_stats.stdout}\n{signed_stats.stderr}")
 
@@ -1694,11 +1753,139 @@ u 3 4
     )
     if (
         signed_trace.returncode != 0
-        or "rankwidth.leaf" not in signed_trace.stderr
-        or "rankwidth.join_map" not in signed_trace.stderr
-        or "rankwidth.join" not in signed_trace.stderr
+        or "rankwidth.linear_dp" not in signed_trace.stderr
+        or "rankwidth_linear_transition_events: 6" not in signed_trace.stdout
     ):
         raise AssertionError(f"signed rankwidth trace failed\n{signed_trace.stdout}\n{signed_trace.stderr}")
+
+    high_signature_linear = """p qsop-sign 8 14 21
+n 0
+cst 0
+e 0 4
+e 0 8
+e 0 13
+e 1 4
+e 1 9
+e 2 3
+e 2 10
+e 2 13
+e 3 8
+e 3 11
+e 3 12
+e 4 5
+e 4 7
+e 4 11
+e 4 12
+e 5 7
+e 6 13
+e 7 8
+e 7 9
+e 7 13
+e 10 11
+"""
+    high_sig_expected = subprocess.run(
+        [str(exe), "--backend", "brute-force", "--max-vars", "16", "-"],
+        input=high_signature_linear,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    high_sig_rankwidth = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "left-deep",
+            "--max-vars",
+            "32",
+            "-",
+        ],
+        input=high_signature_linear,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        high_sig_expected.returncode != 0
+        or high_sig_rankwidth.returncode != 0
+        or high_sig_rankwidth.stdout != high_sig_expected.stdout
+    ):
+        raise AssertionError(
+            f"high-signature linear rankwidth mismatch\n"
+            f"rankwidth:\n{high_sig_rankwidth.stdout}\n{high_sig_rankwidth.stderr}\n"
+            f"brute force:\n{high_sig_expected.stdout}\n{high_sig_expected.stderr}"
+        )
+    high_sig_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "left-deep",
+            "--max-vars",
+            "32",
+            "-",
+        ],
+        input=high_signature_linear,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    parsed_high_sig = parse_solver_stats(high_sig_stats.stdout)
+    if (
+        high_sig_stats.returncode != 0
+        or parsed_high_sig.get("max_signature_entries", 0) <= 8
+        or parsed_high_sig.get("rankwidth_linear_transition_events", 0) == 0
+    ):
+        raise AssertionError(
+            f"high-signature linear rankwidth stats failed\n"
+            f"{high_sig_stats.stdout}\n{high_sig_stats.stderr}"
+        )
+
+    path70 = "p qsop-sign 8 70 69\nn 0\ncst 0\n" + "".join(
+        f"e {i} {i + 1}\n" for i in range(69)
+    )
+    path70_rankwidth = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "left-deep",
+            "--max-vars",
+            "128",
+            "-",
+        ],
+        input=path70,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    path70_treewidth = subprocess.run(
+        [str(exe), "--backend", "treewidth", "--max-vars", "128", "-"],
+        input=path70,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        path70_rankwidth.returncode != 0
+        or path70_treewidth.returncode != 0
+        or path70_rankwidth.stdout != path70_treewidth.stdout
+    ):
+        raise AssertionError(
+            f"linear rankwidth CRT path mismatch\n"
+            f"rankwidth:\n{path70_rankwidth.stdout}\n{path70_rankwidth.stderr}\n"
+            f"treewidth:\n{path70_treewidth.stdout}\n{path70_treewidth.stderr}"
+        )
 
     signed_fourier_trace = subprocess.run(
         [

@@ -132,6 +132,7 @@ def run_tests(sop_solve):
             "rankwidth_dense_even_join_forecast:",
             "rankwidth_materialized_join_events:",
             "rankwidth_streaming_join_events:",
+            "rankwidth_linear_transition_events:",
             "rankwidth_table_assignment_bytes:",
         ]
         for field in required:
