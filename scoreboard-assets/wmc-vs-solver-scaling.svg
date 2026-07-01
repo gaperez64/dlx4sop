@@ -33,6 +33,7 @@
 <rect x="144.0" y="238.6" width="4.0" height="4.0" fill="#2ca02c" opacity="1.00"/>
 <rect x="230.0" y="186.7" width="4.0" height="4.0" fill="#2ca02c" opacity="1.00"/>
 <text x="318.0" y="36.0" text-anchor="middle" fill="#2ca02c" font-size="13">×</text>
+<text x="60.0" y="36.0" text-anchor="middle" fill="#17becf" font-size="13">×</text>
 <polyline points="60.0,170.6 146.0,149.1 232.0,127.4 318.0,71.1 404.0,43.4" stroke="#d62728" stroke-width="2.0" fill="none"/>
 <rect x="58.0" y="168.6" width="4.0" height="4.0" fill="#d62728" opacity="1.00"/>
 <rect x="144.0" y="147.1" width="4.0" height="4.0" fill="#d62728" opacity="1.00"/>
@@ -44,8 +45,10 @@
 <text x="515.0" y="50.0" text-anchor="start" fill="#333" font-size="10">treewidth</text>
 <rect x="500.0" y="57.0" width="12.0" height="9.0" fill="#2ca02c" opacity="1.00"/>
 <text x="515.0" y="66.0" text-anchor="start" fill="#333" font-size="10">branch</text>
-<rect x="500.0" y="73.0" width="12.0" height="9.0" fill="#d62728" opacity="1.00"/>
-<text x="515.0" y="82.0" text-anchor="start" fill="#333" font-size="10">ganak (WMC)</text>
-<text x="500.0" y="102.0" text-anchor="start" fill="#666" font-size="9">× = first size</text>
-<text x="500.0" y="114.0" text-anchor="start" fill="#666" font-size="9">that times out</text>
+<rect x="500.0" y="73.0" width="12.0" height="9.0" fill="#17becf" opacity="1.00"/>
+<text x="515.0" y="82.0" text-anchor="start" fill="#333" font-size="10">rankwidth:linear</text>
+<rect x="500.0" y="89.0" width="12.0" height="9.0" fill="#d62728" opacity="1.00"/>
+<text x="515.0" y="98.0" text-anchor="start" fill="#333" font-size="10">ganak (WMC)</text>
+<text x="500.0" y="118.0" text-anchor="start" fill="#666" font-size="9">× = first size</text>
+<text x="500.0" y="130.0" text-anchor="start" fill="#666" font-size="9">that times out</text>
 </svg>
