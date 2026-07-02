@@ -2,10 +2,9 @@
 
 `dlx4sop` is a C/Meson toolkit for exact finite-modulus quadratic sums of
 powers (QSOPs). The project goal is a competitive exact strong simulator using
-signed quadratic SOPs with fixed-boundary circuit amplitudes as the current
-benchmark contract.
+QSOPs with fixed-boundary circuit amplitudes.
 
-Current corpus coverage, solver timings, and native simulator comparisons live
+Current benchmark corpus coverage, solver timings, and native simulator comparisons live
 in [scoreboard.md](scoreboard.md).
 
 ## Build
