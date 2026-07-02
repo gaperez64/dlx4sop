@@ -468,10 +468,10 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
     )
     print(
         "| Source | Upstream | Total solved | 0-32 | 33-64 | 65-128 | 129-256 | "
-        "257-512 sample | QSOP modes |",
+        "257-512 sample |",
         file=file,
     )
-    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |", file=file)
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
     total_solved = 0
     total_attempted_large = 0
     total_solved_large = 0
@@ -486,7 +486,7 @@ def write_benchmark_table(named_records: list[tuple[str, list[dict]]], file: Tex
             f"{solved} | "
             f"{tier_cell(entry, '0-32')} | {tier_cell(entry, '33-64')} | "
             f"{tier_cell(entry, '65-128')} | {tier_cell(entry, '129-256')} | "
-            f"{tier_cell(entry, '257-512 sample')} | {markdown_escape(mode_summary(entry))} |",
+            f"{tier_cell(entry, '257-512 sample')} |",
             file=file,
         )
     print(
@@ -836,6 +836,166 @@ def write_scaling_section(artifact_dir: pathlib.Path | None, assets_subdir: str,
     print(f"![WMC vs solver scaling]({assets_subdir}/wmc-vs-solver-scaling.svg)\n", file=file)
 
 
+def _artifact_records(artifact_dir: pathlib.Path | None, stem: str) -> list[dict]:
+    if artifact_dir is None:
+        return []
+    path = artifact_dir / stem
+    if not path.exists():
+        return []
+    return read_jsonl(path)
+
+
+def _single_solver_summary(tier: str, records: list[dict], config: str | None = None) -> dict | None:
+    rows = summarize_solver_records([(tier, records)])
+    if config is not None:
+        rows = [row for row in rows if row["config"] == config]
+    if not rows:
+        return None
+    rows.sort(key=lambda row: (row["config"], row["records"]))
+    return rows[0]
+
+
+def _summary_cell(row: dict | None) -> str:
+    if row is None:
+        return "missing"
+    return f"{row['ok']} / {row['records']}; {format_ns(row['elapsed_ns'])}"
+
+
+def _status_summary(records: list[dict]) -> str:
+    counts = collections.Counter(str(record.get("status") or "ok") for record in records)
+    if not counts:
+        return "missing"
+    order = ("ok", "timeout", "memout", "error")
+    parts = [f"{counts[name]} {name}" for name in order if counts.get(name)]
+    parts.extend(
+        f"{count} {name}"
+        for name, count in sorted(counts.items())
+        if name not in order
+    )
+    return ", ".join(parts)
+
+
+def write_linear_rankwidth_section(artifact_dir: pathlib.Path | None, file: TextIO) -> None:
+    """Visible summary for the linear-layout rankwidth refresh."""
+    linear_stems = (
+        "dlx4sop-tier-0-32-rankwidth-linear-current.jsonl",
+        "dlx4sop-tier-33-64-rankwidth-linear-current.jsonl",
+        "dlx4sop-tier-65-128-rankwidth-linear-current.jsonl",
+        "dlx4sop-tier-129-256-rankwidth-linear-current.jsonl",
+        "dlx4sop-tier-257-512-sample-rankwidth-linear-current.jsonl",
+        "mqt-bench-tier-33-64-rankwidth-linear-current.jsonl",
+        "mqt-bench-tier-65-128-rankwidth-linear-current.jsonl",
+        "scaling-rankwidth-linear-current.jsonl",
+    )
+    if artifact_dir is None or not any((artifact_dir / stem).exists() for stem in linear_stems):
+        return
+
+    print("## Linear Rankwidth Experiment\n", file=file)
+    print(
+        "`rankwidth:linear` is the min-fill-search linear-layout run using the new "
+        "left-deep count-table path. The tables below split the latest refresh by "
+        "experiment instead of hiding MQT and synthetic rows inside the tier aggregate.\n",
+        file=file,
+    )
+
+    qasm_rows = [
+        (
+            "0-32",
+            "dlx4sop-tier-0-32-rankwidth-linear-current.jsonl",
+            "rankwidth:linear",
+            "rankwidth left-deep",
+            "dlx4sop-tier-0-32-rankwidth-current.jsonl",
+            "rankwidth --rankwidth-generate left-deep --rankwidth-mode count-table",
+        ),
+        (
+            "33-64",
+            "dlx4sop-tier-33-64-rankwidth-linear-current.jsonl",
+            "rankwidth:linear",
+            "rankwidth min-fill-cut",
+            "dlx4sop-tier-33-64-rankwidth-min-fill-cut-current.jsonl",
+            "rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table",
+        ),
+        (
+            "65-128",
+            "dlx4sop-tier-65-128-rankwidth-linear-current.jsonl",
+            "rankwidth:linear",
+            "rankwidth min-fill-cut",
+            "dlx4sop-tier-65-128-rankwidth-min-fill-cut-current.jsonl",
+            "rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table",
+        ),
+        (
+            "129-256",
+            "dlx4sop-tier-129-256-rankwidth-linear-current.jsonl",
+            "rankwidth:linear",
+            "rankwidth min-fill-cut",
+            "dlx4sop-tier-129-256-rankwidth-min-fill-cut-current.jsonl",
+            "rankwidth --rankwidth-generate min-fill-cut --rankwidth-mode count-table",
+        ),
+        (
+            "257-512 sample",
+            "dlx4sop-tier-257-512-sample-rankwidth-linear-current.jsonl",
+            "rankwidth:linear",
+            "treewidth baseline",
+            "dlx4sop-tier-257-512-sample-treewidth-current.jsonl",
+            "treewidth --treewidth-order min-fill-max-degree",
+        ),
+    ]
+    print("| QASM tier | Linear layout | Reference |", file=file)
+    print("| --- | ---: | ---: |", file=file)
+    for tier, linear_stem, linear_config, ref_label, ref_stem, ref_config in qasm_rows:
+        linear = _single_solver_summary(
+            tier,
+            _artifact_records(artifact_dir, linear_stem),
+            linear_config,
+        )
+        reference = _single_solver_summary(
+            tier,
+            _artifact_records(artifact_dir, ref_stem),
+            ref_config,
+        )
+        print(
+            f"| {markdown_escape(tier)} | {_summary_cell(linear)} | "
+            f"{markdown_escape(ref_label)}: {_summary_cell(reference)} |",
+            file=file,
+        )
+    print("", file=file)
+
+    print("| MQT materialized tier | Linear layout | Rankwidth best |", file=file)
+    print("| --- | ---: | ---: |", file=file)
+    for tier in ("33-64", "65-128"):
+        slug = tier
+        linear = _single_solver_summary(
+            tier,
+            _artifact_records(artifact_dir, f"mqt-bench-tier-{slug}-rankwidth-linear-current.jsonl"),
+            "rankwidth:linear",
+        )
+        best = _single_solver_summary(
+            tier,
+            _artifact_records(artifact_dir, f"mqt-bench-tier-{slug}-rankwidth-best-current.jsonl"),
+            "rankwidth:best",
+        )
+        print(
+            f"| {markdown_escape(tier)} | {_summary_cell(linear)} | {_summary_cell(best)} |",
+            file=file,
+        )
+    print("", file=file)
+
+    scaling = _artifact_records(artifact_dir, "scaling-rankwidth-linear-current.jsonl")
+    scaling_largest = _scaling_largest_solved(
+        artifact_dir,
+        "scaling-rankwidth-linear-current.jsonl",
+        "solve_elapsed_ns",
+        "solve_ms",
+    )
+    if scaling:
+        largest = f"{scaling_largest}q" if scaling_largest is not None else "none"
+        print(
+            f"Scaling synthetic: `rankwidth:linear` status is {_status_summary(scaling)}; "
+            f"largest solved size is {largest} under the current cap.\n",
+            file=file,
+        )
+
+
 def _rankwidth_study_records(artifact_dir: pathlib.Path | None) -> list[dict]:
     if artifact_dir is None:
         return []
@@ -854,7 +1014,7 @@ def write_rankwidth_separation_section(artifact_dir: pathlib.Path | None, file: 
     """Targeted RQ2 section for the bounded-rankwidth clique-blowup tree family."""
     print("## Rankwidth Separation Study\n", file=file)
     print(
-        "Synthetic sign-edge QSOPs under "
+        "Synthetic QSOPs under "
         "`benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree "
         "clique-blowup family from the rankwidth note. The intended signal is not broad "
         "corpus coverage: it is whether the rankwidth backend stays at constant cutrank "
@@ -1019,14 +1179,14 @@ def write_mode_scoreboard(
     # the solver's mode, which is the authoritative one.
 
     today = _datetime.date.today().isoformat()
-    print(f"# Scoreboard — {mode} QSOPs\n", file=file)
+    print("# Scoreboard\n", file=file)
     updated_line = f"Last updated: {today}."
     if timeout_note:
         updated_line += f" Per-instance timeout: {timeout_note}."
     print(updated_line + "\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,
@@ -1133,9 +1293,10 @@ def write_mode_scoreboard(
     print("Export time vs Ganak time per WMC encoding and tier.\n", file=file)
     print(f"![WMC time breakdown]({assets_subdir}/wmc-time-breakdown.svg)\n", file=file)
 
-    # Scaling study is mode-agnostic (synthetic sign family); show it on the sign scoreboard.
+    # Scaling study is mode-agnostic; show it on the QSOP scoreboard.
     if mode == "sign":
         write_scaling_section(artifact_dir, assets_subdir, file)
+        write_linear_rankwidth_section(artifact_dir, file)
         write_rankwidth_matrix_join_section(artifact_dir, file)
         write_rankwidth_separation_section(artifact_dir, file)
 
@@ -1150,7 +1311,7 @@ def write_index(solver_records: list[tuple[str, list[dict]]], file: TextIO) -> N
     print(f"Last updated: {today}.\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,
@@ -1169,7 +1330,7 @@ def write_index(solver_records: list[tuple[str, list[dict]]], file: TextIO) -> N
     )
     print(f"Total current solved coverage: **{total_solved} fixed-boundary benchmark rows**.\n", file=file)
 
-    print("| Source | Total solved | Signed QSOP rows |", file=file)
+    print("| Source | Total solved | QSOP rows |", file=file)
     print("| --- | ---: | ---: |", file=file)
     for source in sorted(rows, key=source_sort_key):
         entry = rows[source]
@@ -1193,7 +1354,7 @@ def write_scoreboard(
     print(f"Last updated: {today}.\n", file=file)
     print(
         "This tracks progress toward a competitive exact strong simulator based on "
-        "signed quadratic SOPs. The current benchmark contract is fixed-boundary "
+        "quadratic SOPs. The current benchmark contract is fixed-boundary "
         "strong simulation: import a static circuit into QSOP, solve the exact "
         "residue-count histogram, and compare with native simulators where possible.\n",
         file=file,

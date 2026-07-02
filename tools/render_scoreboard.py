@@ -668,7 +668,7 @@ def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
         fastest_ns = min(ok_ns) if ok_ns else 0
 
         print(f"### {tier}\n", file=file)
-        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio | Signed rows |", file=file)
+        print("| Backend | Solved | Skipped | Timeout | Error | Total time | Geomean | Ratio | QSOP rows |", file=file)
         print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
 
         for backend in sorted(tier_entries):
