@@ -136,7 +136,7 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-The public performance summary is the signed-QSOP
+The public performance summary is the QSOP
 [scoreboard.md](scoreboard.md).
 
 `tools/bench.py` is the unified benchmark entry point. It requires only the
@@ -184,7 +184,7 @@ python3 tools/run_corpus_benchmarks.py \
 `run_corpus_benchmarks.py` is the single orchestrator. It runs solver, WMC (Ganak),
 and native-simulator jobs for all tiers (including the MQT Bench large tiers) and the
 WMC-vs-solver scaling study, then renders `scoreboard.md`, `scoreboard.json`, and
-flat `scoreboard-assets/` SVGs for the signed QSOP benchmark set.
+flat `scoreboard-assets/` SVGs for the QSOP benchmark set.
 
 `bench.py full` is a thin alias for the same pipeline. Pass `--skip-wmc`,
 `--skip-native`, `--skip-solver`, `--skip-scaling`, or `--skip-scoreboard` to run a
@@ -194,7 +194,7 @@ stabilizer-engine qubit cap.
 
 The native baseline uses dense statevector engines under a qubit cap plus
 `qiskit-clifford` (stabilizer, O(n²) memory) for the large Clifford circuits the
-statevector engines cannot reach. Signed QSOPs are compared against native runs on
+statevector engines cannot reach. QSOPs are compared against native runs on
 the same boundaries (native amplitudes are the shared ground truth).
 
 #### Scaling study (synthetic family)
@@ -238,10 +238,10 @@ JSONL artifacts without re-running any experiments.
 
 ## Current Status
 
-[scoreboard.md](scoreboard.md) tracks signed-QSOP corpus coverage, solver timings,
+[scoreboard.md](scoreboard.md) tracks QSOP benchmark corpus coverage, solver timings,
 WMC backend behavior, native simulator comparisons, and the recommended solver
 configuration per tier.
 
-Headline finding: on signed QSOPs, treewidth and hybrid branch remain the useful
+Summary of findings: on QSOPs, treewidth and hybrid branch remain the useful
 native baselines; WMC/Ganak is complementary and reaches some hard rows, but it
 does not yet beat native treewidth on the current scaling study.
