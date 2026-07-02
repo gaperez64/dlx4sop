@@ -217,7 +217,7 @@ def main() -> int:
             raise AssertionError(f"scoreboard refresh failed:\n{completed.stdout}\n{completed.stderr}")
         output = output_path.read_text(encoding="utf-8")
         for expected in (
-            "# Scoreboard — sign QSOPs",
+            "# Scoreboard",
             "## Benchmarks",
             "| Synthetic | https://example.invalid/synthetic | 2 | 0 | 1 | 0 | 0 | 1 / 2 |",
             "## Survival Curves",

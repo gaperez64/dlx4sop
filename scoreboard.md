@@ -1,8 +1,8 @@
-# Scoreboard — sign QSOPs
+# Scoreboard
 
-Last updated: 2026-07-01. Per-instance timeout: 30 s.
+Last updated: 2026-07-02. Per-instance timeout: 30 s.
 
-This tracks progress toward a competitive exact strong simulator based on signed quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
+This tracks progress toward a competitive exact strong simulator based on quadratic SOPs. The current benchmark contract is fixed-boundary strong simulation: import a static circuit into QSOP, solve the exact residue-count histogram, and compare with native simulators where possible.
 
 ## Benchmarks
 
@@ -86,6 +86,25 @@ Synthetic phase-polynomial circuits (committed under `benchmarks/corpus/sop/synt
 
 ![WMC vs solver scaling](scoreboard-assets/wmc-vs-solver-scaling.svg)
 
+## Linear Rankwidth Experiment
+
+`rankwidth:linear` is the min-fill-search linear-layout run using the new left-deep count-table path. The tables below split the latest refresh by experiment instead of hiding MQT and synthetic rows inside the tier aggregate.
+
+| QASM tier | Linear layout | Reference |
+| --- | ---: | ---: |
+| 0-32 | 132 / 132; 593.2 ms | rankwidth left-deep: 132 / 132; 459.1 ms |
+| 33-64 | 38 / 38; 257.5 ms | rankwidth min-fill-cut: 38 / 38; 68.5 ms |
+| 65-128 | 66 / 202; 4294.46 s | rankwidth min-fill-cut: 114 / 202; 295.32 s |
+| 129-256 | 8 / 82; 2296.09 s | rankwidth min-fill-cut: 40 / 82; 148.91 s |
+| 257-512 sample | 4 / 60; 1724.01 s | treewidth baseline: 60 / 60; 63.14 s |
+
+| MQT materialized tier | Linear layout | Rankwidth best |
+| --- | ---: | ---: |
+| 33-64 | 72 / 72; 328.5 ms | 72 / 72; 347.5 ms |
+| 65-128 | 42 / 42; 208.0 ms | 42 / 42; 271.2 ms |
+
+Scaling synthetic: `rankwidth:linear` status is 18 timeout; largest solved size is none under the current cap.
+
 ## Rankwidth Matrix-Join Experiment
 
 This is the missing dense-join experiment from the note's matrix-multiplication section. It instantiates the twisted join that exactly realizes an `N x N` matrix product with rankwidth parameter `k = 2 log2 N`. The direct rankwidth join has `N^4 = 2^(2k)` pair pressure; the dense route is ordinary matrix multiplication (`N^3 = 2^(3k/2)` with the classical kernel used here). This is a kernel experiment, not a claim that the full solver has a production Theorem-5 implementation.
@@ -104,7 +123,7 @@ This is the missing dense-join experiment from the note's matrix-multiplication 
 
 ## Rankwidth Separation Study
 
-Synthetic sign-edge QSOPs under `benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree clique-blowup family from the rankwidth note. The intended signal is not broad corpus coverage: it is whether the rankwidth backend stays at constant cutrank while treewidth tables grow with the clique blow-up parameter.
+Synthetic QSOPs under `benchmarks/corpus/sop/synthetic/rankwidth/` instantiate the binary-tree clique-blowup family from the rankwidth note. The intended signal is not broad corpus coverage: it is whether the rankwidth backend stays at constant cutrank while treewidth tables grow with the clique blow-up parameter.
 
 | Config | OK / rows | Time | Kernel time | Max width | Max table | Forecast pressure |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
