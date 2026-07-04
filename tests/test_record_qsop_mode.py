@@ -93,7 +93,7 @@ def test_write_mode_scoreboard_sign(refresh_mod):
     )
     out = buf.getvalue()
     expected_headings = [
-        "# Scoreboard — sign QSOPs",
+        "# Scoreboard",
         "## Benchmarks",
         "## Survival Curves",
         "## Solver Time by Tier",
@@ -136,8 +136,8 @@ def test_write_index(refresh_mod):
         raise AssertionError("expected '# Scoreboard' in index")
     if ".md)" in out:
         raise AssertionError("index must not link secondary markdown scoreboards")
-    if "| Source | Total solved | Signed QSOP rows |" not in out:
-        raise AssertionError("expected signed-row summary table in index")
+    if "| Source | Total solved | QSOP rows |" not in out:
+        raise AssertionError("expected QSOP-row summary table in index")
     if "scoreboard-assets" in out:
         raise AssertionError("index must not contain SVG paths")
 
