@@ -208,6 +208,153 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             f"{approx_controlled_phase.stdout}\n{approx_controlled_phase.stderr}"
         )
 
+    approx_gate_sweep = subprocess.run(
+        [str(exe), "--approx", "1e0", "--input", "000", "--output", "000", "-"],
+        input="""OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[3];
+gphase(0.11);
+phase(0.37) q;
+u1(0.19) q[0];
+p(pi/3) q[1];
+rz(0.23) q[0];
+rx(0.31) q[1];
+ry(0.41) q[2];
+u2(0.13,0.17) q[0];
+u3(0.11,0.13,0.17) q[1];
+u(0.19,0.23,0.29) q[2];
+cp(0.21) q[0], q[1];
+cu1(0.27) q[1], q[2];
+cphase(0.33) q[0], q[2];
+crz(0.35) q[1], q[0];
+rzz(0.39) q[0], q[1];
+rxx(0.43) q[1], q[2];
+ryy(0.47) q[0], q[2];
+cs q[0], q[1];
+ctdg q[1], q[2];
+csx q[0], q[2];
+csxdg q[2], q[0];
+""",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        approx_gate_sweep.returncode != 0
+        or "qasm2sop_approx rounded_phase_ops" not in approx_gate_sweep.stdout
+        or "p qsop-sign" not in approx_gate_sweep.stdout
+    ):
+        raise AssertionError(
+            f"unexpected approximate gate sweep result:\n"
+            f"{approx_gate_sweep.stdout}\n{approx_gate_sweep.stderr}"
+        )
+
+    approx_qreg_sweep = subprocess.run(
+        [str(exe), "--approx", "1e0", "--input", "0000", "--output", "0000", "-"],
+        input="""OPENQASM 2.0;
+qreg a[2];
+qreg b[2];
+rx(0.17) a;
+cp(0.23) a, b;
+rzz(0.31) a, b;
+""",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if approx_qreg_sweep.returncode != 0 or "qasm2sop_approx" not in approx_qreg_sweep.stdout:
+        raise AssertionError(
+            f"unexpected approximate qreg sweep result:\n"
+            f"{approx_qreg_sweep.stdout}\n{approx_qreg_sweep.stderr}"
+        )
+
+    bad_approx_gphase_operand = subprocess.run(
+        [str(exe), "--approx", "1e0", "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\ngphase(0.37) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        bad_approx_gphase_operand.returncode == 0
+        or "gphase gate does not take qubit operands" not in bad_approx_gphase_operand.stderr
+    ):
+        raise AssertionError(
+            f"unexpected bad approximate gphase operand result:\n"
+            f"{bad_approx_gphase_operand.stderr}"
+        )
+
+    approx_file_input = subprocess.run(
+        [str(exe), "--approx", "1e0", "--input", "0", "--output", "0", str(qasm)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if approx_file_input.returncode != 0 or "qasm2sop_approx" not in approx_file_input.stdout:
+        raise AssertionError(
+            f"unexpected approximate file input result:\n"
+            f"{approx_file_input.stdout}\n{approx_file_input.stderr}"
+        )
+
+    approx_param_qregs = subprocess.run(
+        [str(exe), "--approx", "1e0", "--input", "00", "--output", "00", "-"],
+        input="""OPENQASM 2.0;
+qreg q[2];
+u2(0.13,0.17) q;
+u3(0.11,0.13,0.17) q;
+u(0.19,0.23,0.29) q;
+""",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if approx_param_qregs.returncode != 0 or "qasm2sop_approx" not in approx_param_qregs.stdout:
+        raise AssertionError(
+            f"unexpected approximate parameter qreg result:\n"
+            f"{approx_param_qregs.stdout}\n{approx_param_qregs.stderr}"
+        )
+
+    exact_aliases = subprocess.run(
+        [str(exe), "--input", "11", "--output", "11", "-"],
+        input="OPENQASM 2.0;\nqreg q[2];\ngphase(pi/4);\nphase(pi/4) q[0];\ncphase(pi/4) q[0], q[1];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        exact_aliases.returncode == 0
+        or "unsupported non-sign quadratic phase coefficient" not in exact_aliases.stderr
+    ):
+        raise AssertionError(
+            f"unexpected exact alias rejection:\n{exact_aliases.stdout}\n{exact_aliases.stderr}"
+        )
+
+    approx_angle_errors = [
+        ("p()", "unsupported p phase angle"),
+        ("p(pi/0)", "unsupported p phase angle"),
+        ("u2(0.1,0.2,0.3)", "unsupported u2 angle list"),
+        ("u3(0.1,0.2)", "unsupported u3 angle list"),
+    ]
+    for gate_text, expected_error in approx_angle_errors:
+        failed = subprocess.run(
+            [str(exe), "--approx", "1e0", "-"],
+            input=f"OPENQASM 2.0;\nqreg q[1];\n{gate_text} q[0];\n",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if failed.returncode == 0 or expected_error not in failed.stderr:
+            raise AssertionError(
+                f"unexpected approximate angle error for {gate_text}:\n{failed.stderr}"
+            )
+
     spaced_controlled_phase = subprocess.run(
         [str(exe), "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ncu1 (pi/4) q[0], q[1];\n",
