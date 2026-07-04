@@ -4,53 +4,18 @@
 powers (QSOPs). The project goal is a competitive exact strong simulator using
 QSOPs with fixed-boundary circuit amplitudes.
 
-Current benchmark corpus coverage, solver timings, and native simulator comparisons live
-in [scoreboard.md](scoreboard.md).
-
-## Build
-
-```sh
-meson setup build
-meson compile -C build
-meson test -C build --print-errorlogs
-```
-
-The default `build` directory is a debug build (`-O0`, assertions on) — correct for
-development and the test suite. **For benchmarking, use an optimized build** (roughly
-3x faster on solver hot paths):
-
-```sh
-meson setup build-bench --buildtype=release -Db_lto=true -Dc_args=-march=x86-64-v2
-meson compile -C build-bench
-```
-
-`-march=x86-64-v2` enables the hardware `popcnt` instruction (portable across x86 CPUs
-since ~2009) — without it `__builtin_popcount` falls back to a slow libgcc routine that
-dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware by
-default, so the `-Dc_args` is unnecessary there.
-
-Point the benchmark tooling at the optimized binaries (e.g.
-`--sop-solve build-bench/sop-solve`); see the [Benchmarks](#benchmarks) section.
-
-CI enforces at least 75% line coverage over production `src` files:
-
-```sh
-tools/check-coverage.sh build-coverage
-```
-
-Release binaries are built by `.github/workflows/release-binaries.yml` when a
-`v*` tag is pushed, or manually through GitHub Actions. The workflow compiles
-and packages `qasm2sop`, `sop-check`, `sop-solve`, `sop-stats`, and `sop2wmc`
-as `linux-x86_64` and `macos-arm64` tarballs with SHA-256 sidecar files.
-
 ## Tools
+
+Prebuilt releases include the core command-line tools as `linux-x86_64` and
+`macos-arm64` tarballs with SHA-256 sidecar files. The same tools are built
+from source:
 
 - `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
 - `sop-stats`: print structural statistics, with opt-in exact small-width
   support-graph diagnostics.
 - `sop-solve`: solve exact residue-count histograms; stats mode can include
-  the count vector used by benchmark tooling to reconstruct amplitudes and a
-  convenience probability estimate via `--include-probability`.
+  the count vector used to reconstruct amplitudes and a convenience probability
+  estimate via `--include-probability`.
 - `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
@@ -77,13 +42,28 @@ as `linux-x86_64` and `macos-arm64` tarballs with SHA-256 sidecar files.
     edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
     and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
     amp-soft output when no profitable block is found.
-- `tools/*.py`: benchmark runners, corpus scanners, and boundary translators.
-  `tools/bench.py` is the unified benchmark entry point (see **Benchmarks**
-  below). `tools/bench_wmc_ganak.py` drives `sop2wmc` + Ganak and cross-checks
-  results against `sop-solve`; all five current encodings are supported.
+- `tools/*.py`: corpus scanners, manifest helpers, report/render helpers, and
+  boundary translators.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
-External frameworks stay at the benchmark/import boundary.
+External frameworks stay at corpus import and validation boundaries.
+
+## Build
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+The default `build` directory is a debug build (`-O0`, assertions on), which is
+appropriate for development and the test suite.
+
+CI enforces at least 75% line coverage over production `src` files:
+
+```sh
+tools/check-coverage.sh build-coverage
+```
 
 ## Solver Guide
 
@@ -152,6 +132,19 @@ each CNF block documents the variable map and the final accumulator bits.
 
 The public performance summary is the QSOP
 [scoreboard.md](scoreboard.md).
+
+Use an optimized build for timing-sensitive runs:
+
+```sh
+meson setup build-bench --buildtype=release -Db_lto=true -Dc_args=-march=x86-64-v2
+meson compile -C build-bench
+```
+
+`-march=x86-64-v2` enables the hardware `popcnt` instruction (portable across x86 CPUs
+since ~2009); without it `__builtin_popcount` falls back to a slow libgcc routine that
+dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware by
+default, so the `-Dc_args` is unnecessary there. Point the benchmark tooling at the
+optimized binaries, for example `--sop-solve build-bench/sop-solve`.
 
 `tools/bench.py` is the unified benchmark entry point. It requires only the
 built binaries and the committed QSOP corpus for local runs; external tools
@@ -249,13 +242,3 @@ JSONL artifacts without re-running any experiments.
 - `tools/gen_scaling_family.py`: generate / materialize the synthetic scaling family.
 - `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
 - `tools/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).
-
-## Current Status
-
-[scoreboard.md](scoreboard.md) tracks QSOP benchmark corpus coverage, solver timings,
-WMC backend behavior, native simulator comparisons, and the recommended solver
-configuration per tier.
-
-Summary of findings: on QSOPs, treewidth and hybrid branch remain the useful
-native baselines; WMC/Ganak is complementary and reaches some hard rows, but it
-does not yet beat native treewidth on the current scaling study.
