@@ -129,6 +129,20 @@ build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_disconnected.qsop &
 build/sop2wmc --encoding amplitude tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
 ```
 
+### Approximate QASM imports
+
+`qasm2sop` is exact by default: circuits with phases outside the supported
+finite grid are rejected. Use `--approx X` to opt in to phase rounding, where
+`X` is a positive additive amplitude error budget. Scientific notation is
+accepted, for example:
+
+```sh
+build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
+```
+
+Approximate output includes comment lines recording the chosen modulus, rounded
+phase count, and certified additive amplitude error bound.
+
 The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
 `probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
 `sop-solve --include-probability`) outside the counter; the metadata header in

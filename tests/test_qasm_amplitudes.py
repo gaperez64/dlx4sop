@@ -22,6 +22,9 @@ def parse_angle(text: str) -> float:
     if text == "0":
         return 0.0
 
+    if "pi" not in text:
+        return sign * float(text)
+
     multiplier = 1.0
     if "*" in text:
         multiplier_text, text = text.split("*", 1)
@@ -436,9 +439,25 @@ def parse_solver_amplitude(output: str) -> complex:
     return total * (2.0 ** (-norm_h / 2.0))
 
 
-def sop_amplitude(qasm2sop: pathlib.Path, sop_solve: pathlib.Path, qasm: str, input_bits: str, output_bits: str) -> complex:
+def sop_amplitude(
+    qasm2sop: pathlib.Path,
+    sop_solve: pathlib.Path,
+    qasm: str,
+    input_bits: str,
+    output_bits: str,
+    extra_qasm2sop_args: list[str] | None = None,
+) -> complex:
+    extra_qasm2sop_args = extra_qasm2sop_args or []
     imported = subprocess.run(
-        [str(qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
+        [
+            str(qasm2sop),
+            *extra_qasm2sop_args,
+            "--input",
+            input_bits,
+            "--output",
+            output_bits,
+            "-",
+        ],
         input=qasm,
         check=False,
         stdout=subprocess.PIPE,
@@ -630,6 +649,28 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             exact_checks += 1
     if exact_checks == 0:
         raise AssertionError("no representable sign-only amplitude cases were checked")
+
+    approx_qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[1];
+    h q[0];
+    p(0.37) q[0];
+    h q[0];
+    """
+    for input_bits, output_bits in [("0", "0"), ("0", "1")]:
+        expected = simulate_qasm(approx_qasm, input_bits, output_bits)
+        actual = sop_amplitude(
+            qasm2sop,
+            sop_solve,
+            approx_qasm,
+            input_bits,
+            output_bits,
+            ["--approx", "5e-2"],
+        )
+        if abs(expected - actual) > 5e-2 + 1e-9:
+            raise AssertionError(
+                f"approx phase {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
+            )
 
 
 def main() -> int:

@@ -104,6 +104,36 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if bad_phase.returncode == 0 or "unsupported u1 phase angle" not in bad_phase.stderr:
         raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
 
+    approx_phase = subprocess.run(
+        [str(exe), "--approx", "5e-2", "--input", "0", "--output", "0", "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nh q[0];\np(0.37) q[0];\nh q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        approx_phase.returncode != 0
+        or "qasm2sop_approx additive_amplitude_error_bound" not in approx_phase.stdout
+        or "p qsop-sign" not in approx_phase.stdout
+    ):
+        raise AssertionError(
+            f"unexpected approximate phase result:\n{approx_phase.stdout}\n{approx_phase.stderr}"
+        )
+
+    approx_gphase = subprocess.run(
+        [str(exe), "--approx=5e-2", "--input", "0", "--output", "0", "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\ngphase(0.37);\nid q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if approx_gphase.returncode != 0 or "qasm2sop_approx" not in approx_gphase.stdout:
+        raise AssertionError(
+            f"unexpected approximate gphase result:\n{approx_gphase.stdout}\n{approx_gphase.stderr}"
+        )
+
     spaced_phase = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nh q[0];\nu1 (3*pi/4) q[0];\nh q[0];\n",
@@ -158,6 +188,24 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(
             f"unexpected bad controlled phase result:\n{bad_controlled_phase.stderr}"
+        )
+
+    approx_controlled_phase = subprocess.run(
+        [str(exe), "--approx", "5e-2", "--input", "11", "--output", "11", "-"],
+        input="OPENQASM 2.0;\nqreg q[2];\ncp(pi/3) q[0], q[1];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        approx_controlled_phase.returncode != 0
+        or "\ne " not in approx_controlled_phase.stdout
+        or "unsupported non-sign quadratic" in approx_controlled_phase.stderr
+    ):
+        raise AssertionError(
+            "unexpected approximate controlled phase result:\n"
+            f"{approx_controlled_phase.stdout}\n{approx_controlled_phase.stderr}"
         )
 
     spaced_controlled_phase = subprocess.run(
@@ -235,6 +283,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     error_cases = [
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), "--input"], "missing value"),
+        ([str(exe), "--approx"], "missing value"),
+        ([str(exe), "--approx=0", str(qasm)], "positive finite"),
         ([str(exe), str(qasm), str(qasm)], "at most one input"),
         ([str(exe), str(source_root / "tests" / "golden" / "missing.qasm")], "No such file"),
     ]

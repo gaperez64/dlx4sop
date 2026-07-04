@@ -5,12 +5,16 @@
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define QASM_PI 3.141592653589793238462643383279502884
+#define QASM_TWO_PI (2.0 * QASM_PI)
 
 typedef struct qasm_reg {
   char *name;
@@ -84,6 +88,11 @@ typedef struct qasm_importer {
   uint64_t norm_h;
   const char *input_bits;
   const char *output_bits;
+  uint32_t modulus;
+  bool approx_enabled;
+  double approx_epsilon;
+  double approx_delta;
+  uint64_t approx_phase_count;
   bool have_openqasm;
   bool saw_gate;
 } qasm_importer_t;
@@ -96,7 +105,7 @@ static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
 }
 
 static void print_usage(FILE *file) {
-  fputs("usage: qasm2sop [--input BITS] [--output BITS] [PATH|-]\n", file);
+  fputs("usage: qasm2sop [--input BITS] [--output BITS] [--approx EPS] [PATH|-]\n", file);
 }
 
 static char *trim(char *text) {
@@ -150,12 +159,21 @@ static void lowercase_ascii(char *text) {
   }
 }
 
-static uint32_t mod16_i64(int64_t value) {
-  int64_t residue = value % 16;
+static uint32_t mod_i64(int64_t value, uint32_t modulus) {
+  int64_t residue = value % (int64_t)modulus;
   if (residue < 0) {
-    residue += 16;
+    residue += (int64_t)modulus;
   }
   return (uint32_t)residue;
+}
+
+static uint32_t coeff_from_pi_over_eight_units(const qasm_importer_t *importer, int64_t units) {
+  const uint32_t scale = importer->modulus / 16U;
+  return mod_i64(units * (int64_t)scale, importer->modulus);
+}
+
+static uint32_t sign_coeff(const qasm_importer_t *importer) {
+  return importer->modulus / 2U;
 }
 
 static bool parse_numeric_pi_units(const char *expr, uint64_t unit_denominator,
@@ -426,23 +444,47 @@ static bool parse_qreg(qasm_importer_t *importer, char *rest) {
   return add_qreg(importer, name, size);
 }
 
-static uint32_t named_phase_coeff_for_gate(const char *gate) {
+static uint32_t named_phase_coeff_for_gate(const qasm_importer_t *importer, const char *gate) {
   if (strcmp(gate, "t") == 0) {
-    return 2;
+    return coeff_from_pi_over_eight_units(importer, 2);
   }
   if (strcmp(gate, "s") == 0) {
-    return 4;
+    return coeff_from_pi_over_eight_units(importer, 4);
   }
   if (strcmp(gate, "z") == 0) {
-    return 8;
+    return coeff_from_pi_over_eight_units(importer, 8);
   }
   if (strcmp(gate, "sdg") == 0) {
-    return 12;
+    return coeff_from_pi_over_eight_units(importer, 12);
   }
   if (strcmp(gate, "tdg") == 0) {
-    return 14;
+    return coeff_from_pi_over_eight_units(importer, 14);
   }
   return UINT32_MAX;
+}
+
+static bool named_phase_angle_for_gate(const char *gate, double *out_angle) {
+  if (strcmp(gate, "t") == 0) {
+    *out_angle = QASM_PI / 4.0;
+    return true;
+  }
+  if (strcmp(gate, "s") == 0) {
+    *out_angle = QASM_PI / 2.0;
+    return true;
+  }
+  if (strcmp(gate, "z") == 0) {
+    *out_angle = QASM_PI;
+    return true;
+  }
+  if (strcmp(gate, "sdg") == 0) {
+    *out_angle = -QASM_PI / 2.0;
+    return true;
+  }
+  if (strcmp(gate, "tdg") == 0) {
+    *out_angle = -QASM_PI / 4.0;
+    return true;
+  }
+  return false;
 }
 
 static bool parse_pi_units(const char *expr, uint64_t unit_denominator, int64_t *out_units) {
@@ -573,7 +615,7 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
   if (!*out_matches) {
     return true;
   }
-  *out_coeff = mod16_i64(units);
+  *out_coeff = coeff_from_pi_over_eight_units(importer, units);
   return true;
 }
 
@@ -630,6 +672,175 @@ static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, c
   return true;
 }
 
+static bool parse_plain_double(const char *text, double *out_value) {
+  errno = 0;
+  char *end = NULL;
+  const double value = strtod(text, &end);
+  if (errno != 0 || end == text || *end != '\0' || !isfinite(value)) {
+    return false;
+  }
+  *out_value = value;
+  return true;
+}
+
+static bool parse_angle_radians(const char *expr, double *out_angle) {
+  char compact[128];
+  size_t compact_len = 0;
+  for (const char *p = expr; *p != '\0'; p++) {
+    if (isspace((unsigned char)*p)) {
+      continue;
+    }
+    if (compact_len + 1U >= sizeof(compact)) {
+      return false;
+    }
+    compact[compact_len++] = *p;
+  }
+  compact[compact_len] = '\0';
+  if (compact_len == 0) {
+    return false;
+  }
+
+  if (strstr(compact, "pi") == NULL) {
+    return parse_plain_double(compact, out_angle);
+  }
+
+  const char *p = compact;
+  double sign = 1.0;
+  if (*p == '-') {
+    sign = -1.0;
+    p++;
+  } else if (*p == '+') {
+    p++;
+  }
+
+  const char *pi = strstr(p, "pi");
+  if (pi == NULL || strstr(pi + 2, "pi") != NULL) {
+    return false;
+  }
+
+  double multiplier = 1.0;
+  if (pi != p) {
+    if (pi == p + 1 || pi[-1] != '*') {
+      return false;
+    }
+    char multiplier_text[64];
+    const size_t multiplier_len = (size_t)(pi - p - 1);
+    if (multiplier_len == 0 || multiplier_len >= sizeof(multiplier_text)) {
+      return false;
+    }
+    memcpy(multiplier_text, p, multiplier_len);
+    multiplier_text[multiplier_len] = '\0';
+    if (!parse_plain_double(multiplier_text, &multiplier)) {
+      return false;
+    }
+  }
+
+  double divisor = 1.0;
+  p = pi + 2;
+  if (*p == '/') {
+    p++;
+    if (!parse_plain_double(p, &divisor) || divisor == 0.0) {
+      return false;
+    }
+  } else if (*p == '*') {
+    double trailing_multiplier = 0.0;
+    if (!parse_plain_double(p + 1, &trailing_multiplier)) {
+      return false;
+    }
+    multiplier *= trailing_multiplier;
+  } else if (*p != '\0') {
+    return false;
+  }
+
+  *out_angle = sign * multiplier * QASM_PI / divisor;
+  return isfinite(*out_angle);
+}
+
+static bool parse_param_angle_radians(qasm_importer_t *importer, const char *gate,
+                                      const char *prefix, const char *name,
+                                      double *out_angle, bool *out_matches) {
+  const size_t prefix_len = strlen(prefix);
+  const size_t gate_len = strlen(gate);
+  if (strncmp(gate, prefix, prefix_len) != 0) {
+    *out_matches = false;
+    return true;
+  }
+  *out_matches = true;
+
+  if (gate_len <= prefix_len || gate[gate_len - 1U] != ')') {
+    set_error(importer, "%s phase gate must be written as %s(<angle>)", name, name);
+    return false;
+  }
+
+  const size_t expr_len = gate_len - prefix_len - 1U;
+  char expr[128];
+  if (expr_len == 0 || expr_len >= sizeof(expr)) {
+    set_error(importer, "unsupported %s phase angle '%s'", name, gate);
+    return false;
+  }
+  memcpy(expr, gate + prefix_len, expr_len);
+  expr[expr_len] = '\0';
+
+  if (!parse_angle_radians(expr, out_angle)) {
+    set_error(importer, "unsupported %s phase angle '%s'", name, gate);
+    return false;
+  }
+  return true;
+}
+
+static bool parse_param_radian_list(qasm_importer_t *importer, const char *gate,
+                                    const char *prefix, const char *name, double *out_angles,
+                                    size_t expected, bool *out_matches) {
+  const size_t prefix_len = strlen(prefix);
+  const size_t gate_len = strlen(gate);
+  if (strncmp(gate, prefix, prefix_len) != 0) {
+    *out_matches = false;
+    return true;
+  }
+  *out_matches = true;
+
+  if (gate_len <= prefix_len || gate[gate_len - 1U] != ')') {
+    set_error(importer, "%s gate must be written with %" PRIu64 " angle parameters", name,
+              (uint64_t)expected);
+    return false;
+  }
+
+  const size_t params_len = gate_len - prefix_len - 1U;
+  char params[256];
+  if (params_len == 0 || params_len >= sizeof(params)) {
+    set_error(importer, "unsupported %s angle list '%s'", name, gate);
+    return false;
+  }
+  memcpy(params, gate + prefix_len, params_len);
+  params[params_len] = '\0';
+
+  char *cursor = params;
+  for (size_t i = 0; i < expected; i++) {
+    char *next = NULL;
+    if (i + 1U < expected) {
+      next = strchr(cursor, ',');
+      if (next == NULL) {
+        set_error(importer, "unsupported %s angle list '%s'", name, gate);
+        return false;
+      }
+      *next = '\0';
+      next++;
+    } else if (strchr(cursor, ',') != NULL) {
+      set_error(importer, "unsupported %s angle list '%s'", name, gate);
+      return false;
+    }
+
+    char *expr = trim(cursor);
+    if (!parse_angle_radians(expr, &out_angles[i])) {
+      set_error(importer, "unsupported %s angle '%s'", name, gate);
+      return false;
+    }
+    cursor = next;
+  }
+
+  return true;
+}
+
 static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate, uint32_t *out_coeff,
                                  bool *out_is_phase) {
   bool matches = false;
@@ -643,13 +854,20 @@ static bool parse_u1_phase_coeff(qasm_importer_t *importer, const char *gate, ui
   if (!parse_param_phase_coeff(importer, gate, "p(", "p", out_coeff, &matches)) {
     return false;
   }
+  if (matches) {
+    *out_is_phase = true;
+    return true;
+  }
+  if (!parse_param_phase_coeff(importer, gate, "phase(", "phase", out_coeff, &matches)) {
+    return false;
+  }
   *out_is_phase = matches;
   return true;
 }
 
 static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate, uint32_t *out_coeff,
                                  bool *out_is_phase) {
-  const uint32_t named_coeff = named_phase_coeff_for_gate(gate);
+  const uint32_t named_coeff = named_phase_coeff_for_gate(importer, gate);
   if (named_coeff != UINT32_MAX) {
     *out_coeff = named_coeff;
     *out_is_phase = true;
@@ -660,7 +878,7 @@ static bool phase_coeff_for_gate(qasm_importer_t *importer, const char *gate, ui
 
 static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const char *gate,
                                             uint32_t *out_coeff, bool *out_is_controlled_phase) {
-  const uint32_t named_coeff = named_phase_coeff_for_gate(gate + 1);
+  const uint32_t named_coeff = named_phase_coeff_for_gate(importer, gate + 1);
   if (gate[0] == 'c' && named_coeff != UINT32_MAX) {
     *out_coeff = named_coeff;
     *out_is_controlled_phase = true;
@@ -678,6 +896,61 @@ static bool controlled_phase_coeff_for_gate(qasm_importer_t *importer, const cha
   if (!parse_param_phase_coeff(importer, gate, "cp(", "cp", out_coeff, &matches)) {
     return false;
   }
+  if (matches) {
+    *out_is_controlled_phase = true;
+    return true;
+  }
+  if (!parse_param_phase_coeff(importer, gate, "cphase(", "cphase", out_coeff, &matches)) {
+    return false;
+  }
+  *out_is_controlled_phase = matches;
+  return true;
+}
+
+static bool phase_angle_for_gate(qasm_importer_t *importer, const char *gate, double *out_angle,
+                                 bool *out_is_phase) {
+  bool matches = false;
+  if (!parse_param_angle_radians(importer, gate, "u1(", "u1", out_angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_phase = true;
+    return true;
+  }
+  if (!parse_param_angle_radians(importer, gate, "p(", "p", out_angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_phase = true;
+    return true;
+  }
+  if (!parse_param_angle_radians(importer, gate, "phase(", "phase", out_angle, &matches)) {
+    return false;
+  }
+  *out_is_phase = matches;
+  return true;
+}
+
+static bool controlled_phase_angle_for_gate(qasm_importer_t *importer, const char *gate,
+                                            double *out_angle, bool *out_is_controlled_phase) {
+  bool matches = false;
+  if (!parse_param_angle_radians(importer, gate, "cu1(", "cu1", out_angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_controlled_phase = true;
+    return true;
+  }
+  if (!parse_param_angle_radians(importer, gate, "cp(", "cp", out_angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_is_controlled_phase = true;
+    return true;
+  }
+  if (!parse_param_angle_radians(importer, gate, "cphase(", "cphase", out_angle, &matches)) {
+    return false;
+  }
   *out_is_controlled_phase = matches;
   return true;
 }
@@ -688,12 +961,12 @@ static bool rz_units_for_gate(qasm_importer_t *importer, const char *gate, const
 }
 
 static bool add_constant(qasm_importer_t *importer, uint32_t coeff) {
-  importer->constant = (importer->constant + coeff) % 16U;
+  importer->constant = (importer->constant + coeff) % importer->modulus;
   return true;
 }
 
 static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint32_t coeff) {
-  if (coeff % 16U == 0) {
+  if (coeff % importer->modulus == 0) {
     return true;
   }
   return add_unary(importer, importer->current[qubit], coeff);
@@ -705,7 +978,7 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
     return false;
   }
   const uint32_t next_var = importer->nvars++;
-  if (!add_edge(importer, importer->current[qubit], next_var, 8)) {
+  if (!add_edge(importer, importer->current[qubit], next_var, sign_coeff(importer))) {
     return false;
   }
   importer->current[qubit] = next_var;
@@ -714,12 +987,13 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
 }
 
 static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
-  return add_edge(importer, importer->current[left], importer->current[right], 8);
+  return add_edge(importer, importer->current[left], importer->current[right],
+                  sign_coeff(importer));
 }
 
 static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uint32_t right,
                                    uint32_t coeff) {
-  if (coeff % 16U == 0) {
+  if (coeff % importer->modulus == 0) {
     return true;
   }
   return add_edge(importer, importer->current[left], importer->current[right], coeff);
@@ -727,31 +1001,34 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
 
 static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32_t right,
                                 uint32_t coeff) {
-  if (coeff % 16U == 0) {
+  if (coeff % importer->modulus == 0) {
     return true;
   }
 
   const uint32_t left_var = importer->current[left];
   const uint32_t right_var = importer->current[right];
   return add_unary(importer, left_var, coeff) && add_unary(importer, right_var, coeff) &&
-         add_edge(importer, left_var, right_var, mod16_i64(-2 * (int64_t)coeff));
+         add_edge(importer, left_var, right_var,
+                  mod_i64(-2 * (int64_t)coeff, importer->modulus));
 }
 
 static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  return add_constant(importer, mod16_i64(-units)) &&
-         apply_phase(importer, qubit, mod16_i64(2 * units));
+  return add_constant(importer, coeff_from_pi_over_eight_units(importer, -units)) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 2 * units));
 }
 
 static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target, int64_t units) {
-  return apply_phase(importer, control, mod16_i64(-units)) &&
-         apply_controlled_phase(importer, control, target, mod16_i64(2 * units));
+  return apply_phase(importer, control, coeff_from_pi_over_eight_units(importer, -units)) &&
+         apply_controlled_phase(importer, control, target,
+                                coeff_from_pi_over_eight_units(importer, 2 * units));
 }
 
 static bool apply_rzz(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
-  return add_constant(importer, mod16_i64(-units)) &&
-         apply_phase(importer, left, mod16_i64(2 * units)) &&
-         apply_phase(importer, right, mod16_i64(2 * units)) &&
-         apply_controlled_phase(importer, left, right, mod16_i64(-4 * units));
+  return add_constant(importer, coeff_from_pi_over_eight_units(importer, -units)) &&
+         apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 2 * units)) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 2 * units)) &&
+         apply_controlled_phase(importer, left, right,
+                                coeff_from_pi_over_eight_units(importer, -4 * units));
 }
 
 static bool apply_rxx(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
@@ -761,28 +1038,38 @@ static bool apply_rxx(qasm_importer_t *importer, uint32_t left, uint32_t right, 
 }
 
 static bool apply_ryy(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
-  return apply_phase(importer, left, 12) && apply_h(importer, left) &&
-         apply_phase(importer, right, 12) && apply_h(importer, right) &&
+  return apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, left) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, right) &&
          apply_rzz(importer, left, right, units) && apply_h(importer, left) &&
-         apply_phase(importer, left, 4) && apply_h(importer, right) &&
-         apply_phase(importer, right, 4);
+         apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 4)) &&
+         apply_h(importer, right) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 4));
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 8) && apply_h(importer, qubit);
+  return apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 8)) &&
+         apply_h(importer, qubit);
 }
 
 static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_phase(importer, qubit, 12) && apply_x_decomposition(importer, qubit) &&
-         apply_phase(importer, qubit, 4);
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_x_decomposition(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 4));
 }
 
 static bool apply_sx_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 4) && apply_h(importer, qubit);
+  return apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 4)) &&
+         apply_h(importer, qubit);
 }
 
 static bool apply_sxdg_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) && apply_phase(importer, qubit, 12) && apply_h(importer, qubit);
+  return apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, qubit);
 }
 
 static bool apply_rx(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
@@ -790,14 +1077,16 @@ static bool apply_rx(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
 }
 
 static bool apply_ry(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  return apply_phase(importer, qubit, 12) && apply_h(importer, qubit) &&
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, qubit) &&
          apply_rz(importer, qubit, units) && apply_h(importer, qubit) &&
-         apply_phase(importer, qubit, 4);
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 4));
 }
 
 static bool apply_u3(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
                      int64_t phi_units, int64_t lambda_units) {
-  return add_constant(importer, mod16_i64(phi_units + lambda_units)) &&
+  return add_constant(importer,
+                      coeff_from_pi_over_eight_units(importer, phi_units + lambda_units)) &&
          apply_rz(importer, qubit, lambda_units) && apply_ry(importer, qubit, theta_units) &&
          apply_rz(importer, qubit, phi_units);
 }
@@ -812,9 +1101,116 @@ static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, 
          apply_h(importer, target);
 }
 
+static uint32_t rounded_coeff_for_angle(qasm_importer_t *importer, double angle) {
+  const long double scaled =
+      (long double)angle * (long double)importer->modulus / (long double)QASM_TWO_PI;
+  const long double nearest = nearbyintl(scaled);
+  long double residue = fmodl(nearest, (long double)importer->modulus);
+  if (residue < 0.0L) {
+    residue += (long double)importer->modulus;
+  }
+
+  const long double rounded_angle =
+      nearest * (long double)QASM_TWO_PI / (long double)importer->modulus;
+  long double delta = remainderl((long double)angle - rounded_angle, (long double)QASM_TWO_PI);
+  if (delta < 0.0L) {
+    delta = -delta;
+  }
+  if (delta < 1e-15L) {
+    delta = 0.0L;
+  }
+  importer->approx_delta += (double)(2.0L * sinl(delta / 2.0L));
+  importer->approx_phase_count++;
+
+  return (uint32_t)residue;
+}
+
+static bool add_constant_angle(qasm_importer_t *importer, double angle) {
+  return add_constant(importer, rounded_coeff_for_angle(importer, angle));
+}
+
+static bool apply_phase_angle(qasm_importer_t *importer, uint32_t qubit, double angle) {
+  return apply_phase(importer, qubit, rounded_coeff_for_angle(importer, angle));
+}
+
+static bool apply_rz_angle(qasm_importer_t *importer, uint32_t qubit, double angle) {
+  return add_constant_angle(importer, -0.5 * angle) && apply_phase_angle(importer, qubit, angle);
+}
+
+static bool apply_rx_angle(qasm_importer_t *importer, uint32_t qubit, double angle) {
+  return apply_h(importer, qubit) && apply_rz_angle(importer, qubit, angle) &&
+         apply_h(importer, qubit);
+}
+
+static bool apply_ry_angle(qasm_importer_t *importer, uint32_t qubit, double angle) {
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, qubit) && apply_rz_angle(importer, qubit, angle) &&
+         apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 4));
+}
+
+static bool apply_controlled_phase_angle(qasm_importer_t *importer, uint32_t control,
+                                         uint32_t target, double angle) {
+  return apply_phase_angle(importer, control, 0.5 * angle) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_phase_angle(importer, target, -0.5 * angle) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_phase_angle(importer, target, 0.5 * angle);
+}
+
+static bool apply_csx_angle_decomposition(qasm_importer_t *importer, uint32_t control,
+                                          uint32_t target, double angle) {
+  return apply_h(importer, target) &&
+         apply_controlled_phase_angle(importer, control, target, angle) &&
+         apply_h(importer, target);
+}
+
+static bool apply_crz_angle(qasm_importer_t *importer, uint32_t control, uint32_t target,
+                            double angle) {
+  return apply_phase_angle(importer, control, -0.5 * angle) &&
+         apply_controlled_phase_angle(importer, control, target, angle);
+}
+
+static bool apply_rzz_angle(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                            double angle) {
+  return apply_cx_decomposition(importer, left, right) && apply_rz_angle(importer, right, angle) &&
+         apply_cx_decomposition(importer, left, right);
+}
+
+static bool apply_rxx_angle(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                            double angle) {
+  return apply_h(importer, left) && apply_h(importer, right) &&
+         apply_rzz_angle(importer, left, right, angle) && apply_h(importer, left) &&
+         apply_h(importer, right);
+}
+
+static bool apply_ryy_angle(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                            double angle) {
+  return apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, left) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_h(importer, right) &&
+         apply_rzz_angle(importer, left, right, angle) && apply_h(importer, left) &&
+         apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 4)) &&
+         apply_h(importer, right) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 4));
+}
+
+static bool apply_u3_angle(qasm_importer_t *importer, uint32_t qubit, double theta, double phi,
+                           double lambda) {
+  return add_constant_angle(importer, 0.5 * (phi + lambda)) &&
+         apply_rz_angle(importer, qubit, lambda) && apply_ry_angle(importer, qubit, theta) &&
+         apply_rz_angle(importer, qubit, phi);
+}
+
+static bool apply_u2_angle(qasm_importer_t *importer, uint32_t qubit, double phi, double lambda) {
+  return apply_u3_angle(importer, qubit, QASM_PI / 2.0, phi, lambda);
+}
+
 static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
-  return apply_phase(importer, target, 12) && apply_cx_decomposition(importer, control, target) &&
-         apply_phase(importer, target, 4);
+  return apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 12)) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 4));
 }
 
 static bool apply_csx_decomposition(qasm_importer_t *importer, uint32_t control,
@@ -826,12 +1222,18 @@ static bool apply_csx_decomposition(qasm_importer_t *importer, uint32_t control,
 
 static bool apply_ccz_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                     uint32_t third) {
-  return apply_phase(importer, first, 2) && apply_phase(importer, second, 2) &&
-         apply_phase(importer, third, 2) && apply_phase_on_xor2(importer, first, second, 14) &&
-         apply_phase_on_xor2(importer, first, third, 14) &&
-         apply_phase_on_xor2(importer, second, third, 14) &&
+  return apply_phase(importer, first, coeff_from_pi_over_eight_units(importer, 2)) &&
+         apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 2)) &&
+         apply_phase(importer, third, coeff_from_pi_over_eight_units(importer, 2)) &&
+         apply_phase_on_xor2(importer, first, second,
+                             coeff_from_pi_over_eight_units(importer, 14)) &&
+         apply_phase_on_xor2(importer, first, third,
+                             coeff_from_pi_over_eight_units(importer, 14)) &&
+         apply_phase_on_xor2(importer, second, third,
+                             coeff_from_pi_over_eight_units(importer, 14)) &&
          apply_cx_decomposition(importer, first, third) &&
-         apply_cx_decomposition(importer, second, third) && apply_phase(importer, third, 2) &&
+         apply_cx_decomposition(importer, second, third) &&
+         apply_phase(importer, third, coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_cx_decomposition(importer, second, third) &&
          apply_cx_decomposition(importer, first, third);
 }
@@ -844,14 +1246,17 @@ static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, u
 
 static bool apply_rccx_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                      uint32_t target) {
-  return apply_u2(importer, target, 0, 4) && apply_phase(importer, first, 2) &&
-         apply_phase(importer, second, 2) && apply_phase(importer, target, 2) &&
+  return apply_u2(importer, target, 0, 4) &&
+         apply_phase(importer, first, coeff_from_pi_over_eight_units(importer, 2)) &&
+         apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 2)) &&
+         apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_cx_decomposition(importer, first, second) &&
          apply_cx_decomposition(importer, second, target) &&
-         apply_phase(importer, target, 14) &&
+         apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 14)) &&
          apply_cx_decomposition(importer, first, second) &&
          apply_cx_decomposition(importer, second, target) &&
-         apply_phase(importer, second, 14) && apply_phase(importer, target, 2) &&
+         apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 14)) &&
+         apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_u2(importer, target, 0, 4);
 }
 
@@ -870,7 +1275,8 @@ static bool apply_iswap_decomposition(qasm_importer_t *importer, uint32_t left, 
   const uint32_t tmp = importer->current[left];
   importer->current[left] = importer->current[right];
   importer->current[right] = tmp;
-  return apply_phase(importer, left, 4) && apply_phase(importer, right, 4);
+  return apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 4)) &&
+         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 4));
 }
 
 static bool split_two_operands(qasm_importer_t *importer, char *rest, char **left, char **right) {
@@ -1083,6 +1489,104 @@ static bool apply_param_three_qubit_operand(qasm_importer_t *importer, char *res
   return true;
 }
 
+typedef bool (*qasm_radian_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                         double angle);
+
+typedef bool (*qasm_radian_two_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                                  double first, double second);
+
+typedef bool (*qasm_radian_three_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit,
+                                                    double first, double second, double third);
+
+static bool apply_radian_one_qubit_operand(qasm_importer_t *importer, char *rest, double angle,
+                                           qasm_radian_one_qubit_fn apply) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply(importer, qubit, angle);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply(importer, reg->offset + i, angle)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool apply_radian_two_param_one_qubit_operand(
+    qasm_importer_t *importer, char *rest, double first, double second,
+    qasm_radian_two_param_one_qubit_fn apply) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply(importer, qubit, first, second);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply(importer, reg->offset + i, first, second)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool apply_radian_three_param_one_qubit_operand(
+    qasm_importer_t *importer, char *rest, double first, double second, double third,
+    qasm_radian_three_param_one_qubit_fn apply) {
+  rest = trim(rest);
+  if (strchr(rest, '[') != NULL) {
+    uint32_t qubit = 0;
+    if (!parse_qref(importer, rest, &qubit)) {
+      return false;
+    }
+    return apply(importer, qubit, first, second, third);
+  }
+
+  if (!valid_identifier(rest)) {
+    set_error(importer, "invalid qreg name '%s'", rest);
+    return false;
+  }
+
+  qasm_reg_t *reg = find_reg(importer, rest);
+  if (reg == NULL) {
+    set_error(importer, "unknown qreg '%s'", rest);
+    return false;
+  }
+  for (uint32_t i = 0; i < reg->size; i++) {
+    if (!apply(importer, reg->offset + i, first, second, third)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op, uint32_t left,
                                uint32_t right, uint32_t phase_coeff) {
   switch (op) {
@@ -1098,9 +1602,11 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
   case QASM_TWO_CY:
     return apply_cy_decomposition(importer, left, right);
   case QASM_TWO_CSX:
-    return apply_csx_decomposition(importer, left, right, 4);
+    return apply_csx_decomposition(importer, left, right,
+                                   coeff_from_pi_over_eight_units(importer, 4));
   case QASM_TWO_CSXDG:
-    return apply_csx_decomposition(importer, left, right, 12);
+    return apply_csx_decomposition(importer, left, right,
+                                   coeff_from_pi_over_eight_units(importer, 12));
   case QASM_TWO_SWAP: {
     const uint32_t tmp = importer->current[left];
     importer->current[left] = importer->current[right];
@@ -1230,6 +1736,46 @@ static bool apply_angle_two_qubit_operands(qasm_importer_t *importer, char *rest
   return true;
 }
 
+typedef bool (*qasm_radian_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
+                                         uint32_t right, double angle);
+
+static bool apply_radian_two_qubit_operands(qasm_importer_t *importer, char *rest, double angle,
+                                            qasm_radian_two_qubit_fn apply) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply(importer, left.qubit, right.qubit, angle);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply(importer, left_qubit, right_qubit, angle)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 typedef bool (*qasm_three_qubit_fn)(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                     uint32_t third);
 
@@ -1274,8 +1820,171 @@ static bool apply_three_qubit_operands(qasm_importer_t *importer, char *rest,
   return true;
 }
 
+static bool apply_approx_gate(qasm_importer_t *importer, char *gate, char *rest,
+                              bool *out_handled) {
+  *out_handled = false;
+
+  double u3_angles[3] = {0.0};
+  bool is_u3 = false;
+  if (!parse_param_radian_list(importer, gate, "u3(", "u3", u3_angles, 3, &is_u3)) {
+    return false;
+  }
+  if (is_u3) {
+    *out_handled = true;
+    return apply_radian_three_param_one_qubit_operand(importer, rest, u3_angles[0], u3_angles[1],
+                                                      u3_angles[2], apply_u3_angle);
+  }
+
+  if (!parse_param_radian_list(importer, gate, "u(", "u", u3_angles, 3, &is_u3)) {
+    return false;
+  }
+  if (is_u3) {
+    *out_handled = true;
+    return apply_radian_three_param_one_qubit_operand(importer, rest, u3_angles[0], u3_angles[1],
+                                                      u3_angles[2], apply_u3_angle);
+  }
+
+  double u2_angles[2] = {0.0};
+  bool is_u2 = false;
+  if (!parse_param_radian_list(importer, gate, "u2(", "u2", u2_angles, 2, &is_u2)) {
+    return false;
+  }
+  if (is_u2) {
+    *out_handled = true;
+    return apply_radian_two_param_one_qubit_operand(importer, rest, u2_angles[0], u2_angles[1],
+                                                    apply_u2_angle);
+  }
+
+  double angle = 0.0;
+  bool matches = false;
+  if (!parse_param_angle_radians(importer, gate, "gphase(", "gphase", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    if (*trim(rest) != '\0') {
+      set_error(importer, "gphase gate does not take qubit operands");
+      return false;
+    }
+    return add_constant_angle(importer, angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "rz(", "rz", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_one_qubit_operand(importer, rest, angle, apply_rz_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "rx(", "rx", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_one_qubit_operand(importer, rest, angle, apply_rx_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "ry(", "ry", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_one_qubit_operand(importer, rest, angle, apply_ry_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "crz(", "crz", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_crz_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "rxx(", "rxx", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_rxx_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "ryy(", "ryy", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_ryy_angle);
+  }
+
+  if (!parse_param_angle_radians(importer, gate, "rzz(", "rzz", &angle, &matches)) {
+    return false;
+  }
+  if (matches) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_rzz_angle);
+  }
+
+  bool is_phase = false;
+  if (!phase_angle_for_gate(importer, gate, &angle, &is_phase)) {
+    return false;
+  }
+  if (is_phase) {
+    *out_handled = true;
+    return apply_radian_one_qubit_operand(importer, rest, angle, apply_phase_angle);
+  }
+
+  bool is_controlled_phase = false;
+  if (!controlled_phase_angle_for_gate(importer, gate, &angle, &is_controlled_phase)) {
+    return false;
+  }
+  if (is_controlled_phase) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_controlled_phase_angle);
+  }
+
+  if (strcmp(gate, "csx") == 0 || strcmp(gate, "csxdg") == 0) {
+    *out_handled = true;
+    const double csx_angle = strcmp(gate, "csx") == 0 ? QASM_PI / 2.0 : -QASM_PI / 2.0;
+    return apply_radian_two_qubit_operands(importer, rest, csx_angle,
+                                           apply_csx_angle_decomposition);
+  }
+
+  if (gate[0] == 'c' && strcmp(gate, "cz") != 0 &&
+      named_phase_angle_for_gate(gate + 1, &angle)) {
+    *out_handled = true;
+    return apply_radian_two_qubit_operands(importer, rest, angle, apply_controlled_phase_angle);
+  }
+
+  return true;
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
+
+  if (importer->approx_enabled) {
+    bool handled = false;
+    if (!apply_approx_gate(importer, gate, rest, &handled)) {
+      return false;
+    }
+    if (handled) {
+      return true;
+    }
+  }
+
+  uint32_t global_phase_coeff = 0;
+  bool is_gphase = false;
+  if (!parse_param_phase_coeff(importer, gate, "gphase(", "gphase", &global_phase_coeff,
+                               &is_gphase)) {
+    return false;
+  }
+  if (is_gphase) {
+    if (*trim(rest) != '\0') {
+      set_error(importer, "gphase gate does not take qubit operands");
+      return false;
+    }
+    return add_constant(importer, global_phase_coeff);
+  }
 
   int64_t u3_units[3] = {0};
   bool is_u3 = false;
@@ -1525,6 +2234,10 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
     gate_end++;
   }
   if (*gate_end == '\0') {
+    lowercase_ascii(text);
+    if (strncmp(text, "gphase(", strlen("gphase(")) == 0) {
+      return apply_gate(importer, text, text + strlen(text));
+    }
     set_error(importer, "gate statement is missing operands");
     return false;
   }
@@ -1592,11 +2305,11 @@ static bool parse_qasm(FILE *input, const char *path, qasm_importer_t *importer)
   return ok;
 }
 
-static bool write_zero_qsop(FILE *file, uint64_t norm_h) {
-  fprintf(file, "p qsop-sign 8 1 0\n");
+static bool write_zero_qsop(FILE *file, uint64_t norm_h, uint32_t modulus) {
+  fprintf(file, "p qsop-sign %" PRIu32 " 1 0\n", modulus);
   fprintf(file, "n %" PRIu64 "\n", norm_h);
   fputs("cst 0\n\n", file);
-  fputs("u 0 4\n", file);
+  fprintf(file, "u 0 %" PRIu32 "\n", modulus / 2U);
   return !ferror(file);
 }
 
@@ -1636,6 +2349,9 @@ static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_
 }
 
 static uint32_t output_modulus(const qasm_importer_t *importer) {
+  if (importer->approx_enabled) {
+    return importer->modulus;
+  }
   if (importer->constant % 2U != 0) {
     return 16;
   }
@@ -1652,8 +2368,12 @@ static uint32_t output_modulus(const qasm_importer_t *importer) {
   return 8;
 }
 
-static uint32_t output_coeff(uint32_t coeff, uint32_t modulus) {
-  return modulus == 8 ? coeff / 2U : coeff;
+static uint32_t output_coeff(const qasm_importer_t *importer, uint32_t coeff, uint32_t modulus) {
+  if (modulus == importer->modulus) {
+    return coeff % modulus;
+  }
+  const uint32_t scale = importer->modulus / modulus;
+  return coeff / scale;
 }
 
 static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
@@ -1664,13 +2384,14 @@ static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
   }
   if (boundary_conflict) {
     free(pins);
-    return write_zero_qsop(file, importer->norm_h);
+    return write_zero_qsop(file, importer->norm_h,
+                           importer->approx_enabled ? importer->modulus : 8U);
   }
 
   const uint32_t modulus = output_modulus(importer);
   const uint32_t sign_coeff = modulus / 2U;
   for (uint32_t i = 0; i < importer->edges_len; i++) {
-    const uint32_t coeff = output_coeff(importer->edges[i].q, modulus);
+    const uint32_t coeff = output_coeff(importer, importer->edges[i].q, modulus);
     if (coeff != sign_coeff) {
       set_error(importer,
                 "unsupported non-sign quadratic phase coefficient %" PRIu32
@@ -1684,11 +2405,11 @@ static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
   fprintf(file, "p qsop-sign %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", modulus, importer->nvars,
           importer->edges_len);
   fprintf(file, "n %" PRIu64 "\n", importer->norm_h);
-  fprintf(file, "cst %" PRIu32 "\n", output_coeff(importer->constant, modulus));
+  fprintf(file, "cst %" PRIu32 "\n", output_coeff(importer, importer->constant, modulus));
 
   for (uint32_t i = 0; i < importer->unary_len; i++) {
     fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", importer->unary[i].v,
-            output_coeff(importer->unary[i].q, modulus));
+            output_coeff(importer, importer->unary[i].q, modulus));
   }
   for (uint32_t i = 0; i < importer->edges_len; i++) {
     fprintf(file, "e %" PRIu32 " %" PRIu32 "\n", importer->edges[i].u, importer->edges[i].v);
@@ -1701,6 +2422,18 @@ static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
 
   free(pins);
   return !ferror(file);
+}
+
+static void write_approx_certificate(FILE *file, const qasm_importer_t *importer) {
+  if (!importer->approx_enabled) {
+    return;
+  }
+  fprintf(file, "c qasm2sop_approx epsilon %.17g\n", importer->approx_epsilon);
+  fprintf(file, "c qasm2sop_approx modulus %" PRIu32 "\n", importer->modulus);
+  fprintf(file, "c qasm2sop_approx rounded_phase_ops %" PRIu64 "\n",
+          importer->approx_phase_count);
+  fprintf(file, "c qasm2sop_approx additive_amplitude_error_bound %.17g\n",
+          importer->approx_delta);
 }
 
 static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *error) {
@@ -1737,6 +2470,7 @@ static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *erro
     return false;
   }
 
+  write_approx_certificate(stdout, importer);
   ok = qsop_write_file(stdout, qsop, error);
   qsop_free(qsop);
   return ok;
@@ -1751,10 +2485,170 @@ static void print_qsop_error(const qsop_error_t *error) {
   }
 }
 
+static bool parse_approx_epsilon(const char *text, double *out_epsilon, char *error,
+                                 size_t error_size) {
+  errno = 0;
+  char *end = NULL;
+  const double epsilon = strtod(text, &end);
+  if (errno != 0 || end == text || *trim(end) != '\0' || !isfinite(epsilon) || epsilon <= 0.0) {
+    snprintf(error, error_size, "--approx must be a positive finite error budget");
+    return false;
+  }
+  *out_epsilon = epsilon;
+  return true;
+}
+
+static bool read_stream_to_memory(FILE *input, char **out_data, size_t *out_len, char *error,
+                                  size_t error_size) {
+  size_t cap = 8192U;
+  size_t len = 0;
+  char *data = malloc(cap);
+  if (data == NULL) {
+    snprintf(error, error_size, "out of memory while reading input");
+    return false;
+  }
+
+  for (;;) {
+    if (len == cap) {
+      if (cap > SIZE_MAX / 2U) {
+        free(data);
+        snprintf(error, error_size, "input is too large");
+        return false;
+      }
+      const size_t new_cap = cap * 2U;
+      char *new_data = realloc(data, new_cap);
+      if (new_data == NULL) {
+        free(data);
+        snprintf(error, error_size, "out of memory while reading input");
+        return false;
+      }
+      data = new_data;
+      cap = new_cap;
+    }
+
+    const size_t nread = fread(data + len, 1, cap - len, input);
+    len += nread;
+    if (nread == 0) {
+      if (ferror(input)) {
+        free(data);
+        snprintf(error, error_size, "read failed: %s", strerror(errno));
+        return false;
+      }
+      break;
+    }
+  }
+
+  if (len + 1U > cap) {
+    char *new_data = realloc(data, len + 1U);
+    if (new_data == NULL) {
+      free(data);
+      snprintf(error, error_size, "out of memory while reading input");
+      return false;
+    }
+    data = new_data;
+  }
+  data[len] = '\0';
+  *out_data = data;
+  *out_len = len;
+  return true;
+}
+
+static bool estimate_approx_phase_ops(const char *source, uint64_t *out_phase_ops, char *error,
+                                      size_t error_size) {
+  char *copy = strdup(source);
+  if (copy == NULL) {
+    snprintf(error, error_size, "out of memory while estimating approximate phase count");
+    return false;
+  }
+
+  uint64_t nqubits = 0;
+  uint64_t phase_ops = 0;
+  char *save = NULL;
+  for (char *line = strtok_r(copy, "\n", &save); line != NULL;
+       line = strtok_r(NULL, "\n", &save)) {
+    char *comment = strstr(line, "//");
+    if (comment != NULL) {
+      *comment = '\0';
+    }
+    char *text = trim(line);
+    if (*text == '\0') {
+      continue;
+    }
+    const size_t len = strlen(text);
+    if (len > 0 && text[len - 1U] == ';') {
+      text[len - 1U] = '\0';
+      text = trim(text);
+    }
+    if (*text == '\0' || starts_with_keyword(text, "OPENQASM") ||
+        starts_with_keyword(text, "include") || starts_with_keyword(text, "opaque") ||
+        starts_with_keyword(text, "barrier")) {
+      continue;
+    }
+    if (starts_with_keyword(text, "qreg")) {
+      char *rest = trim(text + strlen("qreg"));
+      char *open = strchr(rest, '[');
+      char *close = open == NULL ? NULL : strchr(open + 1, ']');
+      if (open != NULL && close != NULL) {
+        *close = '\0';
+        uint32_t size = 0;
+        if (parse_u32_text(trim(open + 1), &size)) {
+          if (UINT64_MAX - nqubits < size) {
+            free(copy);
+            snprintf(error, error_size, "too many qubits while estimating approximation modulus");
+            return false;
+          }
+          nqubits += size;
+        }
+      }
+      continue;
+    }
+    if (starts_with_keyword(text, "creg") || starts_with_keyword(text, "measure") ||
+        starts_with_keyword(text, "reset") || starts_with_keyword(text, "if")) {
+      continue;
+    }
+
+    const uint64_t width = nqubits == 0 ? 1U : nqubits;
+    if (width > UINT64_MAX / 16U || phase_ops > UINT64_MAX - width * 16U) {
+      free(copy);
+      snprintf(error, error_size, "too many approximate phase operations");
+      return false;
+    }
+    phase_ops += width * 16U;
+  }
+
+  free(copy);
+  *out_phase_ops = phase_ops;
+  return true;
+}
+
+static bool choose_approx_modulus(uint64_t estimated_phase_ops, double epsilon,
+                                  uint32_t *out_modulus, char *error, size_t error_size) {
+  if (estimated_phase_ops == 0) {
+    *out_modulus = 16;
+    return true;
+  }
+
+  const long double multiple =
+      ceill((long double)QASM_PI * (long double)estimated_phase_ops / (16.0L * epsilon));
+  if (!isfinite((double)multiple) || multiple > (long double)UINT32_MAX / 16.0L) {
+    snprintf(error, error_size, "--approx %.17g requires a modulus larger than %" PRIu32,
+             epsilon, UINT32_MAX);
+    return false;
+  }
+
+  uint64_t value = (uint64_t)multiple;
+  if (value == 0) {
+    value = 1;
+  }
+  *out_modulus = (uint32_t)(16U * value);
+  return true;
+}
+
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   const char *input_bits = NULL;
   const char *output_bits = NULL;
+  const char *approx_text = NULL;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
@@ -1781,6 +2675,29 @@ int main(int argc, char **argv) {
         return 2;
       }
       input_bits = argv[i] + strlen("--input=");
+      continue;
+    }
+    if (strcmp(argv[i], "--approx") == 0) {
+      if (approx_text != NULL) {
+        fputs("error: duplicate --approx option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      if (i + 1 >= argc) {
+        fputs("error: missing value for --approx\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      approx_text = argv[++i];
+      continue;
+    }
+    if (strncmp(argv[i], "--approx=", strlen("--approx=")) == 0) {
+      if (approx_text != NULL) {
+        fputs("error: duplicate --approx option\n", stderr);
+        print_usage(stderr);
+        return 2;
+      }
+      approx_text = argv[i] + strlen("--approx=");
       continue;
     }
     if (strcmp(argv[i], "--output") == 0) {
@@ -1819,6 +2736,15 @@ int main(int argc, char **argv) {
     input_path = argv[i];
   }
 
+  const bool approx_enabled = approx_text != NULL;
+  double approx_epsilon = 0.0;
+  char option_error[256] = {0};
+  if (approx_enabled &&
+      !parse_approx_epsilon(approx_text, &approx_epsilon, option_error, sizeof(option_error))) {
+    fprintf(stderr, "error: %s\n", option_error);
+    return 2;
+  }
+
   FILE *input = stdin;
   const char *diagnostic_path = "<stdin>";
   if (input_path != NULL && strcmp(input_path, "-") != 0) {
@@ -1831,15 +2757,87 @@ int main(int argc, char **argv) {
   }
 
   qasm_importer_t importer = {0};
-  importer.input_bits = input_bits;
-  importer.output_bits = output_bits;
-  bool ok = parse_qasm(input, diagnostic_path, &importer);
-  if (input != stdin) {
-    fclose(input);
+  bool ok = false;
+  char *source = NULL;
+  size_t source_len = 0;
+
+  if (!approx_enabled) {
+    importer.input_bits = input_bits;
+    importer.output_bits = output_bits;
+    importer.modulus = 16;
+    ok = parse_qasm(input, diagnostic_path, &importer);
+    if (input != stdin) {
+      fclose(input);
+    }
+  } else {
+    char read_error[256] = {0};
+    if (!read_stream_to_memory(input, &source, &source_len, read_error, sizeof(read_error))) {
+      if (input != stdin) {
+        fclose(input);
+      }
+      fprintf(stderr, "error: %s\n", read_error);
+      return 1;
+    }
+    if (input != stdin) {
+      fclose(input);
+    }
+
+    uint64_t estimated_phase_ops = 0;
+    if (!estimate_approx_phase_ops(source, &estimated_phase_ops, read_error, sizeof(read_error))) {
+      fprintf(stderr, "error: %s\n", read_error);
+      free(source);
+      return 1;
+    }
+
+    uint32_t approx_modulus = 16;
+    if (!choose_approx_modulus(estimated_phase_ops, approx_epsilon, &approx_modulus, read_error,
+                               sizeof(read_error))) {
+      fprintf(stderr, "error: %s\n", read_error);
+      free(source);
+      return 2;
+    }
+
+    for (;;) {
+      importer = (qasm_importer_t){0};
+      importer.input_bits = input_bits;
+      importer.output_bits = output_bits;
+      importer.modulus = approx_modulus;
+      importer.approx_enabled = true;
+      importer.approx_epsilon = approx_epsilon;
+
+      FILE *memory_input = fmemopen(source, source_len, "rb");
+      if (memory_input == NULL) {
+        fprintf(stderr, "error: failed to read buffered input\n");
+        free(source);
+        return 1;
+      }
+      ok = parse_qasm(memory_input, diagnostic_path, &importer);
+      fclose(memory_input);
+      if (!ok) {
+        break;
+      }
+
+      const double tolerance = approx_epsilon * 1e-12 + 1e-15;
+      if (importer.approx_delta <= approx_epsilon + tolerance) {
+        break;
+      }
+
+      const double failed_bound = importer.approx_delta;
+      free_importer(&importer);
+      if (approx_modulus > UINT32_MAX / 2U) {
+        fprintf(stderr,
+                "error: could not certify --approx %.17g within modulus limit; bound is %.17g\n",
+                approx_epsilon, failed_bound);
+        free(source);
+        return 1;
+      }
+      approx_modulus *= 2U;
+    }
   }
   if (!ok) {
     fprintf(stderr, "error: %s:%zu: %s\n", diagnostic_path, importer.line_no, importer.error);
     free_importer(&importer);
+    free(source);
     return 1;
   }
 
@@ -1850,12 +2848,14 @@ int main(int argc, char **argv) {
                               sizeof(boundary_error))) {
     fprintf(stderr, "error: %s\n", boundary_error);
     free_importer(&importer);
+    free(source);
     return 2;
   }
 
   qsop_error_t error = {0};
   ok = canonicalize_to_stdout(&importer, &error);
   free_importer(&importer);
+  free(source);
   if (!ok) {
     print_qsop_error(&error);
     return 1;
