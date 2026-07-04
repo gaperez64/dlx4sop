@@ -15,6 +15,7 @@ Instance sizes: n = 3..10 variables, up to ~m = n edges
 Deterministic seed: SEED = 42 (override with env DIFFERENTIAL_SEED=<n>)
 """
 
+import cmath
 import itertools
 import json
 import os
@@ -23,6 +24,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import time
 from typing import NamedTuple
 
 
@@ -295,6 +297,160 @@ def test_metamorphic_duplicate_edge_pair(exe: pathlib.Path) -> None:
         )
 
 
+def parse_single_fourier_output(output: str) -> tuple[float, float, float] | None:
+    """Parse amplitude_re/amplitude_im/numeric_error_bound from single-fourier output."""
+    re_val = im_val = bound_val = None
+    for line in output.splitlines():
+        if line.startswith("amplitude_re: "):
+            re_val = float(line[len("amplitude_re: "):])
+        elif line.startswith("amplitude_im: "):
+            im_val = float(line[len("amplitude_im: "):])
+        elif line.startswith("numeric_error_bound: "):
+            bound_val = float(line[len("numeric_error_bound: "):])
+    if re_val is None or im_val is None or bound_val is None:
+        return None
+    return re_val, im_val, bound_val
+
+
+def bruteforce_amplitude(counts: list[str], r: int) -> complex:
+    """Exact amplitude reconstruction from a full residue histogram (double precision;
+    fine here since instances are small enough that counts don't overflow double's
+    53-bit mantissa)."""
+    total = complex(0.0, 0.0)
+    omega = cmath.exp(2j * cmath.pi / r)
+    for k, c in enumerate(counts):
+        total += int(c) * (omega**k)
+    return total
+
+
+def test_single_fourier_mode_matches_bruteforce(
+    exe: pathlib.Path, backend_args: list[str], backend_label: str, seed_offset: int,
+    verbose: bool = False,
+) -> None:
+    """The single-mode complex DP (Corollary 1: one complex value per boundary
+    signature, table size independent of r) must agree with the exact brute-force
+    amplitude reconstruction, within its own reported numeric_error_bound (plus a
+    small slack for this test's own double-precision reconstruction, which is less
+    precise than the solver's internal long double)."""
+    instances = generate_test_suite(INSTANCE_SIZES, MODULI, INSTANCES_PER_BUCKET, SEED + seed_offset)
+    failures = []
+    for idx, inst in enumerate(instances):
+        ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+        if ground_truth_out is None:
+            continue
+        counts = parse_residue_vector(ground_truth_out)
+        if counts is None:
+            continue
+        expected = bruteforce_amplitude(counts, inst.r)
+
+        single_out = run_sop_solve(exe, inst.text, backend_args)
+        if single_out is None:
+            failures.append(
+                f"instance {idx} (nvars={inst.nvars} r={inst.r}) [{backend_label}]: "
+                f"single-fourier solve failed"
+            )
+            continue
+        parsed = parse_single_fourier_output(single_out)
+        if parsed is None:
+            failures.append(
+                f"instance {idx} (nvars={inst.nvars} r={inst.r}) [{backend_label}]: "
+                f"could not parse single-fourier output: {single_out!r}"
+            )
+            continue
+        actual_re, actual_im, bound = parsed
+        diff = abs(complex(actual_re, actual_im) - expected)
+        tolerance = bound + 1e-6  # slack for this test's own double-precision reconstruction
+        if diff > tolerance:
+            failures.append(
+                f"instance {idx} (nvars={inst.nvars} r={inst.r}) [{backend_label}]: "
+                f"single-fourier amplitude mismatch: expected {expected}, got "
+                f"({actual_re}, {actual_im}), diff={diff}, bound={bound}"
+            )
+        elif verbose:
+            print(f"  instance {idx} [{backend_label}]: single-fourier ok (diff={diff:.3e}, bound={bound:.3e})")
+
+    if failures:
+        for msg in failures:
+            print(f"FAIL: {msg}", file=sys.stderr)
+        raise AssertionError(
+            f"{len(failures)} single-fourier mismatch(es) on {len(instances)} instances"
+        )
+
+
+LARGE_R_SMOKE_TEXT = (
+    "p qsop-sign 4294967200 5 4\n"
+    "n 3\n"
+    "cst 123456789\n"
+    "u 0 111111111\n"
+    "u 1 222222222\n"
+    "u 2 333333333\n"
+    "u 3 444444444\n"
+    "u 4 555555555\n"
+    "e 0 1\n"
+    "e 1 2\n"
+    "e 2 3\n"
+    "e 3 4\n"
+)
+
+
+def test_single_fourier_mode_large_r_smoke(exe: pathlib.Path, backend_args: list[str],
+                                           backend_label: str) -> None:
+    """Regression test for the bug this backend fixes: r in the billions (as produced
+    by qasm2sop --approx at a tight error budget) must solve fast, since the DP's
+    table size is O(2^k) independent of r -- unlike count-table/all-modes-Fourier
+    mode, which would need an O(r) or O(r^2) allocation and could not complete."""
+    start = time.monotonic()
+    output = run_sop_solve(exe, LARGE_R_SMOKE_TEXT, backend_args)
+    elapsed = time.monotonic() - start
+    assert output is not None, f"[{backend_label}] large-r single-fourier solve failed"
+    assert elapsed < 5.0, (
+        f"[{backend_label}] large-r single-fourier solve took {elapsed:.2f}s (expected < 5s)"
+    )
+    parsed = parse_single_fourier_output(output)
+    assert parsed is not None, (
+        f"[{backend_label}] could not parse large-r single-fourier output: {output!r}"
+    )
+
+
+def test_single_fourier_mode_treewidth_matches_rankwidth(exe: pathlib.Path,
+                                                         verbose: bool = False) -> None:
+    """Cross-check: the two independent single-mode complex DP implementations
+    (treewidth bucket elimination vs rankwidth leaf/join) must agree with each other,
+    not just with brute-force -- this specifically exercises the join/crossing-parity
+    code path in solve_join_complex_streaming that has no treewidth analogue."""
+    instances = generate_test_suite(INSTANCE_SIZES, MODULI, INSTANCES_PER_BUCKET, SEED + 5)
+    failures = []
+    for idx, inst in enumerate(instances):
+        tw_out = run_sop_solve(exe, inst.text, ["--backend", "treewidth", "--solve-mode", "single-fourier"])
+        rw_out = run_sop_solve(exe, inst.text, ["--backend", "rankwidth", "--solve-mode", "single-fourier"])
+        if tw_out is None or rw_out is None:
+            continue
+        tw_parsed = parse_single_fourier_output(tw_out)
+        rw_parsed = parse_single_fourier_output(rw_out)
+        if tw_parsed is None or rw_parsed is None:
+            failures.append(f"instance {idx} (nvars={inst.nvars} r={inst.r}): could not parse output")
+            continue
+        tw_re, tw_im, tw_bound = tw_parsed
+        rw_re, rw_im, rw_bound = rw_parsed
+        diff = abs(complex(tw_re, tw_im) - complex(rw_re, rw_im))
+        tolerance = tw_bound + rw_bound + 1e-12
+        if diff > tolerance:
+            failures.append(
+                f"instance {idx} (nvars={inst.nvars} r={inst.r}): "
+                f"treewidth=({tw_re},{tw_im}) rankwidth=({rw_re},{rw_im}) diff={diff}"
+            )
+        elif verbose:
+            print(f"  instance {idx}: treewidth/rankwidth agree (diff={diff:.3e})")
+
+    if failures:
+        for msg in failures:
+            print(f"FAIL: {msg}", file=sys.stderr)
+        raise AssertionError(
+            f"{len(failures)} treewidth/rankwidth single-fourier disagreement(s) on "
+            f"{len(instances)} instances"
+        )
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 3:
         print(f"usage: {argv[0]} <sop-solve> <source-root>")
@@ -306,6 +462,21 @@ def main(argv: list[str]) -> None:
     test_all_backends_agree(exe, verbose=verbose)
     test_metamorphic_variable_rename(exe)
     test_metamorphic_duplicate_edge_pair(exe)
+    test_single_fourier_mode_matches_bruteforce(
+        exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth", 3,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_matches_bruteforce(
+        exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth", 4,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_treewidth_matches_rankwidth(exe, verbose=verbose)
+    test_single_fourier_mode_large_r_smoke(
+        exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
+    )
+    test_single_fourier_mode_large_r_smoke(
+        exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
+    )
     print(f"all differential backend tests passed (seed={SEED})")
 
 

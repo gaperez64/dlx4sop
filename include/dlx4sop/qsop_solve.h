@@ -14,6 +14,17 @@ typedef struct qsop_result {
   char **count_strings;
 } qsop_result_t;
 
+/* Result of a single-Fourier-mode solve (Corollary 1): one complex value, with a
+ * certified worst-case bound on the numerical (floating-point) error accumulated by the
+ * DP. This is independent of the phase-rounding error a caller may have introduced
+ * upstream (e.g. qasm2sop --approx's reported additive_amplitude_error_bound); the two
+ * bounds are additive and a caller wanting a total certified error sums them. */
+typedef struct qsop_amplitude {
+  long double re;
+  long double im;
+  long double numeric_error_bound;
+} qsop_amplitude_t;
+
 typedef struct qsop_solve_stats {
   /* Branch / brute-force search */
   uint64_t search_nodes;
@@ -217,6 +228,16 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
     qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error);
 
+/* Compute a single Fourier mode (target_mode, typically 1 for one amplitude) directly via
+ * a complex-arithmetic dynamic program: table size is O(2^k) per elimination step,
+ * independent of r (unlike the count-table/all-modes-Fourier paths above, which are
+ * O(r*2^k)). Suitable for QSOP instances with r far too large for those paths to allocate
+ * (e.g. qasm2sop --approx output at a tight error budget). */
+bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                      qsop_treewidth_order_t order_policy, uint32_t target_mode,
+                                      qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                      qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order,
                                 uint32_t **order_out, uint32_t *width_out,
                                 qsop_error_t *error);
@@ -285,6 +306,16 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       uint32_t max_vars, qsop_result_t **out,
                                       qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                       qsop_error_t *error);
+
+/* Compute a single Fourier mode (target_mode, typically 1 for one amplitude) directly via
+ * a complex-arithmetic dynamic program over the given rank-decomposition: table size is
+ * O(2^k) per node, independent of r (unlike the count-table/all-modes-Fourier paths
+ * above, which are O(r*2^k)). Mirrors qsop_solve_treewidth_single_mode. */
+bool qsop_solve_rankwidth_single_mode(const qsop_instance_t *qsop,
+                                      const qsop_rankwidth_decomposition_t *decomposition,
+                                      uint32_t max_vars, uint32_t target_mode,
+                                      qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                      qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_write_file(FILE *file,
                                              const qsop_rankwidth_decomposition_t *decomposition,

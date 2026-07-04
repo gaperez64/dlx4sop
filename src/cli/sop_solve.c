@@ -53,7 +53,9 @@ static void print_usage(FILE *file) {
         "[--branch-rw-memory-penalty-ns N] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--solve-mode count-table|fourier] [--rankwidth-mode count-table|fourier] "
+        "[--solve-mode count-table|fourier|single-fourier] "
+        "[--fourier-target-mode N] "
+        "[--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
         "[--stats-jsonl PATH] [--branch-calibrate-backends] "
@@ -546,6 +548,9 @@ int main(int argc, char **argv) {
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
   bool solve_mode_set = false;
+  bool single_fourier_mode = false;
+  uint32_t fourier_target_mode = 1;
+  bool fourier_target_mode_set = false;
   bool treewidth_order_set = false;
   bool include_result = false;
   bool include_probability = false;
@@ -896,13 +901,27 @@ int main(int argc, char **argv) {
       const char *value = argv[++i];
       if (strcmp(value, "count-table") == 0) {
         solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
+        solve_mode_set = true;
       } else if (strcmp(value, "fourier") == 0) {
         solve_mode = QSOP_SOLVE_MODE_FOURIER;
+        solve_mode_set = true;
+      } else if (strcmp(value, "single-fourier") == 0) {
+        single_fourier_mode = true;
       } else {
         fprintf(stderr, "error: unsupported solve mode '%s'\n", value);
         return 2;
       }
-      solve_mode_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--fourier-target-mode") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --fourier-target-mode requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--fourier-target-mode", argv[++i], &fourier_target_mode)) {
+        return 2;
+      }
+      fourier_target_mode_set = true;
       continue;
     }
     if (strcmp(argv[i], "--treewidth-order") == 0) {
@@ -1010,6 +1029,22 @@ int main(int argc, char **argv) {
     fputs("error: --include-probability requires --format stats\n", stderr);
     return 2;
   }
+  if (single_fourier_mode && backend != SOLVE_BACKEND_TREEWIDTH &&
+      backend != SOLVE_BACKEND_RANKWIDTH) {
+    fputs("error: --solve-mode single-fourier requires --backend treewidth or rankwidth\n",
+          stderr);
+    return 2;
+  }
+  if (fourier_target_mode_set && !single_fourier_mode) {
+    fputs("error: --fourier-target-mode requires --solve-mode single-fourier\n", stderr);
+    return 2;
+  }
+  if (single_fourier_mode && (include_result || include_probability)) {
+    fputs("error: --solve-mode single-fourier is incompatible with --include-result/"
+          "--include-probability (it already reports the amplitude directly)\n",
+          stderr);
+    return 2;
+  }
 
   FILE *input = stdin;
   const char *diagnostic_path = "<stdin>";
@@ -1059,6 +1094,66 @@ int main(int argc, char **argv) {
       .user = &csv_trace,
   };
   qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
+
+  if (single_fourier_mode) {
+    qsop_amplitude_t amplitude = {0};
+    qsop_solve_stats_t amp_stats = {0};
+    if (backend == SOLVE_BACKEND_RANKWIDTH) {
+      qsop_rankwidth_decomposition_t *single_mode_decomposition = NULL;
+      if (rankwidth_decomposition_path != NULL) {
+        FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
+        if (decomposition_file == NULL) {
+          fprintf(stderr, "error: %s: %s\n", rankwidth_decomposition_path, strerror(errno));
+          qsop_free(qsop);
+          return 1;
+        }
+        ok = qsop_rankwidth_decomposition_parse_file(
+            decomposition_file, rankwidth_decomposition_path, qsop->nvars,
+            &single_mode_decomposition, &error);
+        fclose(decomposition_file);
+      } else {
+        ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
+                                                   &single_mode_decomposition, &error);
+      }
+      if (!ok) {
+        print_error(&error, rankwidth_decomposition_path != NULL ? rankwidth_decomposition_path
+                                                                 : diagnostic_path);
+        qsop_free(qsop);
+        return 1;
+      }
+      ok = qsop_solve_rankwidth_single_mode(qsop, single_mode_decomposition, max_vars,
+                                           fourier_target_mode, &amplitude, &amp_stats, trace_ptr,
+                                           &error);
+      qsop_rankwidth_decomposition_free(single_mode_decomposition);
+    } else {
+      ok = qsop_solve_treewidth_single_mode(qsop, max_vars, treewidth_order, fourier_target_mode,
+                                           &amplitude, &amp_stats, trace_ptr, &error);
+    }
+    qsop_free(qsop);
+    if (jsonl_file != NULL) {
+      fclose(jsonl_file);
+    }
+    if (!ok) {
+      print_error(&error, diagnostic_path);
+      return 1;
+    }
+    printf("mode: single-fourier\n");
+    printf("fourier_target_mode: %" PRIu32 "\n", fourier_target_mode);
+    printf("amplitude_re: %.17Lg\n", amplitude.re);
+    printf("amplitude_im: %.17Lg\n", amplitude.im);
+    printf("numeric_error_bound: %.17Lg\n", amplitude.numeric_error_bound);
+    if (format == SOLVE_FORMAT_STATS) {
+      ok = write_solver_stats(stdout, backend, &amp_stats, solve_mode, solve_mode_set,
+                              rankwidth_mode, rankwidth_decomposition_label, treewidth_order,
+                              &error);
+      if (!ok) {
+        print_error(&error, "<stdout>");
+        return 1;
+      }
+    }
+    return 0;
+  }
+
   qsop_backend_stats_sink_t sink = {
       .file = jsonl_file,
       .instance = diagnostic_path,

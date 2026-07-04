@@ -144,7 +144,7 @@ def test_rankwidth_signed_path_agrees_with_treewidth(exe: pathlib.Path) -> None:
 
 
 def test_rankwidth_signed_large_crt_agrees_with_treewidth(exe: pathlib.Path) -> None:
-    """Labelled CRT path (nvars >= 64) must agree with treewidth on a large path graph."""
+    """Signed CRT path (nvars >= 64) must agree with treewidth on a large path graph."""
     for nvars in [70, 100]:
         qsop_text = make_signed_path_qsop(nvars, r=8)
         r_tw = run_treewidth(exe, qsop_text, extra_args=["--max-vars", "256"])

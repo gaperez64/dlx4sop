@@ -3,12 +3,19 @@
 #include "dlx4sop/residue.h"
 #include "trace.h"
 
+#include <float.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Long-double pi, matching the precision (and literal) already used for amplitude
+ * reconstruction in src/cli/sop_solve.c and the treewidth single-mode path. */
+static const long double rw_two_pi =
+    6.283185307179586476925286766559005768394338798750211641949889L;
 
 #define RW_JOIN_MAP_INITIAL_CAP 1024U
 #define RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT UINT64_C(1000000)
@@ -144,6 +151,36 @@ typedef struct rw_fourier_table {
   size_t signature_slots_mask;
 } rw_fourier_table_t;
 
+/* Single Fourier-mode table: one complex accumulator per occurring boundary signature,
+ * with no dependence on r in table size (unlike rw_fourier_table_t, whose `values` holds
+ * r/2 odd-mode slots per signature). This is what makes single-amplitude evaluation
+ * r-independent (Corollary 1), mirroring tw_factor_complex_t in treewidth.c. */
+typedef struct rw_complex_table {
+  uint32_t *signatures;
+  uint64_t *assignments;
+  uint32_t *assignment_weights;
+  long double *re;
+  long double *im;
+  uint32_t *signature_slots;
+  size_t len;
+  size_t cap;
+  size_t signature_slots_mask;
+} rw_complex_table_t;
+
+/* Context for the single-mode solve: r and target_mode evaluate omega_r^{target_mode*k}
+ * at leaves; sign_re is the precomputed omega_r^{target_mode*r/2} = (-1)^target_mode used
+ * at every join crossing (computed once, not per join pair); complex_ops counts total
+ * per-signature complex multiply-accumulate operations, the basis for the certified
+ * numerical error bound. */
+typedef struct rw_complex_context {
+  uint32_t r;
+  uint32_t target_mode;
+  long double sign_re;
+  uint64_t complex_ops;
+  qsop_solve_stats_t *stats;
+  qsop_solve_trace_t *trace;
+} rw_complex_context_t;
+
 typedef struct rw_dense_basis {
   uint64_t *pivot_rows;
   uint64_t *pivot_coords;
@@ -245,6 +282,20 @@ static uint64_t *fourier_assignment(const rw_fourier_table_t *table, size_t inde
 
 static uint32_t fourier_odd_mode_count(uint32_t r) {
   return r / 2U;
+}
+
+static uint64_t *complex_assignment(const rw_complex_table_t *table, size_t index, size_t words) {
+  return qsop_bitset_row(table->assignments, words, (uint32_t)index);
+}
+
+/* omega_r^{target_mode * k}, computed directly from a scalar angle: r never sizes an
+ * array in this path, only a divisor here, so table cost is fully independent of r. */
+static void rw_root_of_unity(uint32_t r, uint32_t target_mode, uint32_t k, long double *re,
+                             long double *im) {
+  const long double angle =
+      rw_two_pi * (long double)target_mode * (long double)k / (long double)r;
+  *re = cosl(angle);
+  *im = sinl(angle);
 }
 
 static const uint64_t *signature_bits(const rw_signature_pool_t *pool, uint32_t signature) {
@@ -537,6 +588,34 @@ static bool fourier_slots_rehash(rw_fourier_table_t *table, qsop_error_t *error)
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
     set_error(error, "out of memory while growing rankwidth Fourier signature index");
+    return false;
+  }
+  memset(slots, 0xFF, new_cap * sizeof(*slots));
+  const size_t mask = new_cap - 1U;
+  for (size_t i = 0; i < table->len; i++) {
+    size_t s = rep_hash(table->signatures[i]) & mask;
+    while (slots[s] != UINT32_MAX) {
+      s = (s + 1U) & mask;
+    }
+    slots[s] = (uint32_t)i;
+  }
+  free(table->signature_slots);
+  table->signature_slots = slots;
+  table->signature_slots_mask = mask;
+  return true;
+}
+
+static bool complex_slots_rehash(rw_complex_table_t *table, qsop_error_t *error) {
+  size_t new_cap = table->signature_slots_mask != 0
+                       ? (table->signature_slots_mask + 1U) * 2U
+                       : 16U;
+  const size_t need = (table->len + 1U) * 2U;
+  while (new_cap < need) {
+    new_cap *= 2U;
+  }
+  uint32_t *slots = malloc(new_cap * sizeof(*slots));
+  if (slots == NULL) {
+    set_error(error, "out of memory while growing rankwidth single-mode signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots));
@@ -1126,6 +1205,79 @@ static void fourier_table_free(rw_fourier_table_t *table) {
   free(table->values);
   free(table->signature_slots);
   *table = (rw_fourier_table_t){0};
+}
+
+static bool reserve_complex_table(rw_complex_table_t *table, size_t needed, size_t words,
+                                  qsop_error_t *error) {
+  if (needed <= table->cap) {
+    return true;
+  }
+
+  size_t new_cap = table->cap == 0 ? 8U : table->cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "rankwidth single-mode table is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  if (new_cap > SIZE_MAX / sizeof(long double)) {
+    set_error(error, "rankwidth single-mode table is too large");
+    return false;
+  }
+  if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
+    set_error(error, "rankwidth single-mode assignment table is too large");
+    return false;
+  }
+
+  uint32_t *signatures = calloc(new_cap, sizeof(*signatures));
+  uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
+  uint32_t *assignment_weights = calloc(new_cap, sizeof(*assignment_weights));
+  long double *re = calloc(new_cap, sizeof(*re));
+  long double *im = calloc(new_cap, sizeof(*im));
+  if (signatures == NULL || assignments == NULL || assignment_weights == NULL || re == NULL ||
+      im == NULL) {
+    free(signatures);
+    free(assignments);
+    free(assignment_weights);
+    free(re);
+    free(im);
+    set_error(error, "out of memory while growing rankwidth single-mode table");
+    return false;
+  }
+  if (table->len != 0) {
+    memcpy(signatures, table->signatures, table->len * sizeof(*signatures));
+    memcpy(assignments, table->assignments, table->len * words * sizeof(*assignments));
+    memcpy(assignment_weights, table->assignment_weights,
+           table->len * sizeof(*assignment_weights));
+    memcpy(re, table->re, table->len * sizeof(*re));
+    memcpy(im, table->im, table->len * sizeof(*im));
+  }
+  free(table->signatures);
+  free(table->assignments);
+  free(table->assignment_weights);
+  free(table->re);
+  free(table->im);
+  table->signatures = signatures;
+  table->assignments = assignments;
+  table->assignment_weights = assignment_weights;
+  table->re = re;
+  table->im = im;
+  table->cap = new_cap;
+  return true;
+}
+
+static void complex_table_free(rw_complex_table_t *table) {
+  if (table == NULL) {
+    return;
+  }
+  free(table->signatures);
+  free(table->assignments);
+  free(table->assignment_weights);
+  free(table->re);
+  free(table->im);
+  free(table->signature_slots);
+  *table = (rw_complex_table_t){0};
 }
 
 static bool parse_u32_token(const char *text, uint32_t *out) {
@@ -4144,6 +4296,96 @@ static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t si
   return true;
 }
 
+static bool complex_table_signature_index(rw_complex_table_t *table, uint32_t signature,
+                                          const uint64_t *assignment, size_t words, size_t *out,
+                                          qsop_error_t *error) {
+  if (table->signature_slots == NULL ||
+      (table->len + 1U) * 2U > (table->signature_slots_mask + 1U)) {
+    if (!complex_slots_rehash(table, error)) {
+      return false;
+    }
+  }
+
+  const size_t mask = table->signature_slots_mask;
+  size_t slot = rep_hash(signature) & mask;
+  while (table->signature_slots[slot] != UINT32_MAX) {
+    const uint32_t index = table->signature_slots[slot];
+    if (table->signatures[index] == signature) {
+      *out = index;
+      return true;
+    }
+    slot = (slot + 1U) & mask;
+  }
+  if (!reserve_complex_table(table, table->len + 1U, words, error)) {
+    return false;
+  }
+  const size_t index = table->len++;
+  table->signatures[index] = signature;
+  qsop_bitset_copy(complex_assignment(table, index, words), assignment, words);
+  table->assignment_weights[index] = qsop_bitset_popcount(assignment, words);
+  table->re[index] = 0.0L;
+  table->im[index] = 0.0L;
+  table->signature_slots[slot] = (uint32_t)index;
+  *out = index;
+  return true;
+}
+
+static bool complex_table_find_signature(const rw_complex_table_t *table, uint32_t signature,
+                                         size_t *out) {
+  if (table->signature_slots != NULL && table->signature_slots_mask != 0) {
+    const size_t mask = table->signature_slots_mask;
+    size_t slot = rep_hash(signature) & mask;
+    while (table->signature_slots[slot] != UINT32_MAX) {
+      const uint32_t index = table->signature_slots[slot];
+      if (table->signatures[index] == signature) {
+        *out = index;
+        return true;
+      }
+      slot = (slot + 1U) & mask;
+    }
+    return false;
+  }
+  for (size_t i = 0; i < table->len; i++) {
+    if (table->signatures[i] == signature) {
+      *out = i;
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool solve_leaf_complex(const qsop_instance_t *qsop, const uint64_t *adj,
+                               const rw_node_t *node, uint32_t target_mode, size_t words,
+                               rw_signature_pool_t *pool, rw_complex_table_t *table,
+                               uint64_t *zero_bits, uint64_t *one_bits,
+                               uint64_t *signature_bits_buffer, qsop_error_t *error) {
+  const size_t w = words == 0 ? 1U : words;
+  memset(zero_bits, 0, w * sizeof(*zero_bits));
+  memset(one_bits, 0, w * sizeof(*one_bits));
+  memset(signature_bits_buffer, 0, w * sizeof(*signature_bits_buffer));
+
+  uint32_t zero_signature = 0;
+  uint32_t one_signature = 0;
+  qsop_bitset_copy(signature_bits_buffer, qsop_bitset_const_row(adj, words, node->var), words);
+  qsop_bitset_clear(signature_bits_buffer, node->var);
+  qsop_bitset_set(one_bits, node->var);
+  size_t zero = 0;
+  size_t one = 0;
+  if (!signature_pool_intern(pool, zero_bits, &zero_signature, error) ||
+      !signature_pool_intern(pool, signature_bits_buffer, &one_signature, error) ||
+      !complex_table_signature_index(table, zero_signature, zero_bits, words, &zero, error) ||
+      !complex_table_signature_index(table, one_signature, one_bits, words, &one, error)) {
+    return false;
+  }
+  table->re[zero] += 1.0L;
+  long double re = 0.0L;
+  long double im = 0.0L;
+  rw_root_of_unity(qsop->r, target_mode, qsop->unary[node->var] % qsop->r, &re, &im);
+  table->re[one] += re;
+  table->im[one] += im;
+  return true;
+}
+
 static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
                                const rw_node_t *node, const uint64_t *powers,
                                uint64_t prime, size_t words, rw_signature_pool_t *pool,
@@ -4570,6 +4812,70 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
       if (join_signature_pairs != NULL) {
         (*join_signature_pairs)++;
       }
+    }
+  }
+  return true;
+}
+
+/* Complex-arithmetic join for the single-mode path. Structurally identical to
+ * solve_fourier_join_streaming's double loop, but the odd_modes-wide pointwise multiply
+ * collapses to a single complex multiply-accumulate per signature pair, since each
+ * factor carries exactly one target-mode value rather than r/2 mode slots.
+ *
+ * Sign correction: rw_compute_join_transition_sign's residue_shift is 0 or r/2, and the
+ * true multiplicative correction is omega_r^{target_mode * residue_shift}, which equals
+ * +1 when residue_shift==0 and (-1)^target_mode when residue_shift==r/2. The all-modes
+ * Fourier join above applies an unconditional negation because its slots are always odd
+ * modes (where (-1)^mode is always -1); a general target_mode needs the precomputed
+ * ctx->sign_re instead (matching treewidth's append_edge_factor_complex). */
+static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint64_t *adj,
+                                         rw_signature_pool_t *pool,
+                                         const rw_complex_table_t *left,
+                                         const rw_complex_table_t *right,
+                                         rw_complex_context_t *ctx, rw_complex_table_t *out,
+                                         const uint64_t *outside, uint64_t *scratch_sig,
+                                         uint64_t *parent_assignment, size_t words,
+                                         qsop_error_t *error) {
+  const uint32_t r = ctx->r;
+  for (size_t i = 0; i < left->len; i++) {
+    const uint64_t *left_rep = complex_assignment(left, i, words);
+    const long double left_re = left->re[i];
+    const long double left_im = left->im[i];
+    for (size_t j = 0; j < right->len; j++) {
+      const uint64_t *right_rep = complex_assignment(right, j, words);
+      rw_transition_eval_t eval;
+      if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r,
+                                           left->signatures[i], left_rep,
+                                           left->assignment_weights[i],
+                                           right->signatures[j], right_rep,
+                                           right->assignment_weights[j],
+                                           scratch_sig, &eval, error)) {
+        return false;
+      }
+      if (!eval.valid) {
+        continue;
+      }
+
+      size_t out_index = 0;
+      if (!complex_table_find_signature(out, eval.parent_signature, &out_index)) {
+        qsop_bitset_copy(parent_assignment, left_rep, words);
+        qsop_bitset_or(parent_assignment, right_rep, words);
+        if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
+                                           &out_index, error)) {
+          return false;
+        }
+      }
+      const long double right_re = right->re[j];
+      const long double right_im = right->im[j];
+      long double product_re = left_re * right_re - left_im * right_im;
+      long double product_im = left_re * right_im + left_im * right_re;
+      if (eval.residue_shift != 0) {
+        product_re *= ctx->sign_re;
+        product_im *= ctx->sign_re;
+      }
+      out->re[out_index] += product_re;
+      out->im[out_index] += product_im;
+      ctx->complex_ops++;
     }
   }
   return true;
@@ -5775,6 +6081,178 @@ static bool solve_rankwidth_fourier_mod_once(
   return true;
 }
 
+/* Conservative worst-case bound on floating-point error accumulated by the single-mode
+ * complex DP -- same derivation as treewidth.c's single_mode_error_bound (standard
+ * backward-error analysis for long double arithmetic; validated empirically against
+ * exact brute-force reconstruction in the differential tests). Duplicated rather than
+ * shared across translation units, matching this file's existing convention of
+ * duplicating small helpers (e.g. adjacency_bitsets) alongside treewidth.c. */
+static long double single_mode_error_bound(uint64_t complex_ops) {
+  static const long double ops_per_step = 8.0L; /* complex multiply: 4 mul + 2 add/sub, plus margin */
+  return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
+}
+
+/* Closed-form single-mode value when there are no sign edges: every variable
+ * contributes independently, S(f) = prod_v (1 + omega_r^{target_mode * b_v}). Mirrors
+ * fourier_factorized_mode_value's "no sign edges" shortcut but for one target mode and
+ * genuine complex arithmetic, needing no decomposition tree at all. */
+static void solve_rankwidth_single_mode_no_edges(const qsop_instance_t *qsop,
+                                                 uint32_t target_mode, long double *out_re,
+                                                 long double *out_im, uint64_t *complex_ops) {
+  long double acc_re = 1.0L;
+  long double acc_im = 0.0L;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    long double term_re = 0.0L;
+    long double term_im = 0.0L;
+    rw_root_of_unity(qsop->r, target_mode, qsop->unary[v] % qsop->r, &term_re, &term_im);
+    term_re += 1.0L;
+    const long double new_re = acc_re * term_re - acc_im * term_im;
+    const long double new_im = acc_re * term_im + acc_im * term_re;
+    acc_re = new_re;
+    acc_im = new_im;
+    (*complex_ops)++;
+  }
+  *out_re = acc_re;
+  *out_im = acc_im;
+}
+
+static bool solve_rankwidth_single_mode_once(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, uint32_t target_mode, long double *out_re, long double *out_im,
+    long double *out_numeric_error_bound, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
+  rw_complex_context_t ctx = {
+      .r = qsop->r,
+      .target_mode = target_mode,
+      .sign_re = (target_mode % 2U == 0U) ? 1.0L : -1.0L,
+      .stats = stats,
+      .trace = trace,
+  };
+
+  if (qsop->nedges == 0) {
+    long double re = 0.0L;
+    long double im = 0.0L;
+    solve_rankwidth_single_mode_no_edges(qsop, target_mode, &re, &im, &ctx.complex_ops);
+    long double c_re = 0.0L;
+    long double c_im = 0.0L;
+    rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    *out_re = re * c_re - im * c_im;
+    *out_im = re * c_im + im * c_re;
+    if (out_numeric_error_bound != NULL) {
+      *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
+    }
+    return true;
+  }
+
+  rw_complex_table_t *tables =
+      calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
+  if (tables == NULL) {
+    set_error(error, "out of memory while allocating rankwidth single-mode solve state");
+    return false;
+  }
+
+  rw_signature_pool_t pool = {0};
+  if (!signature_pool_init(&pool, decomposition->words, error)) {
+    free(tables);
+    return false;
+  }
+
+  const size_t w = decomposition->words == 0 ? 1U : decomposition->words;
+  uint64_t *scratch = calloc(6U * w, sizeof(*scratch));
+  if (scratch == NULL) {
+    free(tables);
+    signature_pool_free(&pool);
+    set_error(error, "out of memory while allocating rankwidth single-mode scratch");
+    return false;
+  }
+  uint64_t *outside = scratch;
+  uint64_t *scratch_sig = scratch + w;
+  uint64_t *parent_assignment = scratch + 2U * w;
+  uint64_t *leaf_zero = scratch + 3U * w;
+  uint64_t *leaf_one = scratch + 4U * w;
+  uint64_t *leaf_signature = scratch + 5U * w;
+
+  uint64_t signature_entries = 0;
+  uint64_t max_signature_entries = 0;
+
+  for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
+    const uint32_t node_id = decomposition->postorder[i];
+    const rw_node_t *node = &decomposition->nodes[node_id];
+    const uint64_t start = qsop_trace_begin(trace);
+    bool ok = false;
+    if (node->kind == RW_NODE_LEAF) {
+      ok = solve_leaf_complex(qsop, adj, node, target_mode, decomposition->words, &pool,
+                             &tables[node_id], leaf_zero, leaf_one, leaf_signature, error);
+      qsop_trace_emit_elapsed(trace, "rankwidth.single_mode_leaf", 0, tables[node_id].len, start);
+    } else {
+      rankwidth_fill_all_vars(outside, decomposition->nvars, decomposition->words);
+      qsop_bitset_and_not(outside, node_vars_const(decomposition, node_id), decomposition->words);
+      const uint64_t join_start = qsop_trace_begin(trace);
+      ok = solve_join_complex_streaming(qsop, adj, &pool, &tables[node->left],
+                                       &tables[node->right], &ctx, &tables[node_id], outside,
+                                       scratch_sig, parent_assignment, decomposition->words,
+                                       error);
+      qsop_trace_emit_elapsed(trace, "rankwidth.single_mode_join", 0, tables[node_id].len,
+                              join_start);
+    }
+    if (!ok) {
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        complex_table_free(&tables[t]);
+      }
+      free(scratch);
+      free(tables);
+      signature_pool_free(&pool);
+      return false;
+    }
+    signature_entries += tables[node_id].len;
+    if (tables[node_id].len > max_signature_entries) {
+      max_signature_entries = tables[node_id].len;
+    }
+  }
+
+  const rw_complex_table_t *root_table = &tables[decomposition->root];
+  long double root_re = 0.0L;
+  long double root_im = 0.0L;
+  size_t root_index = 0;
+  if (complex_table_find_signature(root_table, 0, &root_index)) {
+    root_re = root_table->re[root_index];
+    root_im = root_table->im[root_index];
+  }
+
+  long double c_re = 0.0L;
+  long double c_im = 0.0L;
+  rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  *out_re = root_re * c_re - root_im * c_im;
+  *out_im = root_re * c_im + root_im * c_re;
+
+  if (stats != NULL) {
+    stats->signature_entries = signature_entries;
+    stats->max_signature_entries = max_signature_entries;
+    stats->join_pairs = ctx.complex_ops;
+    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    if (stats->decomposition_width == UINT32_MAX) {
+      for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+        complex_table_free(&tables[t]);
+      }
+      free(scratch);
+      free(tables);
+      signature_pool_free(&pool);
+      return false;
+    }
+  }
+  if (out_numeric_error_bound != NULL) {
+    *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
+  }
+
+  for (uint32_t t = 0; t < decomposition->nnodes; t++) {
+    complex_table_free(&tables[t]);
+  }
+  free(scratch);
+  free(tables);
+  signature_pool_free(&pool);
+  return true;
+}
+
 static const char *rankwidth_fourier_kernel_internal_name(
     qsop_rankwidth_fourier_kernel_t kernel) {
   switch (kernel) {
@@ -5992,4 +6470,69 @@ bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
   return qsop_solve_rankwidth_mode_trace_stats(qsop, decomposition, max_vars,
                                                QSOP_RANKWIDTH_SOLVE_COUNT_TABLE, out, stats,
                                                trace, error);
+}
+
+bool qsop_solve_rankwidth_single_mode(const qsop_instance_t *qsop,
+                                      const qsop_rankwidth_decomposition_t *decomposition,
+                                      uint32_t max_vars, uint32_t target_mode,
+                                      qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                      qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null amplitude result pointer");
+    return false;
+  }
+  *out = (qsop_amplitude_t){0};
+  if (qsop == NULL || decomposition == NULL) {
+    set_error(error, "internal error: null rankwidth solve argument");
+    return false;
+  }
+  if (qsop->r == 0) {
+    set_error(error, "internal error: QSOP instance has a zero modulus");
+    return false;
+  }
+  if (qsop->nvars != decomposition->nvars) {
+    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    return false;
+  }
+  if (qsop->nvars > max_vars) {
+    set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
+              qsop->nvars);
+    return false;
+  }
+  if (qsop->nvars == 0) {
+    long double c_re = 0.0L;
+    long double c_im = 0.0L;
+    rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    out->re = c_re;
+    out->im = c_im;
+    return true;
+  }
+  if (!rankwidth_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
+    return false;
+  }
+
+  uint64_t *adj = NULL;
+  if (qsop->nedges != 0) {
+    adj = adjacency_bitsets(qsop, decomposition->words, error);
+    if (adj == NULL) {
+      return false;
+    }
+  }
+
+  long double re = 0.0L;
+  long double im = 0.0L;
+  long double numeric_error_bound = 0.0L;
+  const bool ok = solve_rankwidth_single_mode_once(qsop, decomposition, adj, target_mode, &re,
+                                                   &im, &numeric_error_bound, stats, trace, error);
+  free(adj);
+  if (!ok) {
+    return false;
+  }
+  out->re = re;
+  out->im = im;
+  out->numeric_error_bound = numeric_error_bound;
+  return true;
 }
