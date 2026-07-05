@@ -83,6 +83,7 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
             "cp",
             "crz",
             "cry",
+            "cu",
             "rxx",
             "ryy",
             "rzz",
@@ -394,6 +395,16 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                     old_one = state[other]
                     state[index] = cos * old_zero - sin * old_one
                     state[other] = sin * old_zero + cos * old_one
+            elif gate == "cu":
+                theta, phi, lam, gamma = params[0], params[1], params[2], params[3]
+                phase = lambda a: (1, 0, 0, cmath.exp(1j * a))  # noqa: E731
+                apply_one(state, nqubits, a, phase(gamma))
+                apply_one(state, nqubits, a, phase(0.5 * (lam + phi)))
+                apply_one(state, nqubits, b, phase(0.5 * (lam - phi)))
+                apply_controlled_x(state, nqubits, a, b)
+                apply_one(state, nqubits, b, u3_matrix(-0.5 * theta, 0.0, -0.5 * (phi + lam)))
+                apply_controlled_x(state, nqubits, a, b)
+                apply_one(state, nqubits, b, u3_matrix(0.5 * theta, phi, 0.0))
             elif gate == "rxx":
                 apply_xx_rotation(state, nqubits, a, b, angle)
             elif gate == "ryy":
@@ -573,6 +584,16 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             [("00", "00"), ("00", "11"), ("01", "01"), ("01", "10"), ("10", "00"), ("11", "01")],
         ),
         (
+            "h_cu",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q[0];
+            cu(pi,pi/2,pi/2,pi/4) q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("01", "01"), ("01", "10"), ("10", "00"), ("11", "01")],
+        ),
+        (
             "axis_rotations",
             """OPENQASM 2.0;
             include "qelib1.inc";
@@ -715,6 +736,30 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
         if abs(expected - actual) > 5e-2 + 1e-9:
             raise AssertionError(
                 f"approx cry {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
+            )
+
+    # Matches the actual qccq-gauntlet corpus pattern: cu(theta, 0, 0, 0), theta continuous
+    # (never a clean dyadic fraction of pi) -- this is the real-world shape that motivated
+    # adding cu support at all.
+    approx_cu_qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    h q[0];
+    cu(0.73,0,0,0) q[0], q[1];
+    """
+    for input_bits, output_bits in [("00", "00"), ("00", "11"), ("10", "01")]:
+        expected = simulate_qasm(approx_cu_qasm, input_bits, output_bits)
+        actual = sop_amplitude(
+            qasm2sop,
+            sop_solve,
+            approx_cu_qasm,
+            input_bits,
+            output_bits,
+            ["--approx", "5e-2"],
+        )
+        if abs(expected - actual) > 5e-2 + 1e-9:
+            raise AssertionError(
+                f"approx cu {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
             )
 
 

@@ -1117,6 +1117,43 @@ static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, 
          apply_h(importer, target);
 }
 
+/* CU(theta,phi,lambda,gamma): the standard 2-CNOT Barenco/ABC decomposition (same one
+ * OpenQASM 3's stdgates.inc and Qiskit use). Every 2-qubit interaction is one of the two `cx`
+ * gates below (sign-only via apply_cx_decomposition); theta/phi/lambda/gamma only ever land on
+ * single-qubit phase terms, which have no sign-only restriction -- so this needs no format
+ * change to support arbitrary angles via --approx.
+ *
+ * apply_u3's convention represents an angle as an integer count of pi/4. The two u(...)
+ * sub-calls below need theta/2 and (phi+lambda)/2 as apply_u3 parameters, which are exact
+ * pi/4-multiples only when theta_units and (phi_units+lambda_units) are even -- refuse
+ * cleanly otherwise (matching how the rest of exact mode already narrows: e.g. rz(pi/3) is
+ * already an unsupported-angle error) rather than silently rounding. The three p(...) terms
+ * have no such restriction: a single "/2" from pi/4-granularity always lands exactly on the
+ * existing pi/8-tick primitive coeff_from_pi_over_eight_units, regardless of parity -- the
+ * same trick apply_rz/apply_crz already use. */
+static bool apply_cu(qasm_importer_t *importer, uint32_t control, uint32_t target,
+                     int64_t theta_units, int64_t phi_units, int64_t lambda_units,
+                     int64_t gamma_units) {
+  if (theta_units % 2 != 0 || (phi_units + lambda_units) % 2 != 0) {
+    set_error(importer,
+              "unsupported cu angle combination in exact mode (theta and phi+lambda must be "
+              "even multiples of pi/4); use --approx");
+    return false;
+  }
+  const int64_t half_theta = theta_units / 2;
+  const int64_t half_phi_plus_lambda = (phi_units + lambda_units) / 2;
+  return apply_phase(importer, control,
+                     coeff_from_pi_over_eight_units(importer, 2 * gamma_units)) &&
+         apply_phase(importer, control,
+                     coeff_from_pi_over_eight_units(importer, lambda_units + phi_units)) &&
+         apply_phase(importer, target,
+                     coeff_from_pi_over_eight_units(importer, lambda_units - phi_units)) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_u3(importer, target, -half_theta, 0, -half_phi_plus_lambda) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_u3(importer, target, half_theta, phi_units, 0);
+}
+
 static uint64_t rounded_coeff_for_angle(qasm_importer_t *importer, double angle) {
   const long double scaled =
       (long double)angle * (long double)importer->modulus / (long double)QASM_TWO_PI;
@@ -1230,6 +1267,22 @@ static bool apply_u3_angle(qasm_importer_t *importer, uint32_t qubit, double the
 
 static bool apply_u2_angle(qasm_importer_t *importer, uint32_t qubit, double phi, double lambda) {
   return apply_u3_angle(importer, qubit, QASM_PI / 2.0, phi, lambda);
+}
+
+/* Continuous-angle counterpart of apply_cu: no exactness concerns at all, since
+ * rounded_coeff_for_angle (via apply_phase_angle/apply_u3_angle) already handles arbitrary
+ * real angles. This is the path real cu(...) gates actually take (theta continuous, phi=
+ * lambda=gamma=0 in every observed case, which makes this mathematically identical to
+ * apply_cry_angle -- but implemented generally here, not special-cased). */
+static bool apply_cu_angle(qasm_importer_t *importer, uint32_t control, uint32_t target,
+                          double theta, double phi, double lambda, double gamma) {
+  return apply_phase_angle(importer, control, gamma) &&
+         apply_phase_angle(importer, control, 0.5 * (lambda + phi)) &&
+         apply_phase_angle(importer, target, 0.5 * (lambda - phi)) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_u3_angle(importer, target, -0.5 * theta, 0.0, -0.5 * (phi + lambda)) &&
+         apply_cx_decomposition(importer, control, target) &&
+         apply_u3_angle(importer, target, 0.5 * theta, phi, 0.0);
 }
 
 static bool apply_cy_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
@@ -1801,6 +1854,94 @@ static bool apply_radian_two_qubit_operands(qasm_importer_t *importer, char *res
   return true;
 }
 
+/* cu(theta,phi,lambda,gamma) needs 4 angle values + 2 qubit operands -- a shape the two-qubit
+ * wiring above doesn't cover (they only forward a single value). Same split/register-expansion
+ * logic, just forwarding 4 values instead of 1. */
+typedef bool (*qasm_param_cu_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
+                                           uint32_t right, int64_t theta, int64_t phi,
+                                           int64_t lambda, int64_t gamma);
+
+static bool apply_param_cu_two_qubit_operand(qasm_importer_t *importer, char *rest, int64_t theta,
+                                             int64_t phi, int64_t lambda, int64_t gamma,
+                                             qasm_param_cu_two_qubit_fn apply) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply(importer, left.qubit, right.qubit, theta, phi, lambda, gamma);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply(importer, left_qubit, right_qubit, theta, phi, lambda, gamma)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+typedef bool (*qasm_radian_param_cu_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
+                                                   uint32_t right, double theta, double phi,
+                                                   double lambda, double gamma);
+
+static bool apply_radian_param_cu_two_qubit_operand(qasm_importer_t *importer, char *rest,
+                                                    double theta, double phi, double lambda,
+                                                    double gamma,
+                                                    qasm_radian_param_cu_two_qubit_fn apply) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply(importer, left.qubit, right.qubit, theta, phi, lambda, gamma);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply(importer, left_qubit, right_qubit, theta, phi, lambda, gamma)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 typedef bool (*qasm_three_qubit_fn)(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                     uint32_t third);
 
@@ -1932,6 +2073,17 @@ static bool apply_approx_gate(qasm_importer_t *importer, char *gate, char *rest,
   if (matches) {
     *out_handled = true;
     return apply_radian_two_qubit_operands(importer, rest, angle, apply_cry_angle);
+  }
+
+  double cu_angles[4] = {0.0};
+  bool is_cu = false;
+  if (!parse_param_radian_list(importer, gate, "cu(", "cu", cu_angles, 4, &is_cu)) {
+    return false;
+  }
+  if (is_cu) {
+    *out_handled = true;
+    return apply_radian_param_cu_two_qubit_operand(importer, rest, cu_angles[0], cu_angles[1],
+                                                   cu_angles[2], cu_angles[3], apply_cu_angle);
   }
 
   if (!parse_param_angle_radians(importer, gate, "rxx(", "rxx", &angle, &matches)) {
@@ -2089,6 +2241,16 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   }
   if (is_cry) {
     return apply_angle_two_qubit_operands(importer, rest, cry_units, apply_cry);
+  }
+
+  int64_t cu_units[4] = {0};
+  bool is_cu = false;
+  if (!parse_param_unit_list(importer, gate, "cu(", "cu", cu_units, 4, &is_cu)) {
+    return false;
+  }
+  if (is_cu) {
+    return apply_param_cu_two_qubit_operand(importer, rest, cu_units[0], cu_units[1],
+                                            cu_units[2], cu_units[3], apply_cu);
   }
 
   int64_t rxx_units = 0;

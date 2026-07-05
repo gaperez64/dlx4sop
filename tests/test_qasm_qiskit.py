@@ -185,6 +185,22 @@ def h_cry_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     return qasm, circuit, [("00", "00"), ("00", "11"), ("01", "01"), ("01", "10")]
 
 
+def cu_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
+    # All four parameters genuinely nonzero (dyadic, since this file's sop_amplitude has no
+    # --approx support) -- exercises the general decomposition, not just the theta-only
+    # special case (which is mathematically identical to cry and already covered there).
+    qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    h q[0];
+    cu(pi,pi/2,pi/2,pi/4) q[0], q[1];
+    """
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cu(math.pi, math.pi / 2.0, math.pi / 2.0, math.pi / 4.0, 0, 1)
+    return qasm, circuit, [("00", "00"), ("00", "11"), ("01", "01"), ("01", "10")]
+
+
 def axis_rotation_case() -> tuple[str, QuantumCircuit, list[tuple[str, str]]]:
     qasm = """OPENQASM 2.0;
     include "qelib1.inc";
@@ -254,6 +270,7 @@ def run_qiskit_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
         "named_controlled_phase": named_controlled_phase_case(),
         "rz_crz": rz_crz_case(),
         "h_cry": h_cry_case(),
+        "cu": cu_case(),
         "axis_rotation": axis_rotation_case(),
         "u_gates": u_gates_case(),
         "three_qubit": three_qubit_case(),
