@@ -319,6 +319,8 @@ u(0.19,0.23,0.29) q;
             f"{approx_param_qregs.stdout}\n{approx_param_qregs.stderr}"
         )
 
+    # cphase(pi/4) now lowers through cx + single-qubit phases (same trick as cu/cp), so this
+    # imports exactly instead of hitting the old non-sign-quadratic export rejection.
     exact_aliases = subprocess.run(
         [str(exe), "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ngphase(pi/4);\nphase(pi/4) q[0];\ncphase(pi/4) q[0], q[1];\n",
@@ -327,12 +329,9 @@ u(0.19,0.23,0.29) q;
         stderr=subprocess.PIPE,
         text=True,
     )
-    if (
-        exact_aliases.returncode == 0
-        or "unsupported non-sign quadratic phase coefficient" not in exact_aliases.stderr
-    ):
+    if exact_aliases.returncode != 0 or "\ne " not in exact_aliases.stdout:
         raise AssertionError(
-            f"unexpected exact alias rejection:\n{exact_aliases.stdout}\n{exact_aliases.stderr}"
+            f"unexpected exact alias result:\n{exact_aliases.stdout}\n{exact_aliases.stderr}"
         )
 
     approx_angle_errors = [
@@ -355,6 +354,8 @@ u(0.19,0.23,0.29) q;
                 f"unexpected approximate angle error for {gate_text}:\n{failed.stderr}"
             )
 
+    # Same pi/4 lowering improvement as exact_aliases above; this case specifically exercises a
+    # space between the gate name and its parenthesized angle.
     spaced_controlled_phase = subprocess.run(
         [str(exe), "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ncu1 (pi/4) q[0], q[1];\n",
@@ -363,10 +364,7 @@ u(0.19,0.23,0.29) q;
         stderr=subprocess.PIPE,
         text=True,
     )
-    if (
-        spaced_controlled_phase.returncode == 0
-        or "unsupported non-sign quadratic phase coefficient" not in spaced_controlled_phase.stderr
-    ):
+    if spaced_controlled_phase.returncode != 0 or "\ne " not in spaced_controlled_phase.stdout:
         raise AssertionError(
             "unexpected spaced controlled phase result:\n"
             f"{spaced_controlled_phase.stdout}\n{spaced_controlled_phase.stderr}"
@@ -533,16 +531,25 @@ def main() -> int:
     run_boundary_case(exe, source_root, "qasm_crz", ["--input", "10", "--output", "10"])
     run_boundary_case(exe, source_root, "qasm_cry", ["--input", "10", "--output", "10"])
     run_boundary_case(exe, source_root, "qasm_cu", ["--input", "10", "--output", "10"])
+    # These all now lower through cx + single-qubit phases (same trick as cu/cp) instead of a
+    # direct weighted edge, so they import exactly instead of hitting the non-sign-quadratic
+    # export rejection they used to.
+    run_boundary_case(exe, source_root, "qasm_cu1", ["--input", "11", "--output", "11"])
+    run_boundary_case(exe, source_root, "qasm_crz_quarter", ["--input", "10", "--output", "10"])
+    run_boundary_case(exe, source_root, "qasm_cry_quarter", ["--input", "10", "--output", "10"])
+    run_boundary_case(exe, source_root, "qasm_rxx_ryy", ["--input", "00", "--output", "11"])
+    run_boundary_case(exe, source_root, "qasm_rzz", ["--input", "10", "--output", "10"])
+    run_boundary_case(exe, source_root, "qasm_named_cphase", ["--input", "11", "--output", "11"])
+    run_boundary_case(
+        exe, source_root, "qasm_register_cp", ["--input", "1010", "--output", "1010"]
+    )
+    run_boundary_case(exe, source_root, "qasm_csx_dcx", ["--input", "10", "--output", "01"])
+
+    # cp(-7*pi/8): an odd multiple of the finest representable tick (pi/8) needs pi/16
+    # granularity to lower exactly (see apply_controlled_phase) -- still a genuine, expected
+    # rejection in exact mode, unlike the cases above.
     for name, options in [
-        ("qasm_cu1", ["--input", "11", "--output", "11"]),
-        ("qasm_crz_quarter", ["--input", "10", "--output", "10"]),
-        ("qasm_cry_quarter", ["--input", "10", "--output", "10"]),
-        ("qasm_rxx_ryy", ["--input", "00", "--output", "11"]),
-        ("qasm_rzz", ["--input", "10", "--output", "10"]),
-        ("qasm_named_cphase", ["--input", "11", "--output", "11"]),
-        ("qasm_register_cp", ["--input", "1010", "--output", "1010"]),
         ("qasm_phase_eighth", ["--input", "11", "--output", "11"]),
-        ("qasm_csx_dcx", ["--input", "10", "--output", "01"]),
     ]:
         qasm = source_root / "tests" / "golden" / f"{name}.qasm"
         failed = subprocess.run(
@@ -552,8 +559,8 @@ def main() -> int:
             stderr=subprocess.PIPE,
             text=True,
         )
-        if failed.returncode == 0 or "unsupported non-sign quadratic phase coefficient" not in failed.stderr:
-            raise AssertionError(f"{name}: expected non-sign quadratic rejection\n{failed.stderr}")
+        if failed.returncode == 0 or "unsupported cp/cu1 angle in exact mode" not in failed.stderr:
+            raise AssertionError(f"{name}: expected cp/cu1 exact-mode rejection\n{failed.stderr}")
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)

@@ -257,6 +257,10 @@ if python3.found()
       sop_solve.full_path(),
     ],
     depends: [qasm2sop, sop_solve],
+    # Toffoli-family gates (ccx/ccz/cswap) now lower through cx-sandwiches to stay sign-only,
+    # adding variables the default (non-Fourier) backend used for this differential check feels
+    # more than the O(2^k) single-fourier-mode backend real gauntlet circuits actually use.
+    timeout: 90,
   )
   test(
     'qasm solver corpus',

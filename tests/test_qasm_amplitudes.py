@@ -689,6 +689,11 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             except AssertionError as exc:
                 if "unsupported non-sign quadratic phase coefficient" in str(exc):
                     continue
+                # An odd pi/8-unit cp/cu1 angle needs pi/16 granularity to lower exactly (see
+                # apply_controlled_phase) -- a genuine, expected exact-mode rejection, same as
+                # the case above just caught earlier (before export instead of at it).
+                if "unsupported cp/cu1 angle in exact mode" in str(exc):
+                    continue
                 raise
             assert_close(f"{name} {input_bits}->{output_bits}", expected, actual)
             exact_checks += 1

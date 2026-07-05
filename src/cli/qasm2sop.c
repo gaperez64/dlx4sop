@@ -996,25 +996,63 @@ static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
                   sign_coeff(importer));
 }
 
+/* apply_cx_decomposition is defined further below (it needs apply_h/apply_cz, defined in
+ * between) -- forward-declared here so the two functions below can lower through it instead
+ * of encoding a direct weighted edge. */
+static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target);
+
+/* CP(theta) = diag(1,1,1,e^{i*theta}): p(theta/2) c; p(theta/2) t; cx c,t; p(-theta/2) t; cx c,t
+ * gives exactly this matrix for ANY theta (verified by tracing all 4 basis states) -- every
+ * 2-qubit interaction is a cx (sign-only via apply_cx_decomposition), theta only ever lands on
+ * single-qubit phases. `coeff` here is theta's own tick value (not theta/2's), so this needs
+ * coeff to be even to halve exactly; refuse cleanly otherwise (matches how the rest of exact
+ * mode already narrows) rather than falling back to a non-sign edge. Every current caller
+ * (crz, rzz, csx) already passes an even coeff by construction; only a literal cp(theta)/cu1
+ * (theta) with an odd pi/8-unit count could hit the refusal, and --approx always works there.
+ *
+ * coeff == sign_coeff (exactly pi) is already a pure sign edge with no decomposition needed --
+ * short-circuit to the direct edge apply_cz itself uses. This also covers "cz" specifically:
+ * controlled_phase_coeff_for_gate treats it as the named phase gate "c"+"z" (named_phase_coeff_
+ * for_gate("z") happens to equal sign_coeff exactly), routing it through this function rather
+ * than the dedicated QASM_TWO_CZ path -- harmless before this rewrite since the old
+ * implementation was already just this same direct edge, but would otherwise now explode a
+ * plain cz into an unnecessary cx-sandwich. */
 static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uint32_t right,
                                    uint64_t coeff) {
   if (coeff % importer->modulus == 0) {
     return true;
   }
-  return add_edge(importer, importer->current[left], importer->current[right], coeff);
+  if (coeff == sign_coeff(importer)) {
+    return add_edge(importer, importer->current[left], importer->current[right], coeff);
+  }
+  if (coeff % 2 != 0) {
+    set_error(importer,
+              "unsupported cp/cu1 angle in exact mode (must be an even multiple of the "
+              "finest representable tick); use --approx");
+    return false;
+  }
+  const uint64_t half_coeff = coeff / 2;
+  return apply_phase(importer, left, half_coeff) && apply_phase(importer, right, half_coeff) &&
+         apply_cx_decomposition(importer, left, right) &&
+         apply_phase(importer, right,
+                     mod_i64((qasm_int128_t)-1 * (qasm_int128_t)half_coeff, importer->modulus)) &&
+         apply_cx_decomposition(importer, left, right);
 }
 
+/* phase(coeff) conditioned on left XOR right (applied iff exactly one of the two qubits is 1):
+ * cx(left,right) computes right ^= left, a plain phase on right then applies iff that XOR was
+ * 1, and the second cx uncomputes it back to right's original value. Sign-only (2 cx + 1
+ * single-qubit phase), no weighted edge and no halving needed at all -- this is what
+ * apply_ccz_decomposition (ccx/ccz/cswap) uses, and was previously the actual source of the
+ * "non-sign quadratic" export failures on circuits using Toffoli gates. */
 static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32_t right,
                                 uint64_t coeff) {
   if (coeff % importer->modulus == 0) {
     return true;
   }
-
-  const uint32_t left_var = importer->current[left];
-  const uint32_t right_var = importer->current[right];
-  return add_unary(importer, left_var, coeff) && add_unary(importer, right_var, coeff) &&
-         add_edge(importer, left_var, right_var,
-                  mod_i64((qasm_int128_t)-2 * (qasm_int128_t)coeff, importer->modulus));
+  return apply_cx_decomposition(importer, left, right) &&
+         apply_phase(importer, right, coeff) &&
+         apply_cx_decomposition(importer, left, right);
 }
 
 static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
