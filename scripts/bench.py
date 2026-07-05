@@ -8,10 +8,6 @@ Subcommands:
   native    Run native simulator comparison from QASM manifests.
   render    Render scoreboard from existing artifacts.
   full      Full pipeline: local + WMC + native + render.
-  tune-mqt      Run MQT materialized corpus through sop-solve backends.
-  harvest-mqt   Harvest MQT QASM circuits and generate manifests.
-  materialize-mqt  Convert MQT manifests to local QSOP corpus.
-  profile-mqt   Profile MQT QSOP corpus structure (width, expansion, memory risk).
 
 Examples:
 
@@ -35,12 +31,6 @@ Examples:
       --artifact-dir artifacts/full \\
       --ganak /tmp/ganak/ganak \\
       --output scoreboard.md
-
-  # MQT tuning (no external tools needed after materialization):
-  python3 scripts/bench.py tune-mqt \\
-      --corpus benchmarks/corpus/sop/materialized-external/mqt-bench \\
-      --artifact-dir artifacts/mqt-tune \\
-      --timeout 30
 """
 
 from __future__ import annotations
@@ -157,60 +147,6 @@ def cmd_native(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: tune-mqt
-# ---------------------------------------------------------------------------
-
-MQT_DEFAULT_BACKENDS = [
-    "treewidth",
-    "branch:auto",
-    "branch:no-rankwidth",
-    "branch:from-treewidth",
-    "rankwidth:linear",
-    "rankwidth:from-treewidth",
-    "rankwidth:best",
-]
-
-
-def cmd_tune_mqt(args: argparse.Namespace) -> int:
-    """Run MQT materialized QSOP corpus through sop-solve backends."""
-    corpus = args.corpus or (REPO_ROOT / "benchmarks" / "corpus" / "sop" /
-                              "materialized-external" / "mqt-bench")
-    if not corpus.exists():
-        print(f"error: MQT corpus directory not found: {corpus}", file=sys.stderr)
-        print("  Run scripts/materialize_mqt_qsop_corpus.py first.", file=sys.stderr)
-        return 1
-
-    artifact_dir = args.artifact_dir
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-
-    out_jsonl = artifact_dir / "mqt-tuning.jsonl"
-    backends = args.backends or MQT_DEFAULT_BACKENDS
-
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "bench_sop_local.py"),
-        "--sop-solve", str(args.sop_solve),
-        "--corpus-dir", str(corpus),
-        "--timeout", str(args.timeout),
-        "--out", str(out_jsonl),
-    ]
-    for b in backends:
-        cmd += ["--backend", b]
-
-    rc = _run(cmd)
-    if rc != 0:
-        return rc
-
-    summary_path = artifact_dir / "mqt-tuning-summary.md"
-    _run([
-        sys.executable, str(TOOLS_DIR / "render_scoreboard.py"),
-        "--mqt-tuning-jsonl", str(out_jsonl),
-        "--output", str(summary_path),
-    ])
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # Subcommand: render
 # ---------------------------------------------------------------------------
 
@@ -319,72 +255,6 @@ def cmd_full(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: harvest-mqt
-# ---------------------------------------------------------------------------
-
-def cmd_harvest_mqt(args: argparse.Namespace) -> int:
-    """Run harvest_mqt_bench.py to generate MQT QASM manifests."""
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "harvest_mqt_bench.py"),
-        "--output-dir", str(args.manifest_dir),
-        "--qasm2sop", str(args.qasm2sop),
-    ]
-    if args.sop_stats:
-        cmd += ["--sop-stats", str(args.sop_stats)]
-    if args.mqt_source:
-        cmd += ["--mqt-source", str(args.mqt_source)]
-    for tier in (args.target_tiers or []):
-        cmd += ["--target-tier", tier]
-    for family in (args.families or []):
-        cmd += ["--family", family]
-    for size in (args.sizes or []):
-        cmd += ["--size", str(size)]
-    for opt in (args.opt_levels or []):
-        cmd += ["--opt-level", str(opt)]
-    if args.verbose:
-        cmd += ["--verbose"]
-    return _run(cmd)
-
-
-# ---------------------------------------------------------------------------
-# Subcommand: materialize-mqt
-# ---------------------------------------------------------------------------
-
-def cmd_materialize_mqt(args: argparse.Namespace) -> int:
-    """Run materialize_mqt_qsop_corpus.py to convert manifests to QSOP files."""
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "materialize_mqt_qsop_corpus.py"),
-        "--manifest-dir", str(args.manifest_dir),
-        "--output-dir", str(args.corpus_dir),
-        "--qasm2sop", str(args.qasm2sop),
-        "--sop-solve", str(args.sop_solve),
-        "--timeout", str(args.timeout),
-    ]
-    if args.max_rows:
-        cmd += ["--max-rows", str(args.max_rows)]
-    return _run(cmd)
-
-
-# ---------------------------------------------------------------------------
-# Subcommand: profile-mqt
-# ---------------------------------------------------------------------------
-
-def cmd_profile_mqt(args: argparse.Namespace) -> int:
-    """Run profile_mqt_qsop.py to profile MQT corpus structure."""
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "profile_mqt_qsop.py"),
-        "--corpus-dir", str(args.corpus_dir),
-        "--artifact-dir", str(args.artifact_dir),
-        "--sop-solve", str(args.sop_solve),
-        "--timeout", str(args.timeout),
-    ]
-    return _run(cmd)
-
-
-# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -488,52 +358,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_full.add_argument("--skip-native", action="store_true")
     p_full.add_argument("--skip-scoreboard", action="store_true")
     p_full.set_defaults(func=cmd_full)
-
-    # ---- tune-mqt ----
-    p_mqt = subs.add_parser("tune-mqt", help="Run MQT materialized corpus through sop-solve")
-    p_mqt.add_argument("--corpus", type=pathlib.Path, default=None,
-                       help="MQT materialized QSOP corpus directory")
-    p_mqt.add_argument("--artifact-dir", type=pathlib.Path,
-                       default=REPO_ROOT / "artifacts" / "mqt-tune")
-    p_mqt.add_argument("--sop-solve", type=pathlib.Path, default=_sop_solve)
-    p_mqt.add_argument("--backend", action="append", dest="backends", metavar="BACKEND")
-    p_mqt.add_argument("--timeout", type=float, default=30.0)
-    p_mqt.set_defaults(func=cmd_tune_mqt)
-
-    # ---- harvest-mqt ----
-    _mqt_manifests = REPO_ROOT / "benchmarks" / "manifests" / "mqt"
-    _sop_stats = REPO_ROOT / "build" / "sop-stats"
-    p_harvest = subs.add_parser("harvest-mqt", help="Harvest MQT QASM circuits and generate manifests")
-    p_harvest.add_argument("--manifest-dir", type=pathlib.Path, default=_mqt_manifests)
-    p_harvest.add_argument("--qasm2sop", type=pathlib.Path, default=_qasm2sop)
-    p_harvest.add_argument("--sop-stats", type=pathlib.Path, default=None)
-    p_harvest.add_argument("--mqt-source", type=pathlib.Path, default=None)
-    p_harvest.add_argument("--target-tier", action="append", dest="target_tiers", metavar="TIER")
-    p_harvest.add_argument("--family", action="append", dest="families", metavar="FAMILY")
-    p_harvest.add_argument("--size", action="append", dest="sizes", type=int, metavar="N")
-    p_harvest.add_argument("--opt-level", action="append", dest="opt_levels", type=int, metavar="N")
-    p_harvest.add_argument("--verbose", action="store_true")
-    p_harvest.set_defaults(func=cmd_harvest_mqt)
-
-    # ---- materialize-mqt ----
-    _mqt_corpus = REPO_ROOT / "benchmarks" / "corpus" / "sop" / "materialized-external" / "mqt-bench"
-    p_mat = subs.add_parser("materialize-mqt", help="Convert MQT manifests to local QSOP corpus")
-    p_mat.add_argument("--manifest-dir", type=pathlib.Path, default=_mqt_manifests)
-    p_mat.add_argument("--corpus-dir", type=pathlib.Path, default=_mqt_corpus)
-    p_mat.add_argument("--qasm2sop", type=pathlib.Path, default=_qasm2sop)
-    p_mat.add_argument("--sop-solve", type=pathlib.Path, default=_sop_solve)
-    p_mat.add_argument("--timeout", type=float, default=60.0)
-    p_mat.add_argument("--max-rows", type=int, default=None)
-    p_mat.set_defaults(func=cmd_materialize_mqt)
-
-    # ---- profile-mqt ----
-    p_prof = subs.add_parser("profile-mqt", help="Profile MQT QSOP corpus structure")
-    p_prof.add_argument("--corpus-dir", type=pathlib.Path, default=_mqt_corpus)
-    p_prof.add_argument("--artifact-dir", type=pathlib.Path,
-                        default=REPO_ROOT / "artifacts" / "mqt")
-    p_prof.add_argument("--sop-solve", type=pathlib.Path, default=_sop_solve)
-    p_prof.add_argument("--timeout", type=float, default=30.0)
-    p_prof.set_defaults(func=cmd_profile_mqt)
 
     return parser
 

@@ -42,8 +42,8 @@ from source:
     edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
     and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
     amp-soft output when no profitable block is found.
-- `scripts/*.py`: corpus scanners, manifest helpers, report/render helpers, and
-  boundary translators.
+- `scripts/*.py`: benchmark runners, scoreboard refresh/render helpers, branch
+  policy retuning, and the qccq-gauntlet coverage scanner.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at corpus import and validation boundaries.
@@ -206,13 +206,9 @@ the same boundaries (native amplitudes are the shared ground truth).
 
 #### Scaling study (synthetic family)
 
-The WMC-vs-solver crossover study runs on a committed synthetic phase-polynomial
-family under `benchmarks/corpus/sop/synthetic/scaling/`, regenerable with:
-
-```sh
-python3 scripts/gen_scaling_family.py --qubits 8,12,16,20,24,28 --seeds 1,2,3 \
-    --materialize-dir benchmarks/corpus/sop/synthetic/scaling --qasm2sop build/qasm2sop
-```
+The WMC-vs-solver crossover study runs on a committed, frozen synthetic
+phase-polynomial family under `benchmarks/corpus/sop/synthetic/scaling/`
+(the generator that produced it has been removed from `scripts/`).
 
 Real scalable circuit families do not work here: the importable QSOP gate set is
 finite-modulus (Clifford+T and dyadic phases), so the MQT families that scale
@@ -239,6 +235,5 @@ JSONL artifacts without re-running any experiments.
 - `scripts/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
 - `scripts/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `scripts/bench_qasm_native_simulator.py`: compare against supported native simulators.
-- `scripts/gen_scaling_family.py`: generate / materialize the synthetic scaling family.
-- `scripts/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
+- `scripts/render_scoreboard.py`: render ad hoc reports (local backend summaries).
 - `scripts/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).

@@ -70,7 +70,3 @@ tasks.md
 results/
 *.bench.jsonl
 scoreboard.md
-
-# Ephemeral corpus clones (populated by scripts/build_corpus.py --work-dir)
-# Default work-dir is /tmp so nothing to ignore here; non-default paths
-# outside the repo are also outside git scope.

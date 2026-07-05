@@ -430,53 +430,12 @@ if python3.found()
     depends: [qasm2sop, sop_stats],
   )
   test(
-    'qgraph2qasm smoke',
-    python3,
-    args: [
-      files('tests/test_qgraph2qasm.py'),
-      files('scripts/qgraph2qasm.py'),
-    ],
-  )
-  test(
-    'qc2qasm smoke',
-    python3,
-    args: [
-      files('tests/test_qc2qasm.py'),
-      files('scripts/qc2qasm.py'),
-      qasm2sop.full_path(),
-    ],
-    depends: qasm2sop,
-  )
-  test(
-    'feynmandd scan smoke',
-    python3,
-    args: [
-      files('scripts/scan_feynmandd_qasm.py'),
-      qasm2sop.full_path(),
-      meson.current_source_dir() / 'tests' / 'golden',
-      '--limit',
-      '1',
-    ],
-    depends: qasm2sop,
-  )
-  test(
-    'mqt bench scan smoke',
-    python3,
-    args: [
-      files('tests/test_scan_mqt_bench.py'),
-      files('scripts/scan_mqt_bench.py'),
-      qasm2sop.full_path(),
-    ],
-    depends: qasm2sop,
-  )
-  test(
     'external manifest smoke',
     python3,
     args: [
       files('tests/test_external_manifest.py'),
       files('scripts/build_external_qasm_manifest.py'),
       qasm2sop.full_path(),
-      files('scripts/qc2qasm.py'),
     ],
     depends: qasm2sop,
   )
@@ -537,26 +496,6 @@ if python3.found()
     ],
   )
   test(
-    'rankwidth family generator smoke',
-    python3,
-    args: [
-      files('tests/test_gen_rankwidth_family.py'),
-      files('scripts/gen_rankwidth_family.py'),
-    ],
-  )
-  test(
-    'rankwidth family crosscheck smoke',
-    python3,
-    args: [
-      files('tests/test_rankwidth_family_crosscheck.py'),
-      files('scripts/gen_rankwidth_family.py'),
-      files('scripts/bench_sop_local.py'),
-      sop_solve.full_path(),
-    ],
-    depends: sop_solve,
-    timeout: 90,
-  )
-  test(
     'analyze branch regressions smoke',
     python3,
     args: [
@@ -568,13 +507,6 @@ if python3.found()
     python3,
     args: [
       files('tests/test_scoreboard_json_output.py'),
-    ],
-  )
-  test(
-    'bench tune-mqt smoke',
-    python3,
-    args: [
-      files('tests/test_bench_tune_mqt.py'),
     ],
   )
   test(
@@ -596,13 +528,6 @@ if python3.found()
     python3,
     args: [
       files('tests/test_record_qsop_mode.py'),
-    ],
-  )
-  test(
-    'harvest mqt bench smoke',
-    python3,
-    args: [
-      files('tests/test_harvest_mqt_bench.py'),
     ],
   )
   test(
@@ -701,24 +626,6 @@ if python3.found()
       files('tests/test_wmc_runner_options.py'),
       files('scripts/run_corpus_benchmarks.py'),
       files('scripts/bench.py'),
-    ],
-  )
-  test(
-    'build corpus help',
-    python3,
-    args: [
-      files('scripts/build_corpus.py'),
-      '--help',
-    ],
-  )
-  test(
-    'build corpus verify',
-    python3,
-    args: [
-      files('scripts/build_corpus.py'),
-      '--verify',
-      '--lock', files('benchmarks/corpus.lock.json'),
-      '--out', meson.current_source_dir() / 'benchmarks' / 'manifests',
     ],
   )
   test(

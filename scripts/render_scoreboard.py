@@ -543,85 +543,6 @@ def write_import_tables(report_paths: list[pathlib.Path], file: TextIO) -> None:
         )
 
 
-def write_mqt_scaling_table(scaling_table_path: pathlib.Path | None, file: TextIO) -> None:
-    """Render MQT detailed scaling table from mqt-scaling-table.json."""
-    if scaling_table_path is None or not scaling_table_path.exists():
-        return
-    try:
-        scaling = json.loads(scaling_table_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"> warning: could not read MQT scaling table: {exc}\n", file=file)
-        return
-    if not scaling:
-        return
-    print("\n## MQT Bench Scaling by Family\n", file=file)
-    print(
-        "| Family | Mode | Rows | Qubits p50 | Qubits max "
-        "| Vars p50 | Vars max | TW p50 | TW max | Cut-rank p50 | Cut-rank max |",
-        file=file,
-    )
-    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |", file=file)
-    for row in scaling:
-        sign = row.get("sign_count", 0)
-        mode_str = "sign" if sign > 0 or row.get("qsop_mode") == "sign" else "unknown"
-        print(
-            f"| {markdown_escape(row.get('family', ''))} "
-            f"| {markdown_escape(mode_str)} "
-            f"| {row.get('rows', 0)} "
-            f"| {int(row.get('qubits_p50', 0))} "
-            f"| {int(row.get('qubits_max', 0))} "
-            f"| {int(row.get('nvars_p50', 0))} "
-            f"| {int(row.get('nvars_max', 0))} "
-            f"| {int(row.get('treewidth_p50', 0))} "
-            f"| {int(row.get('treewidth_max', 0))} "
-            f"| {int(row.get('cut_rank_p50', 0))} "
-            f"| {int(row.get('cut_rank_max', 0))} |",
-            file=file,
-        )
-
-
-def write_mqt_manifest_notice(manifest_dir: pathlib.Path | None, file: TextIO) -> None:
-    """Emit a notice when MQT manifests are absent or empty."""
-    if manifest_dir is None:
-        return
-    tier_jsons = list(manifest_dir.glob("tier-*.json")) if manifest_dir.exists() else []
-    if tier_jsons:
-        return
-    print("\n## MQT Bench Data\n", file=file)
-    print("> **MQT Bench manifests not found.** "
-          "No MQT QSOP rows are available for this scoreboard.\n", file=file)
-    print("To populate MQT data, run:\n", file=file)
-    print("```sh", file=file)
-    print("# Step 1 — harvest QASM manifests from MQT Bench (requires mqt-bench + qiskit):", file=file)
-    print("python3 scripts/bench.py harvest-mqt \\", file=file)
-    print("    --manifest-dir benchmarks/manifests/mqt \\", file=file)
-    print("    --qasm2sop build/qasm2sop \\", file=file)
-    print("    --sop-stats build/sop-stats", file=file)
-    print("", file=file)
-    print("# Step 2 — materialize QASM manifests to local QSOP corpus:", file=file)
-    print("python3 scripts/bench.py materialize-mqt \\", file=file)
-    print("    --manifest-dir benchmarks/manifests/mqt \\", file=file)
-    print("    --corpus-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\", file=file)
-    print("    --qasm2sop build/qasm2sop \\", file=file)
-    print("    --sop-solve build/sop-solve", file=file)
-    print("", file=file)
-    print("# Step 3 — profile corpus structure:", file=file)
-    print("python3 scripts/bench.py profile-mqt \\", file=file)
-    print("    --corpus-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\", file=file)
-    print("    --artifact-dir artifacts/mqt \\", file=file)
-    print("    --sop-solve build/sop-solve", file=file)
-    print("```", file=file)
-
-
-def write_mqt_tuning_summary(records: list[dict], file: TextIO) -> None:
-    """Render a compact MQT tuning summary from sop_bench_result_v2 records."""
-    print("# MQT Tuning Summary\n", file=file)
-    if not records:
-        print("No MQT tuning records found.\n", file=file)
-        return
-    write_local_backend_summary(records, file)
-
-
 def write_local_backend_summary(records: list[dict], file: TextIO) -> None:
     """Render a compact local backend summary from sop_bench_result_v2 records."""
     by_tier_backend: dict[tuple[str, str], dict] = {}
@@ -698,12 +619,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--import-report", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--local-jsonl", action="append", type=pathlib.Path, default=[], metavar="PATH",
                         help="Local sop_bench_result_v2 JSONL file(s) for local backend summary")
-    parser.add_argument("--mqt-tuning-jsonl", type=pathlib.Path, default=None, metavar="PATH",
-                        help="MQT tuning JSONL file for MQT tuning summary")
-    parser.add_argument("--mqt-manifest-dir", type=pathlib.Path, default=None,
-                        help="MQT manifest directory; if empty/missing, an MQT notice is emitted")
-    parser.add_argument("--mqt-scaling-table", type=pathlib.Path, default=None,
-                        help="Path to mqt-scaling-table.json from profile-mqt")
     parser.add_argument("--output", type=pathlib.Path, default=None,
                         help="Write output to this file instead of stdout")
     return parser.parse_args(argv)
@@ -718,9 +633,6 @@ def main(argv: list[str]) -> int:
             out_file = open(args.output, "w", encoding="utf-8")
         out = out_file if out_file is not None else sys.stdout
 
-        if args.mqt_tuning_jsonl:
-            mqt_records = read_jsonl(args.mqt_tuning_jsonl)
-            write_mqt_tuning_summary(mqt_records, out)
         if args.local_jsonl:
             local_records: list[dict] = []
             for path in args.local_jsonl:
@@ -728,8 +640,6 @@ def main(argv: list[str]) -> int:
             write_local_backend_summary(local_records, out)
         if args.import_report:
             write_import_tables(args.import_report, out)
-        write_mqt_scaling_table(args.mqt_scaling_table, out)
-        write_mqt_manifest_notice(args.mqt_manifest_dir, out)
     except (RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -42,36 +42,10 @@ The QASM is inlined so benchmarks run fully offline after cloning this repo.
 
 ## Refreshing
 
-To rebuild the manifests from scratch (clones FeynmanDD and PyZX, generates
-MQT Bench circuits from the installed package):
-
-```sh
-python3 scripts/build_corpus.py \
-    --lock benchmarks/corpus.lock.json \
-    --out benchmarks/manifests \
-    --work-dir /tmp/dlx4sop-corpus
-```
-
-This takes several minutes.  The clones are cached in `--work-dir`; subsequent
-runs only re-fetch new commits.
-
-To verify that committed manifests respect their tier variable ranges (fast,
-no network if clones already exist):
-
-```sh
-python3 scripts/build_corpus.py --verify
-```
-
-Pass `--rebuild` too to also rebuild and compare case counts (MQT drift is
-reported but not treated as a failure since MQT Bench is version-dependent):
-
-```sh
-python3 scripts/build_corpus.py --verify --rebuild
-```
-
-## Updating the pin
-
-1. Run `git ls-remote <url> HEAD` to get the new commit SHA.
-2. Edit `corpus.lock.json`: update `commit` and bump `tool_versions` as needed.
-3. Re-run `build_corpus.py` and commit the updated manifests alongside the
-   updated lock.
+These manifests are frozen, pinned snapshots. The tool that built them
+(`scripts/build_corpus.py`, which cloned FeynmanDD and PyZX and generated MQT
+Bench circuits from the installed package) has been removed along with the
+rest of the external-harvesting pipeline — `scripts/run_corpus_benchmarks.py`
+still reads these committed manifests to feed the scoreboard, but nothing in
+this repo regenerates them anymore. `corpus.lock.json` remains as the
+provenance record of exactly what was cloned/pinned when they were built.

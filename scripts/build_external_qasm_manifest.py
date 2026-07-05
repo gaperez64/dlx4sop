@@ -48,11 +48,9 @@ def repair_single_register_alias(qasm: str, alias: str) -> str:
     return re.sub(rf"\b{re.escape(alias)}\s*\[", f"{names[0]}[", qasm)
 
 
-def source_files(roots: list[pathlib.Path], include_qc: bool, include_invalid: bool) -> list[tuple[pathlib.Path, pathlib.Path]]:
+def source_files(roots: list[pathlib.Path], include_invalid: bool) -> list[tuple[pathlib.Path, pathlib.Path]]:
     files: list[tuple[pathlib.Path, pathlib.Path]] = []
     suffixes = {".qasm"}
-    if include_qc:
-        suffixes.add(".qc")
 
     for root in roots:
         if root.is_file():
@@ -70,24 +68,7 @@ def source_files(roots: list[pathlib.Path], include_qc: bool, include_invalid: b
     return files
 
 
-def translate_qc(qc2qasm: pathlib.Path, path: pathlib.Path) -> str:
-    completed = subprocess.run(
-        [str(qc2qasm), str(path)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else "qc2qasm failed")
-    return completed.stdout
-
-
-def load_source(path: pathlib.Path, qc2qasm: pathlib.Path | None) -> str:
-    if path.suffix.lower() == ".qc":
-        if qc2qasm is None:
-            raise RuntimeError(".qc input requires --qc2qasm")
-        return translate_qc(qc2qasm, path)
+def load_source(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
@@ -274,8 +255,6 @@ def classify_error(message: str) -> str:
         return "unsupported_angle"
     if "parameterized gate definitions" in message or "simple gate definition" in message:
         return "unsupported_gate_definition"
-    if ".qc" in message or "qc2qasm" in message or "unknown .qc" in message:
-        return "qc_translation_error"
     if (
         "missing OPENQASM" in message
         or "statements must end with ';'" in message
@@ -404,12 +383,10 @@ def report_record(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build a qasm_solver_corpus-compatible manifest from external QASM/QC files."
+        description="Build a qasm_solver_corpus-compatible manifest from external QASM files."
     )
     parser.add_argument("qasm2sop", type=pathlib.Path)
     parser.add_argument("roots", nargs="+", type=pathlib.Path)
-    parser.add_argument("--qc2qasm", type=pathlib.Path, help="translator used when --include-qc is set")
-    parser.add_argument("--include-qc", action="store_true")
     parser.add_argument("--include-invalid", action="store_true")
     parser.add_argument(
         "--strip-terminal-measurements",
@@ -454,15 +431,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--min-vars must be non-negative")
     if args.min_vars > args.max_vars:
         parser.error("--min-vars must be less than or equal to --max-vars")
-    if args.include_qc and args.qc2qasm is None:
-        parser.error("--include-qc requires --qc2qasm")
     args.source_name = args.source_name or args.source_prefix
     return args
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    inputs = source_files(args.roots, args.include_qc, args.include_invalid)
+    inputs = source_files(args.roots, args.include_invalid)
     if args.limit is not None:
         inputs = inputs[: args.limit]
 
@@ -474,7 +449,7 @@ def main(argv: list[str]) -> int:
             break
         qasm = None
         try:
-            qasm = load_source(path, args.qc2qasm)
+            qasm = load_source(path)
             if args.inline_simple_gates:
                 qasm = inline_simple_gates(qasm)
             if args.strip_terminal_measurements:
