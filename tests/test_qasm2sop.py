@@ -370,6 +370,82 @@ u(0.19,0.23,0.29) q;
             f"{spaced_controlled_phase.stdout}\n{spaced_controlled_phase.stderr}"
         )
 
+    # Whitespace inside a gate's parenthesized argument list used to truncate the tokenizer's
+    # gate token mid-expression (see apply_controlled_phase's callers around qasm2sop.c's
+    # parse_statement). This is what macro-expanded angle arithmetic like
+    # scripts/build_external_qasm_manifest.py's inline_simple_gates produces before folding.
+    # All four spellings below are the same expression and must import to the same QSOP.
+    whitespace_variants = [
+        "u(0.564, -pi/2 + pi/2, pi/2 - pi/2) q[0];",
+        "u(0.564,-pi/2+pi/2,pi/2-pi/2) q[0];",
+        "u(0.1,(-pi/2+pi/2),(pi/2-pi/2)) q[0];",
+    ]
+    outputs = []
+    for statement in whitespace_variants[:2]:
+        result = subprocess.run(
+            [str(exe), "--approx", "0.001", "--input", "0", "--output", "0", "-"],
+            input=f"OPENQASM 2.0;\nqreg q[1];\n{statement}\n",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"unexpected whitespace tokenizer result for {statement!r}:\n{result.stderr}")
+        outputs.append(result.stdout)
+    if outputs[0] != outputs[1]:
+        raise AssertionError(
+            f"whitespace and no-whitespace variants produced different QSOP:\n{outputs[0]}\n{outputs[1]}"
+        )
+    nested_parens = subprocess.run(
+        [str(exe), "--approx", "0.001", "--input", "0", "--output", "0", "-"],
+        input=f"OPENQASM 2.0;\nqreg q[1];\n{whitespace_variants[2]}\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if nested_parens.returncode != 0:
+        raise AssertionError(f"unexpected nested-parens tokenizer result:\n{nested_parens.stderr}")
+
+    unbalanced_parens = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi(2,0,0) q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if unbalanced_parens.returncode == 0 or "unbalanced gate parameter list" not in unbalanced_parens.stderr:
+        raise AssertionError(f"unexpected unbalanced-parens result:\n{unbalanced_parens.stderr}")
+
+    # Compound angle arithmetic in parse_angle_radians: equivalent expressions must fold to the
+    # same coefficient, both when they cancel to zero and when they combine to a nonzero value.
+    angle_equivalences = [
+        ("-pi/2+pi/2", "0"),
+        ("pi/2-pi/2", "0"),
+        ("pi/4+pi/8", "3*pi/8"),
+        ("-(pi/2)", "-pi/2"),
+    ]
+    for lhs, rhs in angle_equivalences:
+        results = []
+        for expr in (lhs, rhs):
+            completed = subprocess.run(
+                [str(exe), "--approx", "1e-6", "--input", "0", "--output", "0", "-"],
+                input=f"OPENQASM 2.0;\nqreg q[1];\nrz({expr}) q[0];\n",
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if completed.returncode != 0:
+                raise AssertionError(f"unexpected angle arithmetic result for rz({expr}):\n{completed.stderr}")
+            results.append(completed.stdout)
+        if results[0] != results[1]:
+            raise AssertionError(
+                f"rz({lhs}) and rz({rhs}) produced different QSOP:\n{results[0]}\n{results[1]}"
+            )
+
     bad_rz = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/3) q[0];\n",

@@ -276,8 +276,12 @@ def scan_dataset(
 
         try:
             qasm_text = manifest_tool.inline_simple_gates(qasm_text)
-        except Exception:
-            pass  # defensive only; dumps() has not emitted gate defs in practice
+        except Exception as exc:
+            # Defensive only; dumps() has not emitted gate defs that fail to inline in practice.
+            # Record the failure instead of silently falling through to the un-inlined QASM, so a
+            # later "unsupported OpenQASM operation 'gate'" rejection is traceable to a macro that
+            # genuinely couldn't be inlined, not conflated with a real SOP-expressivity gap.
+            record["inline_simple_gates_error"] = str(exc).splitlines()[-1] if str(exc) else repr(exc)
 
         nqubits = manifest_tool.qasm_qubits(qasm_text)
         zero = "0" * nqubits

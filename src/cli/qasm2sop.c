@@ -677,88 +677,163 @@ static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, c
   return true;
 }
 
-static bool parse_plain_double(const char *text, double *out_value) {
+static bool parse_double_prefix(const char *text, double *out_value, char **out_end) {
   errno = 0;
   char *end = NULL;
   const double value = strtod(text, &end);
-  if (errno != 0 || end == text || *end != '\0' || !isfinite(value)) {
+  if (errno != 0 || end == text || !isfinite(value)) {
     return false;
+  }
+  *out_value = value;
+  *out_end = end;
+  return true;
+}
+
+/* Recursive-descent parser for angle expressions, supporting compound arithmetic such as
+ * "-pi/2 + pi/2" or "pi/4 + pi/8" (not just a single "[mult*]pi[/div]" term). This exists mainly
+ * as a safety net: macro-expanded gate calls (see scripts/build_external_qasm_manifest.py's
+ * inline_simple_gates) already fold such expressions down to a single term or plain decimal
+ * before qasm2sop ever sees them, but this keeps the importer honest if that folding is ever
+ * bypassed or incomplete.
+ *
+ * expr   := term (('+' | '-') term)*
+ * term   := factor (('*' | '/') factor)*
+ * factor := number | 'pi' | '(' expr ')' | ('+' | '-') factor
+ */
+typedef struct {
+  const char *p;
+} angle_parser_t;
+
+static void angle_skip_space(angle_parser_t *parser) {
+  while (isspace((unsigned char)*parser->p)) {
+    parser->p++;
+  }
+}
+
+static char angle_peek(angle_parser_t *parser) {
+  angle_skip_space(parser);
+  return *parser->p;
+}
+
+static bool angle_parse_expr(angle_parser_t *parser, double *out_value);
+
+static bool angle_parse_factor(angle_parser_t *parser, double *out_value) {
+  const char ch = angle_peek(parser);
+  if (ch == '+') {
+    parser->p++;
+    return angle_parse_factor(parser, out_value);
+  }
+  if (ch == '-') {
+    parser->p++;
+    double value = 0.0;
+    if (!angle_parse_factor(parser, &value)) {
+      return false;
+    }
+    *out_value = -value;
+    return true;
+  }
+  if (ch == '(') {
+    parser->p++;
+    double value = 0.0;
+    if (!angle_parse_expr(parser, &value)) {
+      return false;
+    }
+    if (angle_peek(parser) != ')') {
+      return false;
+    }
+    parser->p++;
+    *out_value = value;
+    return true;
+  }
+  if (strncmp(parser->p, "pi", 2) == 0 && !isalnum((unsigned char)parser->p[2]) &&
+      parser->p[2] != '_') {
+    parser->p += 2;
+    *out_value = QASM_PI;
+    return true;
+  }
+  if (isdigit((unsigned char)ch) || ch == '.') {
+    char *end = NULL;
+    if (!parse_double_prefix(parser->p, out_value, &end)) {
+      return false;
+    }
+    parser->p = end;
+    return true;
+  }
+  return false;
+}
+
+static bool angle_parse_term(angle_parser_t *parser, double *out_value) {
+  double value = 0.0;
+  if (!angle_parse_factor(parser, &value)) {
+    return false;
+  }
+  for (;;) {
+    const char op = angle_peek(parser);
+    if (op == '*') {
+      parser->p++;
+      double rhs = 0.0;
+      if (!angle_parse_factor(parser, &rhs)) {
+        return false;
+      }
+      value *= rhs;
+    } else if (op == '/') {
+      parser->p++;
+      double rhs = 0.0;
+      if (!angle_parse_factor(parser, &rhs) || rhs == 0.0) {
+        return false;
+      }
+      value /= rhs;
+    } else {
+      break;
+    }
+  }
+  *out_value = value;
+  return true;
+}
+
+static bool angle_parse_expr(angle_parser_t *parser, double *out_value) {
+  double value = 0.0;
+  if (!angle_parse_term(parser, &value)) {
+    return false;
+  }
+  for (;;) {
+    const char op = angle_peek(parser);
+    if (op == '+') {
+      parser->p++;
+      double rhs = 0.0;
+      if (!angle_parse_term(parser, &rhs)) {
+        return false;
+      }
+      value += rhs;
+    } else if (op == '-') {
+      parser->p++;
+      double rhs = 0.0;
+      if (!angle_parse_term(parser, &rhs)) {
+        return false;
+      }
+      value -= rhs;
+    } else {
+      break;
+    }
   }
   *out_value = value;
   return true;
 }
 
 static bool parse_angle_radians(const char *expr, double *out_angle) {
-  char compact[128];
-  size_t compact_len = 0;
-  for (const char *p = expr; *p != '\0'; p++) {
-    if (isspace((unsigned char)*p)) {
-      continue;
-    }
-    if (compact_len + 1U >= sizeof(compact)) {
-      return false;
-    }
-    compact[compact_len++] = *p;
-  }
-  compact[compact_len] = '\0';
-  if (compact_len == 0) {
+  angle_parser_t parser = {expr};
+  double value = 0.0;
+  if (!angle_parse_expr(&parser, &value)) {
     return false;
   }
-
-  if (strstr(compact, "pi") == NULL) {
-    return parse_plain_double(compact, out_angle);
-  }
-
-  const char *p = compact;
-  double sign = 1.0;
-  if (*p == '-') {
-    sign = -1.0;
-    p++;
-  } else if (*p == '+') {
-    p++;
-  }
-
-  const char *pi = strstr(p, "pi");
-  if (pi == NULL || strstr(pi + 2, "pi") != NULL) {
+  if (angle_peek(&parser) != '\0') {
     return false;
   }
-
-  double multiplier = 1.0;
-  if (pi != p) {
-    if (pi == p + 1 || pi[-1] != '*') {
-      return false;
-    }
-    char multiplier_text[64];
-    const size_t multiplier_len = (size_t)(pi - p - 1);
-    if (multiplier_len == 0 || multiplier_len >= sizeof(multiplier_text)) {
-      return false;
-    }
-    memcpy(multiplier_text, p, multiplier_len);
-    multiplier_text[multiplier_len] = '\0';
-    if (!parse_plain_double(multiplier_text, &multiplier)) {
-      return false;
-    }
-  }
-
-  double divisor = 1.0;
-  p = pi + 2;
-  if (*p == '/') {
-    p++;
-    if (!parse_plain_double(p, &divisor) || divisor == 0.0) {
-      return false;
-    }
-  } else if (*p == '*') {
-    double trailing_multiplier = 0.0;
-    if (!parse_plain_double(p + 1, &trailing_multiplier)) {
-      return false;
-    }
-    multiplier *= trailing_multiplier;
-  } else if (*p != '\0') {
+  if (!isfinite(value)) {
     return false;
   }
-
-  *out_angle = sign * multiplier * QASM_PI / divisor;
-  return isfinite(*out_angle);
+  *out_angle = value;
+  return true;
 }
 
 static bool parse_param_angle_radians(qasm_importer_t *importer, const char *gate,
@@ -793,6 +868,22 @@ static bool parse_param_angle_radians(qasm_importer_t *importer, const char *gat
   return true;
 }
 
+/* Finds the next comma at parenthesis depth zero, so a parenthesized sub-expression such as
+ * "(-pi/2+pi/2)" is never mistaken for containing an argument separator. */
+static char *find_top_level_comma(char *text) {
+  int depth = 0;
+  for (char *p = text; *p != '\0'; p++) {
+    if (*p == '(') {
+      depth++;
+    } else if (*p == ')') {
+      depth--;
+    } else if (*p == ',' && depth == 0) {
+      return p;
+    }
+  }
+  return NULL;
+}
+
 static bool parse_param_radian_list(qasm_importer_t *importer, const char *gate,
                                     const char *prefix, const char *name, double *out_angles,
                                     size_t expected, bool *out_matches) {
@@ -823,14 +914,14 @@ static bool parse_param_radian_list(qasm_importer_t *importer, const char *gate,
   for (size_t i = 0; i < expected; i++) {
     char *next = NULL;
     if (i + 1U < expected) {
-      next = strchr(cursor, ',');
+      next = find_top_level_comma(cursor);
       if (next == NULL) {
         set_error(importer, "unsupported %s angle list '%s'", name, gate);
         return false;
       }
       *next = '\0';
       next++;
-    } else if (strchr(cursor, ',') != NULL) {
+    } else if (find_top_level_comma(cursor) != NULL) {
       set_error(importer, "unsupported %s angle list '%s'", name, gate);
       return false;
     }
@@ -2471,43 +2562,55 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
     return false;
   }
 
-  char *gate_end = text;
-  while (*gate_end != '\0' && !isspace((unsigned char)*gate_end)) {
-    gate_end++;
+  /* Find the end of the bare gate/operator name: the first whitespace or '(', whichever comes
+   * first. A parenthesized parameter list may follow directly ("u(0.1,...)") or after whitespace
+   * ("cu1 (pi/4)"); either way, the first '(' anywhere past this point (if any) opens it, since
+   * OpenQASM 2 operand syntax never contains a literal '(' (registers use '[' ']'). */
+  char *name_end = text;
+  while (*name_end != '\0' && !isspace((unsigned char)*name_end) && *name_end != '(') {
+    name_end++;
   }
-  if (*gate_end == '\0') {
-    lowercase_ascii(text);
-    if (strncmp(text, "gphase(", strlen("gphase(")) == 0) {
-      return apply_gate(importer, text, text + strlen(text));
-    }
-    set_error(importer, "gate statement is missing operands");
-    return false;
-  }
+  char *open_paren = strchr(name_end, '(');
 
   char *rest = NULL;
-  char *after_gate = trim(gate_end);
-  if (*after_gate == '(' && memchr(text, '(', (size_t)(gate_end - text)) == NULL) {
-    char *close = strchr(after_gate + 1, ')');
-    if (close == NULL) {
-      set_error(importer, "parameterized gate is missing ')'");
-      return false;
-    }
+  if (open_paren != NULL) {
+    /* Depth-aware scan for the matching ')', so whitespace or nested parentheses inside the
+     * parameter list (e.g. from macro-substituted angle arithmetic like
+     * "u(0.1, -pi/2 + pi/2)") don't truncate the gate token early. */
+    int depth = 0;
+    char *scan = open_paren;
+    do {
+      if (*scan == '(') {
+        depth++;
+      } else if (*scan == ')') {
+        depth--;
+      } else if (*scan == '\0') {
+        set_error(importer, "unbalanced gate parameter list");
+        return false;
+      }
+      scan++;
+    } while (depth > 0);
+    char *close = scan - 1;
     rest = trim(close + 1);
-    if (*rest == '\0') {
+
+    const size_t name_len = (size_t)(name_end - text);
+    const size_t params_len = (size_t)(close - open_paren + 1);
+    memmove(text + name_len, open_paren, params_len);
+    text[name_len + params_len] = '\0';
+  } else {
+    if (*name_end == '\0') {
       set_error(importer, "gate statement is missing operands");
       return false;
     }
-
-    const size_t name_len = (size_t)(gate_end - text);
-    const size_t params_len = (size_t)(close - after_gate + 1);
-    memmove(text + name_len, after_gate, params_len);
-    text[name_len + params_len] = '\0';
-  } else {
-    *gate_end = '\0';
-    rest = trim(gate_end + 1);
+    *name_end = '\0';
+    rest = trim(name_end + 1);
   }
 
   lowercase_ascii(text);
+  if (*rest == '\0' && strncmp(text, "gphase(", strlen("gphase(")) != 0) {
+    set_error(importer, "gate statement is missing operands");
+    return false;
+  }
   return apply_gate(importer, text, rest);
 }
 
