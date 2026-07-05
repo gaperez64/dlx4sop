@@ -23,5 +23,6 @@ gcovr \
   --root . \
   --filter 'src' \
   --exclude 'tests/' \
+  --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file \
   --print-summary \
   --fail-under-line "$threshold"
