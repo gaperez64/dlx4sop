@@ -42,7 +42,7 @@ from source:
     edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
     and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
     amp-soft output when no profitable block is found.
-- `tools/*.py`: corpus scanners, manifest helpers, report/render helpers, and
+- `scripts/*.py`: corpus scanners, manifest helpers, report/render helpers, and
   boundary translators.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
@@ -62,7 +62,7 @@ appropriate for development and the test suite.
 CI enforces at least 75% line coverage over production `src` files:
 
 ```sh
-tools/check-coverage.sh build-coverage
+scripts/check-coverage.sh build-coverage
 ```
 
 ## Solver Guide
@@ -146,7 +146,7 @@ dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware b
 default, so the `-Dc_args` is unnecessary there. Point the benchmark tooling at the
 optimized binaries, for example `--sop-solve build-bench/sop-solve`.
 
-`tools/bench.py` is the unified benchmark entry point. It requires only the
+`scripts/bench.py` is the unified benchmark entry point. It requires only the
 built binaries and the committed QSOP corpus for local runs; external tools
 (Ganak, native simulators, QASM manifests) are only needed for full refreshes.
 
@@ -154,14 +154,14 @@ built binaries and the committed QSOP corpus for local runs; external tools
 
 ```sh
 meson compile -C build
-python3 tools/bench.py local \
+python3 scripts/bench.py local \
     --tier tier-17-32 \
     --backend treewidth \
     --backend rankwidth:from-treewidth \
     --backend branch:auto \
     --timeout 5 \
     --out artifacts/local/tier-17-32.jsonl
-python3 tools/bench.py render \
+python3 scripts/bench.py render \
     --artifact-dir artifacts/local \
     --view local \
     --output /tmp/local-scoreboard.md
@@ -183,7 +183,7 @@ branch:no-rankwidth   (control: branch without rankwidth delegation)
 ### Full scoreboard refresh (requires Ganak + native simulators)
 
 ```sh
-python3 tools/run_corpus_benchmarks.py \
+python3 scripts/run_corpus_benchmarks.py \
     --artifact-dir artifacts/full \
     --ganak /path/to/ganak
 ```
@@ -210,7 +210,7 @@ The WMC-vs-solver crossover study runs on a committed synthetic phase-polynomial
 family under `benchmarks/corpus/sop/synthetic/scaling/`, regenerable with:
 
 ```sh
-python3 tools/gen_scaling_family.py --qubits 8,12,16,20,24,28 --seeds 1,2,3 \
+python3 scripts/gen_scaling_family.py --qubits 8,12,16,20,24,28 --seeds 1,2,3 \
     --materialize-dir benchmarks/corpus/sop/synthetic/scaling --qasm2sop build/qasm2sop
 ```
 
@@ -226,7 +226,7 @@ on the build optimization level — the branch backend collapses first in all ca
 ### Render from existing artifacts
 
 ```sh
-python3 tools/bench.py render \
+python3 scripts/bench.py render \
     --artifact-dir /tmp/dlx4sop-artifacts \
     --view full
 ```
@@ -236,9 +236,9 @@ JSONL artifacts without re-running any experiments.
 
 ### Other benchmark tools
 
-- `tools/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
-- `tools/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
-- `tools/bench_qasm_native_simulator.py`: compare against supported native simulators.
-- `tools/gen_scaling_family.py`: generate / materialize the synthetic scaling family.
-- `tools/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
-- `tools/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).
+- `scripts/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
+- `scripts/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
+- `scripts/bench_qasm_native_simulator.py`: compare against supported native simulators.
+- `scripts/gen_scaling_family.py`: generate / materialize the synthetic scaling family.
+- `scripts/render_scoreboard.py`: render ad hoc reports (local backend summaries, MQT tuning).
+- `scripts/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).

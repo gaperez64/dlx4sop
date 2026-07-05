@@ -111,9 +111,9 @@ def test_mqt_empty_manifest_notice(tool: pathlib.Path) -> None:
         expected = [
             "## MQT Bench Data",
             "MQT Bench manifests not found",
-            "python3 tools/bench.py harvest-mqt",
-            "python3 tools/bench.py materialize-mqt",
-            "python3 tools/bench.py profile-mqt",
+            "python3 scripts/bench.py harvest-mqt",
+            "python3 scripts/bench.py materialize-mqt",
+            "python3 scripts/bench.py profile-mqt",
         ]
         for s in expected:
             if s not in out:

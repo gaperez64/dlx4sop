@@ -19,8 +19,8 @@ density, so the treewidth DP cost (2^treewidth) explodes while #SAT/WMC (ganak)
 degrades more gracefully — the regime where WMC overtakes the solver backends.
 
 Usage:
-    python3 tools/gen_scaling_family.py --qubits 24 --seed 1 > circuit.qasm
-    python3 tools/gen_scaling_family.py --qubits 8,12,16,20 --seed 1 \
+    python3 scripts/gen_scaling_family.py --qubits 24 --seed 1 > circuit.qasm
+    python3 scripts/gen_scaling_family.py --qubits 8,12,16,20 --seed 1 \
         --out-dir /tmp/scaling   # writes phase-n{N}-s{SEED}.qasm per size
 """
 
@@ -35,7 +35,7 @@ import subprocess
 import sys
 
 SOURCE_NAME = "Synthetic"
-SOURCE_URL = "tools/gen_scaling_family.py"
+SOURCE_URL = "scripts/gen_scaling_family.py"
 FAMILY = "phase-poly"
 
 
@@ -69,7 +69,7 @@ def materialize(
     """Import each (size, seed) circuit into a committed .qsop + .meta.json sidecar.
 
     The corpus is laid out as out_dir/tier-scaling/<stem>.qsop so iter_qsop_corpus
-    (tools/bench_common.py) discovers it as a normal local corpus.
+    (scripts/bench_common.py) discovers it as a normal local corpus.
     """
     tier_dir = out_dir / "tier-scaling"
     tier_dir.mkdir(parents=True, exist_ok=True)

@@ -13,8 +13,8 @@ the treewidth/contraction lower bound without changing the intended low-rank
 structure.
 
 Usage:
-    python3 tools/gen_rankwidth_family.py --height 3 --blowup 4 > instance.qsop
-    python3 tools/gen_rankwidth_family.py --heights 2,3 --blowups 2,4 \
+    python3 scripts/gen_rankwidth_family.py --height 3 --blowup 4 > instance.qsop
+    python3 scripts/gen_rankwidth_family.py --heights 2,3 --blowups 2,4 \
         --materialize-dir benchmarks/corpus/sop/synthetic/rankwidth
 """
 
@@ -28,7 +28,7 @@ import sys
 from collections.abc import Iterable
 
 SOURCE_NAME = "Synthetic"
-SOURCE_URL = "tools/gen_rankwidth_family.py"
+SOURCE_URL = "scripts/gen_rankwidth_family.py"
 FAMILY = "binary-tree-clique-blowup"
 TIER = "tier-rankwidth"
 

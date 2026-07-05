@@ -16,7 +16,7 @@ Reads scoreboard.json (the normalized intermediate) and emits SVG plots:
 Falls back to reading raw JSONL artifacts if scoreboard.json is absent.
 
 Usage:
-    python3 tools/plot_scoreboard.py \\
+    python3 scripts/plot_scoreboard.py \\
         --scoreboard-json scoreboard.json \\
         --artifact-dir artifacts/full \\
         --output-dir scoreboard-assets
@@ -32,7 +32,7 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-sys.path.insert(0, str(REPO_ROOT / "tools"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from render_scoreboard import (
     comparison_key as _comparison_key,
     has_comparison_identity as _has_comparison_identity,

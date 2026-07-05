@@ -5,7 +5,7 @@ Converts selected MQT QASM manifest rows into committed QSOP files with
 sidecar .meta.json files, so local tuning can run without MQT/Qiskit/native tools.
 
 Usage:
-    python3 tools/materialize_mqt_qsop_corpus.py \\
+    python3 scripts/materialize_mqt_qsop_corpus.py \\
         --manifest-dir benchmarks/manifests/mqt \\
         --output-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\
         --qasm2sop build/qasm2sop \\

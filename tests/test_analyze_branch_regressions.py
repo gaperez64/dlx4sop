@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke tests for tools/analyze_branch_regressions.py."""
+"""Smoke tests for scripts/analyze_branch_regressions.py."""
 
 import importlib.util
 import json
@@ -7,7 +7,7 @@ import pathlib
 import sys
 import tempfile
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load_tool():

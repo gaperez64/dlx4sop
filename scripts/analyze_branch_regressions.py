@@ -9,7 +9,7 @@ report that answers:
   - Or because treewidth-order/root probes, cache, or fallthrough behavior changed?
 
 Usage:
-    python3 tools/analyze_branch_regressions.py \\
+    python3 scripts/analyze_branch_regressions.py \\
         --artifact-dir artifacts/full \\
         --output artifacts/branch-regression-summary.md \\
         --json artifacts/branch-regression-summary.json

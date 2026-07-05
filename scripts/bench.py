@@ -16,7 +16,7 @@ Subcommands:
 Examples:
 
   # Fast local backend tuning (no external tools needed):
-  python3 tools/bench.py local \\
+  python3 scripts/bench.py local \\
       --tier tier-17-32 \\
       --backend treewidth \\
       --backend rankwidth:from-treewidth \\
@@ -25,19 +25,19 @@ Examples:
       --out artifacts/local/tier-17-32.jsonl
 
   # Render scoreboard from artifacts:
-  python3 tools/bench.py render \\
+  python3 scripts/bench.py render \\
       --artifact-dir artifacts/local \\
       --view local \\
       --output /tmp/local-scoreboard.md
 
   # Full scoreboard refresh (requires Ganak):
-  python3 tools/bench.py full \\
+  python3 scripts/bench.py full \\
       --artifact-dir artifacts/full \\
       --ganak /tmp/ganak/ganak \\
       --output scoreboard.md
 
   # MQT tuning (no external tools needed after materialization):
-  python3 tools/bench.py tune-mqt \\
+  python3 scripts/bench.py tune-mqt \\
       --corpus benchmarks/corpus/sop/materialized-external/mqt-bench \\
       --artifact-dir artifacts/mqt-tune \\
       --timeout 30
@@ -51,7 +51,7 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOLS_DIR = REPO_ROOT / "tools"
+TOOLS_DIR = REPO_ROOT / "scripts"
 
 
 def _run(cmd: list[str]) -> int:
@@ -177,7 +177,7 @@ def cmd_tune_mqt(args: argparse.Namespace) -> int:
                               "materialized-external" / "mqt-bench")
     if not corpus.exists():
         print(f"error: MQT corpus directory not found: {corpus}", file=sys.stderr)
-        print("  Run tools/materialize_mqt_qsop_corpus.py first.", file=sys.stderr)
+        print("  Run scripts/materialize_mqt_qsop_corpus.py first.", file=sys.stderr)
         return 1
 
     artifact_dir = args.artifact_dir
@@ -222,7 +222,7 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 def _render_local(args: argparse.Namespace) -> int:
-    """Render local-only scoreboard via tools/render_scoreboard.py --local-jsonl."""
+    """Render local-only scoreboard via scripts/render_scoreboard.py --local-jsonl."""
     artifact_dir = args.artifact_dir or REPO_ROOT / "artifacts"
     output = args.output or REPO_ROOT / "scoreboard-local.md"
 

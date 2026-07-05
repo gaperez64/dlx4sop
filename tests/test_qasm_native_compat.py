@@ -10,7 +10,7 @@ def main() -> int:
         return 2
 
     source_root = pathlib.Path(sys.argv[1])
-    sys.path.insert(0, str(source_root / "tools"))
+    sys.path.insert(0, str(source_root / "scripts"))
     from qasm_native_compat import missing_native_compat_gates, qasm_with_native_compat_definitions
 
     qasm = """OPENQASM 2.0;

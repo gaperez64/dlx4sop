@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke tests for tools/harvest_mqt_bench.py."""
+"""Smoke tests for scripts/harvest_mqt_bench.py."""
 
 import importlib.util
 import json
@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load_tool():

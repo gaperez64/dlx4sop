@@ -1427,7 +1427,7 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
     repo = pathlib.Path(__file__).resolve().parents[1]
     artifact_dir = args.artifact_dir
     if args.run_native:
-        native_tool = repo / "tools" / "bench_qasm_native_simulator.py"
+        native_tool = repo / "scripts" / "bench_qasm_native_simulator.py"
         for tier in NATIVE_TIERS:
             manifest = artifact_dir / f"dlx4sop-tier-{tier}-manifest.json"
             if not manifest.exists():
@@ -1463,7 +1463,7 @@ def run_selected_jobs(args: argparse.Namespace) -> None:
             raise RuntimeError(f"missing manifest {manifest}")
         output = artifact_dir / "dlx4sop-tier-257-512-sample-treewidth-current.jsonl"
         command = [
-            str(repo / "tools" / "bench_qasm_corpus.py"),
+            str(repo / "scripts" / "bench_qasm_corpus.py"),
             str(args.qasm2sop),
             str(args.sop_solve),
             "--manifest",

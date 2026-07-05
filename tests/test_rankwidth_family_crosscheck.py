@@ -3,7 +3,7 @@
 
 Usage:
     python3 tests/test_rankwidth_family_crosscheck.py \
-        tools/gen_rankwidth_family.py tools/bench_sop_local.py build/sop-solve
+        scripts/gen_rankwidth_family.py scripts/bench_sop_local.py build/sop-solve
 """
 
 from __future__ import annotations

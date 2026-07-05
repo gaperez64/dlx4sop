@@ -272,7 +272,7 @@ if python3.found()
     'qasm benchmark smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -289,7 +289,7 @@ if python3.found()
     'qasm benchmark summary smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -313,14 +313,14 @@ if python3.found()
     python3,
     args: [
       files('tests/test_bench_qasm_corpus.py'),
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
     ],
   )
   test(
     'qasm rankwidth benchmark smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -344,7 +344,7 @@ if python3.found()
     'qasm rankwidth diagnostics smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -365,7 +365,7 @@ if python3.found()
     'qasm rankwidth comparison smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -386,7 +386,7 @@ if python3.found()
     'qasm treewidth benchmark smoke',
     python3,
     args: [
-      files('tools/bench_qasm_corpus.py'),
+      files('scripts/bench_qasm_corpus.py'),
       qasm2sop.full_path(),
       sop_solve.full_path(),
       '--manifest',
@@ -415,7 +415,7 @@ if python3.found()
     'qasm width benchmark smoke',
     python3,
     args: [
-      files('tools/bench_qasm_widths.py'),
+      files('scripts/bench_qasm_widths.py'),
       qasm2sop.full_path(),
       sop_stats.full_path(),
       '--manifest',
@@ -434,7 +434,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_qgraph2qasm.py'),
-      files('tools/qgraph2qasm.py'),
+      files('scripts/qgraph2qasm.py'),
     ],
   )
   test(
@@ -442,7 +442,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_qc2qasm.py'),
-      files('tools/qc2qasm.py'),
+      files('scripts/qc2qasm.py'),
       qasm2sop.full_path(),
     ],
     depends: qasm2sop,
@@ -451,7 +451,7 @@ if python3.found()
     'feynmandd scan smoke',
     python3,
     args: [
-      files('tools/scan_feynmandd_qasm.py'),
+      files('scripts/scan_feynmandd_qasm.py'),
       qasm2sop.full_path(),
       meson.current_source_dir() / 'tests' / 'golden',
       '--limit',
@@ -464,7 +464,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_scan_mqt_bench.py'),
-      files('tools/scan_mqt_bench.py'),
+      files('scripts/scan_mqt_bench.py'),
       qasm2sop.full_path(),
     ],
     depends: qasm2sop,
@@ -474,9 +474,9 @@ if python3.found()
     python3,
     args: [
       files('tests/test_external_manifest.py'),
-      files('tools/build_external_qasm_manifest.py'),
+      files('scripts/build_external_qasm_manifest.py'),
       qasm2sop.full_path(),
-      files('tools/qc2qasm.py'),
+      files('scripts/qc2qasm.py'),
     ],
     depends: qasm2sop,
   )
@@ -485,7 +485,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_summarize_qasm_report.py'),
-      files('tools/summarize_qasm_report.py'),
+      files('scripts/summarize_qasm_report.py'),
     ],
   )
   test(
@@ -493,7 +493,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_render_scoreboard.py'),
-      files('tools/render_scoreboard.py'),
+      files('scripts/render_scoreboard.py'),
     ],
   )
   test(
@@ -501,7 +501,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_refresh_scoreboard.py'),
-      files('tools/refresh_scoreboard.py'),
+      files('scripts/refresh_scoreboard.py'),
     ],
   )
   test(
@@ -509,7 +509,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_compare_native_solver_results.py'),
-      files('tools/compare_native_solver_results.py'),
+      files('scripts/compare_native_solver_results.py'),
     ],
   )
   test(
@@ -517,7 +517,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_tune_branch_thresholds.py'),
-      files('tools/tune_branch_thresholds.py'),
+      files('scripts/tune_branch_thresholds.py'),
     ],
   )
   test(
@@ -525,7 +525,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_compare_rankwidth_generators.py'),
-      files('tools/compare_rankwidth_generators.py'),
+      files('scripts/compare_rankwidth_generators.py'),
     ],
   )
   test(
@@ -533,7 +533,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_compare_rankwidth_backends.py'),
-      files('tools/compare_rankwidth_backends.py'),
+      files('scripts/compare_rankwidth_backends.py'),
     ],
   )
   test(
@@ -541,7 +541,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_gen_rankwidth_family.py'),
-      files('tools/gen_rankwidth_family.py'),
+      files('scripts/gen_rankwidth_family.py'),
     ],
   )
   test(
@@ -549,8 +549,8 @@ if python3.found()
     python3,
     args: [
       files('tests/test_rankwidth_family_crosscheck.py'),
-      files('tools/gen_rankwidth_family.py'),
-      files('tools/bench_sop_local.py'),
+      files('scripts/gen_rankwidth_family.py'),
+      files('scripts/bench_sop_local.py'),
       sop_solve.full_path(),
     ],
     depends: sop_solve,
@@ -648,7 +648,7 @@ if python3.found()
     'rankwidth family benchmark smoke',
     python3,
     args: [
-      files('tools/bench_sop_local.py'),
+      files('scripts/bench_sop_local.py'),
       '--sop-solve', sop_solve.full_path(),
       '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'rankwidth',
       '--tier', 'tier-rankwidth',
@@ -674,7 +674,7 @@ if python3.found()
     'native simulator benchmark help',
     python3,
     args: [
-      files('tools/bench_qasm_native_simulator.py'),
+      files('scripts/bench_qasm_native_simulator.py'),
       '--help',
     ],
   )
@@ -682,7 +682,7 @@ if python3.found()
     'wmc ganak benchmark help',
     python3,
     args: [
-      files('tools/bench_wmc_ganak.py'),
+      files('scripts/bench_wmc_ganak.py'),
       '--help',
     ],
   )
@@ -691,7 +691,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_bench_wmc_ganak.py'),
-      files('tools/bench_wmc_ganak.py'),
+      files('scripts/bench_wmc_ganak.py'),
     ],
   )
   test(
@@ -699,15 +699,15 @@ if python3.found()
     python3,
     args: [
       files('tests/test_wmc_runner_options.py'),
-      files('tools/run_corpus_benchmarks.py'),
-      files('tools/bench.py'),
+      files('scripts/run_corpus_benchmarks.py'),
+      files('scripts/bench.py'),
     ],
   )
   test(
     'build corpus help',
     python3,
     args: [
-      files('tools/build_corpus.py'),
+      files('scripts/build_corpus.py'),
       '--help',
     ],
   )
@@ -715,7 +715,7 @@ if python3.found()
     'build corpus verify',
     python3,
     args: [
-      files('tools/build_corpus.py'),
+      files('scripts/build_corpus.py'),
       '--verify',
       '--lock', files('benchmarks/corpus.lock.json'),
       '--out', meson.current_source_dir() / 'benchmarks' / 'manifests',
@@ -726,7 +726,7 @@ if python3.found()
     python3,
     args: [
       files('tests/test_native_simulator_benchmark.py'),
-      files('tools/bench_qasm_native_simulator.py'),
+      files('scripts/bench_qasm_native_simulator.py'),
     ],
   )
   # Synthetic scaling family (WMC-vs-solver crossover study): run the committed corpus
@@ -735,7 +735,7 @@ if python3.found()
     'synthetic scaling smoke',
     python3,
     args: [
-      files('tools/bench_sop_local.py'),
+      files('scripts/bench_sop_local.py'),
       '--sop-solve', sop_solve.full_path(),
       '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'scaling',
       '--tier', 'tier-scaling',

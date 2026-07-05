@@ -5,7 +5,7 @@ Runs committed .qsop files from the local corpus through sop-solve backends
 and emits sop_bench_result_v2 JSONL records.
 
 Usage:
-    python3 tools/bench_sop_local.py \\
+    python3 scripts/bench_sop_local.py \\
         --sop-solve build/sop-solve \\
         --corpus-dir benchmarks/corpus/sop \\
         --tier tier-17-32 \\

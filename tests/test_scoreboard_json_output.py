@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke tests for _write_scoreboard_json in tools/refresh_scoreboard.py (C1)."""
+"""Smoke tests for _write_scoreboard_json in scripts/refresh_scoreboard.py (C1)."""
 
 import importlib.util
 import json
@@ -7,7 +7,7 @@ import pathlib
 import sys
 import tempfile
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load_tool():

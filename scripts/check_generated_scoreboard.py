@@ -8,7 +8,7 @@ Checks:
   4. solver_summary entries have required keys and solved <= attempted.
 
 Usage:
-    python3 tools/check_generated_scoreboard.py [--repo-root PATH]
+    python3 scripts/check_generated_scoreboard.py [--repo-root PATH]
 """
 
 from __future__ import annotations

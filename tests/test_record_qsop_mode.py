@@ -6,7 +6,7 @@ import io
 import pathlib
 import sys
 
-TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "tools"
+TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 
 
 def _load_render():

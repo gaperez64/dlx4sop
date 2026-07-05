@@ -10,7 +10,7 @@ is not installed.  The committed output artifacts are QASM manifests and
 sidecar metadata — no runtime MQT dependency in C tools.
 
 Usage:
-    python3 tools/harvest_mqt_bench.py \\
+    python3 scripts/harvest_mqt_bench.py \\
         --output-dir benchmarks/manifests/mqt \\
         --max-per-family 20 \\
         --seed 1234 \\

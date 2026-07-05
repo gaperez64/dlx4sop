@@ -46,7 +46,7 @@ To rebuild the manifests from scratch (clones FeynmanDD and PyZX, generates
 MQT Bench circuits from the installed package):
 
 ```sh
-python3 tools/build_corpus.py \
+python3 scripts/build_corpus.py \
     --lock benchmarks/corpus.lock.json \
     --out benchmarks/manifests \
     --work-dir /tmp/dlx4sop-corpus
@@ -59,14 +59,14 @@ To verify that committed manifests respect their tier variable ranges (fast,
 no network if clones already exist):
 
 ```sh
-python3 tools/build_corpus.py --verify
+python3 scripts/build_corpus.py --verify
 ```
 
 Pass `--rebuild` too to also rebuild and compare case counts (MQT drift is
 reported but not treated as a failure since MQT Bench is version-dependent):
 
 ```sh
-python3 tools/build_corpus.py --verify --rebuild
+python3 scripts/build_corpus.py --verify --rebuild
 ```
 
 ## Updating the pin

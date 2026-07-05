@@ -7,13 +7,13 @@ files under benchmarks/manifests/.  External git sources are cloned into
 installed python-package.
 
 Usage (first run, background-safe):
-    python3 tools/build_corpus.py \\
+    python3 scripts/build_corpus.py \\
         --lock benchmarks/corpus.lock.json \\
         --out benchmarks/manifests \\
         --work-dir /tmp/dlx4sop-corpus
 
 Verify committed manifests (no network for FeynmanDD/PyZX if clones exist):
-    python3 tools/build_corpus.py --verify
+    python3 scripts/build_corpus.py --verify
 """
 
 import argparse
@@ -25,7 +25,7 @@ import sys
 import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOLS_DIR = REPO_ROOT / "tools"
+TOOLS_DIR = REPO_ROOT / "scripts"
 DEFAULT_LOCK = REPO_ROOT / "benchmarks" / "corpus.lock.json"
 DEFAULT_OUT = REPO_ROOT / "benchmarks" / "manifests"
 DEFAULT_WORK_DIR = pathlib.Path("/tmp/dlx4sop-corpus")

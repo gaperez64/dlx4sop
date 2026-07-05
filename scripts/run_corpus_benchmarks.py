@@ -6,12 +6,12 @@ invokes refresh_scoreboard.py to regenerate scoreboard.md.  Heavy jobs
 (large-tier rankwidth/branch) may take 30-60 minutes.
 
 Usage (full rerun):
-    python3 tools/run_corpus_benchmarks.py \\
+    python3 scripts/run_corpus_benchmarks.py \\
         --artifact-dir /tmp/dlx4sop-artifacts \\
         --ganak /tmp/ganak/ganak \\
         --manifests benchmarks/manifests
 
-    python3 tools/refresh_scoreboard.py \\
+    python3 scripts/refresh_scoreboard.py \\
         --artifact-dir /tmp/dlx4sop-artifacts \\
         --allow-missing \\
         --output scoreboard.md
@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOLS_DIR = REPO_ROOT / "tools"
+TOOLS_DIR = REPO_ROOT / "scripts"
 sys.path.insert(0, str(TOOLS_DIR))
 from bench_common import cgroup_limited_command, command_memout  # noqa: E402
 

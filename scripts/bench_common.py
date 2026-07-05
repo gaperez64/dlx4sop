@@ -2,7 +2,7 @@
 """Shared utilities for dlx4sop benchmark runners.
 
 All benchmark runners should emit sop_bench_result_v2 records and use the
-helpers here so that tools/render_scoreboard.py can consume any artifact.
+helpers here so that scripts/render_scoreboard.py can consume any artifact.
 """
 
 from __future__ import annotations

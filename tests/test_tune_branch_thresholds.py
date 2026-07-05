@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/tune_branch_thresholds.py."""
+"""Tests for scripts/tune_branch_thresholds.py."""
 
 import importlib.util
 import json

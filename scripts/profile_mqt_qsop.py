@@ -5,7 +5,7 @@ Reads the materialized MQT QSOP corpus and produces per-row structure profiles.
 Identifies high-width, high-expansion, and high-memory-risk MQT families.
 
 Usage:
-    python3 tools/profile_mqt_qsop.py \\
+    python3 scripts/profile_mqt_qsop.py \\
         --corpus-dir benchmarks/corpus/sop/materialized-external/mqt-bench \\
         --artifact-dir artifacts/mqt \\
         --sop-solve build/sop-solve
