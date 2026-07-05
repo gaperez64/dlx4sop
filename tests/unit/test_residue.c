@@ -203,7 +203,7 @@ static int test_qsop_write_errors(void) {
     return 1;
   }
 
-  uint32_t unary[] = {1, 0};
+  uint64_t unary[] = {1, 0};
   uint32_t edge_u[] = {0};
   uint32_t edge_v[] = {1};
   qsop_instance_t qsop = {

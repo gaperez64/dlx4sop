@@ -84,7 +84,7 @@ static int run_contains(const char *name, const qsop_instance_t *qsop,
 
 static int test_amp_soft_stats(void) {
   /* Sign instance r=2, 3 vars, 2 edges (both non-zero labels). */
-  uint32_t s_unary[] = {1, 0, 1};
+  uint64_t s_unary[] = {1, 0, 1};
   uint32_t s_eu[] = {0, 1};
   uint32_t s_ev[] = {1, 2};
   qsop_instance_t sign2 = {.r = 2, .nvars = 3, .norm_h = 3, .constant = 1,
@@ -139,7 +139,7 @@ static int test_amp_soft_stats(void) {
   }
 
   /* Even Fourier mode makes sign edges trivial and skips them in amplitude encodings. */
-  uint32_t w_unary[] = {0, 0};
+  uint64_t w_unary[] = {0, 0};
   uint32_t w_eu[] = {0};
   uint32_t w_ev[] = {1};
   qsop_instance_t zero_edge = {.r = 8, .nvars = 2, .norm_h = 0, .constant = 0,
@@ -169,7 +169,7 @@ static int test_amp_soft_stats(void) {
 }
 
 static int test_peel_forced_conflict_zero(void) {
-  uint32_t unary[] = {0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0};
+  uint64_t unary[] = {0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0};
   uint32_t eu[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   uint32_t ev[] = {6, 8, 10, 4, 5, 6, 7, 8, 9, 10};
   qsop_instance_t qsop = {.r = 8, .nvars = 11, .norm_h = 15, .constant = 0,
@@ -225,7 +225,7 @@ static int test_export_shapes(void) {
   rc |= run_ok("empty-amp", &empty, &amp);
 
   /* Sign instance, r = 2. */
-  uint32_t s_unary[] = {1, 0, 1};
+  uint64_t s_unary[] = {1, 0, 1};
   uint32_t s_eu[] = {0, 1};
   uint32_t s_ev[] = {1, 2};
   qsop_instance_t sign2 = {.r = 2, .nvars = 3, .norm_h = 3, .constant = 1,
@@ -238,7 +238,7 @@ static int test_export_shapes(void) {
   rc |= run_ok("sign2-amp-soft-no-meta", &sign2, &amp_soft_no_meta);
 
   /* Signed instance, r = 8. */
-  uint32_t s8_unary[] = {2, 4};
+  uint64_t s8_unary[] = {2, 4};
   uint32_t s8_eu[] = {0};
   uint32_t s8_ev[] = {1};
   qsop_instance_t sign8 = {.r = 8, .nvars = 2, .norm_h = 4, .constant = 2,
@@ -250,7 +250,7 @@ static int test_export_shapes(void) {
   rc |= run_ok("sign8-amp-soft", &sign8, &amp_soft);
 
   /* Non-power-of-two modulus exercises the conditional subtract (residue only). */
-  uint32_t n_unary[] = {5, 4};
+  uint64_t n_unary[] = {5, 4};
   uint32_t n_eu[] = {0};
   uint32_t n_ev[] = {1};
   qsop_instance_t mod6 = {.r = 6, .nvars = 2, .norm_h = 1, .constant = 4,
@@ -259,7 +259,7 @@ static int test_export_shapes(void) {
   rc |= run_ok("mod6-amp", &mod6, &amp);
 
   /* Large modulus exercises a wide accumulator and zero-coefficient skips. */
-  uint32_t w_unary[] = {300, 0};
+  uint64_t w_unary[] = {300, 0};
   uint32_t w_eu[] = {0};
   uint32_t w_ev[] = {1};
   qsop_instance_t wide = {.r = 1024, .nvars = 2, .norm_h = 0, .constant = 100,
@@ -328,7 +328,7 @@ static int test_error_paths(void) {
  * Returns re/im via output pointers. */
 static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out) {
   const uint32_t n = qsop->nvars;
-  const uint32_t r = qsop->r;
+  const uint32_t r = (uint32_t)qsop->r;
   double total_re = 0.0, total_im = 0.0;
   for (uint32_t mask = 0; mask < (1U << n); mask++) {
     uint32_t phase = (uint32_t)(qsop->constant % r);
@@ -381,7 +381,7 @@ static int check_peel1_amplitude(const char *name, const qsop_instance_t *qsop,
 
 static int test_peel1(void) {
   /* Chain: 3 vars in a path: 0-1-2 with non-trivial labels. */
-  uint32_t c_unary[] = {0, 0, 0};
+  uint64_t c_unary[] = {0, 0, 0};
   uint32_t c_eu[] = {0, 1};
   uint32_t c_ev[] = {1, 2};
   qsop_instance_t chain = {.r = 4, .nvars = 3, .norm_h = 0, .constant = 0,
@@ -394,7 +394,7 @@ static int test_peel1(void) {
 
   /* Star: var 0 is center, vars 1-3 are leaves with unit unary weights.
    * Peel1 should eliminate leaves (degree 1). */
-  uint32_t st_unary[] = {0, 1, 1, 1};
+  uint64_t st_unary[] = {0, 1, 1, 1};
   uint32_t st_eu[] = {0, 0, 0};
   uint32_t st_ev[] = {1, 2, 3};
   qsop_instance_t star = {.r = 4, .nvars = 4, .norm_h = 0, .constant = 0,
@@ -406,7 +406,7 @@ static int test_peel1(void) {
   }
 
   /* Isolated vars: 3 vars with no edges; peel1 should eliminate all (degree-0). */
-  uint32_t iso_unary[] = {1, 2, 3};
+  uint64_t iso_unary[] = {1, 2, 3};
   qsop_instance_t iso = {.r = 8, .nvars = 3, .norm_h = 0, .constant = 1,
                           .unary = iso_unary, .nedges = 0};
 
@@ -417,7 +417,7 @@ static int test_peel1(void) {
 
   /* Zero amplitude: r=4, P(0,0) = 0, P(1,0) = 0, P(0,1) = 0, P(1,1) = 2.
    * With a=2 on each variable and R=0: omega^2 = -1, so 1 + (-1) = 0 → F0 = 0 and F1 = 0. */
-  uint32_t z_unary[] = {2, 2};
+  uint64_t z_unary[] = {2, 2};
   uint32_t z_eu[] = {0};
   uint32_t z_ev[] = {1};
   qsop_instance_t zero_qsop = {.r = 4, .nvars = 2, .norm_h = 0, .constant = 0,
@@ -434,7 +434,7 @@ static int test_peel1(void) {
 
   /* Actual zero amplitude: 1 var, unary = r/2 (omega^{r/2} = -1), no edges.
    * Z = 1 + (-1) = 0. Peel1 should produce is_zero=true. */
-  uint32_t za_unary[] = {4};  /* omega^4 = -1 for r=8 */
+  uint64_t za_unary[] = {4};  /* omega^4 = -1 for r=8 */
   qsop_instance_t zero_amp = {.r = 8, .nvars = 1, .norm_h = 0, .constant = 0,
                                .unary = za_unary, .nedges = 0};
   double ref_re, ref_im;

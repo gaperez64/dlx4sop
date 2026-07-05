@@ -412,6 +412,89 @@ def test_single_fourier_mode_large_r_smoke(exe: pathlib.Path, backend_args: list
     )
 
 
+HUGE_R_SMOKE_TEXT = (
+    "p qsop-sign 18446744073709551614 5 4\n"
+    "n 3\n"
+    "cst 12345678901234567\n"
+    "u 0 1111111111111111\n"
+    "u 1 2222222222222222\n"
+    "u 2 3333333333333333\n"
+    "u 3 4444444444444444\n"
+    "u 4 5555555555555555\n"
+    "e 0 1\n"
+    "e 1 2\n"
+    "e 2 3\n"
+    "e 3 4\n"
+)
+
+
+def test_single_fourier_mode_huge_r_smoke(exe: pathlib.Path, backend_args: list[str],
+                                          backend_label: str) -> None:
+    """Same regression as test_single_fourier_mode_large_r_smoke, but with r pinned to
+    2^64-2 (the largest even uint64_t value) -- beyond the uint32_t ceiling that existed
+    before this session's widening of qsop_instance_t.r/constant/unary to uint64_t. The
+    single-mode DP's table size is independent of r, so this must still solve quickly."""
+    start = time.monotonic()
+    output = run_sop_solve(exe, HUGE_R_SMOKE_TEXT, backend_args)
+    elapsed = time.monotonic() - start
+    assert output is not None, f"[{backend_label}] huge-r single-fourier solve failed"
+    assert elapsed < 5.0, (
+        f"[{backend_label}] huge-r single-fourier solve took {elapsed:.2f}s (expected < 5s)"
+    )
+    parsed = parse_single_fourier_output(output)
+    assert parsed is not None, (
+        f"[{backend_label}] could not parse huge-r single-fourier output: {output!r}"
+    )
+
+
+def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
+    """The count-table/all-modes-Fourier backends allocate O(r) or O(r^2) structures, so
+    they must cleanly refuse (fast, with a clear error message) rather than hang or crash
+    trying to allocate for r = 2^64-2 -- this is the flip side of the single-mode DP's
+    r-independence: old paths are gated, not widened."""
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(HUGE_R_SMOKE_TEXT)
+        qsop_path = f.name
+
+    configs = [
+        ("brute-force", ["--backend", "brute-force"]),
+        ("brute-force:fourier", ["--backend", "brute-force", "--solve-mode", "fourier"]),
+        ("components", ["--backend", "components"]),
+        ("branch", ["--backend", "branch"]),
+        ("branch:fourier", ["--backend", "branch", "--solve-mode", "fourier"]),
+        ("treewidth", ["--backend", "treewidth"]),
+        ("treewidth:fourier", ["--backend", "treewidth", "--solve-mode", "fourier"]),
+        ("rankwidth", ["--backend", "rankwidth"]),
+        ("rankwidth:fourier", ["--backend", "rankwidth", "--rankwidth-mode", "fourier"]),
+    ]
+    failures = []
+    for label, args in configs:
+        start = time.monotonic()
+        result = subprocess.run(
+            [str(exe), "--max-vars", "64"] + args + [qsop_path],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        elapsed = time.monotonic() - start
+        if result.returncode <= 0:
+            failures.append(f"[{label}]: expected a clean nonzero exit, got {result.returncode}")
+            continue
+        if elapsed > 5.0:
+            failures.append(f"[{label}]: refusal took {elapsed:.2f}s (expected a fast, clean refusal)")
+            continue
+        if "refuses modulus > 2^32-1" not in result.stderr:
+            failures.append(
+                f"[{label}]: expected a 'refuses modulus > 2^32-1' error, got: {result.stderr!r}"
+            )
+
+    if failures:
+        for msg in failures:
+            print(f"FAIL: {msg}", file=sys.stderr)
+        raise AssertionError(f"{len(failures)} old-backend huge-r refusal failure(s)")
+
+
 def test_single_fourier_mode_treewidth_matches_rankwidth(exe: pathlib.Path,
                                                          verbose: bool = False) -> None:
     """Cross-check: the two independent single-mode complex DP implementations
@@ -477,6 +560,13 @@ def main(argv: list[str]) -> None:
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
     )
+    test_single_fourier_mode_huge_r_smoke(
+        exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
+    )
+    test_old_backends_refuse_huge_r(exe)
     print(f"all differential backend tests passed (seed={SEED})")
 
 

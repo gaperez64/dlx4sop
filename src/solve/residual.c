@@ -399,10 +399,13 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
     return false;
   }
 
-  residual->r = qsop->r;
+  /* Callers reach qsop_residual_create only through the branch backend
+   * (qsop_solve_branch), which refuses qsop->r > UINT32_MAX before ever building a
+   * residual, so every unary/constant value here is proven to fit in uint32_t. */
+  residual->r = (uint32_t)qsop->r;
   residual->nvars = qsop->nvars;
   residual->nedges = qsop->nedges;
-  residual->constant = qsop->constant;
+  residual->constant = (uint32_t)qsop->constant;
   residual->active_vars = qsop->nvars;
   residual->active_edges = qsop->nedges;
 
@@ -420,7 +423,12 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
     return false;
   }
 
-  memcpy(residual->unary, qsop->unary, (size_t)qsop->nvars * sizeof(*residual->unary));
+  /* qsop->unary is uint64_t*; residual->unary stays uint32_t* (gated safe, see above), so
+   * this must be an explicit per-element narrowing copy, not a memcpy (whose element size
+   * would otherwise mismatch the source and silently copy the wrong bytes). */
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    residual->unary[v] = (uint32_t)qsop->unary[v];
+  }
   memcpy(residual->edge_u, qsop->edge_u, (size_t)qsop->nedges * sizeof(*residual->edge_u));
   memcpy(residual->edge_v, qsop->edge_v, (size_t)qsop->nedges * sizeof(*residual->edge_v));
   memset(residual->active_var, 1, (size_t)qsop->nvars * sizeof(*residual->active_var));

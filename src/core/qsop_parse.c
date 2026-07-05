@@ -30,14 +30,14 @@ typedef struct parser {
   size_t line_no;
 
   bool have_header;
-  uint32_t r;
+  uint64_t r;
   uint32_t nvars;
   uint32_t expected_terms;
   uint32_t seen_terms;
   uint64_t norm_h;
-  uint32_t constant;
+  uint64_t constant;
 
-  uint32_t *unary;
+  uint64_t *unary;
   int8_t *pins;
   edge_vec_t edges;
 } parser_t;
@@ -72,8 +72,9 @@ static void set_global_error(qsop_error_t *error, const char *path, const char *
   va_end(args);
 }
 
-static uint32_t add_mod_u32(uint32_t a, uint32_t b, uint32_t r) {
-  return (uint32_t)(((uint64_t)a + (uint64_t)b) % (uint64_t)r);
+static uint64_t add_mod_u64(uint64_t a, uint64_t b, uint64_t r) {
+  __extension__ typedef unsigned __int128 uint128_t;
+  return (uint64_t)(((uint128_t)a + (uint128_t)b) % (uint128_t)r);
 }
 
 static bool reserve_edges(edge_vec_t *vec, uint32_t needed) {
@@ -196,9 +197,9 @@ static bool parse_u64_token(parser_t *parser, const char *line, const char *toke
 }
 
 static bool parse_coeff_token(parser_t *parser, const char *line, const char *token,
-                              uint32_t *out) {
-  uint32_t raw = 0;
-  if (!parse_u32_token(parser, line, token, &raw)) {
+                              uint64_t *out) {
+  uint64_t raw = 0;
+  if (!parse_u64_token(parser, line, token, &raw)) {
     return false;
   }
   if (!parser->have_header) {
@@ -258,10 +259,10 @@ static bool parse_header(parser_t *parser, const char *line, char **cursor) {
     return false;
   }
 
-  uint32_t r = 0;
+  uint64_t r = 0;
   uint32_t nvars = 0;
   uint32_t expected_terms = 0;
-  if (!parse_u32_token(parser, line, r_tok, &r) ||
+  if (!parse_u64_token(parser, line, r_tok, &r) ||
       !parse_u32_token(parser, line, nvars_tok, &nvars) ||
       !parse_u32_token(parser, line, terms_tok, &expected_terms)) {
     return false;
@@ -322,13 +323,13 @@ static bool parse_unary(parser_t *parser, const char *line, char **cursor) {
   }
 
   uint32_t v = 0;
-  uint32_t b = 0;
+  uint64_t b = 0;
   if (!parse_vertex_token(parser, line, v_tok, &v) ||
       !parse_coeff_token(parser, line, b_tok, &b)) {
     return false;
   }
 
-  parser->unary[v] = add_mod_u32(parser->unary[v], b, parser->r);
+  parser->unary[v] = add_mod_u64(parser->unary[v], b, parser->r);
   return no_more_tokens(parser, line, cursor);
 }
 
@@ -413,7 +414,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
   }
 
   uint32_t *renumber = malloc((parser->nvars == 0 ? 1U : parser->nvars) * sizeof(*renumber));
-  uint32_t *unary = calloc(parser->nvars == 0 ? 1U : parser->nvars, sizeof(*unary));
+  uint64_t *unary = calloc(parser->nvars == 0 ? 1U : parser->nvars, sizeof(*unary));
   if (renumber == NULL || unary == NULL) {
     free(renumber);
     free(unary);
@@ -422,11 +423,11 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
   }
 
   uint32_t nfree = 0;
-  uint32_t constant = parser->constant;
-  const uint32_t sign_coeff = parser->r / 2U;
+  uint64_t constant = parser->constant;
+  const uint64_t sign_coeff = parser->r / 2U;
   for (uint32_t v = 0; v < parser->nvars; v++) {
     if (parser->pins[v] == 1) {
-      constant = add_mod_u32(constant, parser->unary[v], parser->r);
+      constant = add_mod_u64(constant, parser->unary[v], parser->r);
       renumber[v] = UINT32_MAX;
     } else if (parser->pins[v] == 0) {
       renumber[v] = UINT32_MAX;
@@ -445,22 +446,22 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
     if (pin_u != -1 || pin_v != -1) {
       if (edge.u == edge.v) {
         if (pin_u == 1) {
-          constant = add_mod_u32(constant, sign_coeff, parser->r);
+          constant = add_mod_u64(constant, sign_coeff, parser->r);
         }
         continue;
       }
       if (pin_u != -1 && pin_v != -1) {
         if (pin_u == 1 && pin_v == 1) {
-          constant = add_mod_u32(constant, sign_coeff, parser->r);
+          constant = add_mod_u64(constant, sign_coeff, parser->r);
         }
         continue;
       }
       if (pin_u == 1 && pin_v == -1) {
         const uint32_t v = renumber[edge.v];
-        unary[v] = add_mod_u32(unary[v], sign_coeff, parser->r);
+        unary[v] = add_mod_u64(unary[v], sign_coeff, parser->r);
       } else if (pin_v == 1 && pin_u == -1) {
         const uint32_t u = renumber[edge.u];
-        unary[u] = add_mod_u32(unary[u], sign_coeff, parser->r);
+        unary[u] = add_mod_u64(unary[u], sign_coeff, parser->r);
       }
       continue;
     }
@@ -468,7 +469,7 @@ static bool normalize(parser_t *parser, qsop_instance_t **out) {
     uint32_t u = renumber[edge.u];
     uint32_t v = renumber[edge.v];
     if (u == v) {
-      unary[u] = add_mod_u32(unary[u], sign_coeff, parser->r);
+      unary[u] = add_mod_u64(unary[u], sign_coeff, parser->r);
       continue;
     }
     if (u > v) {

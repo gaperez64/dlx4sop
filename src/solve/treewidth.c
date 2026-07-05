@@ -61,7 +61,7 @@ typedef struct tw_factor_complex_list {
  * multiply-accumulate operations performed, the basis for the certified numerical error
  * bound (see solve_treewidth_single_mode_once). */
 typedef struct tw_complex_context {
-  uint32_t r;
+  uint64_t r;
   uint32_t target_mode;
   uint32_t max_bag_vars;
   uint64_t complex_ops;
@@ -90,6 +90,19 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
   } else {
     *dst += value;
   }
+}
+
+/* Count-table / all-modes-Fourier paths below allocate O(r) or O(r^2) structures per bag, so
+ * their entry points refuse a modulus that would not fit uint32_t rather than silently
+ * truncating it; the single-mode path (tw_complex_context_t below) has no such limit. */
+static bool treewidth_refuse_large_modulus(const qsop_instance_t *qsop, qsop_error_t *error) {
+  if (qsop != NULL && qsop->r > UINT32_MAX) {
+    set_error(error,
+              "treewidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
+              "--solve-mode single-fourier");
+    return false;
+  }
+  return true;
 }
 
 static const char *treewidth_order_trace_phase(qsop_treewidth_order_t order) {
@@ -698,9 +711,13 @@ static bool factor_complex_alloc_scope(const uint32_t *vars, uint32_t arity,
     return false;
   }
 
+  /* malloc, not calloc: every caller either fully overwrites every element itself (the
+   * factor_multiply_complex hot loop chief among them) or explicitly zeroes what it needs
+   * (factor_sum_out_complex's output, which accumulates with +=) -- zero-initializing here
+   * would just be redundant work on top of that. */
   uint32_t *scope = malloc((arity == 0 ? 1U : (size_t)arity) * sizeof(*scope));
-  long double *re = calloc(assignments, sizeof(*re));
-  long double *im = calloc(assignments, sizeof(*im));
+  long double *re = malloc(assignments * sizeof(*re));
+  long double *im = malloc(assignments * sizeof(*im));
   if (scope == NULL || re == NULL || im == NULL) {
     free(scope);
     free(re);
@@ -727,12 +744,13 @@ static bool factor_complex_identity(tw_factor_complex_t *out, qsop_error_t *erro
     return false;
   }
   out->re[0] = 1.0L;
+  out->im[0] = 0.0L;
   return true;
 }
 
 /* omega_r^{target_mode * k}, computed directly from a scalar angle: r never sizes an
  * array in this path, only a divisor here, so table cost is fully independent of r. */
-static void tw_root_of_unity(uint32_t r, uint32_t target_mode, uint32_t k, long double *re,
+static void tw_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
                              long double *im) {
   const long double angle =
       tw_two_pi * (long double)target_mode * (long double)k / (long double)r;
@@ -865,6 +883,11 @@ static bool factor_sum_out_complex(const tw_factor_complex_t *input, uint32_t va
   if (!ok) {
     return false;
   }
+  /* Unlike factor_multiply_complex, this loop accumulates (+=) into out, with multiple input
+   * assignments landing on the same projected output index -- it needs a genuinely zeroed
+   * start, which factor_complex_alloc_scope's malloc no longer provides. */
+  memset(out->re, 0, out->assignments * sizeof(*out->re));
+  memset(out->im, 0, out->assignments * sizeof(*out->im));
 
   for (size_t assignment = 0; assignment < input->assignments; assignment++) {
     const size_t projected = remove_assignment_bit(assignment, pos);
@@ -1191,14 +1214,17 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
   return true;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * count-table path, which allocates O(r) structures below. */
 static bool append_unary_factor(const qsop_instance_t *qsop, uint32_t var, tw_factor_list_t *list,
                                 qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   tw_factor_t factor = {0};
-  if (!factor_alloc_scope(&var, 1, qsop->r, &factor, error)) {
+  if (!factor_alloc_scope(&var, 1, r32, &factor, error)) {
     return false;
   }
-  factor_counts(&factor, qsop->r, 0)[0] = 1;
-  factor_counts(&factor, qsop->r, 1)[qsop->unary[var] % qsop->r] = 1;
+  factor_counts(&factor, r32, 0)[0] = 1;
+  factor_counts(&factor, r32, 1)[qsop->unary[var] % r32] = 1;
   if (!factor_list_push_take(list, &factor, error)) {
     factor_free(&factor);
     return false;
@@ -1206,17 +1232,20 @@ static bool append_unary_factor(const qsop_instance_t *qsop, uint32_t var, tw_fa
   return true;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * all-modes-Fourier path, which allocates O(r^2) structures below. */
 static bool append_unary_factor_fourier(const qsop_instance_t *qsop, uint32_t var,
                                         const uint64_t *powers, tw_factor_list_t *list,
                                         qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   tw_factor_t factor = {0};
-  if (!factor_alloc_scope(&var, 1, qsop->r, &factor, error)) {
+  if (!factor_alloc_scope(&var, 1, r32, &factor, error)) {
     return false;
   }
-  for (uint32_t mode = 0; mode < qsop->r; mode++) {
-    factor_counts(&factor, qsop->r, 0)[mode] = 1;
-    factor_counts(&factor, qsop->r, 1)[mode] =
-        powers[(size_t)mode * qsop->r + (qsop->unary[var] % qsop->r)];
+  for (uint32_t mode = 0; mode < r32; mode++) {
+    factor_counts(&factor, r32, 0)[mode] = 1;
+    factor_counts(&factor, r32, 1)[mode] =
+        powers[(size_t)mode * r32 + (qsop->unary[var] % r32)];
   }
   if (!factor_list_push_take(list, &factor, error)) {
     factor_free(&factor);
@@ -1225,8 +1254,11 @@ static bool append_unary_factor_fourier(const qsop_instance_t *qsop, uint32_t va
   return true;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * count-table path, which allocates O(r) structures below. */
 static bool append_edge_factor(const qsop_instance_t *qsop, uint32_t edge, tw_factor_list_t *list,
                                qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint32_t vars[2] = {qsop->edge_u[edge], qsop->edge_v[edge]};
   if (vars[0] > vars[1]) {
     const uint32_t tmp = vars[0];
@@ -1235,14 +1267,14 @@ static bool append_edge_factor(const qsop_instance_t *qsop, uint32_t edge, tw_fa
   }
 
   tw_factor_t factor = {0};
-  if (!factor_alloc_scope(vars, 2, qsop->r, &factor, error)) {
+  if (!factor_alloc_scope(vars, 2, r32, &factor, error)) {
     return false;
   }
   for (size_t assignment = 0; assignment < factor.assignments; assignment++) {
     const bool left = (assignment & 1U) != 0;
     const bool right = (assignment & 2U) != 0;
-    const uint32_t residue = left && right ? qsop->r / 2U : 0;
-    factor_counts(&factor, qsop->r, assignment)[residue] = 1;
+    const uint32_t residue = left && right ? r32 / 2U : 0;
+    factor_counts(&factor, r32, assignment)[residue] = 1;
   }
   if (!factor_list_push_take(list, &factor, error)) {
     factor_free(&factor);
@@ -1251,9 +1283,12 @@ static bool append_edge_factor(const qsop_instance_t *qsop, uint32_t edge, tw_fa
   return true;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * all-modes-Fourier path, which allocates O(r^2) structures below. */
 static bool append_edge_factor_fourier(const qsop_instance_t *qsop, uint32_t edge,
                                        const uint64_t *powers, tw_factor_list_t *list,
                                        qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint32_t vars[2] = {qsop->edge_u[edge], qsop->edge_v[edge]};
   if (vars[0] > vars[1]) {
     const uint32_t tmp = vars[0];
@@ -1262,16 +1297,16 @@ static bool append_edge_factor_fourier(const qsop_instance_t *qsop, uint32_t edg
   }
 
   tw_factor_t factor = {0};
-  if (!factor_alloc_scope(vars, 2, qsop->r, &factor, error)) {
+  if (!factor_alloc_scope(vars, 2, r32, &factor, error)) {
     return false;
   }
   for (size_t assignment = 0; assignment < factor.assignments; assignment++) {
     const bool left = (assignment & 1U) != 0;
     const bool right = (assignment & 2U) != 0;
-    const uint32_t residue = left && right ? qsop->r / 2U : 0;
-    for (uint32_t mode = 0; mode < qsop->r; mode++) {
-      factor_counts(&factor, qsop->r, assignment)[mode] =
-          powers[(size_t)mode * qsop->r + residue];
+    const uint32_t residue = left && right ? r32 / 2U : 0;
+    for (uint32_t mode = 0; mode < r32; mode++) {
+      factor_counts(&factor, r32, assignment)[mode] =
+          powers[(size_t)mode * r32 + residue];
     }
   }
   if (!factor_list_push_take(list, &factor, error)) {
@@ -1606,8 +1641,11 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
     return false;
   }
 
+  /* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+   * count-table path, which allocates O(r) structures below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
   tw_context_t ctx = {
-      .r = qsop->r,
+      .r = r32,
       .max_bag_vars = max_bag_vars,
       .count_modulus = count_modulus,
       .stats = stats,
@@ -1644,7 +1682,7 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
     set_error(error, "internal error: treewidth solve left an uneliminated factor");
     return false;
   }
-  if (!shift_result_counts(qsop->r, counts, final.counts, qsop->constant, &ctx, error)) {
+  if (!shift_result_counts(r32, counts, final.counts, (uint32_t)qsop->constant, &ctx, error)) {
     factor_list_free(&factors);
     factor_free(&final);
     return false;
@@ -1695,8 +1733,11 @@ static bool solve_treewidth_fourier_mod_once(
     return false;
   }
 
+  /* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+   * all-modes-Fourier path, which allocates O(r^2) structures below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
   tw_context_t ctx = {
-      .r = qsop->r,
+      .r = r32,
       .max_bag_vars = max_bag_vars,
       .count_modulus = prime,
       .stats = stats,
@@ -1734,7 +1775,7 @@ static bool solve_treewidth_fourier_mod_once(
     set_error(error, "internal error: treewidth Fourier solve left an uneliminated factor");
     return false;
   }
-  const bool ok = qsop_fourier_inverse_counts(qsop->r, final.counts, qsop->constant, powers,
+  const bool ok = qsop_fourier_inverse_counts(r32, final.counts, (uint32_t)qsop->constant, powers,
                                               inv_powers, prime, counts, error);
 
   factor_list_free(&factors);
@@ -1746,19 +1787,22 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
                                          const uint32_t *order, uint32_t order_width,
                                          qsop_result_t **out, qsop_solve_stats_t *stats,
                                          qsop_solve_trace_t *trace, qsop_error_t *error) {
+  /* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+   * all-modes-Fourier path, which allocates O(r^2) structures below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
-  if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
+  if (!qsop_fourier_find_ntt_primes_for_nvars(r32, qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "treewidth Fourier CRT count table is too large");
     return false;
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   if (result == NULL || all_counts == NULL || residues == NULL) {
     free(primes);
@@ -1768,10 +1812,10 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
     set_error(error, "out of memory while allocating treewidth Fourier CRT solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
   if (nprimes == 1U) {
-    if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    if (!qsop_counts_alloc(r32, &result->counts, error)) {
       free(primes);
       free(all_counts);
       free(residues);
@@ -1779,7 +1823,7 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
       return false;
     }
   } else {
-    result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+    result->count_strings = calloc(r32, sizeof(*result->count_strings));
     if (result->count_strings == NULL) {
       free(primes);
       free(all_counts);
@@ -1796,10 +1840,10 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     const bool ok =
-        treewidth_fourier_prime_state(qsop->r, primes[p], &powers, &inv_powers, error) &&
+        treewidth_fourier_prime_state(r32, primes[p], &powers, &inv_powers, error) &&
         solve_treewidth_fourier_mod_once(
             qsop, max_bag_vars, order, order_width, primes[p], powers, inv_powers,
-            &all_counts[p * (size_t)qsop->r], stats_for_prime, trace_for_prime, error);
+            &all_counts[p * (size_t)r32], stats_for_prime, trace_for_prime, error);
     free(powers);
     free(inv_powers);
     if (!ok) {
@@ -1812,11 +1856,11 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
   }
 
   if (nprimes == 1U) {
-    memcpy(result->counts, all_counts, (size_t)qsop->r * sizeof(*result->counts));
+    memcpy(result->counts, all_counts, (size_t)r32 * sizeof(*result->counts));
   } else {
-    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (uint32_t residue = 0; residue < r32; residue++) {
       for (size_t p = 0; p < nprimes; p++) {
-        residues[p] = all_counts[p * (size_t)qsop->r + residue];
+        residues[p] = all_counts[p * (size_t)r32 + residue];
       }
       if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                         &result->count_strings[residue], error)) {
@@ -1984,22 +2028,25 @@ static bool solve_treewidth_single_mode_order_policy_once(
   return ok;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * count-table path, which allocates O(r) structures below. */
 static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                 qsop_treewidth_order_t order_policy, qsop_result_t **out,
                                 qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                 qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "treewidth CRT count table is too large");
     return false;
   }
 
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
@@ -2010,9 +2057,9 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
     set_error(error, "out of memory while allocating treewidth CRT solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
     free(primes);
     free(all_counts);
@@ -2026,7 +2073,7 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     if (!solve_treewidth_order_policy_once(qsop, max_bag_vars, order_policy, primes[p],
-                                           &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                                           &all_counts[p * (size_t)r32], stats_for_prime,
                                            trace_for_prime, error)) {
       free(primes);
       free(all_counts);
@@ -2036,9 +2083,9 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
     }
   }
 
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  for (uint32_t residue = 0; residue < r32; residue++) {
     for (size_t p = 0; p < nprimes; p++) {
-      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      residues[p] = all_counts[p * (size_t)r32 + residue];
     }
     if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                       &result->count_strings[residue], error)) {
@@ -2057,22 +2104,25 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
   return true;
 }
 
+/* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
+ * count-table path, which allocates O(r) structures below. */
 static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                             const uint32_t *order, uint32_t order_width,
                                             qsop_result_t **out, qsop_solve_stats_t *stats,
                                             qsop_solve_trace_t *trace, qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "treewidth CRT count table is too large");
     return false;
   }
 
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
@@ -2083,9 +2133,9 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
     set_error(error, "out of memory while allocating treewidth CRT solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
     free(primes);
     free(all_counts);
@@ -2099,7 +2149,7 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     if (!solve_treewidth_once(qsop, max_bag_vars, order, order_width, primes[p],
-                              &all_counts[p * (size_t)qsop->r], stats_for_prime,
+                              &all_counts[p * (size_t)r32], stats_for_prime,
                               trace_for_prime, error)) {
       free(primes);
       free(all_counts);
@@ -2109,9 +2159,9 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
     }
   }
 
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  for (uint32_t residue = 0; residue < r32; residue++) {
     for (size_t p = 0; p < nprimes; p++) {
-      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      residues[p] = all_counts[p * (size_t)r32 + residue];
     }
     if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                       &result->count_strings[residue], error)) {
@@ -2209,6 +2259,9 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
+  if (!treewidth_refuse_large_modulus(qsop, error)) {
+    return false;
+  }
   if (qsop->nvars >= 64U && mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return solve_treewidth_precomputed_crt(qsop, max_bag_vars, order, order_width, out, stats,
                                            trace, error);
@@ -2223,9 +2276,9 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     set_error(error, "out of memory while allocating treewidth result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (!qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
     return false;
   }
@@ -2264,6 +2317,9 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
     set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
+  if (!treewidth_refuse_large_modulus(qsop, error)) {
+    return false;
+  }
   if (qsop->nvars >= 64U && mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return solve_treewidth_crt(qsop, max_bag_vars, order_policy, out, stats, trace, error);
   }
@@ -2277,9 +2333,9 @@ bool qsop_solve_treewidth_order_mode_trace_stats(
     set_error(error, "out of memory while allocating treewidth result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (!qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
     return false;
   }
@@ -2331,6 +2387,9 @@ bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (qsop == NULL || order == NULL || counts == NULL) {
     set_error(error, "internal error: null treewidth precomputed-order modular solve argument");
+    return false;
+  }
+  if (!treewidth_refuse_large_modulus(qsop, error)) {
     return false;
   }
   return solve_treewidth_once(qsop, max_bag_vars, order, order_width, count_modulus, counts,

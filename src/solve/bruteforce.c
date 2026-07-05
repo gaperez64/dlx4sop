@@ -87,26 +87,31 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
     return false;
   }
 
+  /* Gated by the caller (qsop_solve_bruteforce_mode_trace_stats) to qsop->r <= UINT32_MAX
+   * before reaching this all-modes-Fourier path, which allocates O(r) / O(r^2) structures
+   * below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
+
   uint64_t prime = 0;
   uint64_t root = 0;
   uint64_t inv_root = 0;
   uint64_t *powers = NULL;
   uint64_t *inv_powers = NULL;
   uint64_t *modes = NULL;
-  if (!qsop_fourier_find_ntt_prime(qsop->r, qsop->nvars, &prime, error) ||
-      !qsop_fourier_find_order_root(prime, qsop->r, &root, error)) {
+  if (!qsop_fourier_find_ntt_prime(r32, qsop->nvars, &prime, error) ||
+      !qsop_fourier_find_order_root(prime, r32, &root, error)) {
     return false;
   }
   inv_root = qsop_mod_pow_u64(root, prime - 2U, prime);
-  if (!qsop_fourier_make_root_powers(qsop->r, root, prime, &powers, error) ||
-      !qsop_fourier_make_root_powers(qsop->r, inv_root, prime, &inv_powers, error)) {
+  if (!qsop_fourier_make_root_powers(r32, root, prime, &powers, error) ||
+      !qsop_fourier_make_root_powers(r32, inv_root, prime, &inv_powers, error)) {
     free(powers);
     free(inv_powers);
     return false;
   }
-  modes = calloc(qsop->r == 0 ? 1U : qsop->r, sizeof(*modes));
+  modes = calloc(r32 == 0 ? 1U : r32, sizeof(*modes));
   qsop_result_t *result = calloc(1, sizeof(*result));
-  if (modes == NULL || result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (modes == NULL || result == NULL || !qsop_counts_alloc(r32, &result->counts, error)) {
     free(powers);
     free(inv_powers);
     free(modes);
@@ -114,11 +119,11 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
     set_error(error, "out of memory while allocating brute-force Fourier solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
 
   const uint64_t assignments = UINT64_C(1) << qsop->nvars;
-  const uint32_t sign_coeff = qsop->r / 2U;
+  const uint32_t sign_coeff = r32 / 2U;
   if (stats != NULL) {
     stats->leaf_assignments = assignments;
   }
@@ -127,22 +132,22 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
     uint32_t phase = 0;
     for (uint32_t v = 0; v < qsop->nvars; v++) {
       if (bit_is_set(assignment, v)) {
-        phase = (uint32_t)(((uint64_t)phase + qsop->unary[v]) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + qsop->unary[v]) % r32);
       }
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
       if (bit_is_set(assignment, qsop->edge_u[e]) && bit_is_set(assignment, qsop->edge_v[e])) {
-        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % r32);
       }
     }
-    for (uint32_t mode = 0; mode < qsop->r; mode++) {
-      modes[mode] = qsop_mod_add_u64(modes[mode], powers[(size_t)mode * qsop->r + phase], prime);
+    for (uint32_t mode = 0; mode < r32; mode++) {
+      modes[mode] = qsop_mod_add_u64(modes[mode], powers[(size_t)mode * r32 + phase], prime);
     }
   }
   qsop_trace_emit_elapsed(trace, "brute_force.fourier_enumerate", 0, assignments,
                           enumerate_start);
 
-  if (!qsop_fourier_inverse_counts(qsop->r, modes, qsop->constant, powers, inv_powers, prime,
+  if (!qsop_fourier_inverse_counts(r32, modes, (uint32_t)qsop->constant, powers, inv_powers, prime,
                                    result->counts, error)) {
     free(powers);
     free(inv_powers);
@@ -160,6 +165,12 @@ static bool solve_bruteforce_fourier(const qsop_instance_t *qsop, uint32_t max_v
 bool qsop_solve_bruteforce_mode_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_vars, qsop_solve_mode_t mode, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (qsop != NULL && qsop->r > UINT32_MAX) {
+    set_error(error,
+              "brute-force backend refuses modulus > 2^32-1; use --backend treewidth or "
+              "rankwidth with --solve-mode single-fourier");
+    return false;
+  }
   if (mode == QSOP_SOLVE_MODE_FOURIER) {
     return solve_bruteforce_fourier(qsop, max_vars, out, stats, trace, error);
   }
@@ -193,35 +204,36 @@ bool qsop_solve_bruteforce_mode_trace_stats(
     return false;
   }
 
+  const uint32_t r32 = (uint32_t)qsop->r;
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL) {
     set_error(error, "out of memory while allocating result");
     return false;
   }
 
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (!qsop_counts_alloc(r32, &result->counts, error)) {
     qsop_result_free(result);
     return false;
   }
 
   const uint64_t assignments = UINT64_C(1) << qsop->nvars;
-  const uint32_t sign_coeff = qsop->r / 2U;
+  const uint32_t sign_coeff = r32 / 2U;
   if (stats != NULL) {
     stats->leaf_assignments = assignments;
   }
   const uint64_t enumerate_start = qsop_trace_begin(trace);
   for (uint64_t assignment = 0; assignment < assignments; assignment++) {
-    uint32_t phase = qsop->constant;
+    uint32_t phase = (uint32_t)qsop->constant;
     for (uint32_t v = 0; v < qsop->nvars; v++) {
       if (bit_is_set(assignment, v)) {
-        phase = (uint32_t)(((uint64_t)phase + qsop->unary[v]) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + qsop->unary[v]) % r32);
       }
     }
     for (uint32_t e = 0; e < qsop->nedges; e++) {
       if (bit_is_set(assignment, qsop->edge_u[e]) && bit_is_set(assignment, qsop->edge_v[e])) {
-        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % qsop->r);
+        phase = (uint32_t)(((uint64_t)phase + sign_coeff) % r32);
       }
     }
     if (!qsop_count_add(&result->counts[phase], 1, error)) {

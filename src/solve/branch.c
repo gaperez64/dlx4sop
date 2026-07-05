@@ -670,7 +670,7 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
   *key = (residual_cache_key_t){0};
 
   key->canonical = true;
-  key->r = sub->r;
+  key->r = (uint32_t)sub->r;
   key->nvars = sub->nvars;
   key->nedges = sub->nedges;
   key->constant = constant;
@@ -691,7 +691,11 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
 
   memset(key->active_var, 1, (size_t)sub->nvars * sizeof(*key->active_var));
   memset(key->active_edge, 1, (size_t)sub->nedges * sizeof(*key->active_edge));
-  memcpy(key->unary, sub->unary, (size_t)sub->nvars * sizeof(*key->unary));
+  /* sub->unary is uint64_t*; key->unary stays uint32_t* (gated safe -- see the module-level
+   * comment on qsop_solve_branch), so this must be an explicit narrowing copy, not memcpy. */
+  for (uint32_t v = 0; v < sub->nvars; v++) {
+    key->unary[v] = (uint32_t)sub->unary[v];
+  }
   memcpy(key->edge_u, sub->edge_u, (size_t)sub->nedges * sizeof(*key->edge_u));
   memcpy(key->edge_v, sub->edge_v, (size_t)sub->nedges * sizeof(*key->edge_v));
   key->fingerprint = residual_cache_key_fingerprint(key);
@@ -1162,7 +1166,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   uint64_t treewidth_table = 0;
   uint64_t treewidth_join_pairs = 0;
   if (treewidth_available) {
-    treewidth_table = treewidth_table_forecast(treewidth_width, sub->r);
+    treewidth_table = treewidth_table_forecast(treewidth_width, (uint32_t)sub->r);
     treewidth_join_pairs = treewidth_join_pair_forecast(treewidth_width, sub->nvars);
     branch_trace_event(stats, "branch.treewidth_table_forecast", treewidth_table);
     branch_trace_event(stats, "branch.treewidth_join_pair_forecast", treewidth_join_pairs);
@@ -1364,7 +1368,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       !cost_model_rejects &&
       rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
       (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-       rankwidth_should_override_treewidth(treewidth_width, cutrank_width, sub->r));
+       rankwidth_should_override_treewidth(treewidth_width, cutrank_width, (uint32_t)sub->r));
   if (!use_rankwidth || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
     const char *skip_phase = "branch.rankwidth_skip_policy";
     const char *veto = "rw_policy_rejected";
@@ -1411,7 +1415,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
           ? qsop_solve_rankwidth_mode_trace_stats(sub, decomposition, sub->nvars,
                                                   QSOP_RANKWIDTH_SOLVE_FOURIER, &part_result,
                                                   &delegated, stats->trace, error)
-          : (qsop_counts_alloc(sub->r, &part_counts, error) &&
+          : (qsop_counts_alloc((uint32_t)sub->r, &part_counts, error) &&
              qsop_solve_rankwidth_count_table_mod_stats(sub, decomposition, stats->count_modulus,
                                                         part_counts, &delegated, stats->trace,
                                                         error));
@@ -1434,7 +1438,8 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   }
 
   const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
-  if (!branch_counts_shift_add(sub->r, counts, delegate_counts, constant_shift, stats, error)) {
+  if (!branch_counts_shift_add((uint32_t)sub->r, counts, delegate_counts, constant_shift, stats,
+                               error)) {
     free(part_counts);
     qsop_result_free(part_result);
     return false;
@@ -1593,7 +1598,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
         qsop_solve_stats_t cal_stats = {0};
         qsop_error_t cal_err = {0};
         const uint64_t t0 = qsop_trace_now_ns();
-        if (qsop_counts_alloc(sub.r, &cal_counts, &cal_err) &&
+        if (qsop_counts_alloc((uint32_t)sub.r, &cal_counts, &cal_err) &&
             qsop_solve_treewidth_precomputed_order_count_mod_stats(
                 &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, cal_order, tw_cal_width,
                 stats->count_modulus, cal_counts, &cal_stats, NULL, &cal_err)) {
@@ -1607,7 +1612,8 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       if (cal_order_owned) free(cal_order);
     }
     if (recording) {
-      const uint64_t tw_fe = tw_cal_set ? treewidth_table_forecast(tw_cal_width, sub.r) : 0;
+      const uint64_t tw_fe =
+          tw_cal_set ? treewidth_table_forecast(tw_cal_width, (uint32_t)sub.r) : 0;
       const uint64_t tw_jp =
           tw_cal_set ? treewidth_join_pair_forecast(tw_cal_width, sub.nvars) : 0;
       branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
@@ -1676,7 +1682,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
-  const uint64_t tw_forecast_entries = treewidth_table_forecast(order_width, sub.r);
+  const uint64_t tw_forecast_entries = treewidth_table_forecast(order_width, (uint32_t)sub.r);
   const uint64_t tw_forecast_join_pairs = treewidth_join_pair_forecast(order_width, sub.nvars);
 
   uint64_t *part_counts = NULL;
@@ -1690,7 +1696,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
           ? qsop_solve_treewidth_precomputed_order_mode_trace_stats(
                 &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
                 QSOP_SOLVE_MODE_FOURIER, &part_result, &delegated_stats, stats->trace, error)
-          : (qsop_counts_alloc(sub.r, &part_counts, error) &&
+          : (qsop_counts_alloc((uint32_t)sub.r, &part_counts, error) &&
              qsop_solve_treewidth_precomputed_order_count_mod_stats(
                  &sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width,
                  stats->count_modulus, part_counts, &delegated_stats, stats->trace, error));
@@ -1728,7 +1734,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
           uint64_t *cal_counts = NULL;
           qsop_solve_stats_t cal_stats = {0};
           const uint64_t t0 = qsop_trace_now_ns();
-          if (qsop_counts_alloc(sub.r, &cal_counts, &cal_err) &&
+          if (qsop_counts_alloc((uint32_t)sub.r, &cal_counts, &cal_err) &&
               qsop_solve_rankwidth_count_table_mod_stats(&sub, cal_decomp, stats->count_modulus,
                                                          cal_counts, &cal_stats, NULL, &cal_err)) {
             rw_data.actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
@@ -1749,8 +1755,8 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   }
 
   const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
-  if (!branch_counts_shift_add(sub.r, counts, delegate_counts, qsop_residual_constant(residual),
-                               stats, error)) {
+  if (!branch_counts_shift_add((uint32_t)sub.r, counts, delegate_counts,
+                               qsop_residual_constant(residual), stats, error)) {
     free_subinstance(&sub);
     free(part_counts);
     qsop_result_free(part_result);
@@ -1800,8 +1806,8 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
   };
 
   if (!qsop_residual_create(qsop, &residual, error) ||
-      !qsop_counts_alloc(qsop->r, &search.work, error) ||
-      !qsop_counts_alloc(qsop->r, &search.tmp, error)) {
+      !qsop_counts_alloc((uint32_t)qsop->r, &search.work, error) ||
+      !qsop_counts_alloc((uint32_t)qsop->r, &search.tmp, error)) {
     qsop_residual_free(residual);
     branch_search_free(&search);
     return false;
@@ -2288,7 +2294,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_
     set_error(error, "out of memory while allocating branch CRT solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
   result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
@@ -2430,7 +2436,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
     return true;  /* not handled: let main recursion try rankwidth */
   }
   qsop_trace_emit(trace, "branch.treewidth_table_forecast", 0,
-                  treewidth_table_forecast(width, qsop->r), 0);
+                  treewidth_table_forecast(width, (uint32_t)qsop->r), 0);
   qsop_trace_emit(trace, "branch.treewidth_join_pair_forecast", 0,
                   treewidth_join_pair_forecast(width, qsop->nvars), 0);
   qsop_trace_emit(trace, "branch.rankwidth_skip_treewidth_preferred", 0, width, 0);
@@ -2497,7 +2503,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
             uint64_t *cal_counts = NULL;
             qsop_solve_stats_t cal_stats = {0};
             const uint64_t t0 = qsop_trace_now_ns();
-            if (qsop_counts_alloc(qsop->r, &cal_counts, &cal_err) &&
+            if (qsop_counts_alloc((uint32_t)qsop->r, &cal_counts, &cal_err) &&
                 qsop_solve_rankwidth_count_table_mod_stats(qsop, cal_decomp, cal_modulus,
                                                            cal_counts, &cal_stats, NULL, &cal_err)) {
               rw_data.actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
@@ -2511,9 +2517,9 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   }
 
   if (recording) {
-    const uint64_t tw_fe = treewidth_table_forecast(width, qsop->r);
+    const uint64_t tw_fe = treewidth_table_forecast(width, (uint32_t)qsop->r);
     const uint64_t tw_jp = treewidth_join_pair_forecast(width, qsop->nvars);
-    branch_emit_jsonl_record(sink, qsop->nvars, qsop->nedges, qsop->r,
+    branch_emit_jsonl_record(sink, qsop->nvars, qsop->nedges, (uint32_t)qsop->r,
                              "treewidth", "rw_treewidth_preferred",
                              probe_ms, true, width,
                              true, tw_fe, tw_jp,
@@ -2544,6 +2550,12 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     set_error(error, "internal error: null QSOP instance");
     return false;
   }
+  if (qsop->r > UINT32_MAX) {
+    set_error(error,
+              "branch backend refuses modulus > 2^32-1; use --backend treewidth or rankwidth "
+              "with --solve-mode single-fourier");
+    return false;
+  }
   if (o.mode != QSOP_SOLVE_MODE_COUNT_TABLE && o.mode != QSOP_SOLVE_MODE_FOURIER) {
     set_error(error, "internal error: unsupported residual branch solve mode");
     return false;
@@ -2572,9 +2584,9 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     set_error(error, "out of memory while allocating result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
-  if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (!qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
     return false;
   }

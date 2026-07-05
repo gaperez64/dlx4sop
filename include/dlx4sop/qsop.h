@@ -7,12 +7,12 @@
 #include <stdio.h>
 
 typedef struct qsop_instance {
-  uint32_t r;
+  uint64_t r;
   uint32_t nvars;
   uint64_t norm_h;
-  uint32_t constant;
+  uint64_t constant;
 
-  uint32_t *unary;
+  uint64_t *unary;
   uint32_t nedges;
   uint32_t *edge_u;
   uint32_t *edge_v;

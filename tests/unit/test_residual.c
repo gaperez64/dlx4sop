@@ -30,7 +30,7 @@ static int expect_bool(const char *name, bool actual, bool expected) {
 }
 
 static qsop_instance_t fixture_instance(void) {
-  static uint32_t unary[] = {1, 2, 5};
+  static uint64_t unary[] = {1, 2, 5};
   static uint32_t edge_u[] = {0, 1};
   static uint32_t edge_v[] = {1, 2};
 

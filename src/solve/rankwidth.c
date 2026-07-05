@@ -94,13 +94,18 @@ typedef struct rw_join_map {
   size_t cap;
 } rw_join_map_t;
 
-/* Pure transition result: filled by rw_compute_join_transition_sign(). */
+/* Pure transition result: filled by rw_compute_join_transition_sign(). residue_shift is a
+ * modulus-scaled value (0 or r/2) for the OLD count-table/all-modes-Fourier paths, which are
+ * always called with r <= UINT32_MAX; sign_flip is the same fact (parity != 0) expressed
+ * without ever reducing mod r, so the single-mode complex path can use it correctly even
+ * when r is an exact multiple of 2^32 (where (uint32_t)r truncates to 0 and r/2 would too). */
 typedef struct rw_transition_eval {
   bool valid;
   uint32_t left_signature;
   uint32_t right_signature;
   uint32_t parent_signature;
   uint32_t residue_shift;
+  bool sign_flip;
 } rw_transition_eval_t;
 
 /* Compact 16-bit transition item for CSR (used when all sig ids and r fit in uint16_t). */
@@ -173,7 +178,7 @@ typedef struct rw_complex_table {
  * per-signature complex multiply-accumulate operations, the basis for the certified
  * numerical error bound. */
 typedef struct rw_complex_context {
-  uint32_t r;
+  uint64_t r;
   uint32_t target_mode;
   long double sign_re;
   uint64_t complex_ops;
@@ -243,6 +248,20 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
   va_end(args);
 }
 
+/* Count-table / all-modes-Fourier paths below allocate O(r) or O(r^2) structures per
+ * signature, so their entry points refuse a modulus that would not fit uint32_t rather
+ * than silently truncating it; the single-mode path (rw_complex_context_t) has no such
+ * limit. Mirrors treewidth_refuse_large_modulus in treewidth.c. */
+static bool rw_refuse_large_modulus(const qsop_instance_t *qsop, qsop_error_t *error) {
+  if (qsop != NULL && qsop->r > UINT32_MAX) {
+    set_error(error,
+              "rankwidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
+              "--solve-mode single-fourier");
+    return false;
+  }
+  return true;
+}
+
 static void set_parse_error(qsop_error_t *error, const char *path, size_t line, const char *fmt,
                             ...) {
   if (error == NULL) {
@@ -290,7 +309,7 @@ static uint64_t *complex_assignment(const rw_complex_table_t *table, size_t inde
 
 /* omega_r^{target_mode * k}, computed directly from a scalar angle: r never sizes an
  * array in this path, only a divisor here, so table cost is fully independent of r. */
-static void rw_root_of_unity(uint32_t r, uint32_t target_mode, uint32_t k, long double *re,
+static void rw_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
                              long double *im) {
   const long double angle =
       rw_two_pi * (long double)target_mode * (long double)k / (long double)r;
@@ -1233,8 +1252,11 @@ static bool reserve_complex_table(rw_complex_table_t *table, size_t needed, size
   uint32_t *signatures = calloc(new_cap, sizeof(*signatures));
   uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
   uint32_t *assignment_weights = calloc(new_cap, sizeof(*assignment_weights));
-  long double *re = calloc(new_cap, sizeof(*re));
-  long double *im = calloc(new_cap, sizeof(*im));
+  /* malloc, not calloc: complex_table_signature_index is the sole insertion point for new
+   * entries and already sets table->re[index]/im[index] = 0.0L explicitly right after growing
+   * the table, so zero-initializing the whole (growing) buffer here is redundant work. */
+  long double *re = malloc(new_cap * sizeof(*re));
+  long double *im = malloc(new_cap * sizeof(*im));
   if (signatures == NULL || assignments == NULL || assignment_weights == NULL || re == NULL ||
       im == NULL) {
     free(signatures);
@@ -3164,7 +3186,10 @@ static bool solve_rankwidth_linear_count_table_mod_once(
     return false;
   }
 
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats/_count_table_mod_stats above to
+   * qsop->r <= UINT32_MAX before reaching this count-table path, which allocates O(r)
+   * structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
   const uint32_t sign = r / 2U;
   const size_t words = decomposition->words;
   const size_t w = words == 0 ? 1U : words;
@@ -3281,7 +3306,7 @@ static bool solve_rankwidth_linear_count_table_mod_once(
       if (src[residue] == 0) {
         continue;
       }
-      uint32_t shifted = residue + (qsop->constant % r);
+      uint32_t shifted = residue + (uint32_t)(qsop->constant % r);
       if (shifted >= r) {
         shifted -= r;
       }
@@ -3319,10 +3344,13 @@ cleanup:
   return ok;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_linear_count_table_crt(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, const uint32_t *order, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   uint64_t *all_counts = NULL;
   uint64_t *residues = NULL;
@@ -3332,20 +3360,20 @@ static bool solve_rankwidth_linear_count_table_crt(
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     set_error(error, "rankwidth linear CRT count table is too large");
     goto cleanup;
   }
-  all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
     set_error(error, "out of memory for rankwidth linear CRT state");
     goto cleanup;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
     set_error(error, "out of memory for rankwidth linear CRT result strings");
     goto cleanup;
@@ -3356,7 +3384,7 @@ static bool solve_rankwidth_linear_count_table_crt(
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     if (!solve_rankwidth_linear_count_table_mod_once(
-            qsop, decomposition, adj, order, primes[p], &all_counts[p * (size_t)qsop->r],
+            qsop, decomposition, adj, order, primes[p], &all_counts[p * (size_t)r32],
             stats_for_prime, trace_for_prime, error)) {
       ok = false;
       break;
@@ -3366,9 +3394,9 @@ static bool solve_rankwidth_linear_count_table_crt(
     goto cleanup;
   }
 
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  for (uint32_t residue = 0; residue < r32; residue++) {
     for (size_t p = 0; p < nprimes; p++) {
-      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      residues[p] = all_counts[p * (size_t)r32 + residue];
     }
     if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                       &result->count_strings[residue], error)) {
@@ -3398,12 +3426,12 @@ static bool solve_rankwidth_linear_count_table(
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (result == NULL || !qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
     set_error(error, "out of memory while allocating rankwidth linear result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
   if (!solve_rankwidth_linear_count_table_mod_once(qsop, decomposition, adj, order, 0,
                                                    result->counts, stats, trace, error)) {
@@ -3441,6 +3469,7 @@ static bool rw_compute_join_transition_sign(
       .right_signature = right_signature,
       .parent_signature = parent_sig,
       .residue_shift = (uint32_t)(((uint64_t)sign * parity) % r),
+      .sign_flip = parity != 0,
   };
   return true;
 }
@@ -3458,7 +3487,9 @@ static bool rw_transition_csr_build_sign(
     uint64_t *u16_events, uint64_t *u32_events,
     qsop_error_t *error) {
   const size_t words = decomposition->words;
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
   const size_t lreps = left->reps_len;
   const size_t rreps = right->reps_len;
   if (lreps == 0 || rreps == 0) {
@@ -3627,7 +3658,9 @@ static bool rw_execute_csr_join_sign(
   }
 
   const size_t n_psigs = (size_t)max_psig + 1U;
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
   const uint32_t r_mask = r - 1U;
   const bool r_pow2 = (r & r_mask) == 0;
 
@@ -3810,7 +3843,9 @@ static bool rw_join_count_table_streaming_sign(
     const uint64_t *outside, uint64_t *scratch_sig,
     size_t words, uint64_t *candidate_pairs_out, uint64_t *emitted_pairs_out,
     qsop_error_t *error) {
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
   const uint32_t r_mask = r - 1U;
   const bool r_pow2 = (r & r_mask) == 0;
   const size_t lreps = left->reps_len;
@@ -3912,7 +3947,9 @@ static bool build_join_map(const qsop_instance_t *qsop,
                            const uint64_t *adj, rw_signature_pool_t *pool,
                            const rw_table_t *left, const rw_table_t *right, rw_join_map_t *map,
                            qsop_error_t *error) {
-  const uint32_t sign = qsop->r / 2U;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t sign = (uint32_t)qsop->r / 2U;
   if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
     set_error(error, "rankwidth join map is too large");
     return false;
@@ -3976,7 +4013,9 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
                                   rw_signature_pool_t *pool, const rw_table_t *left,
                                   const rw_table_t *right, rw_join_map_t *map,
                                   uint64_t *scratch, qsop_error_t *error) {
-  const uint32_t sign = qsop->r / 2U;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t sign = (uint32_t)qsop->r / 2U;
   if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
     set_error(error, "rankwidth join map is too large");
     return false;
@@ -4075,7 +4114,8 @@ static bool solve_leaf_arena(const qsop_instance_t *qsop, const uint64_t *adj,
          table_add_rep(table, zero_signature, zero, words, error) &&
          table_add_entry(table, zero_signature, 0, 1, error) &&
          table_add_rep(table, one_signature, assignment, words, error) &&
-         table_add_entry(table, one_signature, qsop->unary[node->var] % qsop->r, 1, error);
+         table_add_entry(table, one_signature, (uint32_t)(qsop->unary[node->var] % qsop->r), 1,
+                         error);
 }
 
 static bool solve_leaf_mod(const qsop_instance_t *qsop, const uint64_t *adj, const rw_node_t *node,
@@ -4103,8 +4143,8 @@ static bool solve_leaf_mod(const qsop_instance_t *qsop, const uint64_t *adj, con
       table_add_rep(table, zero_signature, zero, words, error) &&
       table_add_entry_mod(table, zero_signature, 0, 1, modulus, error) &&
       table_add_rep(table, one_signature, assignment, words, error) &&
-      table_add_entry_mod(table, one_signature, qsop->unary[node->var] % qsop->r, 1, modulus,
-                          error);
+      table_add_entry_mod(table, one_signature, (uint32_t)(qsop->unary[node->var] % qsop->r), 1,
+                         modulus, error);
   free(zero);
   free(assignment);
   free(signature);
@@ -4157,7 +4197,9 @@ static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t 
     if (me->right_signature > max_right_sig) max_right_sig = me->right_signature;
   }
   const size_t n_sigs = (size_t)max_parent_sig + 1U;
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
 
   uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
   uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
@@ -4402,7 +4444,9 @@ static bool solve_fourier_leaf(const qsop_instance_t *qsop, const uint64_t *adj,
   qsop_bitset_copy(signature_bits_buffer, qsop_bitset_const_row(adj, words, node->var), words);
   qsop_bitset_clear(signature_bits_buffer, node->var);
   qsop_bitset_set(one_bits, node->var);
-  const uint32_t odd_modes = fourier_odd_mode_count(qsop->r);
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const uint32_t odd_modes = fourier_odd_mode_count((uint32_t)qsop->r);
   size_t zero = 0;
   size_t one = 0;
   if (!signature_pool_intern(pool, zero_bits, &zero_signature, error) ||
@@ -4581,7 +4625,9 @@ static bool solve_fourier_join_dense_reference(
     uint64_t prime, rw_fourier_table_t *out, const uint64_t *outside,
     uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words,
     uint64_t *join_signature_pairs, qsop_error_t *error) {
-  const uint32_t odd_modes = fourier_odd_mode_count(qsop->r);
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const uint32_t odd_modes = fourier_odd_mode_count((uint32_t)qsop->r);
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
   if (basis_scratch == NULL) {
@@ -4690,8 +4736,8 @@ static bool solve_fourier_join_dense_reference(
 
       const uint64_t *right_rep = fourier_assignment(right, ri, words);
       rw_transition_eval_t eval;
-      if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, qsop->r,
-                                           left->signatures[li], left_rep,
+      if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words,
+                                           (uint32_t)qsop->r, left->signatures[li], left_rep,
                                            left->assignment_weights[li],
                                            right->signatures[ri], right_rep,
                                            right->assignment_weights[ri],
@@ -4765,7 +4811,9 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
                                          uint64_t *parent_assignment, size_t words,
                                          uint64_t *join_signature_pairs,
                                          qsop_error_t *error) {
-  const uint32_t r = qsop->r;
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const uint32_t r = (uint32_t)qsop->r;
   const uint32_t odd_modes = fourier_odd_mode_count(r);
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = fourier_assignment(left, i, words);
@@ -4836,7 +4884,11 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
                                          const uint64_t *outside, uint64_t *scratch_sig,
                                          uint64_t *parent_assignment, size_t words,
                                          qsop_error_t *error) {
-  const uint32_t r = ctx->r;
+  /* r is only forwarded to rw_compute_join_transition_sign's residue_shift computation, which
+   * this call site does not consume (it uses eval.sign_flip instead, computed from parity
+   * alone with no mod-r reduction) -- so truncating it here cannot affect correctness even
+   * when ctx->r exceeds UINT32_MAX. */
+  const uint32_t r = (uint32_t)ctx->r;
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = complex_assignment(left, i, words);
     const long double left_re = left->re[i];
@@ -4869,7 +4921,7 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
       const long double right_im = right->im[j];
       long double product_re = left_re * right_re - left_im * right_im;
       long double product_im = left_re * right_im + left_im * right_re;
-      if (eval.residue_shift != 0) {
+      if (eval.sign_flip) {
         product_re *= ctx->sign_re;
         product_im *= ctx->sign_re;
       }
@@ -4881,14 +4933,17 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
 static uint64_t fourier_factorized_mode_value(const qsop_instance_t *qsop,
                                               const uint64_t *powers, uint64_t prime,
                                               uint32_t mode) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t acc = 1;
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    const uint32_t residue = qsop->unary[v] % qsop->r;
+    const uint32_t residue = (uint32_t)(qsop->unary[v] % r32);
     const uint64_t term =
-        qsop_mod_add_u64(1, powers[(size_t)mode * qsop->r + residue], prime);
+        qsop_mod_add_u64(1, powers[(size_t)mode * r32 + residue], prime);
     acc = qsop_mod_mul_u64(acc, term, prime);
   }
   return acc;
@@ -4898,8 +4953,9 @@ static void fourier_fill_root_modes_sign(const qsop_instance_t *qsop,
                                          const rw_fourier_table_t *root_table,
                                          const uint64_t *powers, uint64_t prime,
                                          uint64_t *modes) {
-  qsop_counts_clear(qsop->r, modes);
-  const uint32_t odd_modes = fourier_odd_mode_count(qsop->r);
+  const uint32_t r32 = (uint32_t)qsop->r;
+  qsop_counts_clear(r32, modes);
+  const uint32_t odd_modes = fourier_odd_mode_count(r32);
   size_t root_index = 0;
   if (fourier_table_find_signature(root_table, 0, &root_index)) {
     const uint64_t *odd_values = &root_table->values[root_index * (size_t)odd_modes];
@@ -4907,7 +4963,7 @@ static void fourier_fill_root_modes_sign(const qsop_instance_t *qsop,
       modes[2U * odd + 1U] = odd_values[odd];
     }
   }
-  for (uint32_t mode = 0; mode < qsop->r; mode += 2U) {
+  for (uint32_t mode = 0; mode < r32; mode += 2U) {
     modes[mode] = fourier_factorized_mode_value(qsop, powers, prime, mode);
   }
 }
@@ -5016,7 +5072,8 @@ static bool solve_rankwidth_count_table_mod_once(
     if (root->entries[i].signature != 0) {
       continue;
     }
-    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    const uint32_t residue =
+        (uint32_t)((root->entries[i].residue + qsop->constant) % qsop->r);
     counts[residue] = qsop_mod_add_u64(counts[residue], root->entries[i].count, modulus);
   }
 
@@ -5110,7 +5167,8 @@ static bool solve_sign_edge_crt_build_maps(
     if (root->entries[i].signature != 0) {
       continue;
     }
-    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    const uint32_t residue =
+        (uint32_t)((root->entries[i].residue + qsop->constant) % qsop->r);
     counts[residue] = qsop_mod_add_u64(counts[residue], root->entries[i].count, modulus);
   }
   if (stats != NULL) {
@@ -5175,7 +5233,8 @@ static bool solve_sign_edge_crt_use_maps(
     if (root->entries[i].signature != 0) {
       continue;
     }
-    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    const uint32_t residue =
+        (uint32_t)((root->entries[i].residue + qsop->constant) % qsop->r);
     counts[residue] = qsop_mod_add_u64(counts[residue], root->entries[i].count, modulus);
   }
   for (uint32_t t = 0; t < nnodes; t++) {
@@ -5186,23 +5245,26 @@ static bool solve_sign_edge_crt_use_maps(
 }
 
 /* Sign-edge CRT: full solve for nvars >= 64 using accumulator + per-node transition cache. */
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_count_table_crt(
     const qsop_instance_t *qsop,
     const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "rankwidth CRT count table is too large");
     return false;
   }
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
@@ -5213,9 +5275,9 @@ static bool solve_rankwidth_count_table_crt(
     set_error(error, "out of memory for rankwidth CRT state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
     free(primes);
     free(all_counts);
@@ -5248,7 +5310,7 @@ static bool solve_rankwidth_count_table_crt(
                                               stats, trace, error);
   for (size_t p = 1; p < nprimes && ok; p++) {
     ok = solve_sign_edge_crt_use_maps(qsop, decomposition, adj, primes[p],
-                                         &all_counts[p * (size_t)qsop->r], &pool, maps, error);
+                                         &all_counts[p * (size_t)r32], &pool, maps, error);
   }
   if (!ok) {
     for (uint32_t t = 0; t < nnodes; t++) {
@@ -5263,9 +5325,9 @@ static bool solve_rankwidth_count_table_crt(
     qsop_result_free(result);
     return false;
   }
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  for (uint32_t residue = 0; residue < r32; residue++) {
     for (size_t p = 0; p < nprimes; p++) {
-      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      residues[p] = all_counts[p * (size_t)r32 + residue];
     }
     if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                       &result->count_strings[residue], error)) {
@@ -5333,6 +5395,9 @@ static bool rankwidth_no_edges_add_count(uint64_t *dst, uint64_t value,
   return qsop_count_add(dst, value, error);
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats/_count_table_mod_stats above to
+ * qsop->r <= UINT32_MAX before reaching this count-table path, which allocates O(r)
+ * structures below. */
 static bool solve_rankwidth_no_edges_count_table_mod_once(
     const qsop_instance_t *qsop, uint64_t count_modulus, uint64_t *counts,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
@@ -5340,10 +5405,11 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(
     set_error(error, "rankwidth exact no-edge count-table handoff requires fewer than 64 variables");
     return false;
   }
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *current = NULL;
   uint64_t *next = NULL;
-  if (!qsop_counts_alloc(qsop->r, &current, error) ||
-      !qsop_counts_alloc(qsop->r, &next, error)) {
+  if (!qsop_counts_alloc(r32, &current, error) ||
+      !qsop_counts_alloc(r32, &next, error)) {
     free(current);
     free(next);
     return false;
@@ -5352,16 +5418,16 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(
   const uint64_t start = qsop_trace_begin(trace);
   current[0] = count_modulus == 0 ? 1U : 1U % count_modulus;
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    qsop_counts_clear(qsop->r, next);
-    const uint32_t shift = qsop->unary[v] % qsop->r;
-    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    qsop_counts_clear(r32, next);
+    const uint32_t shift = (uint32_t)(qsop->unary[v] % r32);
+    for (uint32_t residue = 0; residue < r32; residue++) {
       const uint64_t value = current[residue];
       if (value == 0) {
         continue;
       }
       uint32_t shifted = residue + shift;
-      if (shifted >= qsop->r) {
-        shifted -= qsop->r;
+      if (shifted >= r32) {
+        shifted -= r32;
       }
       if (!rankwidth_no_edges_add_count(&next[residue], value, count_modulus, error) ||
           !rankwidth_no_edges_add_count(&next[shifted], value, count_modulus, error)) {
@@ -5375,15 +5441,15 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(
     next = tmp;
   }
 
-  qsop_counts_clear(qsop->r, counts);
-  const uint32_t constant = qsop->constant % qsop->r;
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  qsop_counts_clear(r32, counts);
+  const uint32_t constant = (uint32_t)(qsop->constant % r32);
+  for (uint32_t residue = 0; residue < r32; residue++) {
     if (current[residue] == 0) {
       continue;
     }
     uint32_t shifted = residue + constant;
-    if (shifted >= qsop->r) {
-      shifted -= qsop->r;
+    if (shifted >= r32) {
+      shifted -= r32;
     }
     if (!rankwidth_no_edges_add_count(&counts[shifted], current[residue], count_modulus,
                                       error)) {
@@ -5393,28 +5459,31 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(
     }
   }
   qsop_trace_emit_elapsed(trace, "rankwidth.count_table_factorized", 0,
-                          saturating_mul_u64(qsop->nvars, qsop->r), start);
+                          saturating_mul_u64(qsop->nvars, r32), start);
   rankwidth_no_edges_stats(qsop, stats);
   free(current);
   free(next);
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_no_edges_count_table_crt(
     const qsop_instance_t *qsop, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "rankwidth no-edge CRT count table is too large");
     return false;
   }
 
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
@@ -5425,9 +5494,9 @@ static bool solve_rankwidth_no_edges_count_table_crt(
     set_error(error, "out of memory while allocating rankwidth no-edge CRT state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+  result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
     free(primes);
     free(all_counts);
@@ -5442,7 +5511,7 @@ static bool solve_rankwidth_no_edges_count_table_crt(
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     if (!solve_rankwidth_no_edges_count_table_mod_once(
-            qsop, primes[p], &all_counts[p * (size_t)qsop->r], stats_for_prime,
+            qsop, primes[p], &all_counts[p * (size_t)r32], stats_for_prime,
             trace_for_prime, error)) {
       ok = false;
       break;
@@ -5456,9 +5525,9 @@ static bool solve_rankwidth_no_edges_count_table_crt(
     return false;
   }
 
-  for (uint32_t residue = 0; residue < qsop->r; residue++) {
+  for (uint32_t residue = 0; residue < r32; residue++) {
     for (size_t p = 0; p < nprimes; p++) {
-      residues[p] = all_counts[p * (size_t)qsop->r + residue];
+      residues[p] = all_counts[p * (size_t)r32 + residue];
     }
     if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                       &result->count_strings[residue], error)) {
@@ -5477,6 +5546,8 @@ static bool solve_rankwidth_no_edges_count_table_crt(
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_no_edges_count_table(
     const qsop_instance_t *qsop, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
@@ -5485,12 +5556,12 @@ static bool solve_rankwidth_no_edges_count_table(
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (result == NULL || !qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
     set_error(error, "out of memory while allocating rankwidth no-edge result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = (uint32_t)qsop->r;
   result->norm_h = qsop->norm_h;
   if (!solve_rankwidth_no_edges_count_table_mod_once(qsop, 0, result->counts, stats, trace,
                                                      error)) {
@@ -5535,16 +5606,19 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     return solve_rankwidth_count_table_crt(qsop, decomposition, adj, out, stats, trace, error);
   }
 
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this count-table path, which allocates O(r) structures below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
   qsop_result_t *result = calloc(1, sizeof(*result));
   rw_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
-  if (result == NULL || tables == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (result == NULL || tables == NULL || !qsop_counts_alloc(r32, &result->counts, error)) {
     free(tables);
     qsop_result_free(result);
     set_error(error, "out of memory while allocating rankwidth solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
 
   rw_signature_pool_t pool = {0};
@@ -5571,11 +5645,11 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
 
   /* Pre-allocate join workspace for CSR path (amortizes malloc over all join nodes). */
   const size_t ws_cap_sigs = decomposition->score_cached && decomposition->cached_table_forecast > 0
-      ? (size_t)(decomposition->cached_table_forecast / qsop->r) + 1U
+      ? (size_t)(decomposition->cached_table_forecast / r32) + 1U
       : 0U;
   rw_join_workspace_t join_ws = {0};
   if (ws_cap_sigs > 0 &&
-      !join_workspace_alloc(ws_cap_sigs, qsop->r, &join_ws, error)) {
+      !join_workspace_alloc(ws_cap_sigs, r32, &join_ws, error)) {
     free(scratch);
     for (uint32_t t = 0; t < decomposition->nnodes; t++) table_free(&tables[t]);
     free(tables);
@@ -5702,7 +5776,8 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     if (root->entries[i].signature != 0) {
       continue;
     }
-    const uint32_t residue = (root->entries[i].residue + qsop->constant) % qsop->r;
+    const uint32_t residue =
+        (uint32_t)((root->entries[i].residue + qsop->constant) % qsop->r);
     if (!qsop_count_add(&result->counts[residue], root->entries[i].count, error)) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         table_free(&tables[t]);
@@ -5771,29 +5846,35 @@ static void rankwidth_constant_stats(const qsop_instance_t *qsop, qsop_solve_sta
   (void)qsop;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_constant_result(const qsop_instance_t *qsop, qsop_result_t **out,
                                             qsop_solve_stats_t *stats,
                                             qsop_solve_trace_t *trace, qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   qsop_result_t *result = calloc(1, sizeof(*result));
-  if (result == NULL || !qsop_counts_alloc(qsop->r, &result->counts, error)) {
+  if (result == NULL || !qsop_counts_alloc(r32, &result->counts, error)) {
     qsop_result_free(result);
     set_error(error, "out of memory while allocating rankwidth constant result");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
-  result->counts[qsop->constant % qsop->r] = 1;
+  result->counts[qsop->constant % r32] = 1;
   rankwidth_constant_stats(qsop, stats);
   qsop_trace_emit(trace, "rankwidth.constant", 0, 1, 0);
   *out = result;
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_count_table_mod_stats above to qsop->r <= UINT32_MAX before
+ * reaching this count-table path, which allocates O(r) structures below. */
 static bool solve_rankwidth_constant_mod(const qsop_instance_t *qsop, uint64_t count_modulus,
                                          uint64_t *counts, qsop_solve_stats_t *stats,
                                          qsop_solve_trace_t *trace) {
-  qsop_counts_clear(qsop->r, counts);
-  counts[qsop->constant % qsop->r] = count_modulus == 0 ? 1 : 1 % count_modulus;
+  const uint32_t r32 = (uint32_t)qsop->r;
+  qsop_counts_clear(r32, counts);
+  counts[qsop->constant % r32] = count_modulus == 0 ? 1 : 1 % count_modulus;
   rankwidth_constant_stats(qsop, stats);
   qsop_trace_emit(trace, "rankwidth.constant", 0, 1, 0);
   return true;
@@ -5814,7 +5895,10 @@ bool qsop_solve_rankwidth_count_table_mod_stats(
     set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
-  qsop_counts_clear(qsop->r, counts);
+  if (!rw_refuse_large_modulus(qsop, error)) {
+    return false;
+  }
+  qsop_counts_clear((uint32_t)qsop->r, counts);
   if (qsop->nvars == 0) {
     return solve_rankwidth_constant_mod(qsop, count_modulus, counts, stats, trace);
   }
@@ -5886,21 +5970,24 @@ static bool rankwidth_fourier_prime_state(uint32_t r, uint64_t prime, uint64_t *
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
 static bool solve_rankwidth_fourier_no_edges_mod_once(
     const qsop_instance_t *qsop, const uint64_t *powers, const uint64_t *inv_powers,
     uint64_t prime, qsop_rankwidth_fourier_kernel_t kernel, uint64_t *counts,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
-  uint64_t *modes = calloc(qsop->r, sizeof(*modes));
+  const uint32_t r32 = (uint32_t)qsop->r;
+  uint64_t *modes = calloc(r32, sizeof(*modes));
   if (modes == NULL) {
     set_error(error, "out of memory while allocating factorized rankwidth Fourier modes");
     return false;
   }
   const uint64_t start = qsop_trace_begin(trace);
-  for (uint32_t mode = 0; mode < qsop->r; mode++) {
+  for (uint32_t mode = 0; mode < r32; mode++) {
     modes[mode] = fourier_factorized_mode_value(qsop, powers, prime, mode);
   }
-  qsop_trace_emit_elapsed(trace, "rankwidth.fourier_factorized", 0, qsop->r, start);
-  const bool ok = qsop_fourier_inverse_counts(qsop->r, modes, qsop->constant, powers,
+  qsop_trace_emit_elapsed(trace, "rankwidth.fourier_factorized", 0, r32, start);
+  const bool ok = qsop_fourier_inverse_counts(r32, modes, (uint32_t)qsop->constant, powers,
                                               inv_powers, prime, counts, error);
   free(modes);
   if (!ok) {
@@ -5913,12 +6000,15 @@ static bool solve_rankwidth_fourier_no_edges_mod_once(
   return true;
 }
 
+/* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+ * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
 static bool solve_rankwidth_fourier_mod_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint64_t prime, const uint64_t *powers, const uint64_t *inv_powers,
     qsop_rankwidth_fourier_kernel_t kernel,
     uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
+  const uint32_t r32 = (uint32_t)qsop->r;
   if (qsop->nedges == 0) {
     (void)decomposition;
     (void)adj;
@@ -5960,7 +6050,7 @@ static bool solve_rankwidth_fourier_mod_once(
   uint64_t signature_entries = 0;
   uint64_t max_table_entries = 0;
   uint64_t max_signature_entries = 0;
-  const uint32_t odd_modes = fourier_odd_mode_count(qsop->r);
+  const uint32_t odd_modes = fourier_odd_mode_count(r32);
   for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
     const uint32_t node_id = decomposition->postorder[i];
     const rw_node_t *node = &decomposition->nodes[node_id];
@@ -6023,7 +6113,7 @@ static bool solve_rankwidth_fourier_mod_once(
   }
 
   const rw_fourier_table_t *root_table = &tables[decomposition->root];
-  uint64_t *root_modes = calloc(qsop->r, sizeof(*root_modes));
+  uint64_t *root_modes = calloc(r32, sizeof(*root_modes));
   if (root_modes == NULL) {
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
@@ -6037,9 +6127,9 @@ static bool solve_rankwidth_fourier_mod_once(
   const uint64_t even_start = qsop_trace_begin(trace);
   fourier_fill_root_modes_sign(qsop, root_table, powers, prime, root_modes);
   qsop_trace_emit_elapsed(trace, "rankwidth.fourier_even_closed_form", 0,
-                          (qsop->r + 1U) / 2U, even_start);
+                          (r32 + 1U) / 2U, even_start);
 
-  if (!qsop_fourier_inverse_counts(qsop->r, root_modes, qsop->constant, powers, inv_powers,
+  if (!qsop_fourier_inverse_counts(r32, root_modes, (uint32_t)qsop->constant, powers, inv_powers,
                                    prime, counts, error)) {
     for (uint32_t t = 0; t < decomposition->nnodes; t++) {
       fourier_table_free(&tables[t]);
@@ -6302,19 +6392,22 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   if (stats != NULL) {
     stats->rankwidth_fourier_kernel = (uint32_t)kernel;
   }
+  /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
+   * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *primes = NULL;
   size_t nprimes = 0;
-  if (!qsop_fourier_find_ntt_primes_for_nvars(qsop->r, qsop->nvars, &primes, &nprimes, error)) {
+  if (!qsop_fourier_find_ntt_primes_for_nvars(r32, qsop->nvars, &primes, &nprimes, error)) {
     return false;
   }
-  if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
+  if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
     set_error(error, "rankwidth Fourier CRT count table is too large");
     return false;
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
-  uint64_t *all_counts = calloc(nprimes * (size_t)qsop->r, sizeof(*all_counts));
+  uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   uint64_t *residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   if (result == NULL || all_counts == NULL || residues == NULL) {
     free(primes);
@@ -6324,10 +6417,10 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
     set_error(error, "out of memory while allocating rankwidth Fourier CRT solve state");
     return false;
   }
-  result->r = qsop->r;
+  result->r = r32;
   result->norm_h = qsop->norm_h;
   if (nprimes == 1U) {
-    if (!qsop_counts_alloc(qsop->r, &result->counts, error)) {
+    if (!qsop_counts_alloc(r32, &result->counts, error)) {
       free(primes);
       free(all_counts);
       free(residues);
@@ -6335,7 +6428,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
       return false;
     }
   } else {
-    result->count_strings = calloc(qsop->r, sizeof(*result->count_strings));
+    result->count_strings = calloc(r32, sizeof(*result->count_strings));
     if (result->count_strings == NULL) {
       free(primes);
       free(all_counts);
@@ -6353,9 +6446,9 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     const bool ok =
-        rankwidth_fourier_prime_state(qsop->r, primes[p], &root, &powers, &inv_powers, error) &&
+        rankwidth_fourier_prime_state(r32, primes[p], &root, &powers, &inv_powers, error) &&
         solve_rankwidth_fourier_mod_once(qsop, decomposition, adj, primes[p], powers, inv_powers,
-                                         kernel, &all_counts[p * (size_t)qsop->r],
+                                         kernel, &all_counts[p * (size_t)r32],
                                          stats_for_prime, trace_for_prime, error);
     (void)root;
     free(powers);
@@ -6370,11 +6463,11 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   }
 
   if (nprimes == 1U) {
-    memcpy(result->counts, all_counts, (size_t)qsop->r * sizeof(*result->counts));
+    memcpy(result->counts, all_counts, (size_t)r32 * sizeof(*result->counts));
   } else {
-    for (uint32_t residue = 0; residue < qsop->r; residue++) {
+    for (uint32_t residue = 0; residue < r32; residue++) {
       for (size_t p = 0; p < nprimes; p++) {
-        residues[p] = all_counts[p * (size_t)qsop->r + residue];
+        residues[p] = all_counts[p * (size_t)r32 + residue];
       }
       if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
                                         &result->count_strings[residue], error)) {
@@ -6421,6 +6514,9 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
               "rankwidth solver refuses %" PRIu32
               " variables; pass a larger --max-vars",
               qsop->nvars);
+    return false;
+  }
+  if (!rw_refuse_large_modulus(qsop, error)) {
     return false;
   }
   if (qsop->nvars == 0) {

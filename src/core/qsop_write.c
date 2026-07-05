@@ -29,10 +29,10 @@ bool qsop_write_file(FILE *file, const qsop_instance_t *qsop, qsop_error_t *erro
     return false;
   }
 
-  fprintf(file, "p qsop-sign %" PRIu32 " %" PRIu32 " %" PRIu32 "\n", qsop->r, qsop->nvars,
+  fprintf(file, "p qsop-sign %" PRIu64 " %" PRIu32 " %" PRIu32 "\n", qsop->r, qsop->nvars,
           qsop->nedges);
   fprintf(file, "n %" PRIu64 "\n", qsop->norm_h);
-  fprintf(file, "cst %" PRIu32 "\n", qsop->constant);
+  fprintf(file, "cst %" PRIu64 "\n", qsop->constant);
 
   bool wrote_unary = false;
   for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -41,7 +41,7 @@ bool qsop_write_file(FILE *file, const qsop_instance_t *qsop, qsop_error_t *erro
         fputc('\n', file);
         wrote_unary = true;
       }
-      fprintf(file, "u %" PRIu32 " %" PRIu32 "\n", v, qsop->unary[v]);
+      fprintf(file, "u %" PRIu32 " %" PRIu64 "\n", v, qsop->unary[v]);
     }
   }
 

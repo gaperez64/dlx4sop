@@ -199,10 +199,12 @@ static uint32_t width_for_modulus(uint32_t r) {
   return w == 0 ? 1U : w;
 }
 
-/* Build the shared CNF; fills afinal[0..w-1] (LSB first) and *w_out. */
+/* Build the shared CNF; fills afinal[0..w-1] (LSB first) and *w_out.
+ * Gated by qsop_wmc_write's RESIDUE-encoding dispatch to qsop->r <= UINT32_MAX (in fact
+ * < 2^WMC_MAX_WIDTH) before reaching this count-table-style encoding. */
 static bool build_shared(const qsop_instance_t *qsop, wmc_builder_t *b, int *afinal,
                          uint32_t *w_out, qsop_error_t *error) {
-  const uint32_t r = qsop->r;
+  const uint32_t r = (uint32_t)qsop->r;
   const uint32_t w = width_for_modulus(r);
   *w_out = w;
 
@@ -210,7 +212,7 @@ static bool build_shared(const qsop_instance_t *qsop, wmc_builder_t *b, int *afi
   const int lit_true = new_var(b);
   add_clause1(b, lit_true); /* pin the constant-true literal */
 
-  const uint32_t c0 = qsop->constant % r;
+  const uint32_t c0 = (uint32_t)(qsop->constant % r);
   for (uint32_t j = 0; j < w; j++) {
     afinal[j] = ((c0 >> j) & 1U) ? lit_true : -lit_true;
   }
@@ -236,12 +238,14 @@ static bool build_shared(const qsop_instance_t *qsop, wmc_builder_t *b, int *afi
   return true;
 }
 
+/* Gated by qsop_wmc_write's RESIDUE-encoding dispatch to qsop->r <= UINT32_MAX (in fact
+ * < 2^WMC_MAX_WIDTH) before reaching this count-table-style encoding. */
 static bool write_metadata(FILE *file, const qsop_instance_t *qsop, uint32_t w,
                            const int *afinal, uint32_t residue) {
   fprintf(file,
           "c sop2wmc encoding=residue r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
           " format=qsop-sign norm_h=%" PRIu64 "\n",
-          qsop->r, qsop->nvars, qsop->nedges, qsop->norm_h);
+          (uint32_t)qsop->r, qsop->nvars, qsop->nedges, qsop->norm_h);
   fprintf(file, "c residue %" PRIu32 " width %" PRIu32 "\n", residue, w);
   for (uint32_t v = 0; v < qsop->nvars; v++) {
     fprintf(file, "c xvar %" PRIu32 " %" PRIu32 "\n", v, v + 1U);
@@ -301,8 +305,9 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   return options;
 }
 
-/* omega^k = exp(2*pi*i*k/r) */
-static void omega_power(uint32_t k, uint32_t r, double *re, double *im) {
+/* omega^k = exp(2*pi*i*k/r); r never sizes an array here, only a divisor, so this is safe
+ * for any r that fits in a double's mantissa without needing a modulus ceiling. */
+static void omega_power(uint64_t k, uint64_t r, double *re, double *im) {
   const double angle = 2.0 * M_PI * (double)k / (double)r;
   *re = cos(angle);
   *im = sin(angle);
@@ -459,10 +464,12 @@ static bool fg_multiply_pair(wmc_factor_graph_t *fg, uint32_t u, uint32_t v,
   return true;
 }
 
-/* Build a factor graph for Fourier exponent t: weights become omega^(t*label mod r). */
+/* Build a factor graph for Fourier exponent t: weights become omega^(t*label mod r). r never
+ * sizes an allocation here (only nvars/nedges do), so this path is O(1) in r and needs no
+ * modulus ceiling -- unlike the RESIDUE/RESIDUE_FOURIER(all-modes) encodings below. */
 static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_graph_t *fg,
                           qsop_error_t *error) {
-  const uint32_t r = qsop->r;
+  const uint64_t r = qsop->r;
   *fg = (wmc_factor_graph_t){0};
   fg->nvars = qsop->nvars;
 
@@ -470,13 +477,13 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
   double root_im[WMC_ROOT_CACHE_MAX];
   const bool cache_roots = r <= WMC_ROOT_CACHE_MAX;
   if (cache_roots) {
-    for (uint32_t k = 0; k < r; k++) {
+    for (uint64_t k = 0; k < r; k++) {
       omega_power(k, r, &root_re[k], &root_im[k]);
     }
   }
 
   /* Global factor: omega^(t*c0 mod r). */
-  const uint32_t global_coeff = (uint32_t)((t * (uint64_t)(qsop->constant % r)) % r);
+  const uint64_t global_coeff = ((uint64_t)t * (qsop->constant % r)) % r;
   if (cache_roots) {
     fg->global_re = root_re[global_coeff];
     fg->global_im = root_im[global_coeff];
@@ -496,7 +503,7 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
       return false;
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
-      const uint32_t coeff = (uint32_t)((t * (uint64_t)(qsop->unary[v] % r)) % r);
+      const uint64_t coeff = ((uint64_t)t * (qsop->unary[v] % r)) % r;
       if (cache_roots) {
         fg->w_true_re[v] = root_re[coeff];
         fg->w_true_im[v] = root_im[coeff];
@@ -868,17 +875,17 @@ static void fg_peel1(wmc_factor_graph_t *fg) {
 static void write_amp_metadata(FILE *file, const qsop_instance_t *qsop,
                                 const wmc_factor_graph_t *fg, const char *encoding_tag,
                                 uint32_t n_active_vars, uint32_t n_active_pairs) {
-  const uint32_t r = qsop->r;
-  const uint32_t c0 = (uint32_t)(qsop->constant % r);
+  const uint64_t r = qsop->r;
+  const uint64_t c0 = qsop->constant % r;
   fprintf(file,
-          "c sop2wmc encoding=%s r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+          "c sop2wmc encoding=%s r=%" PRIu64 " nvars=%" PRIu32 " nedges=%" PRIu32
           " format=qsop-sign norm_h=%" PRIu64 "\n",
           encoding_tag, r, qsop->nvars, qsop->nedges, qsop->norm_h);
   if (n_active_vars != qsop->nvars || n_active_pairs != (uint32_t)fg->npairs) {
     fprintf(file, "c preprocess nvars_after=%" PRIu32 " pairs_after=%" PRIu32 "\n",
             n_active_vars, n_active_pairs);
   }
-  fprintf(file, "c constant_phase %" PRIu32 "\n", c0);
+  fprintf(file, "c constant_phase %" PRIu64 "\n", c0);
   fprintf(file, "c amplitude_factor %.17g+%.17gi\n", fg->global_re, fg->global_im);
   fputs("c amplitude = ganak_output * amplitude_factor\n", file);
   fputs("c probability = |amplitude|^2 * 2^(-norm_h)\n", file);
@@ -1108,7 +1115,7 @@ static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool e
   fprintf(file, "p cnf 0 1\n");
   if (emit_metadata) {
     fprintf(file,
-            "c sop2wmc encoding=zero r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            "c sop2wmc encoding=zero r=%" PRIu64 " nvars=%" PRIu32 " nedges=%" PRIu32
             " format=qsop-sign norm_h=%" PRIu64 "\n",
             qsop->r, qsop->nvars, qsop->nedges, qsop->norm_h);
     fputs("c amplitude_factor 0+0i\n", file);
@@ -1515,7 +1522,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   fprintf(file, "p cnf %" PRIu32 " %" PRIu64 "\n", b.nvars, b.nclauses);
   if (emit_metadata) {
     fprintf(file,
-            "c sop2wmc encoding=amp-block r=%" PRIu32 " nvars=%" PRIu32 " nedges=%" PRIu32
+            "c sop2wmc encoding=amp-block r=%" PRIu64 " nvars=%" PRIu32 " nedges=%" PRIu32
             " format=qsop-sign norm_h=%" PRIu64 "\n",
             qsop->r, qsop->nvars, qsop->nedges, qsop->norm_h);
     fprintf(file,
@@ -1620,7 +1627,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     return false;
   }
   if (qsop->r < 2U || (qsop->r % 2U) != 0U) {
-    set_error(error, "WMC export requires a positive even modulus, got %" PRIu32, qsop->r);
+    set_error(error, "WMC export requires a positive even modulus, got %" PRIu64, qsop->r);
     return false;
   }
 
@@ -1670,10 +1677,18 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   }
 
   if (options->encoding == QSOP_WMC_ENCODING_RESIDUE_FOURIER) {
-    const uint32_t r = qsop->r;
-    if (!options->fourier_all_modes && options->fourier_mode >= r) {
-      set_error(error, "Fourier mode %" PRIu32 " is out of range for modulus %" PRIu32,
-                options->fourier_mode, r);
+    /* fg_from_qsop (per-t weight computation) is O(1) in r, so a single target mode needs no
+     * modulus ceiling. Emitting every mode, below, is a distinct O(r) loop and is gated on its
+     * own right before it runs. */
+    if (!options->fourier_all_modes && (uint64_t)options->fourier_mode >= qsop->r) {
+      set_error(error, "Fourier mode %" PRIu32 " is out of range for modulus %" PRIu64,
+                options->fourier_mode, qsop->r);
+      return false;
+    }
+    if (options->fourier_all_modes && qsop->r > UINT32_MAX) {
+      set_error(error,
+                "WMC residue-fourier(all-modes) encoding refuses modulus > 2^32-1; export a "
+                "single --fourier-mode instead");
       return false;
     }
     qsop_wmc_encoding_t inner = options->fourier_inner;
@@ -1683,10 +1698,11 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     }
 
     const uint32_t begin_t = options->fourier_all_modes ? 0U : options->fourier_mode;
-    const uint32_t end_t = options->fourier_all_modes ? r : options->fourier_mode + 1U;
+    const uint32_t end_t =
+        options->fourier_all_modes ? (uint32_t)qsop->r : options->fourier_mode + 1U;
     for (uint32_t t = begin_t; t < end_t; t++) {
       if (options->emit_metadata) {
-        fprintf(file, "c --- fourier t=%" PRIu32 " r=%" PRIu32 " ---\n", t, r);
+        fprintf(file, "c --- fourier t=%" PRIu32 " r=%" PRIu64 " ---\n", t, qsop->r);
       }
 
       if (t == 0) {
@@ -1694,9 +1710,9 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
         fprintf(file, "p cnf %" PRIu32 " 0\n", qsop->nvars);
         if (options->emit_metadata) {
           fprintf(file,
-                  "c sop2wmc encoding=fourier-t0 r=%" PRIu32 " nvars=%" PRIu32
+                  "c sop2wmc encoding=fourier-t0 r=%" PRIu64 " nvars=%" PRIu32
                   " t=0 z0_log2=%" PRIu32 "\n",
-                  r, qsop->nvars, qsop->nvars);
+                  qsop->r, qsop->nvars, qsop->nvars);
           fputs("c amplitude_factor 1+0i\n", file);
           fputs("c z0 = 2^nvars (trivial: no Ganak call needed)\n", file);
         }
@@ -1733,13 +1749,16 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     return true;
   }
 
-  /* RESIDUE encoding. */
-  if (width_for_modulus(qsop->r) > WMC_MAX_WIDTH) {
-    set_error(error, "WMC export modulus %" PRIu32 " is too large", qsop->r);
+  /* RESIDUE encoding: a mod-r adder circuit, sized O(r) once all residues are emitted. Check
+   * the UINT32_MAX ceiling explicitly before calling width_for_modulus (which takes a uint32_t
+   * and would otherwise silently truncate a too-wide qsop->r before the WMC_MAX_WIDTH check
+   * below ever saw the real value). */
+  if (qsop->r > UINT32_MAX || width_for_modulus((uint32_t)qsop->r) > WMC_MAX_WIDTH) {
+    set_error(error, "WMC export modulus %" PRIu64 " is too large", qsop->r);
     return false;
   }
-  if (!options->all_residues && options->residue >= qsop->r) {
-    set_error(error, "residue %" PRIu32 " is out of range for modulus %" PRIu32, options->residue,
+  if (!options->all_residues && (uint64_t)options->residue >= qsop->r) {
+    set_error(error, "residue %" PRIu32 " is out of range for modulus %" PRIu64, options->residue,
               qsop->r);
     return false;
   }
@@ -1754,7 +1773,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
 
   bool ok = true;
   if (options->all_residues) {
-    for (uint32_t k = 0; ok && k < qsop->r; k++) {
+    for (uint32_t k = 0; ok && k < (uint32_t)qsop->r; k++) {
       ok = write_block(file, &builder, qsop, w, afinal, k, options->emit_metadata, true, error);
     }
   } else {

@@ -82,6 +82,7 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
             "cu1",
             "cp",
             "crz",
+            "cry",
             "rxx",
             "ryy",
             "rzz",
@@ -380,6 +381,19 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                             state[index] *= cmath.exp(-0.5j * angle)
                         else:
                             state[index] *= cmath.exp(0.5j * angle)
+            elif gate == "cry":
+                control_bit = 1 << a
+                target_bit = 1 << b
+                cos = math.cos(angle / 2.0)
+                sin = math.sin(angle / 2.0)
+                for index in range(1 << nqubits):
+                    if (index & control_bit) == 0 or (index & target_bit) != 0:
+                        continue
+                    other = index | target_bit
+                    old_zero = state[index]
+                    old_one = state[other]
+                    state[index] = cos * old_zero - sin * old_one
+                    state[other] = sin * old_zero + cos * old_one
             elif gate == "rxx":
                 apply_xx_rotation(state, nqubits, a, b, angle)
             elif gate == "ryy":
@@ -549,6 +563,16 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             [("00", "00"), ("00", "11"), ("10", "10"), ("11", "01")],
         ),
         (
+            "h_cry",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q[0];
+            cry(pi) q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("01", "01"), ("01", "10"), ("10", "00"), ("11", "01")],
+        ),
+        (
             "axis_rotations",
             """OPENQASM 2.0;
             include "qelib1.inc";
@@ -670,6 +694,27 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
         if abs(expected - actual) > 5e-2 + 1e-9:
             raise AssertionError(
                 f"approx phase {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
+            )
+
+    approx_cry_qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    h q;
+    cry(0.53) q[0], q[1];
+    """
+    for input_bits, output_bits in [("00", "00"), ("00", "11"), ("10", "01")]:
+        expected = simulate_qasm(approx_cry_qasm, input_bits, output_bits)
+        actual = sop_amplitude(
+            qasm2sop,
+            sop_solve,
+            approx_cry_qasm,
+            input_bits,
+            output_bits,
+            ["--approx", "5e-2"],
+        )
+        if abs(expected - actual) > 5e-2 + 1e-9:
+            raise AssertionError(
+                f"approx cry {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
             )
 
 

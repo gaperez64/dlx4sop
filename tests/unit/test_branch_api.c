@@ -9,7 +9,7 @@
  * so branch_try_root_treewidth_fast_path returns immediately with root_handled=false,
  * which lets the main branch_solve_counts_once path run on every test call. */
 static qsop_instance_t make_tiny(void) {
-  static uint32_t unary[]  = {1, 2, 5};
+  static uint64_t unary[]  = {1, 2, 5};
   static uint32_t edge_u[] = {0, 1};
   static uint32_t edge_v[] = {1, 2};
   return (qsop_instance_t){
@@ -24,7 +24,7 @@ static qsop_instance_t make_tiny(void) {
   };
 }
 
-static qsop_instance_t make_k10_10(uint32_t unary[20], uint32_t edge_u[100],
+static qsop_instance_t make_k10_10(uint64_t unary[20], uint32_t edge_u[100],
                                    uint32_t edge_v[100]) {
   for (uint32_t i = 0; i < 20; ++i) {
     unary[i] = 0;
@@ -103,7 +103,7 @@ static int test_rw_source_none(void) {
 
 /* rw_source=none on a low-cutrank K10,10 must skip rankwidth and delegate to treewidth. */
 static int test_rw_source_none_treewidth_delegate(void) {
-  uint32_t unary[20];
+  uint64_t unary[20];
   uint32_t edge_u[100];
   uint32_t edge_v[100];
   qsop_instance_t    inst  = make_k10_10(unary, edge_u, edge_v);

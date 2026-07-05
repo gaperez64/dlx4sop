@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 typedef struct qsop_stats {
-  uint32_t r;
+  uint64_t r;
   uint32_t nvars;
   uint32_t nedges;
   uint32_t nonzero_unary;

@@ -633,7 +633,7 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
     return false;
   }
 
-  fprintf(file, "modulus: %" PRIu32 "\n", stats->r);
+  fprintf(file, "modulus: %" PRIu64 "\n", stats->r);
   fprintf(file, "variables: %" PRIu32 "\n", stats->nvars);
   fprintf(file, "quadratic_terms: %" PRIu32 "\n", stats->nedges);
   fprintf(file, "nonzero_unary: %" PRIu32 "\n", stats->nonzero_unary);
@@ -667,7 +667,7 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   }
 
   fprintf(file,
-          "{\"modulus\":%" PRIu32 ",\"variables\":%" PRIu32
+          "{\"modulus\":%" PRIu64 ",\"variables\":%" PRIu32
           ",\"quadratic_terms\":%" PRIu32 ",\"nonzero_unary\":%" PRIu32
           ",\"normalization_h\":%" PRIu64 ",\"format\":\"qsop-sign\",\"components\":%" PRIu32
           ",\"max_degree\":%" PRIu32 ",\"width_diagnostics_available\":%s",
