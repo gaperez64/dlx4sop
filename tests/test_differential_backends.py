@@ -495,43 +495,268 @@ def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
         raise AssertionError(f"{len(failures)} old-backend huge-r refusal failure(s)")
 
 
-def test_single_fourier_mode_treewidth_matches_rankwidth(exe: pathlib.Path,
-                                                         verbose: bool = False) -> None:
-    """Cross-check: the two independent single-mode complex DP implementations
-    (treewidth bucket elimination vs rankwidth leaf/join) must agree with each other,
-    not just with brute-force -- this specifically exercises the join/crossing-parity
-    code path in solve_join_complex_streaming that has no treewidth analogue."""
+SINGLE_FOURIER_BACKEND_CONFIGS = [
+    ("treewidth", ["--backend", "treewidth", "--solve-mode", "single-fourier"]),
+    ("rankwidth", ["--backend", "rankwidth", "--solve-mode", "single-fourier"]),
+    ("branch", ["--backend", "branch", "--solve-mode", "single-fourier"]),
+]
+
+
+def test_single_fourier_mode_backends_agree(exe: pathlib.Path, verbose: bool = False) -> None:
+    """Cross-check: every single-mode complex DP implementation (treewidth bucket
+    elimination, rankwidth leaf/join, and branch's split-and-delegate-to-either) must
+    agree with each other pairwise, not just with brute-force -- this specifically
+    exercises the join/crossing-parity code path in solve_join_complex_streaming (no
+    treewidth analogue) and branch's own duplicated delegation cost-model (which must
+    keep picking a backend that agrees with whichever of treewidth/rankwidth it
+    delegates to for a given instance shape)."""
     instances = generate_test_suite(INSTANCE_SIZES, MODULI, INSTANCES_PER_BUCKET, SEED + 5)
     failures = []
     for idx, inst in enumerate(instances):
-        tw_out = run_sop_solve(exe, inst.text, ["--backend", "treewidth", "--solve-mode", "single-fourier"])
-        rw_out = run_sop_solve(exe, inst.text, ["--backend", "rankwidth", "--solve-mode", "single-fourier"])
-        if tw_out is None or rw_out is None:
-            continue
-        tw_parsed = parse_single_fourier_output(tw_out)
-        rw_parsed = parse_single_fourier_output(rw_out)
-        if tw_parsed is None or rw_parsed is None:
-            failures.append(f"instance {idx} (nvars={inst.nvars} r={inst.r}): could not parse output")
-            continue
-        tw_re, tw_im, tw_bound = tw_parsed
-        rw_re, rw_im, rw_bound = rw_parsed
-        diff = abs(complex(tw_re, tw_im) - complex(rw_re, rw_im))
-        tolerance = tw_bound + rw_bound + 1e-12
-        if diff > tolerance:
-            failures.append(
-                f"instance {idx} (nvars={inst.nvars} r={inst.r}): "
-                f"treewidth=({tw_re},{tw_im}) rankwidth=({rw_re},{rw_im}) diff={diff}"
-            )
-        elif verbose:
-            print(f"  instance {idx}: treewidth/rankwidth agree (diff={diff:.3e})")
+        parsed_by_label: dict[str, tuple[float, float, float]] = {}
+        for label, args in SINGLE_FOURIER_BACKEND_CONFIGS:
+            out = run_sop_solve(exe, inst.text, args)
+            if out is None:
+                continue
+            parsed = parse_single_fourier_output(out)
+            if parsed is None:
+                failures.append(
+                    f"instance {idx} (nvars={inst.nvars} r={inst.r}) [{label}]: "
+                    f"could not parse output: {out!r}"
+                )
+                continue
+            parsed_by_label[label] = parsed
+
+        labels = list(parsed_by_label)
+        for a, b in itertools.combinations(labels, 2):
+            a_re, a_im, a_bound = parsed_by_label[a]
+            b_re, b_im, b_bound = parsed_by_label[b]
+            diff = abs(complex(a_re, a_im) - complex(b_re, b_im))
+            tolerance = a_bound + b_bound + 1e-12
+            if diff > tolerance:
+                failures.append(
+                    f"instance {idx} (nvars={inst.nvars} r={inst.r}): "
+                    f"{a}=({a_re},{a_im}) {b}=({b_re},{b_im}) diff={diff}"
+                )
+            elif verbose:
+                print(f"  instance {idx}: {a}/{b} agree (diff={diff:.3e})")
 
     if failures:
         for msg in failures:
             print(f"FAIL: {msg}", file=sys.stderr)
         raise AssertionError(
-            f"{len(failures)} treewidth/rankwidth single-fourier disagreement(s) on "
-            f"{len(instances)} instances"
+            f"{len(failures)} single-fourier backend disagreement(s) on {len(instances)} instances"
         )
+
+
+def disconnected_qsop(rng: random.Random, component_sizes: list[int], r: int) -> SopInstance:
+    """Concatenate several independent random_qsop instances with disjoint variable ranges
+    and zero cross-edges, to exercise branch single-fourier's component-splitting path --
+    the one new code path with no coverage from test_single_fourier_mode_backends_agree,
+    since random_qsop's edge density (0.4) rarely produces a disconnected graph on its own."""
+    offset = 0
+    unary: list[int] = []
+    edges: list[tuple[int, int]] = []
+    for size in component_sizes:
+        part = random_qsop(rng, size, r)
+        for line in part.text.splitlines():
+            if line.startswith("u "):
+                _, v, coeff = line.split()
+                unary_index = offset + int(v)
+                while len(unary) <= unary_index:
+                    unary.append(0)
+                unary[unary_index] = int(coeff)
+            elif line.startswith("e "):
+                _, u, v = line.split()
+                edges.append((offset + int(u), offset + int(v)))
+        offset += size
+    nvars = offset
+    while len(unary) < nvars:
+        unary.append(0)
+    constant = rng.randint(0, r - 1)
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", f"cst {constant}"]
+    for v in range(nvars):
+        if unary[v] != 0:
+            lines.append(f"u {v} {unary[v]}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    text = "\n".join(lines) + "\n"
+    return SopInstance(r=r, nvars=nvars, nedges=len(edges), text=text)
+
+
+def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
+                                                        verbose: bool = False) -> None:
+    """branch single-fourier's component split (branch_single_mode_alloc_graph/
+    label_components/build_subinstance, and the complex-multiply combination step) has no
+    coverage from test_single_fourier_mode_backends_agree, since that suite's random
+    instances are rarely disconnected. Build genuinely multi-component instances (2-4
+    parts) directly and check against brute-force ground truth."""
+    rng = random.Random(SEED + 7)
+    failures = []
+    shapes = [[3, 4], [2, 2, 2], [5, 3], [2, 3, 4], [1, 1, 6]]
+    for idx, sizes in enumerate(shapes):
+        r = rng.choice(MODULI)
+        inst = disconnected_qsop(rng, sizes, r)
+
+        ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+        if ground_truth_out is None:
+            continue
+        counts = parse_residue_vector(ground_truth_out)
+        if counts is None:
+            continue
+        expected = bruteforce_amplitude(counts, inst.r)
+
+        branch_out = run_sop_solve(
+            exe, inst.text, ["--backend", "branch", "--solve-mode", "single-fourier"]
+        )
+        if branch_out is None:
+            failures.append(f"shape {idx} {sizes} (r={r}): branch single-fourier solve failed")
+            continue
+        parsed = parse_single_fourier_output(branch_out)
+        if parsed is None:
+            failures.append(f"shape {idx} {sizes} (r={r}): could not parse output: {branch_out!r}")
+            continue
+        actual_re, actual_im, bound = parsed
+        diff = abs(complex(actual_re, actual_im) - expected)
+        tolerance = bound + 1e-6
+        if diff > tolerance:
+            failures.append(
+                f"shape {idx} {sizes} (r={r}): expected {expected}, got "
+                f"({actual_re},{actual_im}), diff={diff}, bound={bound}"
+            )
+        elif verbose:
+            print(f"  shape {idx} {sizes} (r={r}): branch disconnected ok (diff={diff:.3e})")
+
+    if failures:
+        for msg in failures:
+            print(f"FAIL: {msg}", file=sys.stderr)
+        raise AssertionError(f"{len(failures)} disconnected-component failure(s)")
+
+
+def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None:
+    """When neither treewidth (cap 14) nor rankwidth (cap 12) is viable for a connected
+    component, branch single-fourier must fail with a clear, fast error -- not hang or
+    attempt an exhaustive search (there is no residual-branching fallback in this mode,
+    see qsop_solve_branch_single_mode's doc comment)."""
+    rng = random.Random(SEED + 8)
+    nvars = 40
+    edges = [
+        (u, v)
+        for u in range(nvars)
+        for v in range(u + 1, nvars)
+        if rng.random() < 0.5
+    ]
+    text = "\n".join(
+        [f"p qsop-sign 16 {nvars} {len(edges)}", "n 0", "cst 0"]
+        + [f"e {u} {v}" for u, v in edges]
+    ) + "\n"
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(text)
+        qsop_path = f.name
+
+    start = time.monotonic()
+    result = subprocess.run(
+        [str(exe), "--max-vars", "64", "--backend", "branch", "--solve-mode", "single-fourier",
+         qsop_path],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    elapsed = time.monotonic() - start
+    assert result.returncode != 0, "expected a nonzero exit for a too-wide component"
+    assert elapsed < 5.0, f"refusal took {elapsed:.2f}s (expected a fast, clean refusal)"
+    assert "no delegate available" in result.stderr, (
+        f"expected a 'no delegate available' error, got: {result.stderr!r}"
+    )
+
+
+def test_branch_single_fourier_large_component(exe: pathlib.Path) -> None:
+    """Regression test: qsop_compute_stats_with_order only populates its order[] output for
+    nvars <= 63 (compute_large_width_diagnostics, used above that threshold, computes
+    min_fill_width/prefix_cut_rank correctly but never touches order at all). Passing that
+    unpopulated (all-zero) buffer straight to the treewidth delegate previously crashed with
+    "internal error: treewidth elimination found no factor for variable" on any >63-variable
+    low-treewidth component -- caught via a real gauntlet circuit during manual verification,
+    not by the smaller random instances above (INSTANCE_SIZES tops out at 10). A path graph
+    (treewidth 1 regardless of length) with 100 variables exercises this directly."""
+    rng = random.Random(SEED + 9)
+    nvars = 100
+    r = 8
+    unary = [rng.randint(0, r - 1) for _ in range(nvars)]
+    constant = rng.randint(0, r - 1)
+    lines = [f"p qsop-sign {r} {nvars} {nvars - 1}", "n 0", f"cst {constant}"]
+    for v in range(nvars):
+        if unary[v] != 0:
+            lines.append(f"u {v} {unary[v]}")
+    for v in range(nvars - 1):
+        lines.append(f"e {v} {v + 1}")
+    text = "\n".join(lines) + "\n"
+
+    # run_sop_solve hardcodes --max-vars 64 before extra_args; a trailing --max-vars here
+    # overrides it (sop_solve.c's parser is last-value-wins), needed since nvars=100 here.
+    branch_out = run_sop_solve(
+        exe, text,
+        ["--backend", "branch", "--solve-mode", "single-fourier", "--max-vars", "128"],
+    )
+    treewidth_out = run_sop_solve(
+        exe, text,
+        ["--backend", "treewidth", "--solve-mode", "single-fourier", "--max-vars", "128"],
+    )
+    assert branch_out is not None, "branch single-fourier failed on a 100-variable path graph"
+    assert treewidth_out is not None, "treewidth single-fourier failed on a 100-variable path graph"
+    branch_parsed = parse_single_fourier_output(branch_out)
+    treewidth_parsed = parse_single_fourier_output(treewidth_out)
+    assert branch_parsed is not None, f"could not parse branch output: {branch_out!r}"
+    assert treewidth_parsed is not None, f"could not parse treewidth output: {treewidth_out!r}"
+    b_re, b_im, b_bound = branch_parsed
+    t_re, t_im, t_bound = treewidth_parsed
+    diff = abs(complex(b_re, b_im) - complex(t_re, t_im))
+    tolerance = b_bound + t_bound + 1e-9
+    assert diff <= tolerance, (
+        f"branch/treewidth disagree on 100-variable path graph: "
+        f"branch=({b_re},{b_im}) treewidth=({t_re},{t_im}) diff={diff}"
+    )
+
+
+def path_qsop(nvars: int, r: int) -> str:
+    """A path graph (treewidth 1 regardless of length): 0-1-2-...-(nvars-1)."""
+    lines = [f"p qsop-sign {r} {nvars} {nvars - 1}", "n 0", "cst 0"]
+    lines += [f"e {v} {v + 1}" for v in range(nvars - 1)]
+    return "\n".join(lines) + "\n"
+
+
+def test_single_fourier_default_max_vars(exe: pathlib.Path) -> None:
+    """--max-vars defaults to 24 (a brute-force/count-table safety valve, since nvars directly
+    drives their 2^nvars or O(r) cost). single-fourier mode has no such blowup, so its default
+    is raised to 4096 when the caller doesn't pass --max-vars explicitly (see sop_solve.c's
+    comment above `if (single_fourier_mode && !max_vars_set)`). Check both halves: a
+    30-variable low-treewidth instance succeeds under single-fourier with no --max-vars flag
+    at all, while the same instance is still refused by count-table mode's unraised default --
+    confirming the raise is scoped to single-fourier, not a global change."""
+    text = path_qsop(30, 8)
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(text)
+        qsop_path = f.name
+
+    single_fourier = subprocess.run(
+        [str(exe), "--backend", "branch", "--solve-mode", "single-fourier", qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert single_fourier.returncode == 0, (
+        f"single-fourier with no --max-vars should succeed on 30 variables (default raised to "
+        f"4096), got: {single_fourier.stderr!r}"
+    )
+
+    count_table = subprocess.run(
+        [str(exe), "--backend", "brute-force", qsop_path],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert count_table.returncode != 0 and "refuses" in count_table.stderr, (
+        f"count-table mode's default --max-vars must stay at 24 (unraised); expected a clean "
+        f"refusal on 30 variables, got returncode={count_table.returncode} "
+        f"stderr={count_table.stderr!r}"
+    )
 
 
 def main(argv: list[str]) -> None:
@@ -553,18 +778,32 @@ def main(argv: list[str]) -> None:
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth", 4,
         verbose=verbose,
     )
-    test_single_fourier_mode_treewidth_matches_rankwidth(exe, verbose=verbose)
+    test_single_fourier_mode_matches_bruteforce(
+        exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch", 6,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_backends_agree(exe, verbose=verbose)
+    test_branch_single_fourier_disconnected_components(exe, verbose=verbose)
+    test_branch_single_fourier_refuses_wide_component(exe)
+    test_branch_single_fourier_large_component(exe)
+    test_single_fourier_default_max_vars(exe)
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
     )
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
     )
+    test_single_fourier_mode_large_r_smoke(
+        exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch"
+    )
     test_single_fourier_mode_huge_r_smoke(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
     )
     test_single_fourier_mode_huge_r_smoke(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch"
     )
     test_old_backends_refuse_huge_r(exe)
     print(f"all differential backend tests passed (seed={SEED})")

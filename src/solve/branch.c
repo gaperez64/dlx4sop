@@ -5,7 +5,9 @@
 #include "component_key.h"
 #include "trace.h"
 
+#include <float.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2598,5 +2600,499 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
   }
 
   *out = result;
+  return true;
+}
+
+/* ---------------------------------------------------------------------------
+ * Single Fourier mode: residual-free split-and-delegate.
+ *
+ * qsop_residual_t (above) hardcodes r/constant/unary[] as uint32_t, so it cannot represent
+ * the large-modulus instances this mode exists for (qasm2sop --approx output). This section
+ * therefore splits qsop_instance_t directly into connected components (mirroring
+ * components.c's already r-agnostic alloc_graph/label_components/build_subinstance) and
+ * delegates each component to treewidth/rankwidth's own single-mode solvers, duplicating the
+ * width-cap/cost-model decision already used for count-table delegation
+ * (branch_try_rankwidth_delegate above) rather than threading a new mode through that
+ * residual-based, calibration-instrumented code. There is no residual-branching fallback here:
+ * a component whose width exceeds both delegates' caps fails with a clear error.
+ * --------------------------------------------------------------------------- */
+
+static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
+                                 long double *im) {
+  /* Duplicated per this file's convention -- tw_root_of_unity/rw_root_of_unity are
+   * independently defined in treewidth.c/rankwidth.c too, rather than shared. */
+  static const long double branch_two_pi =
+      6.283185307179586476925286766559005768394338798750211641949889L;
+  const long double angle = branch_two_pi * (long double)target_mode * (long double)k / (long double)r;
+  *re = cosl(angle);
+  *im = sinl(angle);
+}
+
+/* Duplicated per treewidth.c's/rankwidth.c's single_mode_error_bound convention. */
+static long double branch_single_mode_error_bound(uint64_t complex_ops) {
+  static const long double ops_per_step = 8.0L;
+  return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
+}
+
+static bool branch_single_mode_alloc_graph(const qsop_instance_t *qsop, uint64_t **rowptr_out,
+                                           uint32_t **colind_out, qsop_error_t *error) {
+  uint32_t *degree = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*degree));
+  uint64_t *rowptr = calloc((size_t)qsop->nvars + 1U, sizeof(*rowptr));
+  uint32_t *cursor = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*cursor));
+  uint32_t *colind = calloc(qsop->nedges == 0 ? 1U : (size_t)2U * qsop->nedges, sizeof(*colind));
+  if (degree == NULL || rowptr == NULL || cursor == NULL || colind == NULL) {
+    free(degree);
+    free(rowptr);
+    free(cursor);
+    free(colind);
+    set_error(error, "out of memory while building branch single-fourier component graph");
+    return false;
+  }
+
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    degree[qsop->edge_u[e]]++;
+    degree[qsop->edge_v[e]]++;
+  }
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    rowptr[v + 1U] = rowptr[v] + degree[v];
+    cursor[v] = (uint32_t)rowptr[v];
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    const uint32_t u = qsop->edge_u[e];
+    const uint32_t v = qsop->edge_v[e];
+    colind[cursor[u]++] = v;
+    colind[cursor[v]++] = u;
+  }
+
+  free(degree);
+  free(cursor);
+  *rowptr_out = rowptr;
+  *colind_out = colind;
+  return true;
+}
+
+static bool branch_single_mode_label_components(const qsop_instance_t *qsop,
+                                                const uint64_t *rowptr, const uint32_t *colind,
+                                                uint32_t *component, uint32_t *ncomponents,
+                                                qsop_error_t *error) {
+  uint32_t *queue = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*queue));
+  if (queue == NULL) {
+    set_error(error, "out of memory while labelling branch single-fourier components");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    component[v] = UINT32_MAX;
+  }
+
+  uint32_t count = 0;
+  for (uint32_t start = 0; start < qsop->nvars; start++) {
+    if (component[start] != UINT32_MAX) {
+      continue;
+    }
+    uint32_t head = 0;
+    uint32_t tail = 0;
+    component[start] = count;
+    queue[tail++] = start;
+    while (head < tail) {
+      const uint32_t v = queue[head++];
+      for (uint64_t p = rowptr[v]; p < rowptr[v + 1U]; p++) {
+        const uint32_t other = colind[p];
+        if (component[other] == UINT32_MAX) {
+          component[other] = count;
+          queue[tail++] = other;
+        }
+      }
+    }
+    count++;
+  }
+
+  free(queue);
+  *ncomponents = count;
+  return true;
+}
+
+/* Mirrors components.c's build_subinstance, minus the trailing qsop_canonicalize_small_component
+ * call: that helper's internal buffers assume unary values fit in uint32_t (relying on the
+ * invariant that callers already refused r > UINT32_MAX before ever building a sub-instance),
+ * which single-fourier mode explicitly does not provide. */
+static bool branch_single_mode_build_subinstance(const qsop_instance_t *qsop,
+                                                 const uint32_t *component, uint32_t wanted,
+                                                 qsop_instance_t *sub, qsop_error_t *error) {
+  uint32_t *map = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*map));
+  if (map == NULL) {
+    set_error(error, "out of memory while building branch single-fourier component subinstance");
+    return false;
+  }
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    map[v] = UINT32_MAX;
+  }
+
+  uint32_t nvars = 0;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (component[v] == wanted) {
+      map[v] = nvars++;
+    }
+  }
+
+  uint32_t nedges = 0;
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    if (component[qsop->edge_u[e]] == wanted) {
+      nedges++;
+    }
+  }
+
+  *sub = (qsop_instance_t){
+      .r = qsop->r,
+      .nvars = nvars,
+      .norm_h = 0,
+      .constant = 0,
+      .nedges = nedges,
+  };
+  sub->unary = calloc(nvars == 0 ? 1U : nvars, sizeof(*sub->unary));
+  sub->edge_u = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_u));
+  sub->edge_v = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_v));
+  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL) {
+    free(map);
+    free_subinstance(sub);
+    set_error(error, "out of memory while allocating branch single-fourier component subinstance");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (component[v] == wanted) {
+      sub->unary[map[v]] = qsop->unary[v];
+    }
+  }
+
+  uint32_t out_edge = 0;
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    if (component[qsop->edge_u[e]] == wanted) {
+      sub->edge_u[out_edge] = map[qsop->edge_u[e]];
+      sub->edge_v[out_edge] = map[qsop->edge_v[e]];
+      out_edge++;
+    }
+  }
+
+  free(map);
+  return true;
+}
+
+/* Accumulate one delegated component's stats into the running total, mirroring the spirit of
+ * merge_delegated_stats above but typed for plain qsop_solve_stats_t on both sides (this path
+ * has no branch_search_stats_t -- no residual search, no leaf/fallthrough counters to merge). */
+static void merge_single_mode_stats(qsop_solve_stats_t *stats, const qsop_solve_stats_t *delegated) {
+  if (stats == NULL || delegated == NULL) {
+    return;
+  }
+  stats->treewidth_delegations += delegated->treewidth_delegations;
+  stats->rankwidth_delegations += delegated->rankwidth_delegations;
+  stats->table_entries += delegated->table_entries;
+  stats->signature_entries += delegated->signature_entries;
+  stats->join_pairs += delegated->join_pairs;
+  stats->join_signature_pairs += delegated->join_signature_pairs;
+  if (delegated->max_table_entries > stats->max_table_entries) {
+    stats->max_table_entries = delegated->max_table_entries;
+  }
+  if (delegated->max_signature_entries > stats->max_signature_entries) {
+    stats->max_signature_entries = delegated->max_signature_entries;
+  }
+  if (delegated->decomposition_width > stats->decomposition_width) {
+    stats->decomposition_width = delegated->decomposition_width;
+  }
+  if (delegated->rankwidth_cutrank_width > stats->rankwidth_cutrank_width) {
+    stats->rankwidth_cutrank_width = delegated->rankwidth_cutrank_width;
+  }
+}
+
+/* Per-component delegate-or-error decision. Duplicates (does not share) the veto/cost-model
+ * *ordering* already in branch_try_rankwidth_delegate above -- same constants, same policy
+ * fields -- but against qsop_instance_t/qsop_amplitude_t instead of
+ * qsop_residual_t/uint64_t[r], and without the calibration-only machinery (JSONL sink veto-
+ * reason logging, "calibrating" timing bypass) since --branch-calibrate-backends is rejected
+ * together with --solve-mode single-fourier at the CLI layer.
+ *
+ * NOTE for future maintainers: if branch_try_rankwidth_delegate's cost model / veto constants
+ * are ever retuned, update this function to match, or single-fourier and count-table mode will
+ * silently pick different backends for the same shaped instance. */
+/* Lazily computes a treewidth elimination order the first time it's actually needed.
+ * *order starts out either NULL or the stats-captured order (only valid for nvars <= 63,
+ * see the comment in branch_single_mode_delegate_component below); when NULL, this runs
+ * qsop_treewidth_order_alloc, which has no such ceiling (its adjacency representation
+ * always uses the multi-word bitset form). No-op (and free of an extra min-fill run) once
+ * *order is already set. */
+static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t **order,
+                                            uint32_t *order_width, bool *order_owned,
+                                            qsop_error_t *error) {
+  if (*order != NULL) {
+    return true;
+  }
+  uint32_t *fresh = NULL;
+  uint32_t width = 0;
+  if (!qsop_treewidth_order_alloc(sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &fresh, &width,
+                                 error)) {
+    return false;
+  }
+  *order = fresh;
+  *order_width = width;
+  *order_owned = true;
+  return true;
+}
+
+static bool branch_single_mode_delegate_component(
+    const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
+    const qsop_branch_single_mode_options_t *options, qsop_amplitude_t *out,
+    qsop_solve_stats_t *io_stats, qsop_error_t *error) {
+  *out = (qsop_amplitude_t){0};
+
+  if (sub->nvars == 0) {
+    branch_root_of_unity(sub->r, target_mode, sub->constant % sub->r, &out->re, &out->im);
+    return true;
+  }
+  if (sub->nvars > max_vars) {
+    set_error(error,
+              "branch single-fourier solver refuses a %" PRIu32
+              "-variable component; pass a larger --max-vars",
+              sub->nvars);
+    return false;
+  }
+
+  const qsop_branch_policy_t policy = branch_policy_normalize(&options->policy);
+  const qsop_branch_rw_source_t rw_source = options->rw_source;
+
+  /* qsop_compute_stats_with_order only populates `order` for nvars <= 63 -- its width-
+   * diagnostics path for larger instances (compute_large_width_diagnostics) computes
+   * min_fill_width/prefix_cut_rank correctly but never touches the order buffer at all.
+   * Mirrors the identical "want_stats_order ... sub.nvars <= 63U" guard in
+   * branch_try_dp_delegate above. Passing a buffer unconditionally here previously left it
+   * as all-zero garbage for larger components, crashing the treewidth delegate with
+   * "found no factor for variable" -- caught via the gauntlet solve-readiness re-probe. */
+  const bool want_stats_order = sub->nvars <= 63U;
+  uint32_t *stats_order = want_stats_order ? calloc(sub->nvars, sizeof(*stats_order)) : NULL;
+  if (want_stats_order && stats_order == NULL) {
+    set_error(error, "out of memory while allocating branch single-fourier stats order buffer");
+    return false;
+  }
+  qsop_stats_t sub_stats = {0};
+  if (!qsop_compute_stats_with_order(sub, &sub_stats, stats_order, error)) {
+    free(stats_order);
+    return false;
+  }
+  const bool treewidth_available = sub_stats.width_diagnostics_available;
+  const uint32_t treewidth_width = sub_stats.min_fill_width;
+  const uint32_t prefix_cut_rank = sub_stats.prefix_cut_rank;
+
+  /* order/order_width: lazily computed (see branch_single_mode_ensure_order) the first time
+   * a treewidth order is actually needed, reusing stats_order when available. */
+  uint32_t *order = stats_order;
+  uint32_t order_width = treewidth_width;
+  bool order_owned = false;
+
+  bool use_rankwidth = false;
+  qsop_rankwidth_decomposition_t *decomposition = NULL;
+  uint32_t cutrank_width = 0;
+  bool setup_ok = true;
+
+  if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
+    const bool low_rank_bypass = treewidth_available && prefix_cut_rank <= policy.rw_low_rank_bypass;
+    const bool cheap_treewidth =
+        treewidth_available && !low_rank_bypass &&
+        (treewidth_width <= policy.rw_min_treewidth_width ||
+         treewidth_table_forecast(treewidth_width, (uint32_t)sub->r) <= policy.rw_min_treewidth_forecast ||
+         (sub->nvars < policy.rw_min_residual_vars && treewidth_width <= 5U));
+    const bool prefer_treewidth =
+        treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
+        treewidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
+
+    if (!cheap_treewidth && !prefer_treewidth) {
+      const qsop_rankwidth_generator_t generator =
+          (rw_source == QSOP_BRANCH_RW_SOURCE_NATIVE) ? QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT
+                                                       : QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
+      const bool use_from_treewidth = generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH &&
+                                      treewidth_available;
+      if (use_from_treewidth &&
+          !branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error)) {
+        setup_ok = false;
+      } else {
+        const bool gen_ok =
+            use_from_treewidth
+                ? qsop_rankwidth_decomposition_from_order(sub, order, &decomposition, error)
+                : qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
+                                                        &decomposition, error);
+        if (!gen_ok) {
+          setup_ok = false;
+        } else {
+          uint64_t rankwidth_table = 0;
+          uint64_t rankwidth_join = 0;
+          if (!qsop_rankwidth_decomposition_width(sub, decomposition, &cutrank_width, error) ||
+              !qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table,
+                                                     &rankwidth_join, error)) {
+            setup_ok = false;
+          } else if (cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+            const uint64_t treewidth_table =
+                treewidth_available ? treewidth_table_forecast(treewidth_width, (uint32_t)sub->r) : 0;
+            const uint64_t treewidth_join =
+                treewidth_available ? treewidth_join_pair_forecast(treewidth_width, sub->nvars) : 0;
+            const uint64_t sig_est =
+                sub->r > 0 ? (rankwidth_table / sub->r) : binary_assignment_forecast(cutrank_width);
+            const uint64_t rw_est = saturating_mul_u64(policy.C_rw_table, rankwidth_table) +
+                                    saturating_mul_u64(policy.C_rw_join, rankwidth_join) +
+                                    saturating_mul_u64(policy.C_rw_sig, sig_est) +
+                                    policy.rw_fixed_overhead_ns + policy.rw_memory_penalty_ns;
+            const uint64_t tw_est = treewidth_available
+                ? saturating_mul_u64(policy.C_tw_table, treewidth_table) +
+                      saturating_mul_u64(policy.C_tw_join, treewidth_join) + policy.tw_fixed_overhead_ns
+                : 0;
+            const bool cost_model_favors_rw =
+                !treewidth_available ||
+                (tw_est != 0 && (double)rw_est * policy.rw_min_speedup < (double)tw_est);
+            use_rankwidth =
+                cost_model_favors_rw &&
+                (!treewidth_available || rankwidth_table < treewidth_table) &&
+                (!treewidth_available || rankwidth_join <= treewidth_join) &&
+                (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+                 rankwidth_should_override_treewidth(treewidth_width, cutrank_width, (uint32_t)sub->r));
+          }
+        }
+      }
+    }
+  }
+
+  if (setup_ok && !use_rankwidth && treewidth_available &&
+      treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    setup_ok = branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error);
+  }
+
+  bool ok;
+  qsop_solve_stats_t delegated = {0};
+  if (!setup_ok) {
+    ok = false;
+  } else if (use_rankwidth) {
+    ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
+                                         &delegated, options->trace, error);
+    delegated.rankwidth_delegations++;
+  } else if (treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    ok = qsop_solve_treewidth_precomputed_order_single_mode(
+        sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
+        &delegated, options->trace, error);
+    delegated.treewidth_delegations++;
+  } else if (decomposition != NULL && cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+    /* Treewidth unavailable/too wide, but rankwidth is viable even though the cost model
+     * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
+    ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
+                                         &delegated, options->trace, error);
+    delegated.rankwidth_delegations++;
+  } else {
+    set_error(error,
+              "branch single-fourier: connected component (%" PRIu32
+              " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
+              "; neither is within its delegate cap (%u / %u) -- no delegate available",
+              sub->nvars, treewidth_width, cutrank_width, BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
+              BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
+    ok = false;
+  }
+
+  qsop_rankwidth_decomposition_free(decomposition);
+  if (order_owned) {
+    free(order);
+  } else {
+    free(stats_order);
+  }
+  if (ok) {
+    merge_single_mode_stats(io_stats, &delegated);
+  }
+  return ok;
+}
+
+bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_vars,
+                                   uint32_t target_mode,
+                                   const qsop_branch_single_mode_options_t *options,
+                                   qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                   qsop_error_t *error) {
+  const qsop_branch_single_mode_options_t o =
+      options != NULL ? *options : (qsop_branch_single_mode_options_t){0};
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (out == NULL) {
+    set_error(error, "internal error: null amplitude result pointer");
+    return false;
+  }
+  *out = (qsop_amplitude_t){0};
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (qsop->r == 0) {
+    set_error(error, "internal error: QSOP instance has a zero modulus");
+    return false;
+  }
+  /* Deliberately no `qsop->r > UINT32_MAX` guard here -- that's the entire point of this
+   * entry point (see the file-level comment above). */
+  if (qsop->nvars > max_vars) {
+    set_error(error,
+              "branch single-fourier solver refuses %" PRIu32
+              " variables; pass a larger --max-vars",
+              qsop->nvars);
+    return false;
+  }
+
+  if (qsop->nvars == 0) {
+    branch_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &out->re, &out->im);
+    return true;
+  }
+
+  uint64_t *rowptr = NULL;
+  uint32_t *colind = NULL;
+  uint32_t *component = calloc(qsop->nvars, sizeof(*component));
+  if (component == NULL) {
+    set_error(error, "out of memory while allocating branch single-fourier component labels");
+    return false;
+  }
+  uint32_t ncomponents = 0;
+  const bool split_ok =
+      branch_single_mode_alloc_graph(qsop, &rowptr, &colind, error) &&
+      branch_single_mode_label_components(qsop, rowptr, colind, component, &ncomponents, error);
+  free(rowptr);
+  free(colind);
+  if (!split_ok) {
+    free(component);
+    return false;
+  }
+
+  long double acc_re = 1.0L;
+  long double acc_im = 0.0L;
+  /* Combining components' amplitudes by complex multiplication reuses the same "8 ops per
+   * complex multiply" convention as single_mode_error_bound in treewidth.c/rankwidth.c (see
+   * branch_single_mode_error_bound above), rather than inventing new error-accounting math. */
+  long double error_bound = 0.0L;
+  bool ok = true;
+  for (uint32_t c = 0; ok && c < ncomponents; c++) {
+    qsop_instance_t sub = {0};
+    qsop_amplitude_t part = {0};
+    if (!branch_single_mode_build_subinstance(qsop, component, c, &sub, error) ||
+        !branch_single_mode_delegate_component(&sub, max_vars, target_mode, &o, &part, stats,
+                                               error)) {
+      ok = false;
+    } else {
+      const long double new_re = acc_re * part.re - acc_im * part.im;
+      const long double new_im = acc_re * part.im + acc_im * part.re;
+      acc_re = new_re;
+      acc_im = new_im;
+      error_bound += part.numeric_error_bound + branch_single_mode_error_bound(1);
+    }
+    free_subinstance(&sub);
+  }
+  free(component);
+  if (!ok) {
+    return false;
+  }
+
+  long double c_re = 0.0L;
+  long double c_im = 0.0L;
+  branch_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  out->re = acc_re * c_re - acc_im * c_im;
+  out->im = acc_re * c_im + acc_im * c_re;
+  out->numeric_error_bound = error_bound + branch_single_mode_error_bound(1);
   return true;
 }

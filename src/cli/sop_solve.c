@@ -548,6 +548,7 @@ int main(int argc, char **argv) {
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
   bool solve_mode_set = false;
+  bool max_vars_set = false;
   bool single_fourier_mode = false;
   uint32_t fourier_target_mode = 1;
   bool fourier_target_mode_set = false;
@@ -600,6 +601,7 @@ int main(int argc, char **argv) {
         fputs("error: --max-vars requires a non-negative uint32 value\n", stderr);
         return 2;
       }
+      max_vars_set = true;
       i++;
       continue;
     }
@@ -1030,8 +1032,22 @@ int main(int argc, char **argv) {
     return 2;
   }
   if (single_fourier_mode && backend != SOLVE_BACKEND_TREEWIDTH &&
-      backend != SOLVE_BACKEND_RANKWIDTH) {
-    fputs("error: --solve-mode single-fourier requires --backend treewidth or rankwidth\n",
+      backend != SOLVE_BACKEND_RANKWIDTH && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --solve-mode single-fourier requires --backend treewidth, rankwidth, or "
+          "branch\n",
+          stderr);
+    return 2;
+  }
+  if (single_fourier_mode && branch_heuristic_set) {
+    fputs("error: --branch-heuristic is not supported with --solve-mode single-fourier "
+          "(branch's single-fourier mode delegates to treewidth/rankwidth; it has no "
+          "residual-branching fallback to steer)\n",
+          stderr);
+    return 2;
+  }
+  if (single_fourier_mode && calibrate_backends) {
+    fputs("error: --branch-calibrate-backends is not yet supported with "
+          "--solve-mode single-fourier\n",
           stderr);
     return 2;
   }
@@ -1044,6 +1060,18 @@ int main(int argc, char **argv) {
           "--include-probability (it already reports the amplitude directly)\n",
           stderr);
     return 2;
+  }
+  /* --max-vars's default (24) is a brute-force/count-table safety valve, since nvars directly
+   * drives their 2^nvars or O(r) cost there. single-fourier mode has no such blowup -- table
+   * size is O(2^bagwidth), independent of nvars -- so raise the default when it applies and the
+   * caller hasn't overridden it. 4096 is an empirically-tested ceiling, not a guess: real
+   * qasm2sop --approx gauntlet circuits up to ~2300 variables were confirmed to complete their
+   * width/cutrank diagnostic in well under a minute; circuits in the several-thousand range
+   * (e.g. ~6600 variables) did not complete within 60s, so this stays comfortably below that
+   * cliff rather than trading "clean refusal" for "slow hang" on the largest real circuits.
+   * Callers needing more can still pass --max-vars explicitly. */
+  if (single_fourier_mode && !max_vars_set) {
+    max_vars = 4096;
   }
 
   FILE *input = stdin;
@@ -1125,6 +1153,15 @@ int main(int argc, char **argv) {
                                            fourier_target_mode, &amplitude, &amp_stats, trace_ptr,
                                            &error);
       qsop_rankwidth_decomposition_free(single_mode_decomposition);
+    } else if (backend == SOLVE_BACKEND_BRANCH) {
+      const qsop_branch_single_mode_options_t branch_single_mode_options = {
+          .rw_source = branch_rw_source,
+          .policy = branch_policy,
+          .trace = trace_ptr,
+      };
+      ok = qsop_solve_branch_single_mode(qsop, max_vars, fourier_target_mode,
+                                         &branch_single_mode_options, &amplitude, &amp_stats,
+                                         &error);
     } else {
       ok = qsop_solve_treewidth_single_mode(qsop, max_vars, treewidth_order, fourier_target_mode,
                                            &amplitude, &amp_stats, trace_ptr, &error);

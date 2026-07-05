@@ -2381,6 +2381,37 @@ bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_
   return true;
 }
 
+bool qsop_solve_treewidth_precomputed_order_single_mode(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint32_t target_mode, qsop_amplitude_t *out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null amplitude result pointer");
+    return false;
+  }
+  *out = (qsop_amplitude_t){0};
+  if (qsop == NULL || order == NULL) {
+    set_error(error, "internal error: null treewidth precomputed-order single-mode solve argument");
+    return false;
+  }
+  if (qsop->r == 0) {
+    set_error(error, "internal error: QSOP instance has a zero modulus");
+    return false;
+  }
+
+  long double re = 0.0L;
+  long double im = 0.0L;
+  long double numeric_error_bound = 0.0L;
+  if (!solve_treewidth_single_mode_once(qsop, max_bag_vars, order, order_width, target_mode, &re,
+                                        &im, &numeric_error_bound, stats, trace, error)) {
+    return false;
+  }
+  out->re = re;
+  out->im = im;
+  out->numeric_error_bound = numeric_error_bound;
+  return true;
+}
+
 bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
     uint32_t order_width, uint64_t count_modulus, uint64_t *counts,

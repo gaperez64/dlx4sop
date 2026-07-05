@@ -252,6 +252,15 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     uint32_t order_width, qsop_solve_mode_t mode, qsop_result_t **out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
+/* Precomputed-order sibling of qsop_solve_treewidth_single_mode: lets a caller (the branch
+ * backend's single-fourier delegation) share one min-fill elimination order across the
+ * treewidth delegate and the from-treewidth rankwidth generator, exactly as it already does
+ * for count-table/all-modes-Fourier via qsop_solve_treewidth_precomputed_order_mode_trace_stats. */
+bool qsop_solve_treewidth_precomputed_order_single_mode(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint32_t target_mode, qsop_amplitude_t *out,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
     uint32_t order_width, uint64_t count_modulus, uint64_t *counts,
@@ -375,5 +384,31 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                        const qsop_branch_solve_options_t *options,
                        qsop_result_t **out, qsop_solve_stats_t *stats,
                        qsop_error_t *error);
+
+/* Per-solve options for qsop_solve_branch_single_mode. Deliberately leaner than
+ * qsop_branch_solve_options_t: no `heuristic` (this entry point has no residual-branching
+ * fallback to steer -- it only splits into connected components and delegates each to
+ * treewidth/rankwidth single-mode) and no `mode` (single-fourier by construction of calling
+ * this entry point at all). */
+typedef struct qsop_branch_single_mode_options {
+  qsop_branch_rw_source_t rw_source;  /* default AUTO (0) */
+  qsop_branch_policy_t policy;        /* all-zero fields take built-in defaults */
+  qsop_backend_stats_sink_t *sink;    /* unused for now; reserved, pass NULL */
+  qsop_solve_trace_t *trace;          /* NULL to disable tracing */
+} qsop_branch_single_mode_options_t;
+
+/* Single Fourier mode for the branch backend: splits the instance into connected components
+ * directly (no qsop_residual_t -- that struct hardcodes r/constant/unary[] as uint32_t, so it
+ * cannot represent the large-modulus instances this mode exists for), delegates each component
+ * to qsop_solve_treewidth_precomputed_order_single_mode or qsop_solve_rankwidth_single_mode
+ * using the same width-cap/cost-model calibration as the count-table delegation path, and
+ * combines per-component amplitudes by complex multiplication. If a component's width exceeds
+ * both delegates' caps, fails with a clear error rather than attempting an exhaustive search --
+ * there is no residual-branching fallback in this entry point. */
+bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_vars,
+                                   uint32_t target_mode,
+                                   const qsop_branch_single_mode_options_t *options,
+                                   qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                   qsop_error_t *error);
 
 #endif
