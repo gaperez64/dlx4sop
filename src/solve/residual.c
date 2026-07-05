@@ -24,13 +24,13 @@ typedef struct trail_entry {
 #define RESIDUAL_NIL UINT32_MAX
 
 struct qsop_residual {
-  uint32_t r;
+  uint64_t r;
   uint32_t nvars;
   uint32_t nedges;
   uint32_t incident_count;
-  uint32_t constant;
+  uint64_t constant;
 
-  uint32_t *unary;
+  uint64_t *unary;
   uint32_t *edge_u;
   uint32_t *edge_v;
   uint32_t *incident_offset;
@@ -67,8 +67,16 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
   va_end(args);
 }
 
-static uint32_t add_mod(uint32_t a, uint32_t b, uint32_t r) {
-  return (uint32_t)(((uint64_t)a + b) % r);
+static uint64_t add_mod_u64(uint64_t a, uint64_t b, uint64_t r) {
+  if (r == 0) {
+    return 0;
+  }
+  a %= r;
+  b %= r;
+  if (b == 0) {
+    return a;
+  }
+  return a >= r - b ? a - (r - b) : a + b;
 }
 
 static uint64_t fingerprint_u64(uint64_t fingerprint, uint64_t value) {
@@ -118,7 +126,7 @@ static bool push_trail(qsop_residual_t *residual, trail_kind_t kind, uint32_t in
   return true;
 }
 
-static bool set_constant(qsop_residual_t *residual, uint32_t value, qsop_error_t *error) {
+static bool set_constant(qsop_residual_t *residual, uint64_t value, qsop_error_t *error) {
   if (residual->constant == value) {
     return true;
   }
@@ -129,7 +137,7 @@ static bool set_constant(qsop_residual_t *residual, uint32_t value, qsop_error_t
   return true;
 }
 
-static bool set_unary(qsop_residual_t *residual, uint32_t v, uint32_t value,
+static bool set_unary(qsop_residual_t *residual, uint32_t v, uint64_t value,
                       qsop_error_t *error) {
   if (residual->unary[v] == value) {
     return true;
@@ -399,13 +407,10 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
     return false;
   }
 
-  /* Callers reach qsop_residual_create only through the branch backend
-   * (qsop_solve_branch), which refuses qsop->r > UINT32_MAX before ever building a
-   * residual, so every unary/constant value here is proven to fit in uint32_t. */
-  residual->r = (uint32_t)qsop->r;
+  residual->r = qsop->r;
   residual->nvars = qsop->nvars;
   residual->nedges = qsop->nedges;
-  residual->constant = (uint32_t)qsop->constant;
+  residual->constant = qsop->constant;
   residual->active_vars = qsop->nvars;
   residual->active_edges = qsop->nedges;
 
@@ -423,11 +428,8 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
     return false;
   }
 
-  /* qsop->unary is uint64_t*; residual->unary stays uint32_t* (gated safe, see above), so
-   * this must be an explicit per-element narrowing copy, not a memcpy (whose element size
-   * would otherwise mismatch the source and silently copy the wrong bytes). */
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    residual->unary[v] = (uint32_t)qsop->unary[v];
+    residual->unary[v] = qsop->unary[v];
   }
   memcpy(residual->edge_u, qsop->edge_u, (size_t)qsop->nedges * sizeof(*residual->edge_u));
   memcpy(residual->edge_v, qsop->edge_v, (size_t)qsop->nedges * sizeof(*residual->edge_v));
@@ -483,10 +485,10 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
     const trail_entry_t entry = residual->trail[--residual->trail_len];
     switch (entry.kind) {
     case TRAIL_SET_UNARY:
-      residual->unary[entry.index] = (uint32_t)entry.old_value;
+      residual->unary[entry.index] = entry.old_value;
       break;
     case TRAIL_SET_CONSTANT:
-      residual->constant = (uint32_t)entry.old_value;
+      residual->constant = entry.old_value;
       break;
     case TRAIL_SET_ACTIVE_VAR: {
       const uint8_t old = (uint8_t)entry.old_value;
@@ -550,7 +552,7 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
   }
 
   if (value == 1U) {
-    if (!set_constant(residual, add_mod(residual->constant, residual->unary[v], residual->r),
+    if (!set_constant(residual, add_mod_u64(residual->constant, residual->unary[v], residual->r),
                       error)) {
       return false;
     }
@@ -566,8 +568,8 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
       }
 
       if (other != UINT32_MAX && residual->active_var[other] != 0 &&
-          !set_unary(residual, other, add_mod(residual->unary[other], residual->r / 2U,
-                                             residual->r),
+          !set_unary(residual, other,
+                     add_mod_u64(residual->unary[other], residual->r / 2U, residual->r),
                      error)) {
         return false;
       }
@@ -586,7 +588,7 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
   return set_var_active(residual, v, false, error);
 }
 
-uint32_t qsop_residual_modulus(const qsop_residual_t *residual) {
+uint64_t qsop_residual_modulus(const qsop_residual_t *residual) {
   return residual == NULL ? 0 : residual->r;
 }
 
@@ -606,11 +608,11 @@ uint32_t qsop_residual_active_edges(const qsop_residual_t *residual) {
   return residual == NULL ? 0 : residual->active_edges;
 }
 
-uint32_t qsop_residual_constant(const qsop_residual_t *residual) {
+uint64_t qsop_residual_constant(const qsop_residual_t *residual) {
   return residual == NULL ? 0 : residual->constant;
 }
 
-uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v) {
+uint64_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v) {
   if (residual == NULL || v >= residual->nvars) {
     return 0;
   }

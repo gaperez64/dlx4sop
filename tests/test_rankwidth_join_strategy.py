@@ -130,6 +130,7 @@ def run_tests(sop_solve):
             "rankwidth_transition_layout_u32_events:",
             "rankwidth_dense_table_forecast:",
             "rankwidth_dense_even_join_forecast:",
+            "rankwidth_dense_join_events:",
             "rankwidth_materialized_join_events:",
             "rankwidth_streaming_join_events:",
             "rankwidth_linear_transition_events:",

@@ -484,9 +484,10 @@ def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
         if elapsed > 5.0:
             failures.append(f"[{label}]: refusal took {elapsed:.2f}s (expected a fast, clean refusal)")
             continue
-        if "refuses modulus > 2^32-1" not in result.stderr:
+        if ("refuses modulus > 2^32-1" not in result.stderr and
+                "requires R <= UINT32_MAX" not in result.stderr):
             failures.append(
-                f"[{label}]: expected a 'refuses modulus > 2^32-1' error, got: {result.stderr!r}"
+                f"[{label}]: expected a large-R refusal error, got: {result.stderr!r}"
             )
 
     if failures:
@@ -497,7 +498,85 @@ def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
 
 SINGLE_FOURIER_BACKEND_CONFIGS = [
     ("treewidth", ["--backend", "treewidth", "--solve-mode", "single-fourier"]),
+    (
+        "treewidth-double",
+        [
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+    ),
     ("rankwidth", ["--backend", "rankwidth", "--solve-mode", "single-fourier"]),
+    (
+        "rankwidth-materialized",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "materialized",
+        ],
+    ),
+    (
+        "rankwidth-dense",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "dense",
+        ],
+    ),
+    (
+        "rankwidth-double",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+    ),
+    (
+        "rankwidth-double-materialized",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "materialized",
+            "--simd",
+            "scalar",
+        ],
+    ),
+    (
+        "rankwidth-double-dense",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "dense",
+            "--simd",
+            "scalar",
+        ],
+    ),
     ("branch", ["--backend", "branch", "--solve-mode", "single-fourier"]),
 ]
 
@@ -586,10 +665,9 @@ def disconnected_qsop(rng: random.Random, component_sizes: list[int], r: int) ->
 
 def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
                                                         verbose: bool = False) -> None:
-    """branch single-fourier's component split (branch_single_mode_alloc_graph/
-    label_components/build_subinstance, and the complex-multiply combination step) has no
-    coverage from test_single_fourier_mode_backends_agree, since that suite's random
-    instances are rarely disconnected. Build genuinely multi-component instances (2-4
+    """branch single-fourier's residual component split and complex-multiply combination step
+    have little coverage from test_single_fourier_mode_backends_agree, since that suite's
+    random instances are rarely disconnected. Build genuinely multi-component instances (2-4
     parts) directly and check against brute-force ground truth."""
     rng = random.Random(SEED + 7)
     failures = []
@@ -635,9 +713,8 @@ def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
 
 def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None:
     """When neither treewidth (cap 14) nor rankwidth (cap 12) is viable for a connected
-    component, branch single-fourier must fail with a clear, fast error -- not hang or
-    attempt an exhaustive search (there is no residual-branching fallback in this mode,
-    see qsop_solve_branch_single_mode's doc comment)."""
+    component, the explicit delegate-only branch single-fourier policy must preserve the old
+    clear, fast refusal without attempting residual fallback."""
     rng = random.Random(SEED + 8)
     nvars = 40
     edges = [
@@ -657,6 +734,8 @@ def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None
     start = time.monotonic()
     result = subprocess.run(
         [str(exe), "--max-vars", "64", "--backend", "branch", "--solve-mode", "single-fourier",
+         "--branch-single-fourier-fallback", "delegate-only",
+         "--trace", "csv",
          qsop_path],
         check=False,
         stdout=subprocess.PIPE,
@@ -668,6 +747,9 @@ def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None
     assert elapsed < 5.0, f"refusal took {elapsed:.2f}s (expected a fast, clean refusal)"
     assert "no delegate available" in result.stderr, (
         f"expected a 'no delegate available' error, got: {result.stderr!r}"
+    )
+    assert "branch.single.fallback_node" not in result.stderr, (
+        f"delegate-only must refuse before residual fallback\n{result.stderr}"
     )
 
 
@@ -716,6 +798,52 @@ def test_branch_single_fourier_large_component(exe: pathlib.Path) -> None:
     assert diff <= tolerance, (
         f"branch/treewidth disagree on 100-variable path graph: "
         f"branch=({b_re},{b_im}) treewidth=({t_re},{t_im}) diff={diff}"
+    )
+
+
+def test_branch_single_fourier_residual_fallback(exe: pathlib.Path) -> None:
+    """Force branch single-fourier past its delegate caps and check the scalar residual
+    fallback against the treewidth single-mode backend on a small complete graph."""
+    nvars = 16
+    r = 8
+    edges = [(u, v) for u in range(nvars) for v in range(u + 1, nvars)]
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", "cst 3"]
+    for v in range(nvars):
+        lines.append(f"u {v} {(2 * v + 1) % r}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    text = "\n".join(lines) + "\n"
+
+    branch_out = run_sop_solve(
+        exe,
+        text,
+        [
+            "--backend", "branch",
+            "--solve-mode", "single-fourier",
+            "--branch-rw-source", "none",
+            "--branch-single-fourier-fallback", "always",
+            "--branch-single-max-fallback-vars", str(nvars),
+            "--branch-single-max-search-nodes", "2000000",
+            "--max-vars", "32",
+        ],
+    )
+    treewidth_out = run_sop_solve(
+        exe,
+        text,
+        ["--backend", "treewidth", "--solve-mode", "single-fourier", "--max-vars", "32"],
+    )
+    assert branch_out is not None, "branch residual fallback failed"
+    assert treewidth_out is not None, "treewidth single-fourier reference failed"
+    branch_parsed = parse_single_fourier_output(branch_out)
+    treewidth_parsed = parse_single_fourier_output(treewidth_out)
+    assert branch_parsed is not None, f"could not parse branch output: {branch_out!r}"
+    assert treewidth_parsed is not None, f"could not parse treewidth output: {treewidth_out!r}"
+    b_re, b_im, b_bound = branch_parsed
+    t_re, t_im, t_bound = treewidth_parsed
+    diff = abs(complex(b_re, b_im) - complex(t_re, t_im))
+    assert diff <= b_bound + t_bound + 1e-7, (
+        f"branch fallback/treewidth disagree: branch=({b_re},{b_im}) "
+        f"treewidth=({t_re},{t_im}) diff={diff}"
     )
 
 
@@ -779,6 +907,70 @@ def main(argv: list[str]) -> None:
         verbose=verbose,
     )
     test_single_fourier_mode_matches_bruteforce(
+        exe,
+        [
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "treewidth-double",
+        13,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_matches_bruteforce(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double",
+        14,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_matches_bruteforce(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "dense",
+        ],
+        "rankwidth-dense",
+        15,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_matches_bruteforce(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "dense",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double-dense",
+        16,
+        verbose=verbose,
+    )
+    test_single_fourier_mode_matches_bruteforce(
         exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch", 6,
         verbose=verbose,
     )
@@ -786,12 +978,69 @@ def main(argv: list[str]) -> None:
     test_branch_single_fourier_disconnected_components(exe, verbose=verbose)
     test_branch_single_fourier_refuses_wide_component(exe)
     test_branch_single_fourier_large_component(exe)
+    test_branch_single_fourier_residual_fallback(exe)
     test_single_fourier_default_max_vars(exe)
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
     )
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
+    )
+    test_single_fourier_mode_large_r_smoke(
+        exe,
+        [
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "treewidth-double",
+    )
+    test_single_fourier_mode_large_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double",
+    )
+    test_single_fourier_mode_large_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "dense",
+        ],
+        "rankwidth-dense",
+    )
+    test_single_fourier_mode_large_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "dense",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double-dense",
     )
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch"
@@ -801,6 +1050,62 @@ def main(argv: list[str]) -> None:
     )
     test_single_fourier_mode_huge_r_smoke(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth"
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe,
+        [
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "treewidth-double",
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double",
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "dense",
+        ],
+        "rankwidth-dense",
+    )
+    test_single_fourier_mode_huge_r_smoke(
+        exe,
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "dense",
+            "--simd",
+            "scalar",
+        ],
+        "rankwidth-double-dense",
     )
     test_single_fourier_mode_huge_r_smoke(
         exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch"

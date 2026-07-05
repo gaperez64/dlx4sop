@@ -232,6 +232,8 @@ JSONL artifacts without re-running any experiments.
 
 ### Other benchmark tools
 
+- `build-bench/bench-kernels --quick`: emit JSONL microbenchmarks for shared SIMD
+  kernels (bitset popcount/xor and f64 complex kernels).
 - `scripts/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
 - `scripts/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
 - `scripts/bench_qasm_native_simulator.py`: compare against supported native simulators.

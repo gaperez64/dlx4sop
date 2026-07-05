@@ -47,15 +47,15 @@ static qsop_instance_t fixture_instance(void) {
 }
 
 static int expect_initial_state(qsop_residual_t *residual) {
-  if (expect_u32("modulus", qsop_residual_modulus(residual), 8) != 0 ||
+  if (expect_u64("modulus", qsop_residual_modulus(residual), 8) != 0 ||
       expect_u32("nvars", qsop_residual_nvars(residual), 3) != 0 ||
       expect_u32("nedges", qsop_residual_nedges(residual), 2) != 0 ||
       expect_u32("active_vars", qsop_residual_active_vars(residual), 3) != 0 ||
       expect_u32("active_edges", qsop_residual_active_edges(residual), 2) != 0 ||
-      expect_u32("constant", qsop_residual_constant(residual), 7) != 0 ||
-      expect_u32("unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
-      expect_u32("unary1", qsop_residual_unary(residual, 1), 2) != 0 ||
-      expect_u32("unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
+      expect_u64("constant", qsop_residual_constant(residual), 7) != 0 ||
+      expect_u64("unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
+      expect_u64("unary1", qsop_residual_unary(residual, 1), 2) != 0 ||
+      expect_u64("unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
       expect_u32("degree0", qsop_residual_active_degree(residual, 0), 1) != 0 ||
       expect_u32("degree1", qsop_residual_active_degree(residual, 1), 2) != 0 ||
       expect_u32("degree2", qsop_residual_active_degree(residual, 2), 1) != 0 ||
@@ -87,9 +87,9 @@ static int test_branch_zero_undo(void) {
   }
   if (expect_u32("zero active_vars", qsop_residual_active_vars(residual), 2) != 0 ||
       expect_u32("zero active_edges", qsop_residual_active_edges(residual), 0) != 0 ||
-      expect_u32("zero constant", qsop_residual_constant(residual), 7) != 0 ||
-      expect_u32("zero unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
-      expect_u32("zero unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
+      expect_u64("zero constant", qsop_residual_constant(residual), 7) != 0 ||
+      expect_u64("zero unary0", qsop_residual_unary(residual, 0), 1) != 0 ||
+      expect_u64("zero unary2", qsop_residual_unary(residual, 2), 5) != 0 ||
       expect_u32("zero degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
       expect_u32("zero degree1", qsop_residual_active_degree(residual, 1), 0) != 0 ||
       expect_u32("zero degree2", qsop_residual_active_degree(residual, 2), 0) != 0 ||
@@ -127,9 +127,9 @@ static int test_branch_one_undo(void) {
   }
   if (expect_u32("one active_vars", qsop_residual_active_vars(residual), 2) != 0 ||
       expect_u32("one active_edges", qsop_residual_active_edges(residual), 0) != 0 ||
-      expect_u32("one constant", qsop_residual_constant(residual), 1) != 0 ||
-      expect_u32("one unary0", qsop_residual_unary(residual, 0), 5) != 0 ||
-      expect_u32("one unary2", qsop_residual_unary(residual, 2), 1) != 0 ||
+      expect_u64("one constant", qsop_residual_constant(residual), 1) != 0 ||
+      expect_u64("one unary0", qsop_residual_unary(residual, 0), 5) != 0 ||
+      expect_u64("one unary2", qsop_residual_unary(residual, 2), 1) != 0 ||
       expect_u32("one degree0", qsop_residual_active_degree(residual, 0), 0) != 0 ||
       expect_u32("one degree1", qsop_residual_active_degree(residual, 1), 0) != 0 ||
       expect_u32("one degree2", qsop_residual_active_degree(residual, 2), 0) != 0 ||
@@ -413,6 +413,87 @@ static int test_invalid_branch(void) {
   return 0;
 }
 
+static int test_large_residual_values(void) {
+  qsop_error_t error = {0};
+  const uint64_t r = 50000000ULL;
+  uint64_t unary[] = {17ULL, r - 2ULL};
+  uint32_t edge_u[] = {0};
+  uint32_t edge_v[] = {1};
+  qsop_instance_t qsop = {
+      .r = r,
+      .nvars = 2,
+      .norm_h = 0,
+      .constant = r - 3ULL,
+      .unary = unary,
+      .nedges = 1,
+      .edge_u = edge_u,
+      .edge_v = edge_v,
+  };
+  qsop_residual_t *residual = NULL;
+  if (!qsop_residual_create(&qsop, &residual, &error)) {
+    fprintf(stderr, "large create failed: %s\n", error.message);
+    return 1;
+  }
+  if (expect_u64("large modulus", qsop_residual_modulus(residual), r) != 0 ||
+      expect_u64("large constant", qsop_residual_constant(residual), r - 3ULL) != 0 ||
+      expect_u64("large unary0", qsop_residual_unary(residual, 0), 17ULL) != 0 ||
+      expect_u64("large unary1", qsop_residual_unary(residual, 1), r - 2ULL) != 0) {
+    qsop_residual_free(residual);
+    return 1;
+  }
+
+  const size_t checkpoint = qsop_residual_checkpoint(residual);
+  if (!qsop_residual_branch(residual, 0, 1, &error)) {
+    fprintf(stderr, "large branch failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  const uint64_t expected_neighbor = (r - 2ULL + r / 2ULL) % r;
+  if (expect_u64("large branched constant", qsop_residual_constant(residual), 14ULL) != 0 ||
+      expect_u64("large neighbor unary", qsop_residual_unary(residual, 1),
+                 expected_neighbor) != 0) {
+    qsop_residual_free(residual);
+    return 1;
+  }
+  if (!qsop_residual_undo(residual, checkpoint, &error)) {
+    fprintf(stderr, "large undo failed: %s\n", error.message);
+    qsop_residual_free(residual);
+    return 1;
+  }
+  if (expect_u64("large undo constant", qsop_residual_constant(residual), r - 3ULL) != 0 ||
+      expect_u64("large undo unary1", qsop_residual_unary(residual, 1), r - 2ULL) != 0) {
+    qsop_residual_free(residual);
+    return 1;
+  }
+  qsop_residual_free(residual);
+
+  const uint64_t huge_r = (uint64_t)UINT32_MAX + 1000ULL;
+  uint64_t huge_unary[] = {huge_r - 7ULL};
+  qsop_instance_t huge = {
+      .r = huge_r,
+      .nvars = 1,
+      .norm_h = 0,
+      .constant = huge_r - 5ULL,
+      .unary = huge_unary,
+      .nedges = 0,
+      .edge_u = NULL,
+      .edge_v = NULL,
+  };
+  residual = NULL;
+  if (!qsop_residual_create(&huge, &residual, &error)) {
+    fprintf(stderr, "huge create failed: %s\n", error.message);
+    return 1;
+  }
+  if (expect_u64("huge modulus", qsop_residual_modulus(residual), huge_r) != 0 ||
+      expect_u64("huge constant", qsop_residual_constant(residual), huge_r - 5ULL) != 0 ||
+      expect_u64("huge unary", qsop_residual_unary(residual, 0), huge_r - 7ULL) != 0) {
+    qsop_residual_free(residual);
+    return 1;
+  }
+  qsop_residual_free(residual);
+  return 0;
+}
+
 int main(void) {
   if (test_branch_zero_undo() != 0) {
     return 1;
@@ -433,6 +514,9 @@ int main(void) {
     return 1;
   }
   if (test_invalid_branch() != 0) {
+    return 1;
+  }
+  if (test_large_residual_values() != 0) {
     return 1;
   }
   return 0;

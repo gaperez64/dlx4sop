@@ -14,6 +14,8 @@ typedef struct qsop_result {
   char **count_strings;
 } qsop_result_t;
 
+typedef struct qsop_simd_vtable qsop_simd_vtable_t;
+
 /* Result of a single-Fourier-mode solve (Corollary 1): one complex value, with a
  * certified worst-case bound on the numerical (floating-point) error accumulated by the
  * DP. This is independent of the phase-rounding error a caller may have introduced
@@ -60,6 +62,7 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_transition_bytes;
   uint64_t rankwidth_transition_layout_u16_events;
   uint64_t rankwidth_transition_layout_u32_events;
+  uint64_t rankwidth_dense_join_events;
   uint64_t rankwidth_materialized_join_events;
   uint64_t rankwidth_streaming_join_events;
   uint64_t rankwidth_streaming_join_candidate_pairs;
@@ -87,6 +90,15 @@ typedef struct qsop_solve_stats {
   uint32_t components;
   uint32_t decomposition_width;
   uint32_t rankwidth_cutrank_width;
+
+  /* Kernel diagnostics */
+  uint32_t simd_kernel;
+  uint32_t single_mode_precision;
+  uint32_t treewidth_single_complex_kernel;
+  uint32_t rankwidth_single_complex_kernel;
+  uint32_t bitset_kernel;
+  uint64_t simd_vectorized_ops;
+  uint64_t simd_scalar_fallback_ops;
 } qsop_solve_stats_t;
 
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
@@ -119,6 +131,13 @@ typedef enum qsop_rankwidth_fourier_kernel {
   QSOP_RANKWIDTH_FOURIER_KERNEL_DENSE_REFERENCE,
 } qsop_rankwidth_fourier_kernel_t;
 
+typedef enum qsop_rankwidth_single_kernel {
+  QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO,
+  QSOP_RANKWIDTH_SINGLE_KERNEL_STREAMING,
+  QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED,
+  QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE,
+} qsop_rankwidth_single_kernel_t;
+
 typedef enum qsop_treewidth_order {
   QSOP_TREEWIDTH_ORDER_MIN_FILL,
   QSOP_TREEWIDTH_ORDER_MIN_DEGREE,
@@ -143,6 +162,12 @@ typedef struct qsop_rankwidth_solve_options {
   uint64_t materialize_join_max_pairs;           /* 0 = use built-in default */
   qsop_rankwidth_fourier_kernel_t fourier_kernel; /* default AUTO */
 } qsop_rankwidth_solve_options_t;
+
+typedef struct qsop_rankwidth_single_mode_options {
+  qsop_rankwidth_single_kernel_t kernel; /* default AUTO */
+  uint64_t materialize_join_max_pairs;   /* 0 = use built-in default */
+  const qsop_simd_vtable_t *simd;        /* optional; used by f64 kernels */
+} qsop_rankwidth_single_mode_options_t;
 
 /* Policy for how the branch solver sources a rank decomposition when considering
  * rankwidth delegation. */
@@ -238,6 +263,13 @@ bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_
                                       qsop_amplitude_t *out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_treewidth_single_mode_f64(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                          qsop_treewidth_order_t order_policy,
+                                          uint32_t target_mode,
+                                          const qsop_simd_vtable_t *simd,
+                                          qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                          qsop_solve_trace_t *trace, qsop_error_t *error);
+
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order,
                                 uint32_t **order_out, uint32_t *width_out,
                                 qsop_error_t *error);
@@ -326,6 +358,27 @@ bool qsop_solve_rankwidth_single_mode(const qsop_instance_t *qsop,
                                       qsop_amplitude_t *out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_rankwidth_single_mode_options(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, uint32_t target_mode,
+    const qsop_rankwidth_single_mode_options_t *options,
+    qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
+
+bool qsop_solve_rankwidth_single_mode_f64(const qsop_instance_t *qsop,
+                                          const qsop_rankwidth_decomposition_t *decomposition,
+                                          uint32_t max_vars, uint32_t target_mode,
+                                          const qsop_simd_vtable_t *simd,
+                                          qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                          qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_rankwidth_single_mode_f64_options(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    uint32_t max_vars, uint32_t target_mode,
+    const qsop_rankwidth_single_mode_options_t *options,
+    qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
+
 bool qsop_rankwidth_decomposition_write_file(FILE *file,
                                              const qsop_rankwidth_decomposition_t *decomposition,
                                              qsop_error_t *error);
@@ -385,26 +438,49 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                        qsop_result_t **out, qsop_solve_stats_t *stats,
                        qsop_error_t *error);
 
-/* Per-solve options for qsop_solve_branch_single_mode. Deliberately leaner than
- * qsop_branch_solve_options_t: no `heuristic` (this entry point has no residual-branching
- * fallback to steer -- it only splits into connected components and delegates each to
- * treewidth/rankwidth single-mode) and no `mode` (single-fourier by construction of calling
- * this entry point at all). */
+typedef enum qsop_branch_single_fallback {
+  QSOP_BRANCH_SINGLE_FALLBACK_AUTO = 0,
+  QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY,
+  QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+} qsop_branch_single_fallback_t;
+
+typedef enum qsop_branch_single_precision {
+  QSOP_BRANCH_SINGLE_PRECISION_AUTO = 0,
+  QSOP_BRANCH_SINGLE_PRECISION_DOUBLE,
+  QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE,
+} qsop_branch_single_precision_t;
+
+typedef enum qsop_branch_single_kernel {
+  QSOP_BRANCH_SINGLE_KERNEL_AUTO = 0,
+  QSOP_BRANCH_SINGLE_KERNEL_SCALAR,
+  QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2,
+} qsop_branch_single_kernel_t;
+
+/* Per-solve options for qsop_solve_branch_single_mode. Zero-initialize for defaults:
+ * rw_source=auto/from-treewidth, heuristic=split, fallback=auto, precision/kernel=auto,
+ * and zero numeric caps selecting built-in limits. */
 typedef struct qsop_branch_single_mode_options {
-  qsop_branch_rw_source_t rw_source;  /* default AUTO (0) */
-  qsop_branch_policy_t policy;        /* all-zero fields take built-in defaults */
-  qsop_backend_stats_sink_t *sink;    /* unused for now; reserved, pass NULL */
-  qsop_solve_trace_t *trace;          /* NULL to disable tracing */
+  qsop_branch_rw_source_t rw_source;
+  qsop_branch_policy_t policy;
+  qsop_branch_heuristic_t heuristic;
+  qsop_branch_single_fallback_t fallback;
+  qsop_branch_single_precision_t precision;
+  qsop_branch_single_kernel_t kernel;
+
+  uint64_t max_search_nodes;
+  uint32_t max_fallback_vars;
+  uint32_t max_recursion_depth;
+  uint64_t cache_budget_mib;
+  uint32_t cache_min_vars;
+  uint32_t phase_cache_lg_cap;
+
+  qsop_backend_stats_sink_t *sink;
+  qsop_solve_trace_t *trace;
 } qsop_branch_single_mode_options_t;
 
-/* Single Fourier mode for the branch backend: splits the instance into connected components
- * directly (no qsop_residual_t -- that struct hardcodes r/constant/unary[] as uint32_t, so it
- * cannot represent the large-modulus instances this mode exists for), delegates each component
- * to qsop_solve_treewidth_precomputed_order_single_mode or qsop_solve_rankwidth_single_mode
- * using the same width-cap/cost-model calibration as the count-table delegation path, and
- * combines per-component amplitudes by complex multiplication. If a component's width exceeds
- * both delegates' caps, fails with a clear error rather than attempting an exhaustive search --
- * there is no residual-branching fallback in this entry point. */
+/* Single Fourier mode for the branch backend: delegates connected components to treewidth or
+ * rankwidth when cheap, then optionally falls back to scalar residual branching without ever
+ * allocating O(R) count vectors. */
 bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_vars,
                                    uint32_t target_mode,
                                    const qsop_branch_single_mode_options_t *options,

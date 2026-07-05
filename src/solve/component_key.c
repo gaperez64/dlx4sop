@@ -48,9 +48,9 @@ static void sort_component_edges(uint32_t nedges, uint32_t *edge_u, uint32_t *ed
   }
 }
 
-static int compare_component_arrays(uint32_t nvars, uint32_t nedges, const uint32_t *lhs_unary,
+static int compare_component_arrays(uint32_t nvars, uint32_t nedges, const uint64_t *lhs_unary,
                                     const uint32_t *lhs_edge_u, const uint32_t *lhs_edge_v,
-                                    const uint32_t *rhs_unary,
+                                    const uint64_t *rhs_unary,
                                     const uint32_t *rhs_edge_u, const uint32_t *rhs_edge_v) {
   for (uint32_t v = 0; v < nvars; v++) {
     if (lhs_unary[v] != rhs_unary[v]) {
@@ -72,10 +72,10 @@ typedef struct small_component_canonicalizer {
   const qsop_instance_t *sub;
   uint32_t *perm;
   bool *used;
-  uint32_t *candidate_unary;
+  uint64_t *candidate_unary;
   uint32_t *candidate_edge_u;
   uint32_t *candidate_edge_v;
-  uint32_t *best_unary;
+  uint64_t *best_unary;
   uint32_t *best_edge_u;
   uint32_t *best_edge_v;
   bool have_best;
@@ -83,11 +83,8 @@ typedef struct small_component_canonicalizer {
 
 static void consider_component_permutation(small_component_canonicalizer_t *ctx) {
   const qsop_instance_t *sub = ctx->sub;
-  /* sub->unary is uint64_t*; candidate_unary stays uint32_t* (small components only, and
-   * always reached through the branch/components backends, which refuse r > UINT32_MAX
-   * before ever building a sub-instance -- so every value here is proven to fit). */
   for (uint32_t v = 0; v < sub->nvars; v++) {
-    ctx->candidate_unary[ctx->perm[v]] = (uint32_t)sub->unary[v];
+    ctx->candidate_unary[ctx->perm[v]] = sub->unary[v];
   }
   for (uint32_t e = 0; e < sub->nedges; e++) {
     uint32_t u = ctx->perm[sub->edge_u[e]];
@@ -143,10 +140,10 @@ bool qsop_canonicalize_small_component(qsop_instance_t *sub, uint32_t max_nvars,
       .sub = sub,
       .perm = malloc(nvars_alloc * sizeof(uint32_t)),
       .used = calloc(nvars_alloc, sizeof(bool)),
-      .candidate_unary = malloc(nvars_alloc * sizeof(uint32_t)),
+      .candidate_unary = malloc(nvars_alloc * sizeof(uint64_t)),
       .candidate_edge_u = malloc(nedges_alloc * sizeof(uint32_t)),
       .candidate_edge_v = malloc(nedges_alloc * sizeof(uint32_t)),
-      .best_unary = malloc(nvars_alloc * sizeof(uint32_t)),
+      .best_unary = malloc(nvars_alloc * sizeof(uint64_t)),
       .best_edge_u = malloc(nedges_alloc * sizeof(uint32_t)),
       .best_edge_v = malloc(nedges_alloc * sizeof(uint32_t)),
   };
@@ -166,12 +163,7 @@ bool qsop_canonicalize_small_component(qsop_instance_t *sub, uint32_t max_nvars,
   }
 
   enumerate_component_permutations(&ctx, 0);
-  /* sub->unary is uint64_t*, ctx.best_unary is uint32_t* -- an explicit widening copy, not
-   * memcpy (whose element size would otherwise mismatch and both under-read best_unary and
-   * leave sub->unary only half-populated). */
-  for (uint32_t v = 0; v < sub->nvars; v++) {
-    sub->unary[v] = ctx.best_unary[v];
-  }
+  memcpy(sub->unary, ctx.best_unary, (size_t)sub->nvars * sizeof(*sub->unary));
   memcpy(sub->edge_u, ctx.best_edge_u, (size_t)sub->nedges * sizeof(*sub->edge_u));
   memcpy(sub->edge_v, ctx.best_edge_v, (size_t)sub->nedges * sizeof(*sub->edge_v));
 

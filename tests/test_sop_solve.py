@@ -2492,6 +2492,301 @@ def run_branch_policy_arg_validation(exe: pathlib.Path) -> None:
             )
 
 
+def run_kernel_diagnostics(exe: pathlib.Path) -> None:
+    auto = subprocess.run(
+        [str(exe), "--print-kernels"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_auto = {
+        "simd_requested=auto",
+        "single_mode_precision=auto",
+    }
+    if auto.returncode != 0 or not expected_auto.issubset(set(auto.stdout.splitlines())):
+        raise AssertionError(f"--print-kernels failed\n{auto.stdout}\n{auto.stderr}")
+    if not any(line.startswith("simd_kernel=") for line in auto.stdout.splitlines()):
+        raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
+        raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
+
+    scalar = subprocess.run(
+        [str(exe), "--simd", "scalar", "--print-kernels"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_scalar = {
+        "simd_requested=scalar",
+        "simd_kernel=scalar",
+        "bitset_popcount_kernel=scalar",
+    }
+    if scalar.returncode != 0 or not expected_scalar.issubset(set(scalar.stdout.splitlines())):
+        raise AssertionError(f"--simd scalar --print-kernels failed\n{scalar.stdout}\n{scalar.stderr}")
+
+    scalar_stats = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--simd",
+            "scalar",
+            "-",
+        ],
+        input=_path_qsop(3, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_scalar_stats = {"simd_kernel: scalar", "bitset_kernel: scalar"}
+    if (
+        scalar_stats.returncode != 0
+        or not expected_scalar_stats.issubset(set(scalar_stats.stdout.splitlines()))
+    ):
+        raise AssertionError(
+            f"--format stats --simd scalar failed\n{scalar_stats.stdout}\n{scalar_stats.stderr}"
+        )
+
+    bad_simd = subprocess.run(
+        [str(exe), "--simd", "bad", "--print-kernels"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_simd.returncode != 2 or "unsupported --simd" not in bad_simd.stderr:
+        raise AssertionError(f"bad --simd diagnostic failed\n{bad_simd.stdout}\n{bad_simd.stderr}")
+
+    precision_without_mode = subprocess.run(
+        [str(exe), "--single-mode-precision", "double", "-"],
+        input=_path_qsop(3, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        precision_without_mode.returncode != 2
+        or "--single-mode-precision requires --solve-mode single-fourier"
+        not in precision_without_mode.stderr
+    ):
+        raise AssertionError(
+            f"--single-mode-precision guard failed\n"
+            f"{precision_without_mode.stdout}\n{precision_without_mode.stderr}"
+        )
+
+    treewidth_double = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "treewidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+            "-",
+        ],
+        input=_path_qsop(3, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_double_stats = {
+        "single_mode_precision: double",
+        "simd_kernel: scalar",
+        "treewidth_single_complex_kernel: 2",
+    }
+    if (
+        treewidth_double.returncode != 0
+        or not expected_double_stats.issubset(set(treewidth_double.stdout.splitlines()))
+    ):
+        raise AssertionError(
+            f"treewidth double precision solve failed\n"
+            f"{treewidth_double.stdout}\n{treewidth_double.stderr}"
+        )
+
+    rankwidth_double = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--simd",
+            "scalar",
+            "-",
+        ],
+        input=_path_qsop(3, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected_rankwidth_double_stats = {
+        "single_mode_precision: double",
+        "simd_kernel: scalar",
+        "rankwidth_single_complex_kernel: 2",
+    }
+    if (
+        rankwidth_double.returncode != 0
+        or not expected_rankwidth_double_stats.issubset(set(rankwidth_double.stdout.splitlines()))
+    ):
+        raise AssertionError(
+            f"rankwidth double precision solve failed\n"
+            f"{rankwidth_double.stdout}\n{rankwidth_double.stderr}"
+        )
+
+    rankwidth_materialized = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "materialized",
+            "-",
+        ],
+        input=_path_qsop(5, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if rankwidth_materialized.returncode != 0:
+        raise AssertionError(
+            f"rankwidth materialized single-mode failed\n"
+            f"{rankwidth_materialized.stdout}\n{rankwidth_materialized.stderr}"
+        )
+    materialized_stats = parse_solver_stats(rankwidth_materialized.stdout)
+    if materialized_stats.get("rankwidth_materialized_join_events", 0) < 1:
+        raise AssertionError(f"expected materialized join events\n{rankwidth_materialized.stdout}")
+    if materialized_stats.get("rankwidth_transition_bytes", 0) <= 0:
+        raise AssertionError(f"expected materialized transition bytes\n{rankwidth_materialized.stdout}")
+
+    rankwidth_streaming = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "streaming",
+            "-",
+        ],
+        input=_path_qsop(5, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if rankwidth_streaming.returncode != 0:
+        raise AssertionError(
+            f"rankwidth streaming single-mode failed\n"
+            f"{rankwidth_streaming.stdout}\n{rankwidth_streaming.stderr}"
+        )
+    streaming_stats = parse_solver_stats(rankwidth_streaming.stdout)
+    if streaming_stats.get("rankwidth_streaming_join_events", 0) < 1:
+        raise AssertionError(f"expected streaming join events\n{rankwidth_streaming.stdout}")
+
+    rankwidth_dense = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "dense",
+            "-",
+        ],
+        input=_path_qsop(5, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if rankwidth_dense.returncode != 0:
+        raise AssertionError(
+            f"rankwidth dense single-mode failed\n"
+            f"{rankwidth_dense.stdout}\n{rankwidth_dense.stderr}"
+        )
+    dense_stats = parse_solver_stats(rankwidth_dense.stdout)
+    if dense_stats.get("rankwidth_dense_join_events", 0) < 1:
+        raise AssertionError(f"expected dense join events\n{rankwidth_dense.stdout}")
+
+    branch_kernel = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "single-fourier",
+            "--branch-single-kernel",
+            "scalar",
+            "--branch-single-precision",
+            "double",
+            "-",
+        ],
+        input=_path_qsop(4, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if branch_kernel.returncode != 0 or "mode: single-fourier" not in branch_kernel.stdout:
+        raise AssertionError(
+            f"branch single-mode kernel options failed\n"
+            f"{branch_kernel.stdout}\n{branch_kernel.stderr}"
+        )
+
+    bad_branch_numeric = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "single-fourier",
+            "--branch-single-max-search-nodes",
+            "notanint",
+            "-",
+        ],
+        input=_path_qsop(3, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if bad_branch_numeric.returncode != 2 or "branch-single-max-search-nodes" not in bad_branch_numeric.stderr:
+        raise AssertionError(
+            f"branch single-mode numeric guard failed\n"
+            f"{bad_branch_numeric.stdout}\n{bad_branch_numeric.stderr}"
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: test_sop_solve.py SOP_SOLVE SOURCE_ROOT", file=sys.stderr)
@@ -2521,6 +2816,7 @@ def main() -> int:
     run_branch_stats_sink(exe)
     run_rankwidth_memory_budget(exe)
     run_branch_policy_arg_validation(exe)
+    run_kernel_diagnostics(exe)
     return 0
 
 

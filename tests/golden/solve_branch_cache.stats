@@ -8,9 +8,9 @@ cache_canonical_stores: 6
 cache_entries: 6
 cache_canonical_entries: 6
 cache_stored_residue_slots: 24
-cache_key_bytes: 115
+cache_key_bytes: 155
 cache_count_bytes: 192
-cache_estimated_bytes: 4147
+cache_estimated_bytes: 4443
 leaf_assignments: 6
 treewidth_delegations: 0
 rankwidth_delegations: 0

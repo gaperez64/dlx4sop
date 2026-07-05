@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_solve.h"
+#include "dlx4sop/simd.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -27,6 +28,12 @@ typedef enum solve_trace_format {
   SOLVE_TRACE_CSV,
 } solve_trace_format_t;
 
+typedef enum single_mode_precision_cli {
+  SINGLE_MODE_PRECISION_AUTO = 0,
+  SINGLE_MODE_PRECISION_DOUBLE,
+  SINGLE_MODE_PRECISION_LONG_DOUBLE,
+} single_mode_precision_cli_t;
+
 typedef enum rankwidth_memory_policy {
   RW_MEMORY_POLICY_SKIP,
   RW_MEMORY_POLICY_FALLBACK,
@@ -51,10 +58,20 @@ static void print_usage(FILE *file) {
         "[--branch-rw-fixed-overhead-ns N] "
         "[--branch-tw-fixed-overhead-ns N] "
         "[--branch-rw-memory-penalty-ns N] "
+        "[--branch-single-fourier-fallback auto|delegate-only|always] "
+        "[--branch-single-max-fallback-vars N] "
+        "[--branch-single-max-search-nodes N] "
+        "[--branch-single-cache-budget-mib N] "
+        "[--branch-single-cache-min-vars N] "
+        "[--branch-single-kernel auto|scalar|simd-avx2] "
+        "[--branch-single-precision auto|double|long-double] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
         "[--solve-mode count-table|fourier|single-fourier] "
         "[--fourier-target-mode N] "
+        "[--simd auto|scalar|neon|avx512] "
+        "[--single-mode-precision auto|double|long-double] "
+        "[--print-kernels] "
         "[--rankwidth-mode count-table|fourier] "
         "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
         "[--include-result] [--include-probability] "
@@ -62,6 +79,7 @@ static void print_usage(FILE *file) {
         "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
         "[--rankwidth-memory-policy skip|fallback|hard-error] "
         "[--rankwidth-join-strategy auto|materialized|streaming] "
+        "[--rankwidth-single-kernel auto|streaming|materialized|dense] "
         "[--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference] "
         "[--rankwidth-materialize-join-max-pairs N] "
         "[--max-vars N] [--trace csv] [PATH|-]\n",
@@ -152,6 +170,43 @@ static const char *rankwidth_fourier_kernel_name(qsop_rankwidth_fourier_kernel_t
   return "unknown";
 }
 
+static const char *simd_request_name(qsop_simd_kernel_t kernel) {
+  switch (kernel) {
+  case QSOP_SIMD_KERNEL_SCALAR:
+    return "scalar";
+  case QSOP_SIMD_KERNEL_AUTO:
+    return "auto";
+  case QSOP_SIMD_KERNEL_NEON:
+    return "neon";
+  case QSOP_SIMD_KERNEL_AVX512:
+    return "avx512";
+  }
+  return "unknown";
+}
+
+static const char *single_mode_precision_name(single_mode_precision_cli_t precision) {
+  switch (precision) {
+  case SINGLE_MODE_PRECISION_AUTO:
+    return "auto";
+  case SINGLE_MODE_PRECISION_DOUBLE:
+    return "double";
+  case SINGLE_MODE_PRECISION_LONG_DOUBLE:
+    return "long-double";
+  }
+  return "unknown";
+}
+
+static qsop_simd_kernel_t simd_kernel_from_vtable(const qsop_simd_vtable_t *simd) {
+  const char *name = qsop_simd_kernel_name(simd);
+  if (strcmp(name, "neon") == 0) {
+    return QSOP_SIMD_KERNEL_NEON;
+  }
+  if (strcmp(name, "avx512") == 0) {
+    return QSOP_SIMD_KERNEL_AVX512;
+  }
+  return QSOP_SIMD_KERNEL_SCALAR;
+}
+
 static const char *solve_mode_name(qsop_solve_mode_t mode) {
   switch (mode) {
   case QSOP_SOLVE_MODE_COUNT_TABLE:
@@ -220,6 +275,32 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   if (solve_mode_set || solve_mode != QSOP_SOLVE_MODE_COUNT_TABLE) {
     fprintf(file, "solve_mode: %s\n", solve_mode_name(solve_mode));
     fprintf(file, "solve_mode_kernel: %s\n", solve_mode_kernel_name(backend, solve_mode));
+  }
+  if (stats->simd_kernel != 0) {
+    fprintf(file, "simd_kernel: %s\n",
+            simd_request_name((qsop_simd_kernel_t)stats->simd_kernel));
+  }
+  if (stats->single_mode_precision != 0) {
+    fprintf(file, "single_mode_precision: %s\n",
+            single_mode_precision_name((single_mode_precision_cli_t)stats->single_mode_precision));
+  }
+  if (stats->treewidth_single_complex_kernel != 0) {
+    fprintf(file, "treewidth_single_complex_kernel: %" PRIu32 "\n",
+            stats->treewidth_single_complex_kernel);
+  }
+  if (stats->rankwidth_single_complex_kernel != 0) {
+    fprintf(file, "rankwidth_single_complex_kernel: %" PRIu32 "\n",
+            stats->rankwidth_single_complex_kernel);
+  }
+  if (stats->bitset_kernel != 0) {
+    fprintf(file, "bitset_kernel: %s\n",
+            simd_request_name((qsop_simd_kernel_t)stats->bitset_kernel));
+  }
+  if (stats->simd_vectorized_ops != 0) {
+    fprintf(file, "simd_vectorized_ops: %" PRIu64 "\n", stats->simd_vectorized_ops);
+  }
+  if (stats->simd_scalar_fallback_ops != 0) {
+    fprintf(file, "simd_scalar_fallback_ops: %" PRIu64 "\n", stats->simd_scalar_fallback_ops);
   }
   if (backend == SOLVE_BACKEND_COMPONENTS) {
     fprintf(file, "components: %" PRIu32 "\n", stats->components);
@@ -327,6 +408,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_transition_layout_u16_events);
     fprintf(file, "rankwidth_transition_layout_u32_events: %" PRIu64 "\n",
             stats->rankwidth_transition_layout_u32_events);
+    fprintf(file, "rankwidth_dense_join_events: %" PRIu64 "\n",
+            stats->rankwidth_dense_join_events);
     fprintf(file, "rankwidth_materialized_join_events: %" PRIu64 "\n",
             stats->rankwidth_materialized_join_events);
     fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
@@ -540,6 +623,18 @@ int main(int argc, char **argv) {
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
   qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
+  qsop_branch_single_fallback_t branch_single_fallback =
+      QSOP_BRANCH_SINGLE_FALLBACK_AUTO;
+  qsop_branch_single_precision_t branch_single_precision =
+      QSOP_BRANCH_SINGLE_PRECISION_AUTO;
+  qsop_branch_single_kernel_t branch_single_kernel =
+      QSOP_BRANCH_SINGLE_KERNEL_AUTO;
+  uint64_t branch_single_max_search_nodes = 0;
+  uint32_t branch_single_max_fallback_vars = 0;
+  uint64_t branch_single_cache_budget_mib = 0;
+  uint32_t branch_single_cache_min_vars = 0;
+  bool branch_single_option_set = false;
+  bool branch_single_precision_set = false;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
   qsop_treewidth_order_t treewidth_order = QSOP_TREEWIDTH_ORDER_MIN_FILL;
@@ -552,6 +647,11 @@ int main(int argc, char **argv) {
   bool single_fourier_mode = false;
   uint32_t fourier_target_mode = 1;
   bool fourier_target_mode_set = false;
+  qsop_simd_kernel_t simd_request = QSOP_SIMD_KERNEL_AUTO;
+  bool simd_set = false;
+  single_mode_precision_cli_t single_mode_precision = SINGLE_MODE_PRECISION_AUTO;
+  bool single_mode_precision_set = false;
+  bool print_kernels = false;
   bool treewidth_order_set = false;
   bool include_result = false;
   bool include_probability = false;
@@ -560,6 +660,9 @@ int main(int argc, char **argv) {
   uint64_t rw_memory_budget_bytes = 0; /* 0 = no limit */
   rankwidth_memory_policy_t rw_memory_policy = RW_MEMORY_POLICY_SKIP;
   qsop_rankwidth_join_strategy_t rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
+  qsop_rankwidth_single_kernel_t rw_single_kernel =
+      QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO;
+  bool rw_single_kernel_set = false;
   qsop_rankwidth_fourier_kernel_t rw_fourier_kernel =
       QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
   bool rw_fourier_kernel_set = false;
@@ -696,6 +799,31 @@ int main(int argc, char **argv) {
                          &rw_materialize_join_max_pairs)) return 2;
       continue;
     }
+    if (strcmp(argv[i], "--rankwidth-single-kernel") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-single-kernel requires auto|streaming|materialized|dense\n",
+              stderr);
+        return 2;
+      }
+      const char *val = argv[++i];
+      if (strcmp(val, "auto") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO;
+      } else if (strcmp(val, "streaming") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_STREAMING;
+      } else if (strcmp(val, "materialized") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED;
+      } else if (strcmp(val, "dense") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
+      } else {
+        fprintf(stderr,
+                "error: unknown rankwidth single-mode kernel '%s' "
+                "(expected auto|streaming|materialized|dense)\n",
+                val);
+        return 2;
+      }
+      rw_single_kernel_set = true;
+      continue;
+    }
     if (strcmp(argv[i], "--rankwidth-fourier-kernel") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --rankwidth-fourier-kernel requires auto|streaming|hybrid-even-fwht|dense-reference\n",
@@ -809,6 +937,115 @@ int main(int argc, char **argv) {
       if (i + 1 >= argc) { fputs("error: --branch-rw-memory-penalty-ns requires a value\n", stderr); return 2; }
       if (!parse_u64_arg("--branch-rw-memory-penalty-ns", argv[++i],
                          &branch_policy.rw_memory_penalty_ns)) return 2;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-fourier-fallback") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-fourier-fallback requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "auto") == 0) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_AUTO;
+      } else if (strcmp(value, "delegate-only") == 0 ||
+                 strcmp(value, "never") == 0 ||
+                 strcmp(value, "off") == 0) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY;
+      } else if (strcmp(value, "always") == 0) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS;
+      } else {
+        fprintf(stderr,
+                "error: unsupported --branch-single-fourier-fallback '%s' "
+                "(expected auto|delegate-only|always)\n",
+                value);
+        return 2;
+      }
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-max-fallback-vars") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-max-fallback-vars requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-max-fallback-vars", argv[++i],
+                         &branch_single_max_fallback_vars)) return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-max-search-nodes") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-max-search-nodes requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--branch-single-max-search-nodes", argv[++i],
+                         &branch_single_max_search_nodes)) return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-cache-budget-mib") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-cache-budget-mib requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--branch-single-cache-budget-mib", argv[++i],
+                         &branch_single_cache_budget_mib)) return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-cache-min-vars") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-cache-min-vars requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-cache-min-vars", argv[++i],
+                         &branch_single_cache_min_vars)) return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-kernel") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-kernel requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "auto") == 0) {
+        branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_AUTO;
+      } else if (strcmp(value, "scalar") == 0) {
+        branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_SCALAR;
+      } else if (strcmp(value, "simd-avx2") == 0) {
+        branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2;
+      } else {
+        fprintf(stderr,
+                "error: unsupported --branch-single-kernel '%s' "
+                "(expected auto|scalar|simd-avx2)\n",
+                value);
+        return 2;
+      }
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-precision") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-precision requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "auto") == 0) {
+        branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_AUTO;
+      } else if (strcmp(value, "double") == 0) {
+        branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_DOUBLE;
+      } else if (strcmp(value, "long-double") == 0) {
+        branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE;
+      } else {
+        fprintf(stderr,
+                "error: unsupported --branch-single-precision '%s' "
+                "(expected auto|double|long-double)\n",
+                value);
+        return 2;
+      }
+      branch_single_option_set = true;
+      branch_single_precision_set = true;
       continue;
     }
     if (strcmp(argv[i], "--backend") == 0) {
@@ -926,6 +1163,54 @@ int main(int argc, char **argv) {
       fourier_target_mode_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--simd") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --simd requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "auto") == 0) {
+        simd_request = QSOP_SIMD_KERNEL_AUTO;
+      } else if (strcmp(value, "scalar") == 0) {
+        simd_request = QSOP_SIMD_KERNEL_SCALAR;
+      } else if (strcmp(value, "neon") == 0) {
+        simd_request = QSOP_SIMD_KERNEL_NEON;
+      } else if (strcmp(value, "avx512") == 0) {
+        simd_request = QSOP_SIMD_KERNEL_AVX512;
+      } else {
+        fprintf(stderr, "error: unsupported --simd '%s' (expected auto|scalar|neon|avx512)\n",
+                value);
+        return 2;
+      }
+      simd_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--single-mode-precision") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --single-mode-precision requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "auto") == 0) {
+        single_mode_precision = SINGLE_MODE_PRECISION_AUTO;
+      } else if (strcmp(value, "double") == 0) {
+        single_mode_precision = SINGLE_MODE_PRECISION_DOUBLE;
+      } else if (strcmp(value, "long-double") == 0) {
+        single_mode_precision = SINGLE_MODE_PRECISION_LONG_DOUBLE;
+      } else {
+        fprintf(stderr,
+                "error: unsupported --single-mode-precision '%s' "
+                "(expected auto|double|long-double)\n",
+                value);
+        return 2;
+      }
+      single_mode_precision_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--print-kernels") == 0) {
+      print_kernels = true;
+      continue;
+    }
     if (strcmp(argv[i], "--treewidth-order") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --treewidth-order requires a value\n", stderr);
@@ -969,6 +1254,10 @@ int main(int argc, char **argv) {
     fputs("error: --branch-rw-source requires --backend branch\n", stderr);
     return 2;
   }
+  if (branch_single_option_set && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --branch-single-* options require --backend branch\n", stderr);
+    return 2;
+  }
   if (calibrate_backends && backend != SOLVE_BACKEND_BRANCH) {
     fputs("error: --branch-calibrate-backends requires --backend branch\n", stderr);
     return 2;
@@ -997,6 +1286,10 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-fourier-kernel requires --backend rankwidth\n", stderr);
     return 2;
   }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rw_single_kernel_set) {
+    fputs("error: --rankwidth-single-kernel requires --backend rankwidth\n", stderr);
+    return 2;
+  }
   if (rankwidth_mode_set && solve_mode_set &&
       rankwidth_mode != rankwidth_mode_from_solve_mode(solve_mode)) {
     fputs("error: --solve-mode conflicts with --rankwidth-mode\n", stderr);
@@ -1012,6 +1305,10 @@ int main(int argc, char **argv) {
   }
   if (rw_fourier_kernel_set && rankwidth_mode != QSOP_RANKWIDTH_SOLVE_FOURIER) {
     fputs("error: --rankwidth-fourier-kernel requires --rankwidth-mode fourier\n", stderr);
+    return 2;
+  }
+  if (rw_single_kernel_set && !single_fourier_mode) {
+    fputs("error: --rankwidth-single-kernel requires --solve-mode single-fourier\n", stderr);
     return 2;
   }
   if (backend != SOLVE_BACKEND_TREEWIDTH && treewidth_order_set) {
@@ -1038,11 +1335,8 @@ int main(int argc, char **argv) {
           stderr);
     return 2;
   }
-  if (single_fourier_mode && branch_heuristic_set) {
-    fputs("error: --branch-heuristic is not supported with --solve-mode single-fourier "
-          "(branch's single-fourier mode delegates to treewidth/rankwidth; it has no "
-          "residual-branching fallback to steer)\n",
-          stderr);
+  if (branch_single_option_set && !single_fourier_mode) {
+    fputs("error: --branch-single-* options require --solve-mode single-fourier\n", stderr);
     return 2;
   }
   if (single_fourier_mode && calibrate_backends) {
@@ -1072,6 +1366,49 @@ int main(int argc, char **argv) {
    * Callers needing more can still pass --max-vars explicitly. */
   if (single_fourier_mode && !max_vars_set) {
     max_vars = 4096;
+  }
+
+  if (single_mode_precision_set && !single_fourier_mode && !print_kernels) {
+    fputs("error: --single-mode-precision requires --solve-mode single-fourier\n", stderr);
+    return 2;
+  }
+  if (single_mode_precision_set && !branch_single_precision_set) {
+    switch (single_mode_precision) {
+    case SINGLE_MODE_PRECISION_AUTO:
+      branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_AUTO;
+      break;
+    case SINGLE_MODE_PRECISION_DOUBLE:
+      branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_DOUBLE;
+      break;
+    case SINGLE_MODE_PRECISION_LONG_DOUBLE:
+      branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE;
+      break;
+    }
+  }
+
+  const qsop_simd_vtable_t *simd = qsop_simd_resolve(simd_request);
+  if ((simd_request == QSOP_SIMD_KERNEL_NEON || simd_request == QSOP_SIMD_KERNEL_AVX512) &&
+      simd == NULL) {
+    fprintf(stderr, "error: requested %s SIMD kernel is not available on this CPU\n",
+            simd_request_name(simd_request));
+    return 2;
+  }
+
+  if (print_kernels) {
+    printf("simd_requested=%s\n", simd_request_name(simd_request));
+    printf("simd_kernel=%s\n", qsop_simd_kernel_name(simd));
+    printf("bitset_popcount_kernel=%s\n", qsop_simd_kernel_name(simd));
+    printf("single_mode_precision=%s\n", single_mode_precision_name(single_mode_precision));
+    return 0;
+  }
+
+  if (single_fourier_mode && single_mode_precision == SINGLE_MODE_PRECISION_LONG_DOUBLE &&
+      backend == SOLVE_BACKEND_BRANCH &&
+      branch_single_fallback != QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY) {
+    fputs("error: --single-mode-precision long-double is not implemented for branch residual "
+          "fallback yet; use --branch-single-fourier-fallback delegate-only\n",
+          stderr);
+    return 2;
   }
 
   FILE *input = stdin;
@@ -1149,19 +1486,42 @@ int main(int argc, char **argv) {
         qsop_free(qsop);
         return 1;
       }
-      ok = qsop_solve_rankwidth_single_mode(qsop, single_mode_decomposition, max_vars,
-                                           fourier_target_mode, &amplitude, &amp_stats, trace_ptr,
-                                           &error);
+      const qsop_rankwidth_single_mode_options_t rankwidth_single_options = {
+          .kernel = rw_single_kernel,
+          .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+          .simd = simd,
+      };
+      if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+        ok = qsop_solve_rankwidth_single_mode_f64_options(
+            qsop, single_mode_decomposition, max_vars, fourier_target_mode,
+            &rankwidth_single_options, &amplitude, &amp_stats, trace_ptr, &error);
+      } else {
+        ok = qsop_solve_rankwidth_single_mode_options(
+            qsop, single_mode_decomposition, max_vars, fourier_target_mode,
+            &rankwidth_single_options, &amplitude, &amp_stats, trace_ptr, &error);
+      }
       qsop_rankwidth_decomposition_free(single_mode_decomposition);
     } else if (backend == SOLVE_BACKEND_BRANCH) {
       const qsop_branch_single_mode_options_t branch_single_mode_options = {
           .rw_source = branch_rw_source,
           .policy = branch_policy,
+          .heuristic = branch_heuristic,
+          .fallback = branch_single_fallback,
+          .precision = branch_single_precision,
+          .kernel = branch_single_kernel,
+          .max_search_nodes = branch_single_max_search_nodes,
+          .max_fallback_vars = branch_single_max_fallback_vars,
+          .cache_budget_mib = branch_single_cache_budget_mib,
+          .cache_min_vars = branch_single_cache_min_vars,
           .trace = trace_ptr,
       };
       ok = qsop_solve_branch_single_mode(qsop, max_vars, fourier_target_mode,
                                          &branch_single_mode_options, &amplitude, &amp_stats,
                                          &error);
+    } else if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+      ok = qsop_solve_treewidth_single_mode_f64(qsop, max_vars, treewidth_order,
+                                                fourier_target_mode, simd, &amplitude,
+                                                &amp_stats, trace_ptr, &error);
     } else {
       ok = qsop_solve_treewidth_single_mode(qsop, max_vars, treewidth_order, fourier_target_mode,
                                            &amplitude, &amp_stats, trace_ptr, &error);
@@ -1173,6 +1533,13 @@ int main(int argc, char **argv) {
     if (!ok) {
       print_error(&error, diagnostic_path);
       return 1;
+    }
+    if (simd_set) {
+      amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+      amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+    }
+    if (single_mode_precision_set) {
+      amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
     }
     printf("mode: single-fourier\n");
     printf("fourier_target_mode: %" PRIu32 "\n", fourier_target_mode);

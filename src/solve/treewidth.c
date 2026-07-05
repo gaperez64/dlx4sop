@@ -1,6 +1,7 @@
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/bitset.h"
 #include "dlx4sop/residue.h"
+#include "dlx4sop/simd.h"
 #include "trace.h"
 
 #include <float.h>
@@ -50,11 +51,25 @@ typedef struct tw_factor_complex {
   long double *im;
 } tw_factor_complex_t;
 
+typedef struct tw_factor_complex64 {
+  uint32_t arity;
+  uint32_t *vars;
+  size_t assignments;
+  double *re;
+  double *im;
+} tw_factor_complex64_t;
+
 typedef struct tw_factor_complex_list {
   tw_factor_complex_t *items;
   size_t len;
   size_t cap;
 } tw_factor_complex_list_t;
+
+typedef struct tw_factor_complex64_list {
+  tw_factor_complex64_t *items;
+  size_t len;
+  size_t cap;
+} tw_factor_complex64_list_t;
 
 /* Context for the single-mode solve: r and target_mode are needed to evaluate
  * omega_r^{target_mode * k} at leaves; complex_ops counts total per-assignment complex
@@ -68,6 +83,16 @@ typedef struct tw_complex_context {
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
 } tw_complex_context_t;
+
+typedef struct tw_complex64_context {
+  uint64_t r;
+  uint32_t target_mode;
+  uint32_t max_bag_vars;
+  uint64_t complex_ops;
+  const qsop_simd_vtable_t *simd;
+  qsop_solve_stats_t *stats;
+  qsop_solve_trace_t *trace;
+} tw_complex64_context_t;
 
 static void set_error(qsop_error_t *error, const char *fmt, ...) {
   if (error == NULL) {
@@ -883,17 +908,18 @@ static bool factor_sum_out_complex(const tw_factor_complex_t *input, uint32_t va
   if (!ok) {
     return false;
   }
-  /* Unlike factor_multiply_complex, this loop accumulates (+=) into out, with multiple input
-   * assignments landing on the same projected output index -- it needs a genuinely zeroed
-   * start, which factor_complex_alloc_scope's malloc no longer provides. */
-  memset(out->re, 0, out->assignments * sizeof(*out->re));
-  memset(out->im, 0, out->assignments * sizeof(*out->im));
-
-  for (size_t assignment = 0; assignment < input->assignments; assignment++) {
-    const size_t projected = remove_assignment_bit(assignment, pos);
-    out->re[projected] += input->re[assignment];
-    out->im[projected] += input->im[assignment];
-    ctx->complex_ops++;
+  const size_t stride = (size_t)1U << pos;
+  const size_t block = stride << 1U;
+  for (size_t base = 0; base < input->assignments; base += block) {
+    const size_t out_base = base >> 1U;
+    for (size_t off = 0; off < stride; off++) {
+      const size_t lower = base + off;
+      const size_t upper = lower + stride;
+      const size_t projected = out_base + off;
+      out->re[projected] = input->re[lower] + input->re[upper];
+      out->im[projected] = input->im[lower] + input->im[upper];
+      ctx->complex_ops += 2U;
+    }
   }
 
   note_complex_factor_table(ctx, out);
@@ -1065,16 +1091,22 @@ static uint64_t missing_edges_for(uint32_t v, const uint64_t *work, const uint64
   }
 
   uint64_t fill = 0;
-  for (uint32_t u = 0; u < nvars; u++) {
-    if (!qsop_bitset_get(remaining, u)) {
-      continue;
-    }
-    qsop_bitset_clear(remaining, u);
-    const uint64_t *u_neighbors = qsop_bitset_const_row(work, words, u);
-    for (size_t w = 0; w < words; w++) {
-      fill += qsop_popcount_u64(remaining[w] & ~u_neighbors[w]);
-      if (fill > stop_after) {
-        return fill;
+  for (size_t word = 0; word < words; word++) {
+    uint64_t bits = remaining[word];
+    while (bits != 0) {
+      const uint32_t bit = qsop_ctz_u64(bits);
+      const uint32_t u = (uint32_t)(word * 64U + bit);
+      bits &= bits - 1U;
+      if (u >= nvars) {
+        continue;
+      }
+      qsop_bitset_clear(remaining, u);
+      const uint64_t *u_neighbors = qsop_bitset_const_row(work, words, u);
+      for (size_t w = 0; w < words; w++) {
+        fill += qsop_popcount_u64(remaining[w] & ~u_neighbors[w]);
+        if (fill > stop_after) {
+          return fill;
+        }
       }
     }
   }
@@ -1152,25 +1184,31 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
     uint32_t best = 0;
     uint64_t best_fill = UINT64_MAX;
     uint32_t best_degree = UINT32_MAX;
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      if (!qsop_bitset_get(active, v)) {
-        continue;
-      }
-      const uint32_t degree =
-          qsop_bitset_popcount_intersection(qsop_bitset_const_row(work, words, v), active, words);
-      if (!treewidth_order_needs_fill(order_policy, found, degree, best_degree)) {
-        continue;
-      }
-      const uint64_t fill =
-          missing_edges_for(v, work, active, scratch, words, qsop->nvars,
-                            treewidth_fill_stop_after(order_policy, found, degree, best_fill,
-                                                      best_degree));
-      if (treewidth_candidate_is_better(order_policy, found, fill, degree, best_fill,
-                                        best_degree)) {
-        found = true;
-        best = v;
-        best_fill = fill;
-        best_degree = degree;
+    for (size_t word = 0; word < words; word++) {
+      uint64_t bits = active[word];
+      while (bits != 0) {
+        const uint32_t bit = qsop_ctz_u64(bits);
+        const uint32_t v = (uint32_t)(word * 64U + bit);
+        bits &= bits - 1U;
+        if (v >= qsop->nvars) {
+          continue;
+        }
+        const uint32_t degree = qsop_bitset_popcount_intersection(
+            qsop_bitset_const_row(work, words, v), active, words);
+        if (!treewidth_order_needs_fill(order_policy, found, degree, best_degree)) {
+          continue;
+        }
+        const uint64_t fill =
+            missing_edges_for(v, work, active, scratch, words, qsop->nvars,
+                              treewidth_fill_stop_after(order_policy, found, degree, best_fill,
+                                                        best_degree));
+        if (treewidth_candidate_is_better(order_policy, found, fill, degree, best_fill,
+                                          best_degree)) {
+          found = true;
+          best = v;
+          best_fill = fill;
+          best_degree = degree;
+        }
       }
     }
     if (!found) {
@@ -1194,16 +1232,22 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
       scratch[w] = best_row[w] & active[w];
     }
     qsop_bitset_clear(active, best);
-    for (uint32_t u = 0; u < qsop->nvars; u++) {
-      if (!qsop_bitset_get(scratch, u)) {
-        continue;
+    for (size_t word = 0; word < words; word++) {
+      uint64_t bits = scratch[word];
+      while (bits != 0) {
+        const uint32_t bit = qsop_ctz_u64(bits);
+        const uint32_t u = (uint32_t)(word * 64U + bit);
+        bits &= bits - 1U;
+        if (u >= qsop->nvars) {
+          continue;
+        }
+        uint64_t *u_row = qsop_bitset_row(work, words, u);
+        for (size_t w = 0; w < words; w++) {
+          u_row[w] |= scratch[w];
+          u_row[w] &= active[w];
+        }
+        qsop_bitset_clear(u_row, u);
       }
-      uint64_t *u_row = qsop_bitset_row(work, words, u);
-      for (size_t w = 0; w < words; w++) {
-        u_row[w] |= scratch[w];
-        u_row[w] &= active[w];
-      }
-      qsop_bitset_clear(u_row, u);
     }
   }
 
@@ -1606,6 +1650,451 @@ static bool multiply_remaining_factors_complex(tw_factor_complex_list_t *list,
   return true;
 }
 
+static void factor_complex64_free(tw_factor_complex64_t *factor) {
+  if (factor == NULL) {
+    return;
+  }
+  free(factor->vars);
+  free(factor->re);
+  free(factor->im);
+  *factor = (tw_factor_complex64_t){0};
+}
+
+static bool factor_complex64_alloc_scope(const uint32_t *vars, uint32_t arity,
+                                         tw_factor_complex64_t *out, qsop_error_t *error) {
+  *out = (tw_factor_complex64_t){0};
+
+  size_t assignments = 0;
+  if (!checked_assignment_count(arity, &assignments, error)) {
+    return false;
+  }
+  if (assignments > SIZE_MAX / sizeof(double)) {
+    set_error(error, "treewidth double single-mode factor table is too large");
+    return false;
+  }
+
+  uint32_t *scope = malloc((arity == 0 ? 1U : (size_t)arity) * sizeof(*scope));
+  double *re = malloc(assignments * sizeof(*re));
+  double *im = malloc(assignments * sizeof(*im));
+  if (scope == NULL || re == NULL || im == NULL) {
+    free(scope);
+    free(re);
+    free(im);
+    set_error(error, "out of memory while allocating treewidth double single-mode factor");
+    return false;
+  }
+  if (arity != 0) {
+    memcpy(scope, vars, (size_t)arity * sizeof(*scope));
+  }
+
+  *out = (tw_factor_complex64_t){
+      .arity = arity,
+      .vars = scope,
+      .assignments = assignments,
+      .re = re,
+      .im = im,
+  };
+  return true;
+}
+
+static bool factor_complex64_identity(tw_factor_complex64_t *out, qsop_error_t *error) {
+  if (!factor_complex64_alloc_scope(NULL, 0, out, error)) {
+    return false;
+  }
+  out->re[0] = 1.0;
+  out->im[0] = 0.0;
+  return true;
+}
+
+static void tw_root_of_unity_f64(uint64_t r, uint32_t target_mode, uint64_t k, double *re,
+                                 double *im) {
+  const double angle = (double)tw_two_pi * (double)target_mode * (double)k / (double)r;
+  *re = cos(angle);
+  *im = sin(angle);
+}
+
+static void note_complex64_factor_table(const tw_complex64_context_t *ctx,
+                                        const tw_factor_complex64_t *factor) {
+  if (ctx->stats == NULL) {
+    return;
+  }
+  const uint64_t entries = (uint64_t)factor->assignments;
+  ctx->stats->table_entries = entries;
+  if (entries > ctx->stats->max_table_entries) {
+    ctx->stats->max_table_entries = entries;
+  }
+}
+
+static bool projection_map_is_identity(const size_t *map, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    if (map[i] != i) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
+                                      const tw_factor_complex64_t *right,
+                                      tw_complex64_context_t *ctx, tw_factor_complex64_t *out,
+                                      qsop_error_t *error) {
+  uint32_t *vars = NULL;
+  uint32_t arity = 0;
+  if (!make_scope_union(left->vars, left->arity, right->vars, right->arity, &vars, &arity,
+                        error)) {
+    return false;
+  }
+  if (arity > ctx->max_bag_vars) {
+    free(vars);
+    set_error(error,
+              "treewidth backend refuses a %" PRIu32
+              "-variable bag; pass a larger --max-vars or use another backend",
+              arity);
+    return false;
+  }
+
+  uint32_t *left_positions =
+      malloc((left->arity == 0 ? 1U : left->arity) * sizeof(*left_positions));
+  uint32_t *right_positions =
+      malloc((right->arity == 0 ? 1U : right->arity) * sizeof(*right_positions));
+  if (left_positions == NULL || right_positions == NULL) {
+    free(vars);
+    free(left_positions);
+    free(right_positions);
+    set_error(error, "out of memory while multiplying treewidth double single-mode factors");
+    return false;
+  }
+  if (!map_scope_positions(vars, arity, left->vars, left->arity, left_positions, error) ||
+      !map_scope_positions(vars, arity, right->vars, right->arity, right_positions, error)) {
+    free(vars);
+    free(left_positions);
+    free(right_positions);
+    return false;
+  }
+
+  const uint64_t start = qsop_trace_begin(ctx->trace);
+  bool ok = factor_complex64_alloc_scope(vars, arity, out, error);
+  free(vars);
+  if (!ok) {
+    free(left_positions);
+    free(right_positions);
+    return false;
+  }
+
+  size_t *left_map = NULL;
+  size_t *right_map = NULL;
+  if (!projection_map_alloc(out->assignments, arity, left_positions, left->arity, &left_map,
+                            error) ||
+      !projection_map_alloc(out->assignments, arity, right_positions, right->arity, &right_map,
+                            error)) {
+    factor_complex64_free(out);
+    free(left_positions);
+    free(right_positions);
+    free(left_map);
+    free(right_map);
+    return false;
+  }
+
+  const bool identity_maps = projection_map_is_identity(left_map, out->assignments) &&
+                             projection_map_is_identity(right_map, out->assignments);
+  if (identity_maps && ctx->simd != NULL && ctx->simd->complex_mul_assign_f64 != NULL &&
+      out->assignments >= 8U) {
+    ctx->simd->complex_mul_assign_f64(out->re, out->im, left->re, left->im, right->re,
+                                      right->im, out->assignments);
+    add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
+    if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
+      add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)out->assignments);
+    }
+  } else {
+    for (size_t assignment = 0; assignment < out->assignments; assignment++) {
+      const size_t left_assignment = left_map[assignment];
+      const size_t right_assignment = right_map[assignment];
+      const double lre = left->re[left_assignment];
+      const double lim = left->im[left_assignment];
+      const double rre = right->re[right_assignment];
+      const double rim = right->im[right_assignment];
+      out->re[assignment] = lre * rre - lim * rim;
+      out->im[assignment] = lre * rim + lim * rre;
+      ctx->complex_ops++;
+    }
+    if (ctx->stats != NULL) {
+      add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops,
+                         (uint64_t)out->assignments);
+    }
+  }
+
+  free(left_positions);
+  free(right_positions);
+  free(left_map);
+  free(right_map);
+  if (ctx->stats != NULL) {
+    add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
+  }
+  note_complex64_factor_table(ctx, out);
+  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_multiply_f64", arity,
+                          out->assignments, start);
+  return true;
+}
+
+static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_t var,
+                                     tw_complex64_context_t *ctx, tw_factor_complex64_t *out,
+                                     qsop_error_t *error) {
+  const uint32_t pos = scope_var_pos(input->vars, input->arity, var);
+  if (pos == UINT32_MAX) {
+    set_error(error, "internal error: treewidth factor does not contain eliminated variable");
+    return false;
+  }
+
+  uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
+  if (vars == NULL) {
+    set_error(error, "out of memory while projecting treewidth double single-mode factor");
+    return false;
+  }
+  uint32_t arity = 0;
+  for (uint32_t i = 0; i < input->arity; i++) {
+    if (i != pos) {
+      vars[arity++] = input->vars[i];
+    }
+  }
+
+  const uint64_t start = qsop_trace_begin(ctx->trace);
+  bool ok = factor_complex64_alloc_scope(vars, arity, out, error);
+  free(vars);
+  if (!ok) {
+    return false;
+  }
+
+  const size_t stride = (size_t)1U << pos;
+  const size_t block = stride << 1U;
+  for (size_t base = 0; base < input->assignments; base += block) {
+    const size_t out_base = base >> 1U;
+    if (ctx->simd != NULL && ctx->simd->complex_sum_out_pairs_f64 != NULL && stride >= 8U) {
+      ctx->simd->complex_sum_out_pairs_f64(out->re + out_base, out->im + out_base,
+                                           input->re + base, input->im + base, stride);
+      if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
+        add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)stride);
+      }
+    } else {
+      for (size_t off = 0; off < stride; off++) {
+        const size_t lower = base + off;
+        const size_t upper = lower + stride;
+        const size_t projected = out_base + off;
+        out->re[projected] = input->re[lower] + input->re[upper];
+        out->im[projected] = input->im[lower] + input->im[upper];
+      }
+      if (ctx->stats != NULL) {
+        add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)stride);
+      }
+    }
+    add_saturating_u64(&ctx->complex_ops, (uint64_t)(2U * stride));
+  }
+
+  note_complex64_factor_table(ctx, out);
+  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_sum_out_f64", arity,
+                          out->assignments, start);
+  return true;
+}
+
+static bool factor_complex64_list_reserve(tw_factor_complex64_list_t *list, size_t needed,
+                                          qsop_error_t *error) {
+  if (needed <= list->cap) {
+    return true;
+  }
+
+  size_t new_cap = list->cap == 0 ? 16U : list->cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "treewidth double single-mode factor list is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  tw_factor_complex64_t *items = realloc(list->items, new_cap * sizeof(*items));
+  if (items == NULL) {
+    set_error(error, "out of memory while growing treewidth double single-mode factor list");
+    return false;
+  }
+  for (size_t i = list->cap; i < new_cap; i++) {
+    items[i] = (tw_factor_complex64_t){0};
+  }
+  list->items = items;
+  list->cap = new_cap;
+  return true;
+}
+
+static bool factor_complex64_list_push_take(tw_factor_complex64_list_t *list,
+                                            tw_factor_complex64_t *factor,
+                                            qsop_error_t *error) {
+  if (!factor_complex64_list_reserve(list, list->len + 1U, error)) {
+    return false;
+  }
+  list->items[list->len++] = *factor;
+  *factor = (tw_factor_complex64_t){0};
+  return true;
+}
+
+static void factor_complex64_list_remove_at(tw_factor_complex64_list_t *list, size_t index) {
+  factor_complex64_free(&list->items[index]);
+  list->len--;
+  if (index != list->len) {
+    list->items[index] = list->items[list->len];
+    list->items[list->len] = (tw_factor_complex64_t){0};
+  }
+}
+
+static tw_factor_complex64_t factor_complex64_list_take_at(tw_factor_complex64_list_t *list,
+                                                           size_t index) {
+  tw_factor_complex64_t taken = list->items[index];
+  list->len--;
+  if (index != list->len) {
+    list->items[index] = list->items[list->len];
+  }
+  list->items[list->len] = (tw_factor_complex64_t){0};
+  return taken;
+}
+
+static void factor_complex64_list_free(tw_factor_complex64_list_t *list) {
+  if (list == NULL) {
+    return;
+  }
+  for (size_t i = 0; i < list->len; i++) {
+    factor_complex64_free(&list->items[i]);
+  }
+  free(list->items);
+  *list = (tw_factor_complex64_list_t){0};
+}
+
+static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t var,
+                                          uint32_t target_mode,
+                                          tw_factor_complex64_list_t *list,
+                                          qsop_error_t *error) {
+  tw_factor_complex64_t factor = {0};
+  if (!factor_complex64_alloc_scope(&var, 1, &factor, error)) {
+    return false;
+  }
+  factor.re[0] = 1.0;
+  factor.im[0] = 0.0;
+  tw_root_of_unity_f64(qsop->r, target_mode, qsop->unary[var] % qsop->r,
+                       &factor.re[1], &factor.im[1]);
+  if (!factor_complex64_list_push_take(list, &factor, error)) {
+    factor_complex64_free(&factor);
+    return false;
+  }
+  return true;
+}
+
+static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t edge,
+                                         uint32_t target_mode,
+                                         tw_factor_complex64_list_t *list,
+                                         qsop_error_t *error) {
+  uint32_t vars[2] = {qsop->edge_u[edge], qsop->edge_v[edge]};
+  if (vars[0] > vars[1]) {
+    const uint32_t tmp = vars[0];
+    vars[0] = vars[1];
+    vars[1] = tmp;
+  }
+
+  tw_factor_complex64_t factor = {0};
+  if (!factor_complex64_alloc_scope(vars, 2, &factor, error)) {
+    return false;
+  }
+  const double sign_re = (target_mode % 2U == 0U) ? 1.0 : -1.0;
+  for (size_t assignment = 0; assignment < factor.assignments; assignment++) {
+    const bool left = (assignment & 1U) != 0;
+    const bool right = (assignment & 2U) != 0;
+    factor.re[assignment] = (left && right) ? sign_re : 1.0;
+    factor.im[assignment] = 0.0;
+  }
+  if (!factor_complex64_list_push_take(list, &factor, error)) {
+    factor_complex64_free(&factor);
+    return false;
+  }
+  return true;
+}
+
+static bool build_initial_factors_complex64(const qsop_instance_t *qsop, uint32_t target_mode,
+                                            tw_factor_complex64_list_t *list,
+                                            qsop_error_t *error) {
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (!append_unary_factor_complex64(qsop, v, target_mode, list, error)) {
+      return false;
+    }
+  }
+  for (uint32_t e = 0; e < qsop->nedges; e++) {
+    if (!append_edge_factor_complex64(qsop, e, target_mode, list, error)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool eliminate_variable_complex64(tw_factor_complex64_list_t *list, uint32_t var,
+                                         tw_complex64_context_t *ctx, qsop_error_t *error) {
+  tw_factor_complex64_t combined = {0};
+  bool collected = false;
+  for (size_t i = 0; i < list->len;) {
+    if (!scope_contains_var(list->items[i].vars, list->items[i].arity, var)) {
+      i++;
+      continue;
+    }
+
+    if (!collected) {
+      combined = factor_complex64_list_take_at(list, i);
+      collected = true;
+      continue;
+    }
+
+    tw_factor_complex64_t next = {0};
+    if (!factor_multiply_complex64(&combined, &list->items[i], ctx, &next, error)) {
+      factor_complex64_free(&combined);
+      return false;
+    }
+    factor_complex64_free(&combined);
+    combined = next;
+    factor_complex64_list_remove_at(list, i);
+    collected = true;
+  }
+
+  if (!collected) {
+    set_error(error, "internal error: treewidth elimination found no factor for variable");
+    return false;
+  }
+
+  tw_factor_complex64_t reduced = {0};
+  if (!factor_sum_out_complex64(&combined, var, ctx, &reduced, error)) {
+    factor_complex64_free(&combined);
+    return false;
+  }
+  factor_complex64_free(&combined);
+  if (!factor_complex64_list_push_take(list, &reduced, error)) {
+    factor_complex64_free(&reduced);
+    return false;
+  }
+  return true;
+}
+
+static bool multiply_remaining_factors_complex64(tw_factor_complex64_list_t *list,
+                                                 tw_complex64_context_t *ctx,
+                                                 tw_factor_complex64_t *out,
+                                                 qsop_error_t *error) {
+  if (list->len == 0) {
+    return factor_complex64_identity(out, error);
+  }
+
+  *out = factor_complex64_list_take_at(list, 0);
+  while (list->len != 0) {
+    tw_factor_complex64_t next = {0};
+    if (!factor_multiply_complex64(out, &list->items[0], ctx, &next, error)) {
+      factor_complex64_free(out);
+      return false;
+    }
+    factor_complex64_free(out);
+    *out = next;
+    factor_complex64_list_remove_at(list, 0);
+  }
+  return true;
+}
+
 static bool shift_result_counts(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
                                 const tw_context_t *ctx, qsop_error_t *error) {
   qsop_counts_clear(r, dst);
@@ -1654,6 +2143,7 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
 
   if (stats != NULL) {
     stats->decomposition_width = order_width;
+    stats->treewidth_single_complex_kernel = 1U;
   }
 
   tw_factor_list_t factors = {0};
@@ -1927,6 +2417,11 @@ static long double single_mode_error_bound(uint64_t complex_ops) {
   return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
 }
 
+static long double single_mode_error_bound_f64(uint64_t complex_ops) {
+  static const long double ops_per_step = 8.0L;
+  return (long double)complex_ops * ops_per_step * DBL_EPSILON;
+}
+
 static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                              const uint32_t *order, uint32_t order_width,
                                              uint32_t target_mode, long double *out_re,
@@ -2008,6 +2503,85 @@ static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32
   return true;
 }
 
+static bool solve_treewidth_single_mode_once_f64(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint32_t target_mode, const qsop_simd_vtable_t *simd,
+    double *out_re, double *out_im, long double *out_numeric_error_bound,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (stats != NULL) {
+    *stats = (qsop_solve_stats_t){0};
+  }
+  if (qsop == NULL || order == NULL || out_re == NULL || out_im == NULL) {
+    set_error(error, "internal error: null treewidth double single-mode solve argument");
+    return false;
+  }
+  if (max_bag_vars == 0 && qsop->nvars != 0) {
+    set_error(error,
+              "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
+              "--max-vars");
+    return false;
+  }
+
+  tw_complex64_context_t ctx = {
+      .r = qsop->r,
+      .target_mode = target_mode,
+      .max_bag_vars = max_bag_vars,
+      .simd = simd,
+      .stats = stats,
+      .trace = trace,
+  };
+
+  if (stats != NULL) {
+    stats->decomposition_width = order_width;
+    stats->treewidth_single_complex_kernel = 2U;
+  }
+
+  tw_factor_complex64_list_t factors = {0};
+  const uint64_t factors_start = qsop_trace_begin(trace);
+  if (!build_initial_factors_complex64(qsop, target_mode, &factors, error)) {
+    factor_complex64_list_free(&factors);
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, "treewidth.single_mode_initial_factors_f64", 0, factors.len,
+                          factors_start);
+
+  for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
+    if (!eliminate_variable_complex64(&factors, order[pos], &ctx, error)) {
+      factor_complex64_list_free(&factors);
+      return false;
+    }
+  }
+
+  tw_factor_complex64_t final = {0};
+  if (!multiply_remaining_factors_complex64(&factors, &ctx, &final, error)) {
+    factor_complex64_list_free(&factors);
+    return false;
+  }
+  if (final.arity != 0) {
+    factor_complex64_list_free(&factors);
+    factor_complex64_free(&final);
+    set_error(error,
+              "internal error: treewidth double single-mode solve left an uneliminated factor");
+    return false;
+  }
+
+  double c_re = 0.0;
+  double c_im = 0.0;
+  tw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  const double result_re = final.re[0] * c_re - final.im[0] * c_im;
+  const double result_im = final.re[0] * c_im + final.im[0] * c_re;
+
+  factor_complex64_list_free(&factors);
+  factor_complex64_free(&final);
+
+  *out_re = result_re;
+  *out_im = result_im;
+  if (out_numeric_error_bound != NULL) {
+    *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
+  }
+  return true;
+}
+
 static bool solve_treewidth_single_mode_order_policy_once(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
     uint32_t target_mode, long double *out_re, long double *out_im,
@@ -2024,6 +2598,26 @@ static bool solve_treewidth_single_mode_order_policy_once(
   const bool ok = solve_treewidth_single_mode_once(qsop, max_bag_vars, order, width, target_mode,
                                                    out_re, out_im, out_numeric_error_bound, stats,
                                                    trace, error);
+  free(order);
+  return ok;
+}
+
+static bool solve_treewidth_single_mode_order_policy_once_f64(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order_policy,
+    uint32_t target_mode, const qsop_simd_vtable_t *simd, double *out_re, double *out_im,
+    long double *out_numeric_error_bound, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  const uint64_t order_start = qsop_trace_begin(trace);
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+    return false;
+  }
+  qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
+                          order_start);
+  const bool ok = solve_treewidth_single_mode_once_f64(
+      qsop, max_bag_vars, order, width, target_mode, simd, out_re, out_im,
+      out_numeric_error_bound, stats, trace, error);
   free(order);
   return ok;
 }
@@ -2377,6 +2971,40 @@ bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_
   }
   out->re = re;
   out->im = im;
+  out->numeric_error_bound = numeric_error_bound;
+  return true;
+}
+
+bool qsop_solve_treewidth_single_mode_f64(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                          qsop_treewidth_order_t order_policy,
+                                          uint32_t target_mode,
+                                          const qsop_simd_vtable_t *simd,
+                                          qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                          qsop_solve_trace_t *trace, qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null amplitude result pointer");
+    return false;
+  }
+  *out = (qsop_amplitude_t){0};
+  if (qsop == NULL) {
+    set_error(error, "internal error: null QSOP instance");
+    return false;
+  }
+  if (qsop->r == 0) {
+    set_error(error, "internal error: QSOP instance has a zero modulus");
+    return false;
+  }
+
+  double re = 0.0;
+  double im = 0.0;
+  long double numeric_error_bound = 0.0L;
+  if (!solve_treewidth_single_mode_order_policy_once_f64(
+          qsop, max_bag_vars, order_policy, target_mode, simd, &re, &im,
+          &numeric_error_bound, stats, trace, error)) {
+    return false;
+  }
+  out->re = (long double)re;
+  out->im = (long double)im;
   out->numeric_error_bound = numeric_error_bound;
   return true;
 }

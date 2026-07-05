@@ -21,7 +21,7 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
 bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
                           qsop_error_t *error);
 
-uint32_t qsop_residual_modulus(const qsop_residual_t *residual);
+uint64_t qsop_residual_modulus(const qsop_residual_t *residual);
 
 uint32_t qsop_residual_nvars(const qsop_residual_t *residual);
 
@@ -31,9 +31,9 @@ uint32_t qsop_residual_active_vars(const qsop_residual_t *residual);
 
 uint32_t qsop_residual_active_edges(const qsop_residual_t *residual);
 
-uint32_t qsop_residual_constant(const qsop_residual_t *residual);
+uint64_t qsop_residual_constant(const qsop_residual_t *residual);
 
-uint32_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v);
+uint64_t qsop_residual_unary(const qsop_residual_t *residual, uint32_t v);
 
 uint32_t qsop_residual_edge_u(const qsop_residual_t *residual, uint32_t e);
 

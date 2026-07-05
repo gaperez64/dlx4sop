@@ -27,3 +27,9 @@ option('developer_warnings',
        type: 'boolean',
        value: true,
        description: 'Enable strict compiler warnings')
+
+option('simd',
+       type: 'combo',
+       choices: ['auto', 'scalar', 'neon', 'avx512'],
+       value: 'auto',
+       description: 'SIMD kernels to build/use')

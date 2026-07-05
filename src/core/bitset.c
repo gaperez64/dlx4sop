@@ -1,5 +1,7 @@
 #include "dlx4sop/bitset.h"
 
+#include "dlx4sop/simd.h"
+
 #include <string.h>
 
 size_t qsop_bitset_words(uint32_t nbits) {
@@ -21,6 +23,19 @@ uint32_t qsop_popcount_u64(uint64_t value) {
   uint32_t count = 0;
   while (value != 0) {
     value &= value - 1U;
+    count++;
+  }
+  return count;
+#endif
+}
+
+uint32_t qsop_ctz_u64(uint64_t value) {
+#if defined(__GNUC__) || defined(__clang__)
+  return (uint32_t)__builtin_ctzll(value);
+#else
+  uint32_t count = 0;
+  while ((value & 1U) == 0) {
+    value >>= 1U;
     count++;
   }
   return count;
@@ -53,10 +68,28 @@ void qsop_bitset_or(uint64_t *dst, const uint64_t *src, size_t words) {
   }
 }
 
+void qsop_bitset_or_simd(uint64_t *dst, const uint64_t *src, size_t words,
+                         const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->or_u64 != NULL && words >= 4U) {
+    simd->or_u64(dst, src, words);
+    return;
+  }
+  qsop_bitset_or(dst, src, words);
+}
+
 void qsop_bitset_and(uint64_t *dst, const uint64_t *src, size_t words) {
   for (size_t w = 0; w < words; w++) {
     dst[w] &= src[w];
   }
+}
+
+void qsop_bitset_and_simd(uint64_t *dst, const uint64_t *src, size_t words,
+                          const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->and_u64 != NULL && words >= 4U) {
+    simd->and_u64(dst, src, words);
+    return;
+  }
+  qsop_bitset_and(dst, src, words);
 }
 
 void qsop_bitset_and_not(uint64_t *dst, const uint64_t *src, size_t words) {
@@ -65,10 +98,28 @@ void qsop_bitset_and_not(uint64_t *dst, const uint64_t *src, size_t words) {
   }
 }
 
+void qsop_bitset_and_not_simd(uint64_t *dst, const uint64_t *src, size_t words,
+                              const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->andnot_u64 != NULL && words >= 4U) {
+    simd->andnot_u64(dst, src, words);
+    return;
+  }
+  qsop_bitset_and_not(dst, src, words);
+}
+
 void qsop_bitset_xor(uint64_t *dst, const uint64_t *src, size_t words) {
   for (size_t w = 0; w < words; w++) {
     dst[w] ^= src[w];
   }
+}
+
+void qsop_bitset_xor_simd(uint64_t *dst, const uint64_t *src, size_t words,
+                          const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->xor_u64 != NULL && words >= 4U) {
+    simd->xor_u64(dst, src, words);
+    return;
+  }
+  qsop_bitset_xor(dst, src, words);
 }
 
 bool qsop_bitset_equal(const uint64_t *left, const uint64_t *right, size_t words) {
@@ -101,6 +152,27 @@ uint32_t qsop_bitset_popcount_intersection(const uint64_t *left, const uint64_t 
   return count;
 }
 
+uint32_t qsop_bitset_popcount_intersection_simd(const uint64_t *left, const uint64_t *right,
+                                                size_t words,
+                                                const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->popcount_and_u64 != NULL && words >= 4U) {
+    return simd->popcount_and_u64(left, right, words);
+  }
+  return qsop_bitset_popcount_intersection(left, right, words);
+}
+
+uint32_t qsop_bitset_popcount_andnot_simd(const uint64_t *left, const uint64_t *right,
+                                          size_t words, const qsop_simd_vtable_t *simd) {
+  if (simd != NULL && simd->popcount_andnot_u64 != NULL && words >= 4U) {
+    return simd->popcount_andnot_u64(left, right, words);
+  }
+  uint32_t count = 0;
+  for (size_t w = 0; w < words; w++) {
+    count += qsop_popcount_u64(left[w] & ~right[w]);
+  }
+  return count;
+}
+
 uint64_t qsop_bitset_fingerprint(const uint64_t *bits, size_t words) {
   uint64_t fingerprint = UINT64_C(1469598103934665603);
   for (size_t w = 0; w < words; w++) {
@@ -110,7 +182,8 @@ uint64_t qsop_bitset_fingerprint(const uint64_t *bits, size_t words) {
   return fingerprint;
 }
 
-uint32_t qsop_gf2_rank_bitsets(uint64_t *rows, uint32_t nrows, uint32_t ncols, size_t words) {
+uint32_t qsop_gf2_rank_bitsets_simd(uint64_t *rows, uint32_t nrows, uint32_t ncols,
+                                    size_t words, const qsop_simd_vtable_t *simd) {
   uint32_t rank = 0;
   for (uint32_t col = 0; col < ncols && rank < nrows; col++) {
     /* The column bit is fixed across all rows this iteration: hoist its word + mask out of
@@ -138,9 +211,13 @@ uint32_t qsop_gf2_rank_bitsets(uint64_t *rows, uint32_t nrows, uint32_t ncols, s
       if (row == rank || (target[col_word] & col_mask) == 0) {
         continue;
       }
-      qsop_bitset_xor(target, rank_row, words);
+      qsop_bitset_xor_simd(target, rank_row, words, simd);
     }
     rank++;
   }
   return rank;
+}
+
+uint32_t qsop_gf2_rank_bitsets(uint64_t *rows, uint32_t nrows, uint32_t ncols, size_t words) {
+  return qsop_gf2_rank_bitsets_simd(rows, nrows, ncols, words, NULL);
 }

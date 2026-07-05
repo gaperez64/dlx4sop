@@ -28,6 +28,12 @@
 #define BRANCH_POLICY_DEFAULT_C_TW_TABLE             20UL
 #define BRANCH_POLICY_DEFAULT_C_TW_JOIN              10UL
 #define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.1
+#define BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS 64U
+#define BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES UINT64_C(10000000)
+#define BRANCH_SINGLE_DEFAULT_CACHE_BUDGET_MIB 256U
+#define BRANCH_SINGLE_DEFAULT_CACHE_MIN_VARS 12U
+#define BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP 16U
+#define BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP 30U
 
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {
@@ -181,15 +187,15 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
 typedef struct residual_cache_key {
   uint64_t fingerprint;
   bool canonical;
-  uint32_t r;
+  uint64_t r;
   uint32_t nvars;
   uint32_t nedges;
-  uint32_t constant;
+  uint64_t constant;
   uint32_t active_vars;
   uint32_t active_edges;
   uint8_t *active_var;
   uint8_t *active_edge;
-  uint32_t *unary;
+  uint64_t *unary;
   uint32_t *edge_u;
   uint32_t *edge_v;
 } residual_cache_key_t;
@@ -379,6 +385,11 @@ static uint64_t binary_assignment_forecast(uint32_t nvars) {
 static uint64_t treewidth_table_forecast(uint32_t width, uint32_t r) {
   const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
   return saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
+}
+
+static uint64_t treewidth_single_mode_table_forecast(uint32_t width) {
+  const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
+  return binary_assignment_forecast(bag_vars);
 }
 
 static uint64_t treewidth_join_pair_forecast(uint32_t width, uint32_t nvars) {
@@ -662,7 +673,7 @@ static uint64_t residual_cache_key_fingerprint(const residual_cache_key_t *key) 
   return fingerprint;
 }
 
-static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, uint32_t constant,
+static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, uint64_t constant,
                                                     residual_cache_key_t *key,
                                                     qsop_error_t *error) {
   if (key == NULL) {
@@ -672,7 +683,7 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
   *key = (residual_cache_key_t){0};
 
   key->canonical = true;
-  key->r = (uint32_t)sub->r;
+  key->r = sub->r;
   key->nvars = sub->nvars;
   key->nedges = sub->nedges;
   key->constant = constant;
@@ -693,11 +704,7 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
 
   memset(key->active_var, 1, (size_t)sub->nvars * sizeof(*key->active_var));
   memset(key->active_edge, 1, (size_t)sub->nedges * sizeof(*key->active_edge));
-  /* sub->unary is uint64_t*; key->unary stays uint32_t* (gated safe -- see the module-level
-   * comment on qsop_solve_branch), so this must be an explicit narrowing copy, not memcpy. */
-  for (uint32_t v = 0; v < sub->nvars; v++) {
-    key->unary[v] = (uint32_t)sub->unary[v];
-  }
+  memcpy(key->unary, sub->unary, (size_t)sub->nvars * sizeof(*key->unary));
   memcpy(key->edge_u, sub->edge_u, (size_t)sub->nedges * sizeof(*key->edge_u));
   memcpy(key->edge_v, sub->edge_v, (size_t)sub->nedges * sizeof(*key->edge_v));
   key->fingerprint = residual_cache_key_fingerprint(key);
@@ -907,11 +914,16 @@ static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t 
     *out_canonical_store = entry.key.canonical;
   }
 
-  if (!qsop_counts_alloc(entry.key.r, &entry.counts, error)) {
+  if (entry.key.r > UINT32_MAX) {
+    residual_cache_key_free(&entry.key);
+    set_error(error, "count-table branch residual cache requires R <= UINT32_MAX");
+    return false;
+  }
+  if (!qsop_counts_alloc((uint32_t)entry.key.r, &entry.counts, error)) {
     residual_cache_key_free(&entry.key);
     return false;
   }
-  memcpy(entry.counts, counts, (size_t)entry.key.r * sizeof(*entry.counts));
+  memcpy(entry.counts, counts, (size_t)(uint32_t)entry.key.r * sizeof(*entry.counts));
 
   if (!residual_cache_reserve(cache, cache->len + 1U, error)) {
     residual_cache_key_free(&entry.key);
@@ -1019,7 +1031,7 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
     }
   }
 
-  const uint32_t r = qsop_residual_modulus(residual);
+  const uint64_t r = qsop_residual_modulus(residual);
   uint32_t nedges = 0;
   for (uint32_t e = 0; e < source_edges; e++) {
     const uint32_t u = qsop_residual_edge_u(residual, e);
@@ -1132,6 +1144,14 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width,
   return decision_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
          binary_assignment_forecast(decision_width) <
              treewidth_table_forecast(treewidth_width, r) &&
+         treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
+}
+
+static bool rankwidth_should_override_treewidth_single(uint32_t treewidth_width,
+                                                       uint32_t decision_width) {
+  return decision_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
+         binary_assignment_forecast(decision_width) <
+             treewidth_single_mode_table_forecast(treewidth_width) &&
          treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
@@ -1466,7 +1486,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   const bool recording = (stats->sink != NULL && stats->sink->file != NULL);
   const bool calibrate = recording && stats->sink->calibrate_backends;
   const uint32_t active_edges = qsop_residual_active_edges(residual);
-  const uint32_t modulus_r = qsop_residual_modulus(residual);
+  const uint32_t modulus_r = (uint32_t)qsop_residual_modulus(residual);
 
   qsop_instance_t sub = {0};
   qsop_stats_t sub_stats = {0};
@@ -1568,8 +1588,8 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
                                      sub_stats.prefix_cut_rank,
                                      sub_stats.width_diagnostics_available,
-                                     qsop_residual_constant(residual), shared_order, stats,
-                                     rw_ptr, &delegated, error)) {
+                                     (uint32_t)qsop_residual_constant(residual), shared_order,
+                                     stats, rw_ptr, &delegated, error)) {
     free(shared_order);
     free_subinstance(&sub);
     return false;
@@ -1758,7 +1778,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
 
   const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
   if (!branch_counts_shift_add((uint32_t)sub.r, counts, delegate_counts,
-                               qsop_residual_constant(residual), stats, error)) {
+                               (uint32_t)qsop_residual_constant(residual), stats, error)) {
     free_subinstance(&sub);
     free(part_counts);
     qsop_result_free(part_result);
@@ -1885,7 +1905,7 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
                                   qsop_error_t *error) {
   *out_split = false;
   const uint32_t nvars = qsop_residual_nvars(residual);
-  const uint32_t r = qsop_residual_modulus(residual);
+  const uint32_t r = (uint32_t)qsop_residual_modulus(residual);
   const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
   uint64_t *acc = NULL;
@@ -1996,10 +2016,10 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
 
   const bool finalized =
       use_fourier
-          ? qsop_fourier_inverse_counts(r, acc, qsop_residual_constant(residual), powers,
+          ? qsop_fourier_inverse_counts(r, acc, (uint32_t)qsop_residual_constant(residual), powers,
                                         inv_powers, prime, counts, error)
-          : branch_counts_shift_add(r, counts, acc, qsop_residual_constant(residual), stats,
-                                    error);
+          : branch_counts_shift_add(r, counts, acc, (uint32_t)qsop_residual_constant(residual),
+                                    stats, error);
   if (!finalized) {
     free(component);
     free(acc);
@@ -2111,11 +2131,11 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
 static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
                           branch_search_stats_t *stats, qsop_error_t *error) {
   const uint64_t edge_free_start = qsop_trace_begin(stats->trace);
-  const uint32_t r = qsop_residual_modulus(residual);
+  const uint32_t r = (uint32_t)qsop_residual_modulus(residual);
   uint64_t *current = stats->work;
   uint64_t *next = stats->tmp;
   qsop_counts_clear(r, current);
-  current[qsop_residual_constant(residual)] = 1;
+  current[(uint32_t)qsop_residual_constant(residual)] = 1;
 
   for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
     if (!qsop_residual_var_active(residual, v)) {
@@ -2123,7 +2143,7 @@ static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
     }
 
     qsop_counts_clear(r, next);
-    const uint32_t unary = qsop_residual_unary(residual, v);
+    const uint32_t unary = (uint32_t)qsop_residual_unary(residual, v);
     for (uint32_t residue = 0; residue < r; residue++) {
       const uint64_t count = current[residue];
       if (count == 0) {
@@ -2156,7 +2176,8 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
                                 branch_search_stats_t *stats, qsop_error_t *error) {
   if (qsop_residual_active_vars(residual) == 0) {
     stats->leaves++;
-    return branch_count_add(stats, &counts[qsop_residual_constant(residual)], 1, error);
+    return branch_count_add(stats, &counts[(uint32_t)qsop_residual_constant(residual)], 1,
+                            error);
   }
   if (qsop_residual_active_edges(residual) == 0) {
     return edge_free_sum(residual, counts, stats, error);
@@ -2232,13 +2253,14 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     if (entry->search_nodes > 1U) {
       add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
     }
-    return add_counts(qsop_residual_modulus(residual), counts, entry->counts, stats, error);
+    return add_counts((uint32_t)qsop_residual_modulus(residual), counts, entry->counts, stats,
+                      error);
   }
 
   stats->cache_misses++;
   const uint64_t subtree_start_nodes = stats->nodes;
   uint64_t *computed = NULL;
-  const uint32_t r = qsop_residual_modulus(residual);
+  const uint32_t r = (uint32_t)qsop_residual_modulus(residual);
   if (!qsop_counts_alloc(r, &computed, error)) {
     return false;
   }
@@ -2554,8 +2576,8 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
   }
   if (qsop->r > UINT32_MAX) {
     set_error(error,
-              "branch backend refuses modulus > 2^32-1; use --backend treewidth or rankwidth "
-              "with --solve-mode single-fourier");
+              "count-table/all-modes branch backend requires R <= UINT32_MAX; use "
+              "--solve-mode single-fourier");
     return false;
   }
   if (o.mode != QSOP_SOLVE_MODE_COUNT_TABLE && o.mode != QSOP_SOLVE_MODE_FOURIER) {
@@ -2604,17 +2626,13 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
 }
 
 /* ---------------------------------------------------------------------------
- * Single Fourier mode: residual-free split-and-delegate.
+ * Single Fourier mode: delegate-first residual branching.
  *
- * qsop_residual_t (above) hardcodes r/constant/unary[] as uint32_t, so it cannot represent
- * the large-modulus instances this mode exists for (qasm2sop --approx output). This section
- * therefore splits qsop_instance_t directly into connected components (mirroring
- * components.c's already r-agnostic alloc_graph/label_components/build_subinstance) and
- * delegates each component to treewidth/rankwidth's own single-mode solvers, duplicating the
- * width-cap/cost-model decision already used for count-table delegation
- * (branch_try_rankwidth_delegate above) rather than threading a new mode through that
- * residual-based, calibration-instrumented code. There is no residual-branching fallback here:
- * a component whose width exceeds both delegates' caps fails with a clear error.
+ * The single-mode branch backend uses widened qsop_residual_t state, so it can split active
+ * residual components, delegate cheap components to treewidth/rankwidth, and fall back to
+ * scalar residual branching without allocating O(R) residue tables. The explicit delegate-only
+ * policy still uses this same recursion, but stops with a clear "no delegate available" error
+ * before the residual branching step.
  * --------------------------------------------------------------------------- */
 
 static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
@@ -2628,153 +2646,352 @@ static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, l
   *im = sinl(angle);
 }
 
-/* Duplicated per treewidth.c's/rankwidth.c's single_mode_error_bound convention. */
-static long double branch_single_mode_error_bound(uint64_t complex_ops) {
-  static const long double ops_per_step = 8.0L;
-  return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
+typedef struct branch_c64 {
+  double re;
+  double im;
+} branch_c64_t;
+
+static inline branch_c64_t c64_zero(void) {
+  return (branch_c64_t){0.0, 0.0};
 }
 
-static bool branch_single_mode_alloc_graph(const qsop_instance_t *qsop, uint64_t **rowptr_out,
-                                           uint32_t **colind_out, qsop_error_t *error) {
-  uint32_t *degree = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*degree));
-  uint64_t *rowptr = calloc((size_t)qsop->nvars + 1U, sizeof(*rowptr));
-  uint32_t *cursor = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*cursor));
-  uint32_t *colind = calloc(qsop->nedges == 0 ? 1U : (size_t)2U * qsop->nedges, sizeof(*colind));
-  if (degree == NULL || rowptr == NULL || cursor == NULL || colind == NULL) {
-    free(degree);
-    free(rowptr);
-    free(cursor);
-    free(colind);
-    set_error(error, "out of memory while building branch single-fourier component graph");
+static inline branch_c64_t c64_one(void) {
+  return (branch_c64_t){1.0, 0.0};
+}
+
+static inline branch_c64_t c64_add(branch_c64_t a, branch_c64_t b) {
+  return (branch_c64_t){a.re + b.re, a.im + b.im};
+}
+
+static inline branch_c64_t c64_mul(branch_c64_t a, branch_c64_t b) {
+  return (branch_c64_t){a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
+}
+
+static inline void c64_accum_error(uint64_t ops, long double *err) {
+  if (err != NULL) {
+    *err += (long double)ops * 8.0L * DBL_EPSILON;
+  }
+}
+
+typedef struct branch_phase_cache {
+  uint64_t r;
+  uint32_t target_mode;
+  uint64_t *keys;
+  double *re;
+  double *im;
+  uint8_t *used;
+  size_t cap;
+  size_t len;
+} branch_phase_cache_t;
+
+typedef struct branch_amp_cache_entry {
+  residual_cache_key_t key;
+  branch_c64_t amp;
+  long double numeric_error_bound;
+  uint64_t search_nodes;
+  size_t next;
+} branch_amp_cache_entry_t;
+
+typedef struct branch_amp_cache {
+  branch_amp_cache_entry_t *entries;
+  size_t *buckets;
+  size_t len;
+  size_t cap;
+  size_t bucket_count;
+  uint64_t estimated_bytes;
+  uint64_t budget_bytes;
+  uint32_t min_vars;
+} branch_amp_cache_t;
+
+typedef struct branch_single_mode_state {
+  uint64_t r;
+  uint32_t target_mode;
+  uint32_t max_vars;
+  qsop_branch_rw_source_t rw_source;
+  qsop_branch_policy_t policy;
+  qsop_branch_heuristic_t heuristic;
+  qsop_branch_single_fallback_t fallback;
+  qsop_branch_single_precision_t precision;
+  qsop_branch_single_kernel_t kernel;
+  uint64_t max_search_nodes;
+  uint32_t max_fallback_vars;
+  uint32_t max_recursion_depth;
+
+  branch_phase_cache_t phase_cache;
+  branch_amp_cache_t amp_cache;
+
+  uint64_t nodes;
+  uint64_t leaves;
+  uint64_t cache_hits;
+  uint64_t cache_misses;
+  uint64_t cache_avoided_nodes;
+  uint64_t cache_stores;
+  uint64_t branch_fallthroughs;
+  uint32_t depth;
+  long double numeric_error_bound;
+
+  qsop_solve_stats_t *stats;
+  qsop_solve_trace_t *trace;
+} branch_single_mode_state_t;
+
+static uint64_t branch_hash_u64(uint64_t x) {
+  x += UINT64_C(0x9e3779b97f4a7c15);
+  x = (x ^ (x >> 30U)) * UINT64_C(0xbf58476d1ce4e5b9);
+  x = (x ^ (x >> 27U)) * UINT64_C(0x94d049bb133111eb);
+  return x ^ (x >> 31U);
+}
+
+static bool branch_phase_cache_init(branch_phase_cache_t *cache, uint64_t r,
+                                    uint32_t target_mode, uint32_t lg_cap,
+                                    qsop_error_t *error) {
+  *cache = (branch_phase_cache_t){.r = r, .target_mode = target_mode};
+  if (lg_cap == 0) {
+    lg_cap = BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP;
+  }
+  if (lg_cap > BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP) {
+    set_error(error, "branch single-Fourier phase cache is too large");
     return false;
   }
-
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    degree[qsop->edge_u[e]]++;
-    degree[qsop->edge_v[e]]++;
+  cache->cap = (size_t)1U << lg_cap;
+  cache->keys = calloc(cache->cap, sizeof(*cache->keys));
+  cache->re = calloc(cache->cap, sizeof(*cache->re));
+  cache->im = calloc(cache->cap, sizeof(*cache->im));
+  cache->used = calloc(cache->cap, sizeof(*cache->used));
+  if (cache->keys == NULL || cache->re == NULL || cache->im == NULL || cache->used == NULL) {
+    free(cache->keys);
+    free(cache->re);
+    free(cache->im);
+    free(cache->used);
+    *cache = (branch_phase_cache_t){0};
+    set_error(error, "out of memory while allocating branch single-Fourier phase cache");
+    return false;
   }
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    rowptr[v + 1U] = rowptr[v] + degree[v];
-    cursor[v] = (uint32_t)rowptr[v];
-  }
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    const uint32_t u = qsop->edge_u[e];
-    const uint32_t v = qsop->edge_v[e];
-    colind[cursor[u]++] = v;
-    colind[cursor[v]++] = u;
-  }
-
-  free(degree);
-  free(cursor);
-  *rowptr_out = rowptr;
-  *colind_out = colind;
   return true;
 }
 
-static bool branch_single_mode_label_components(const qsop_instance_t *qsop,
-                                                const uint64_t *rowptr, const uint32_t *colind,
-                                                uint32_t *component, uint32_t *ncomponents,
-                                                qsop_error_t *error) {
-  uint32_t *queue = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*queue));
-  if (queue == NULL) {
-    set_error(error, "out of memory while labelling branch single-fourier components");
+static void branch_phase_cache_free(branch_phase_cache_t *cache) {
+  if (cache == NULL) {
+    return;
+  }
+  free(cache->keys);
+  free(cache->re);
+  free(cache->im);
+  free(cache->used);
+  *cache = (branch_phase_cache_t){0};
+}
+
+static uint64_t mul_mod_u64_u32(uint64_t a, uint32_t b, uint64_t mod) {
+  if (mod == 0) {
+    return 0;
+  }
+#if defined(__SIZEOF_INT128__)
+  return (uint64_t)(((__uint128_t)(a % mod) * (__uint128_t)b) % (__uint128_t)mod);
+#else
+  const long double product = fmodl((long double)(a % mod) * (long double)b, (long double)mod);
+  return (uint64_t)product;
+#endif
+}
+
+static branch_c64_t branch_quarter_phase(uint32_t target_mode, uint32_t multiplier) {
+  switch ((target_mode * multiplier) & 3U) {
+  case 0:
+    return (branch_c64_t){1.0, 0.0};
+  case 1:
+    return (branch_c64_t){0.0, 1.0};
+  case 2:
+    return (branch_c64_t){-1.0, 0.0};
+  default:
+    return (branch_c64_t){0.0, -1.0};
+  }
+}
+
+static branch_c64_t branch_phase_compute(uint64_t r, uint32_t target_mode, uint64_t residue) {
+  residue %= r;
+  if (residue == 0) {
+    return c64_one();
+  }
+  if ((r & 1U) == 0 && residue == r / 2U) {
+    return (target_mode & 1U) != 0 ? (branch_c64_t){-1.0, 0.0} : c64_one();
+  }
+  if ((r & 3U) == 0) {
+    if (residue == r / 4U) {
+      return branch_quarter_phase(target_mode, 1U);
+    }
+    if (residue == (3U * (r / 4U))) {
+      return branch_quarter_phase(target_mode, 3U);
+    }
+  }
+
+  static const double two_pi = 6.2831853071795864769252867665590057683943387987502;
+  const uint64_t k = mul_mod_u64_u32(residue, target_mode, r);
+  const double angle = two_pi * (double)k / (double)r;
+  return (branch_c64_t){cos(angle), sin(angle)};
+}
+
+static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t residue) {
+  if (cache == NULL || cache->r == 0) {
+    return c64_one();
+  }
+  residue %= cache->r;
+  if (residue == 0 ||
+      (((cache->r & 1U) == 0) && residue == cache->r / 2U) ||
+      (((cache->r & 3U) == 0) &&
+       (residue == cache->r / 4U || residue == 3U * (cache->r / 4U)))) {
+    return branch_phase_compute(cache->r, cache->target_mode, residue);
+  }
+  if (cache->cap == 0) {
+    return branch_phase_compute(cache->r, cache->target_mode, residue);
+  }
+  size_t idx = (size_t)(branch_hash_u64(residue) & (uint64_t)(cache->cap - 1U));
+  while (cache->used[idx] != 0) {
+    if (cache->keys[idx] == residue) {
+      return (branch_c64_t){cache->re[idx], cache->im[idx]};
+    }
+    idx = (idx + 1U) & (cache->cap - 1U);
+  }
+  const branch_c64_t value = branch_phase_compute(cache->r, cache->target_mode, residue);
+  if (cache->len * 10U >= cache->cap * 7U) {
+    return value;
+  }
+  cache->used[idx] = 1U;
+  cache->keys[idx] = residue;
+  cache->re[idx] = value.re;
+  cache->im[idx] = value.im;
+  cache->len++;
+  return value;
+}
+
+static uint64_t residual_key_estimated_bytes(const residual_cache_key_t *key) {
+  uint64_t bytes = sizeof(*key);
+  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
+  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
+  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
+  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_u)));
+  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_v)));
+  return bytes;
+}
+
+static void branch_amp_cache_free(branch_amp_cache_t *cache) {
+  if (cache == NULL) {
+    return;
+  }
+  for (size_t i = 0; i < cache->len; i++) {
+    residual_cache_key_free(&cache->entries[i].key);
+  }
+  free(cache->entries);
+  free(cache->buckets);
+  *cache = (branch_amp_cache_t){0};
+}
+
+static bool branch_amp_cache_reserve(branch_amp_cache_t *cache, size_t needed,
+                                     qsop_error_t *error) {
+  if (needed <= cache->cap) {
+    return true;
+  }
+  size_t new_cap = cache->cap == 0 ? 32U : cache->cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      set_error(error, "branch single-Fourier amplitude cache is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  branch_amp_cache_entry_t *entries = realloc(cache->entries, new_cap * sizeof(*entries));
+  if (entries == NULL) {
+    set_error(error, "out of memory while growing branch single-Fourier amplitude cache");
     return false;
   }
-
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    component[v] = UINT32_MAX;
-  }
-
-  uint32_t count = 0;
-  for (uint32_t start = 0; start < qsop->nvars; start++) {
-    if (component[start] != UINT32_MAX) {
-      continue;
-    }
-    uint32_t head = 0;
-    uint32_t tail = 0;
-    component[start] = count;
-    queue[tail++] = start;
-    while (head < tail) {
-      const uint32_t v = queue[head++];
-      for (uint64_t p = rowptr[v]; p < rowptr[v + 1U]; p++) {
-        const uint32_t other = colind[p];
-        if (component[other] == UINT32_MAX) {
-          component[other] = count;
-          queue[tail++] = other;
-        }
-      }
-    }
-    count++;
-  }
-
-  free(queue);
-  *ncomponents = count;
+  cache->entries = entries;
+  cache->cap = new_cap;
   return true;
 }
 
-/* Mirrors components.c's build_subinstance, minus the trailing qsop_canonicalize_small_component
- * call: that helper's internal buffers assume unary values fit in uint32_t (relying on the
- * invariant that callers already refused r > UINT32_MAX before ever building a sub-instance),
- * which single-fourier mode explicitly does not provide. */
-static bool branch_single_mode_build_subinstance(const qsop_instance_t *qsop,
-                                                 const uint32_t *component, uint32_t wanted,
-                                                 qsop_instance_t *sub, qsop_error_t *error) {
-  uint32_t *map = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*map));
-  if (map == NULL) {
-    set_error(error, "out of memory while building branch single-fourier component subinstance");
+static bool branch_amp_cache_rehash(branch_amp_cache_t *cache, size_t bucket_count,
+                                    qsop_error_t *error) {
+  size_t *buckets = malloc(bucket_count * sizeof(*buckets));
+  if (buckets == NULL) {
+    set_error(error, "out of memory while allocating branch single-Fourier amplitude cache");
     return false;
   }
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    map[v] = UINT32_MAX;
+  for (size_t i = 0; i < bucket_count; i++) {
+    buckets[i] = SIZE_MAX;
   }
+  for (size_t i = 0; i < cache->len; i++) {
+    const size_t bucket = (size_t)(cache->entries[i].key.fingerprint % bucket_count);
+    cache->entries[i].next = buckets[bucket];
+    buckets[bucket] = i;
+  }
+  free(cache->buckets);
+  cache->buckets = buckets;
+  cache->bucket_count = bucket_count;
+  return true;
+}
 
-  uint32_t nvars = 0;
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    if (component[v] == wanted) {
-      map[v] = nvars++;
+static bool branch_amp_cache_find(const branch_amp_cache_t *cache,
+                                  const qsop_residual_t *residual,
+                                  const branch_amp_cache_entry_t **out) {
+  *out = NULL;
+  if (cache->bucket_count == 0 ||
+      qsop_residual_active_vars(residual) < cache->min_vars) {
+    return true;
+  }
+  const uint64_t fingerprint = qsop_residual_fingerprint(residual);
+  const size_t bucket = (size_t)(fingerprint % cache->bucket_count);
+  for (size_t i = cache->buckets[bucket]; i != SIZE_MAX; i = cache->entries[i].next) {
+    const branch_amp_cache_entry_t *entry = &cache->entries[i];
+    if (entry->key.fingerprint == fingerprint &&
+        residual_cache_key_matches_residual(&entry->key, residual)) {
+      *out = entry;
+      return true;
     }
   }
+  return true;
+}
 
-  uint32_t nedges = 0;
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (component[qsop->edge_u[e]] == wanted) {
-      nedges++;
-    }
+static bool branch_amp_cache_store(branch_amp_cache_t *cache, const qsop_residual_t *residual,
+                                   branch_c64_t amp, long double numeric_error_bound,
+                                   uint64_t search_nodes, qsop_error_t *error) {
+  if (qsop_residual_active_vars(residual) < cache->min_vars) {
+    return true;
   }
-
-  *sub = (qsop_instance_t){
-      .r = qsop->r,
-      .nvars = nvars,
-      .norm_h = 0,
-      .constant = 0,
-      .nedges = nedges,
+  branch_amp_cache_entry_t entry = {
+      .amp = amp,
+      .numeric_error_bound = numeric_error_bound,
+      .search_nodes = search_nodes,
+      .next = SIZE_MAX,
   };
-  sub->unary = calloc(nvars == 0 ? 1U : nvars, sizeof(*sub->unary));
-  sub->edge_u = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_u));
-  sub->edge_v = calloc(nedges == 0 ? 1U : nedges, sizeof(*sub->edge_v));
-  if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL) {
-    free(map);
-    free_subinstance(sub);
-    set_error(error, "out of memory while allocating branch single-fourier component subinstance");
+  if (!residual_cache_key_create(residual, &entry.key, error)) {
     return false;
   }
-
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    if (component[v] == wanted) {
-      sub->unary[map[v]] = qsop->unary[v];
-    }
+  const uint64_t entry_bytes =
+      sizeof(entry) + residual_key_estimated_bytes(&entry.key);
+  if (cache->budget_bytes != 0 &&
+      (entry_bytes > cache->budget_bytes ||
+       cache->estimated_bytes > cache->budget_bytes - entry_bytes)) {
+    residual_cache_key_free(&entry.key);
+    return true;
   }
-
-  uint32_t out_edge = 0;
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (component[qsop->edge_u[e]] == wanted) {
-      sub->edge_u[out_edge] = map[qsop->edge_u[e]];
-      sub->edge_v[out_edge] = map[qsop->edge_v[e]];
-      out_edge++;
-    }
+  if (!branch_amp_cache_reserve(cache, cache->len + 1U, error)) {
+    residual_cache_key_free(&entry.key);
+    return false;
   }
-
-  free(map);
+  if (cache->bucket_count == 0) {
+    if (!branch_amp_cache_rehash(cache, 64U, error)) {
+      residual_cache_key_free(&entry.key);
+      return false;
+    }
+  } else if (cache->bucket_count <= SIZE_MAX / 2U &&
+             cache->len + 1U > cache->bucket_count * 2U &&
+             !branch_amp_cache_rehash(cache, cache->bucket_count * 2U, error)) {
+    residual_cache_key_free(&entry.key);
+    return false;
+  }
+  const size_t bucket = (size_t)(entry.key.fingerprint % cache->bucket_count);
+  entry.next = cache->buckets[bucket];
+  cache->entries[cache->len] = entry;
+  cache->buckets[bucket] = cache->len;
+  cache->len++;
+  add_saturating_u64(&cache->estimated_bytes, entry_bytes);
   return true;
 }
 
@@ -2841,12 +3058,19 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
 
 static bool branch_single_mode_delegate_component(
     const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
-    const qsop_branch_single_mode_options_t *options, qsop_amplitude_t *out,
-    qsop_solve_stats_t *io_stats, qsop_error_t *error) {
+    const qsop_branch_single_mode_options_t *options, bool fail_on_refusal,
+    bool *out_delegated, qsop_amplitude_t *out, qsop_solve_stats_t *io_stats,
+    qsop_error_t *error) {
+  if (out_delegated != NULL) {
+    *out_delegated = false;
+  }
   *out = (qsop_amplitude_t){0};
 
   if (sub->nvars == 0) {
     branch_root_of_unity(sub->r, target_mode, sub->constant % sub->r, &out->re, &out->im);
+    if (out_delegated != NULL) {
+      *out_delegated = true;
+    }
     return true;
   }
   if (sub->nvars > max_vars) {
@@ -2898,7 +3122,7 @@ static bool branch_single_mode_delegate_component(
     const bool cheap_treewidth =
         treewidth_available && !low_rank_bypass &&
         (treewidth_width <= policy.rw_min_treewidth_width ||
-         treewidth_table_forecast(treewidth_width, (uint32_t)sub->r) <= policy.rw_min_treewidth_forecast ||
+         treewidth_single_mode_table_forecast(treewidth_width) <= policy.rw_min_treewidth_forecast ||
          (sub->nvars < policy.rw_min_residual_vars && treewidth_width <= 5U));
     const bool prefer_treewidth =
         treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
@@ -2930,11 +3154,11 @@ static bool branch_single_mode_delegate_component(
             setup_ok = false;
           } else if (cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
             const uint64_t treewidth_table =
-                treewidth_available ? treewidth_table_forecast(treewidth_width, (uint32_t)sub->r) : 0;
+                treewidth_available ? treewidth_single_mode_table_forecast(treewidth_width) : 0;
             const uint64_t treewidth_join =
                 treewidth_available ? treewidth_join_pair_forecast(treewidth_width, sub->nvars) : 0;
-            const uint64_t sig_est =
-                sub->r > 0 ? (rankwidth_table / sub->r) : binary_assignment_forecast(cutrank_width);
+            rankwidth_table = binary_assignment_forecast(cutrank_width);
+            const uint64_t sig_est = rankwidth_table;
             const uint64_t rw_est = saturating_mul_u64(policy.C_rw_table, rankwidth_table) +
                                     saturating_mul_u64(policy.C_rw_join, rankwidth_join) +
                                     saturating_mul_u64(policy.C_rw_sig, sig_est) +
@@ -2951,7 +3175,7 @@ static bool branch_single_mode_delegate_component(
                 (!treewidth_available || rankwidth_table < treewidth_table) &&
                 (!treewidth_available || rankwidth_join <= treewidth_join) &&
                 (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-                 rankwidth_should_override_treewidth(treewidth_width, cutrank_width, (uint32_t)sub->r));
+                 rankwidth_should_override_treewidth_single(treewidth_width, cutrank_width));
           }
         }
       }
@@ -2983,13 +3207,17 @@ static bool branch_single_mode_delegate_component(
                                          &delegated, options->trace, error);
     delegated.rankwidth_delegations++;
   } else {
-    set_error(error,
-              "branch single-fourier: connected component (%" PRIu32
-              " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
-              "; neither is within its delegate cap (%u / %u) -- no delegate available",
-              sub->nvars, treewidth_width, cutrank_width, BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
-              BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
-    ok = false;
+    if (fail_on_refusal) {
+      set_error(error,
+                "branch single-fourier: connected component (%" PRIu32
+                " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
+                "; neither is within its delegate cap (%u / %u) -- no delegate available",
+                sub->nvars, treewidth_width, cutrank_width, BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
+                BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
+      ok = false;
+    } else {
+      ok = true;
+    }
   }
 
   qsop_rankwidth_decomposition_free(decomposition);
@@ -2999,8 +3227,404 @@ static bool branch_single_mode_delegate_component(
     free(stats_order);
   }
   if (ok) {
-    merge_single_mode_stats(io_stats, &delegated);
+    if (delegated.treewidth_delegations != 0 || delegated.rankwidth_delegations != 0) {
+      if (out_delegated != NULL) {
+        *out_delegated = true;
+      }
+      merge_single_mode_stats(io_stats, &delegated);
+    }
   }
+  return ok;
+}
+
+static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
+                                       branch_single_mode_state_t *state,
+                                       branch_c64_t *out, qsop_error_t *error);
+
+static uint64_t branch_cache_budget_bytes(uint64_t mib) {
+  return saturating_mul_u64(mib, UINT64_C(1024) * UINT64_C(1024));
+}
+
+static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
+                                          const qsop_instance_t *qsop,
+                                          uint32_t max_vars,
+                                          uint32_t target_mode,
+                                          const qsop_branch_single_mode_options_t *options,
+                                          qsop_solve_stats_t *stats,
+                                          qsop_error_t *error) {
+  const qsop_branch_single_mode_options_t o =
+      options != NULL ? *options : (qsop_branch_single_mode_options_t){0};
+  *state = (branch_single_mode_state_t){
+      .r = qsop->r,
+      .target_mode = target_mode,
+      .max_vars = max_vars,
+      .rw_source = o.rw_source,
+      .policy = o.policy,
+      .heuristic = o.heuristic,
+      .fallback = o.fallback,
+      .precision = o.precision,
+      .kernel = o.kernel,
+      .max_search_nodes = o.max_search_nodes != 0 ? o.max_search_nodes
+                                                  : BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES,
+      .max_fallback_vars = o.max_fallback_vars != 0 ? o.max_fallback_vars
+                                                    : BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS,
+      .max_recursion_depth = o.max_recursion_depth != 0 ? o.max_recursion_depth : qsop->nvars,
+      .stats = stats,
+      .trace = o.trace,
+  };
+  const uint64_t cache_budget_mib =
+      o.cache_budget_mib != 0 ? o.cache_budget_mib : BRANCH_SINGLE_DEFAULT_CACHE_BUDGET_MIB;
+  state->amp_cache = (branch_amp_cache_t){
+      .budget_bytes = branch_cache_budget_bytes(cache_budget_mib),
+      .min_vars = o.cache_min_vars != 0 ? o.cache_min_vars : BRANCH_SINGLE_DEFAULT_CACHE_MIN_VARS,
+  };
+  if (!branch_phase_cache_init(&state->phase_cache, qsop->r, target_mode,
+                               o.phase_cache_lg_cap, error)) {
+    return false;
+  }
+  return true;
+}
+
+static void branch_single_mode_state_free(branch_single_mode_state_t *state) {
+  if (state == NULL) {
+    return;
+  }
+  branch_phase_cache_free(&state->phase_cache);
+  branch_amp_cache_free(&state->amp_cache);
+}
+
+static void branch_single_mode_merge_final_stats(branch_single_mode_state_t *state) {
+  qsop_solve_stats_t *stats = state->stats;
+  if (stats == NULL) {
+    return;
+  }
+  stats->search_nodes = state->nodes;
+  stats->leaf_assignments = state->leaves;
+  stats->cache_hits = state->cache_hits;
+  stats->cache_misses = state->cache_misses;
+  stats->cache_avoided_nodes = state->cache_avoided_nodes;
+  stats->cache_entries = (uint64_t)state->amp_cache.len;
+  stats->cache_key_bytes = state->amp_cache.estimated_bytes;
+  stats->cache_estimated_bytes = state->amp_cache.estimated_bytes;
+  stats->branch_fallthroughs = state->branch_fallthroughs;
+}
+
+static void branch_single_note_residual_shape(branch_single_mode_state_t *state,
+                                              const qsop_residual_t *residual) {
+  if (state->stats == NULL) {
+    return;
+  }
+  max_u32(&state->stats->max_residual_vars, qsop_residual_active_vars(residual));
+  max_u32(&state->stats->max_residual_edges, qsop_residual_active_edges(residual));
+}
+
+static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
+                                         branch_single_mode_state_t *state,
+                                         branch_c64_t *out,
+                                         qsop_error_t *error) {
+  (void)error;
+  const uint64_t edge_free_start = qsop_trace_begin(state->trace);
+  branch_c64_t z =
+      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  const uint64_t r = qsop_residual_modulus(residual);
+  for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
+    if (!qsop_residual_var_active(residual, v)) {
+      continue;
+    }
+    const uint64_t unary = qsop_residual_unary(residual, v) % r;
+    branch_c64_t factor = {0.0, 0.0};
+    if (unary == 0) {
+      factor = (branch_c64_t){2.0, 0.0};
+    } else if ((r & 1U) == 0 && unary == r / 2U && (state->target_mode & 1U) != 0) {
+      *out = c64_zero();
+      add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
+      qsop_trace_emit_elapsed(state->trace, "branch.single.edge_free", state->depth,
+                              qsop_residual_active_vars(residual), edge_free_start);
+      return true;
+    } else {
+      const branch_c64_t phase = branch_phase_lookup(&state->phase_cache, unary);
+      factor = (branch_c64_t){1.0 + phase.re, phase.im};
+    }
+    z = c64_mul(z, factor);
+    c64_accum_error(1, &state->numeric_error_bound);
+  }
+  *out = z;
+  add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
+  qsop_trace_emit_elapsed(state->trace, "branch.single.edge_free", state->depth,
+                          qsop_residual_active_vars(residual), edge_free_start);
+  return true;
+}
+
+static bool branch_solve_component_single_mode(const qsop_instance_t *sub,
+                                               branch_single_mode_state_t *state,
+                                               branch_c64_t *out,
+                                               qsop_error_t *error) {
+  qsop_residual_t *component_residual = NULL;
+  if (!qsop_residual_create(sub, &component_residual, error)) {
+    return false;
+  }
+  state->depth++;
+  const bool ok = branch_sum_rec_single_mode(component_residual, state, out, error);
+  state->depth--;
+  qsop_residual_free(component_residual);
+  return ok;
+}
+
+static bool branch_sum_components_single_mode(qsop_residual_t *residual,
+                                              branch_single_mode_state_t *state,
+                                              bool *out_split,
+                                              branch_c64_t *out,
+                                              qsop_error_t *error) {
+  *out_split = false;
+  const uint32_t nvars = qsop_residual_nvars(residual);
+  uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
+  if (component == NULL) {
+    set_error(error, "out of memory while splitting branch single-Fourier residual components");
+    return false;
+  }
+
+  uint32_t ncomponents = 0;
+  const uint64_t split_start = qsop_trace_begin(state->trace);
+  if (!qsop_residual_active_components(residual, component, &ncomponents, error)) {
+    free(component);
+    return false;
+  }
+  if (state->stats != NULL) {
+    max_u32(&state->stats->max_residual_components, ncomponents);
+  }
+  qsop_trace_emit_elapsed(state->trace, "branch.single.component_split", state->depth,
+                          ncomponents, split_start);
+  if (ncomponents <= 1U) {
+    free(component);
+    return true;
+  }
+
+  branch_c64_t acc =
+      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  for (uint32_t c = 0; c < ncomponents; c++) {
+    qsop_instance_t sub = {0};
+    branch_c64_t part = c64_zero();
+    if (!build_residual_subinstance(residual, component, c, &sub, error) ||
+        !branch_solve_component_single_mode(&sub, state, &part, error)) {
+      free_subinstance(&sub);
+      free(component);
+      return false;
+    }
+    acc = c64_mul(acc, part);
+    c64_accum_error(1, &state->numeric_error_bound);
+    free_subinstance(&sub);
+  }
+  free(component);
+  *out = acc;
+  *out_split = true;
+  return true;
+}
+
+static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
+                                            branch_single_mode_state_t *state,
+                                            bool *out_delegated,
+                                            branch_c64_t *out,
+                                            qsop_error_t *error) {
+  *out_delegated = false;
+  qsop_instance_t sub = {0};
+  qsop_amplitude_t delegated_amp = {0};
+  if (!build_active_residual_subinstance(residual, &sub, error)) {
+    return false;
+  }
+  const qsop_branch_single_mode_options_t delegate_options = {
+      .rw_source = state->rw_source,
+      .policy = state->policy,
+      .heuristic = state->heuristic,
+      .fallback = state->fallback,
+      .precision = state->precision,
+      .kernel = state->kernel,
+      .trace = state->trace,
+  };
+  const bool ok = branch_single_mode_delegate_component(&sub, state->max_vars, state->target_mode,
+                                                        &delegate_options,
+                                                        state->fallback ==
+                                                            QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY,
+                                                        out_delegated, &delegated_amp,
+                                                        state->stats, error);
+  free_subinstance(&sub);
+  if (!ok || !*out_delegated) {
+    return ok;
+  }
+
+  branch_c64_t amp = {(double)delegated_amp.re, (double)delegated_amp.im};
+  const branch_c64_t constant =
+      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  *out = c64_mul(constant, amp);
+  state->numeric_error_bound += delegated_amp.numeric_error_bound;
+  c64_accum_error(2, &state->numeric_error_bound);
+  return true;
+}
+
+static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
+                                            const qsop_residual_t *residual,
+                                            branch_c64_t *out) {
+  if (qsop_residual_active_vars(residual) < state->amp_cache.min_vars) {
+    return false;
+  }
+  const branch_amp_cache_entry_t *entry = NULL;
+  branch_amp_cache_find(&state->amp_cache, residual, &entry);
+  if (entry == NULL) {
+    state->cache_misses++;
+    return false;
+  }
+  state->cache_hits++;
+  if (entry->search_nodes > 1U) {
+    add_saturating_u64(&state->cache_avoided_nodes, entry->search_nodes - 1U);
+  }
+  state->numeric_error_bound += entry->numeric_error_bound;
+  *out = entry->amp;
+  return true;
+}
+
+static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
+                                       branch_single_mode_state_t *state,
+                                       branch_c64_t *out,
+                                       qsop_error_t *error) {
+  if (state->max_recursion_depth != 0 && state->depth > state->max_recursion_depth) {
+    set_error(error, "branch single-Fourier recursion-depth cap exceeded");
+    return false;
+  }
+  state->nodes++;
+  if (state->max_search_nodes != 0 && state->nodes > state->max_search_nodes) {
+    set_error(error,
+              "branch single-Fourier search-node cap exceeded (%" PRIu64
+              "); try --branch-single-max-search-nodes with a larger value",
+              state->max_search_nodes);
+    return false;
+  }
+  branch_single_note_residual_shape(state, residual);
+
+  if (branch_single_mode_cache_lookup(state, residual, out)) {
+    qsop_trace_emit(state->trace, "branch.single.cache_hit", state->depth,
+                    qsop_residual_active_vars(residual), 0);
+    return true;
+  }
+
+  const uint64_t subtree_start_nodes = state->nodes;
+  const long double subtree_start_error = state->numeric_error_bound;
+  bool ok = true;
+  if (qsop_residual_active_vars(residual) == 0) {
+    state->leaves++;
+    *out = branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  } else if (qsop_residual_active_edges(residual) == 0) {
+    ok = branch_edge_free_single_mode(residual, state, out, error);
+  } else {
+    bool did_split = false;
+    ok = branch_sum_components_single_mode(residual, state, &did_split, out, error);
+    if (ok && !did_split) {
+      bool delegated = false;
+      ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
+      if (ok && !delegated) {
+        if (qsop_residual_active_vars(residual) > state->max_fallback_vars) {
+          set_error(error,
+                    "branch single-Fourier fallback refused component with %" PRIu32
+                    " active vars: residual fallback cap %" PRIu32
+                    " exceeded; try --branch-single-max-fallback-vars=%" PRIu32
+                    " or --branch-single-fourier-fallback=delegate-only",
+                    qsop_residual_active_vars(residual), state->max_fallback_vars,
+                    qsop_residual_active_vars(residual));
+          ok = false;
+        } else if (state->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
+          set_error(error,
+                    "branch single-Fourier residual fallback does not implement "
+                    "--branch-single-precision long-double yet");
+          ok = false;
+        } else if (state->kernel == QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2) {
+          set_error(error,
+                    "branch single-Fourier residual fallback does not implement "
+                    "--branch-single-kernel simd-avx2 yet");
+          ok = false;
+        } else {
+          state->branch_fallthroughs++;
+          qsop_trace_emit(state->trace, "branch.single.fallback_node", state->depth,
+                          qsop_residual_active_vars(residual), 0);
+          uint32_t v = 0;
+          const uint64_t select_start = qsop_trace_begin(state->trace);
+          if (!choose_branch_var(residual, state->heuristic, &v, error)) {
+            ok = false;
+          } else {
+            qsop_trace_emit_elapsed(state->trace, "branch.single.select_variable",
+                                    state->depth, v, select_start);
+            branch_c64_t amp0 = c64_zero();
+            branch_c64_t amp1 = c64_zero();
+            for (uint8_t value = 0; ok && value <= 1U; value++) {
+              const size_t checkpoint = qsop_residual_checkpoint(residual);
+              if (!qsop_residual_branch(residual, v, value, error)) {
+                ok = false;
+                break;
+              }
+              state->depth++;
+              branch_c64_t branch_amp = c64_zero();
+              ok = branch_sum_rec_single_mode(residual, state, &branch_amp, error);
+              state->depth--;
+              const bool undo_ok = qsop_residual_undo(residual, checkpoint, error);
+              if (!ok || !undo_ok) {
+                ok = false;
+                break;
+              }
+              if (value == 0) {
+                amp0 = branch_amp;
+              } else {
+                amp1 = branch_amp;
+              }
+            }
+            if (ok) {
+              *out = c64_add(amp0, amp1);
+              c64_accum_error(1, &state->numeric_error_bound);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (!ok) {
+    return false;
+  }
+
+  const uint64_t subtree_nodes = state->nodes - subtree_start_nodes + 1U;
+  const long double subtree_error = state->numeric_error_bound - subtree_start_error;
+  if (!branch_amp_cache_store(&state->amp_cache, residual, *out, subtree_error,
+                              subtree_nodes, error)) {
+    return false;
+  }
+  if (qsop_residual_active_vars(residual) >= state->amp_cache.min_vars) {
+    state->cache_stores++;
+    qsop_trace_emit(state->trace, "branch.single.cache_store", state->depth,
+                    (uint64_t)state->amp_cache.len, 0);
+  }
+  return true;
+}
+
+static bool branch_solve_single_mode_residual(const qsop_instance_t *qsop, uint32_t max_vars,
+                                              uint32_t target_mode,
+                                              const qsop_branch_single_mode_options_t *options,
+                                              qsop_amplitude_t *out,
+                                              qsop_solve_stats_t *stats,
+                                              qsop_error_t *error) {
+  branch_single_mode_state_t state = {0};
+  qsop_residual_t *residual = NULL;
+  if (!branch_single_mode_state_init(&state, qsop, max_vars, target_mode, options, stats, error) ||
+      !qsop_residual_create(qsop, &residual, error)) {
+    branch_single_mode_state_free(&state);
+    qsop_residual_free(residual);
+    return false;
+  }
+
+  branch_c64_t amp = c64_zero();
+  const bool ok = branch_sum_rec_single_mode(residual, &state, &amp, error);
+  if (ok) {
+    out->re = (long double)amp.re;
+    out->im = (long double)amp.im;
+    out->numeric_error_bound = state.numeric_error_bound;
+    branch_single_mode_merge_final_stats(&state);
+  }
+  qsop_residual_free(residual);
+  branch_single_mode_state_free(&state);
   return ok;
 }
 
@@ -3037,62 +3661,5 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
     return false;
   }
 
-  if (qsop->nvars == 0) {
-    branch_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &out->re, &out->im);
-    return true;
-  }
-
-  uint64_t *rowptr = NULL;
-  uint32_t *colind = NULL;
-  uint32_t *component = calloc(qsop->nvars, sizeof(*component));
-  if (component == NULL) {
-    set_error(error, "out of memory while allocating branch single-fourier component labels");
-    return false;
-  }
-  uint32_t ncomponents = 0;
-  const bool split_ok =
-      branch_single_mode_alloc_graph(qsop, &rowptr, &colind, error) &&
-      branch_single_mode_label_components(qsop, rowptr, colind, component, &ncomponents, error);
-  free(rowptr);
-  free(colind);
-  if (!split_ok) {
-    free(component);
-    return false;
-  }
-
-  long double acc_re = 1.0L;
-  long double acc_im = 0.0L;
-  /* Combining components' amplitudes by complex multiplication reuses the same "8 ops per
-   * complex multiply" convention as single_mode_error_bound in treewidth.c/rankwidth.c (see
-   * branch_single_mode_error_bound above), rather than inventing new error-accounting math. */
-  long double error_bound = 0.0L;
-  bool ok = true;
-  for (uint32_t c = 0; ok && c < ncomponents; c++) {
-    qsop_instance_t sub = {0};
-    qsop_amplitude_t part = {0};
-    if (!branch_single_mode_build_subinstance(qsop, component, c, &sub, error) ||
-        !branch_single_mode_delegate_component(&sub, max_vars, target_mode, &o, &part, stats,
-                                               error)) {
-      ok = false;
-    } else {
-      const long double new_re = acc_re * part.re - acc_im * part.im;
-      const long double new_im = acc_re * part.im + acc_im * part.re;
-      acc_re = new_re;
-      acc_im = new_im;
-      error_bound += part.numeric_error_bound + branch_single_mode_error_bound(1);
-    }
-    free_subinstance(&sub);
-  }
-  free(component);
-  if (!ok) {
-    return false;
-  }
-
-  long double c_re = 0.0L;
-  long double c_im = 0.0L;
-  branch_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
-  out->re = acc_re * c_re - acc_im * c_im;
-  out->im = acc_re * c_im + acc_im * c_re;
-  out->numeric_error_bound = error_bound + branch_single_mode_error_bound(1);
-  return true;
+  return branch_solve_single_mode_residual(qsop, max_vars, target_mode, &o, out, stats, error);
 }

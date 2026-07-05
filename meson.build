@@ -8,6 +8,7 @@ project(
 cc = meson.get_compiler('c')
 inc = include_directories('include')
 m_dep = cc.find_library('m', required: false)
+simd_option = get_option('simd')
 
 if get_option('developer_warnings')
   warning_flags = [
@@ -25,11 +26,10 @@ if get_option('developer_warnings')
   add_project_arguments(cc.get_supported_arguments(warning_flags), language: 'c')
 endif
 
-dlx4sop_core = static_library(
-  'dlx4sop_core',
-  files(
+dlx4sop_core_sources = files(
     'src/core/residue.c',
     'src/core/bitset.c',
+    'src/core/simd_scalar.c',
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
     'src/core/qsop_stats.c',
@@ -42,13 +42,56 @@ dlx4sop_core = static_library(
     'src/solve/rankwidth.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
-  ),
+)
+
+simd_link_whole = []
+cpu_family = host_machine.cpu_family()
+
+if simd_option == 'neon' or (simd_option == 'auto' and cpu_family in ['aarch64', 'arm'])
+  if cpu_family not in ['aarch64', 'arm']
+    error('-Dsimd=neon requires an ARM/AArch64 target')
+  endif
+  simd_neon_lib = static_library(
+    'dlx4sop_simd_neon',
+    files('src/core/simd_neon.c'),
+    include_directories: inc,
+  )
+  simd_link_whole += simd_neon_lib
+endif
+
+if simd_option == 'avx512' or (simd_option == 'auto' and cpu_family in ['x86', 'x86_64'])
+  if cpu_family not in ['x86', 'x86_64']
+    error('-Dsimd=avx512 requires an x86 target')
+  endif
+  avx512_args = cc.get_supported_arguments([
+    '-mavx512f',
+    '-mavx512dq',
+    '-mavx512vl',
+  ])
+  if avx512_args.length() < 3 and simd_option == 'avx512'
+    error('compiler does not support the required AVX-512 flags')
+  endif
+  if avx512_args.length() == 3
+    simd_avx512_lib = static_library(
+      'dlx4sop_simd_avx512',
+      files('src/core/simd_avx512.c'),
+      include_directories: inc,
+      c_args: avx512_args,
+    )
+    simd_link_whole += simd_avx512_lib
+  endif
+endif
+
+dlx4sop_core = static_library(
+  'dlx4sop_core',
+  dlx4sop_core_sources,
   include_directories: inc,
 )
 
 dlx4sop_core_dep = declare_dependency(
   include_directories: inc,
   link_with: dlx4sop_core,
+  link_whole: simd_link_whole,
   dependencies: m_dep,
 )
 
@@ -87,6 +130,13 @@ sop2wmc = executable(
   install: true,
 )
 
+bench_kernels = executable(
+  'bench-kernels',
+  'tools/bench_kernels.c',
+  dependencies: dlx4sop_core_dep,
+  install: false,
+)
+
 test_residue = executable(
   'test-residue',
   'tests/unit/test_residue.c',
@@ -103,6 +153,14 @@ test_residual = executable(
 
 test('residual unit', test_residual)
 
+test_bitset = executable(
+  'test-bitset',
+  'tests/unit/test_bitset.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('bitset unit', test_bitset)
+
 test_wmc = executable(
   'test-wmc',
   'tests/unit/test_wmc.c',
@@ -118,6 +176,13 @@ test_branch_api = executable(
 )
 
 test('branch api unit', test_branch_api)
+
+test(
+  'kernel benchmark smoke',
+  bench_kernels,
+  args: ['--simd', 'scalar', '--quick'],
+  timeout: 30,
+)
 
 python3 = find_program('python3', required: false)
 if python3.found()
