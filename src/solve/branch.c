@@ -2646,17 +2646,24 @@ static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, l
   *im = sinl(angle);
 }
 
+/* re/im are long double, not double: components delegated to treewidth/rankwidth
+ * come back as qsop_amplitude_t (long double), with raw (pre-normalization)
+ * magnitudes on the order of 2**(norm_h/2) -- routinely far beyond a double's
+ * ~1.8e308 range on deep circuits (norm_h > ~2048 is enough). Narrowing here
+ * would silently overflow to inf/nan before any combination even happens; see
+ * branch_try_single_mode_delegate below, the one place a delegated amplitude
+ * enters this type. */
 typedef struct branch_c64 {
-  double re;
-  double im;
+  long double re;
+  long double im;
 } branch_c64_t;
 
 static inline branch_c64_t c64_zero(void) {
-  return (branch_c64_t){0.0, 0.0};
+  return (branch_c64_t){0.0L, 0.0L};
 }
 
 static inline branch_c64_t c64_one(void) {
-  return (branch_c64_t){1.0, 0.0};
+  return (branch_c64_t){1.0L, 0.0L};
 }
 
 static inline branch_c64_t c64_add(branch_c64_t a, branch_c64_t b) {
@@ -2669,7 +2676,7 @@ static inline branch_c64_t c64_mul(branch_c64_t a, branch_c64_t b) {
 
 static inline void c64_accum_error(uint64_t ops, long double *err) {
   if (err != NULL) {
-    *err += (long double)ops * 8.0L * DBL_EPSILON;
+    *err += (long double)ops * 8.0L * LDBL_EPSILON;
   }
 }
 
@@ -2855,8 +2862,11 @@ static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t re
   }
   cache->used[idx] = 1U;
   cache->keys[idx] = residue;
-  cache->re[idx] = value.re;
-  cache->im[idx] = value.im;
+  /* The cache itself stores double-precision phases (magnitude always 1, so this
+   * narrowing never risks overflow) -- only the amplitude-carrying branch_c64_t
+   * values need long double range. */
+  cache->re[idx] = (double)value.re;
+  cache->im[idx] = (double)value.im;
   cache->len++;
   return value;
 }
@@ -3451,7 +3461,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
     return ok;
   }
 
-  branch_c64_t amp = {(double)delegated_amp.re, (double)delegated_amp.im};
+  branch_c64_t amp = {delegated_amp.re, delegated_amp.im};
   const branch_c64_t constant =
       branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
   *out = c64_mul(constant, amp);
