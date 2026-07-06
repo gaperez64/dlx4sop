@@ -762,6 +762,48 @@ def test_branch_single_fourier_root_guard_allows_splittable_large_instance(
         print(f"  root guard allows splittable {sum(sizes)}-var instance (diff={diff:.3e})")
 
 
+def test_branch_root_guard_allows_splittable_large_instance(
+    exe: pathlib.Path, verbose: bool = False
+) -> None:
+    """The same root-nvars-guard fix as
+    test_branch_single_fourier_root_guard_allows_splittable_large_instance above, but for
+    qsop_solve_branch's count-table/all-modes entry point. This recursion's branching fallback
+    (branch_sum_uncached) has no separate max_fallback_vars-style cap of its own -- unlike
+    single-fourier -- so the fix there required also adding a new per-component max_vars check
+    at the fallthrough-to-branching point, not just relaxing the root check."""
+    rng = random.Random(SEED + 10)
+    r = rng.choice(MODULI)
+    sizes = [5, 5, 5]
+    inst = disconnected_qsop(rng, sizes, r)
+    assert sum(sizes) > 10 > max(sizes)
+
+    ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+    assert ground_truth_out is not None, "brute-force ground truth failed"
+    ground_truth = parse_residue_vector(ground_truth_out)
+    assert ground_truth is not None, f"could not parse brute-force output: {ground_truth_out!r}"
+
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(inst.text)
+        qsop_path = f.name
+    result = subprocess.run(
+        [str(exe), "--max-vars", "10", "--backend", "branch", qsop_path],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"branch should split a {sum(sizes)}-variable, {len(sizes)}-component instance into "
+        f"per-component delegates/searches each under --max-vars=10, not refuse the whole "
+        f"instance outright; stderr={result.stderr!r}"
+    )
+    counts = parse_residue_vector(result.stdout)
+    assert counts is not None, f"could not parse output: {result.stdout!r}"
+    assert counts == ground_truth, f"mismatch: brute-force={ground_truth} branch={counts}"
+    if verbose:
+        print(f"  branch root guard allows splittable {sum(sizes)}-var instance")
+
+
 def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None:
     """When neither treewidth (cap 14) nor rankwidth (cap 12) is viable for a connected
     component, the explicit delegate-only branch single-fourier policy must preserve the old
@@ -1028,6 +1070,7 @@ def main(argv: list[str]) -> None:
     test_single_fourier_mode_backends_agree(exe, verbose=verbose)
     test_branch_single_fourier_disconnected_components(exe, verbose=verbose)
     test_branch_single_fourier_root_guard_allows_splittable_large_instance(exe, verbose=verbose)
+    test_branch_root_guard_allows_splittable_large_instance(exe, verbose=verbose)
     test_branch_single_fourier_refuses_wide_component(exe)
     test_branch_single_fourier_large_component(exe)
     test_branch_single_fourier_residual_fallback(exe)

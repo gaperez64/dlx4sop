@@ -35,10 +35,12 @@
 #define BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP 16U
 #define BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP 30U
 /* Purely a defensive bound on the root-level component-split allocation's O(nvars) cost, not
- * a solvability gate -- that job belongs entirely to the per-component --max-vars check inside
- * branch_single_mode_delegate_component, which fires before the expensive width diagnostic.
- * See qsop_solve_branch_single_mode's root nvars check. */
-#define BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER 64U
+ * a solvability gate -- that job belongs to a per-component --max-vars check instead (in
+ * qsop_solve_branch_single_mode's case, the one inside branch_single_mode_delegate_component,
+ * which fires before the expensive width diagnostic; in qsop_solve_branch's case, the one added
+ * to branch_sum_uncached's fallthrough-to-branching step, since that recursion has no separate
+ * max_fallback_vars-style cap of its own). Shared by both entry points' root nvars checks. */
+#define BRANCH_ROOT_SANITY_MULTIPLIER 64U
 
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {
@@ -334,6 +336,12 @@ typedef struct branch_search_stats {
   uint32_t depth;
   uint32_t decomposition_width;
   uint32_t rankwidth_cutrank_width;
+  /* Unlike single-fourier's branch_single_mode_state_t, this recursion's branching fallback
+   * (see branch_sum_uncached) has no separate max_fallback_vars-style cap of its own -- the
+   * root nvars check in qsop_solve_branch is deliberately loose (see BRANCH_ROOT_SANITY_
+   * MULTIPLIER), so max_vars must be threaded down here to gate the fallthrough-to-branching
+   * step per component instead. */
+  uint32_t max_vars;
 } branch_search_stats_t;
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
@@ -1814,7 +1822,7 @@ static void branch_search_free(branch_search_stats_t *search) {
 }
 
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
-                                     qsop_branch_heuristic_t heuristic,
+                                     uint32_t max_vars, qsop_branch_heuristic_t heuristic,
                                      qsop_branch_rw_source_t rw_source,
                                      const qsop_branch_policy_t *policy,
                                      qsop_solve_mode_t mode, uint64_t *counts,
@@ -1830,6 +1838,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
       .policy = branch_policy_normalize(policy),
       .mode = mode,
       .count_modulus = count_modulus,
+      .max_vars = max_vars,
   };
 
   if (!qsop_residual_create(qsop, &residual, error) ||
@@ -2204,6 +2213,20 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
+  /* Unlike single-fourier's branching fallback (gated separately by max_fallback_vars), this
+   * recursion has no smaller cap of its own -- qsop_solve_branch's root nvars check is
+   * deliberately loose now (BRANCH_ROOT_SANITY_MULTIPLIER), so a component that didn't split
+   * small enough and isn't delegate-eligible must be refused here instead of falling into
+   * unbounded exhaustive branching. */
+  const uint32_t active_vars = qsop_residual_active_vars(residual);
+  if (active_vars > stats->max_vars) {
+    set_error(error,
+              "residual branch solver refuses a %" PRIu32
+              "-variable component; pass a larger --max-vars or use a future backend",
+              active_vars);
+    return false;
+  }
+
   stats->branch_fallthroughs++;
   branch_trace_event(stats, "branch.fallthrough", qsop_residual_active_vars(residual));
 
@@ -2297,7 +2320,8 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
   return true;
 }
 
-static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_t heuristic,
+static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
+                             qsop_branch_heuristic_t heuristic,
                              qsop_branch_rw_source_t rw_source, qsop_result_t **out,
                              qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                              qsop_backend_stats_sink_t *sink, qsop_error_t *error) {
@@ -2339,7 +2363,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, qsop_branch_heuristic_
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     qsop_backend_stats_sink_t *sink_for_prime = p == 0 ? sink : NULL;
-    if (!branch_solve_counts_once(qsop, primes[p], heuristic, rw_source, NULL,
+    if (!branch_solve_counts_once(qsop, primes[p], max_vars, heuristic, rw_source, NULL,
                                   QSOP_SOLVE_MODE_COUNT_TABLE,
                                   &all_counts[p * (size_t)qsop->r], stats_for_prime,
                                   trace_for_prime, sink_for_prime, error)) {
@@ -2589,11 +2613,20 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     set_error(error, "internal error: unsupported residual branch solve mode");
     return false;
   }
-  if (qsop->nvars > max_vars) {
+  /* Deliberately loose (see BRANCH_ROOT_SANITY_MULTIPLIER's comment): rejecting on the whole
+   * instance's raw nvars here, before ever attempting a component split, would wrongly refuse a
+   * large instance that's actually a disjoint union of many small, easily delegatable
+   * components. The real accept/reject decision for a component that doesn't split small enough
+   * is the per-component max_vars check added to branch_sum_uncached's fallthrough-to-branching
+   * step, since (unlike single-fourier) this recursion's branching fallback has no separate
+   * max_fallback_vars-style cap of its own. */
+  const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_ROOT_SANITY_MULTIPLIER;
+  if ((uint64_t)qsop->nvars > root_sanity_limit) {
     set_error(error,
               "residual branch solver refuses %" PRIu32
-              " variables; pass a larger --max-vars or use a future backend",
-              qsop->nvars);
+              " variables outright (exceeds %ux --max-vars); pass a larger --max-vars or use a "
+              "future backend",
+              qsop->nvars, BRANCH_ROOT_SANITY_MULTIPLIER);
     return false;
   }
   bool root_handled = false;
@@ -2605,7 +2638,8 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return true;
   }
   if (qsop->nvars >= 64U) {
-    return solve_branch_crt(qsop, o.heuristic, o.rw_source, out, stats, o.trace, o.sink, error);
+    return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace,
+                            o.sink, error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -2620,7 +2654,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
 
-  if (!branch_solve_counts_once(qsop, 0, o.heuristic, o.rw_source, &o.policy, o.mode,
+  if (!branch_solve_counts_once(qsop, 0, max_vars, o.heuristic, o.rw_source, &o.policy, o.mode,
                                 result->counts, stats, o.trace, o.sink, error)) {
     qsop_result_free(result);
     return false;
@@ -3676,12 +3710,12 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
    * accept/reject decision for a component that doesn't split small enough is the per-component
    * max_vars check inside branch_single_mode_delegate_component, which already fires before the
    * expensive width diagnostic. */
-  const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER;
+  const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_ROOT_SANITY_MULTIPLIER;
   if ((uint64_t)qsop->nvars > root_sanity_limit) {
     set_error(error,
               "branch single-fourier solver refuses %" PRIu32
               " variables outright (exceeds %ux --max-vars); pass a larger --max-vars",
-              qsop->nvars, BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER);
+              qsop->nvars, BRANCH_ROOT_SANITY_MULTIPLIER);
     return false;
   }
 
