@@ -144,13 +144,29 @@ def parse_amplitude(sop_solve_output: str) -> complex:
     return complex(float(values["amplitude_re"]), float(values["amplitude_im"]))
 
 
+# Rankwidth's join/DP tables have no implicit cap: without this forecast gate,
+# a wide real circuit can drive an unbounded allocation before sop-solve ever
+# gets a chance to report an error. The gate checks the forecast *before*
+# allocating solve state, so this budget must stay comfortably under whatever
+# memory ceiling actually wraps the adapter process.
+RANKWIDTH_MEMORY_BUDGET_MIB = 2048
+
+
 def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     zero = "0" * nqubits
     qsop_text, metrics = import_qsop(qasm_text, zero)
     norm_h = parse_norm_h(qsop_text)
 
+    command = [str(SOP_SOLVE), "--backend", backend, "--solve-mode", "single-fourier"]
+    if backend == "rankwidth":
+        command += [
+            "--rankwidth-memory-budget-mib", str(RANKWIDTH_MEMORY_BUDGET_MIB),
+            "--rankwidth-memory-policy", "skip",
+        ]
+    command.append("-")
+
     completed = subprocess.run(
-        [str(SOP_SOLVE), "--backend", backend, "--solve-mode", "single-fourier", "-"],
+        command,
         input=qsop_text,
         check=False,
         capture_output=True,
@@ -159,6 +175,8 @@ def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     )
     if completed.returncode != 0:
         raise RuntimeError(f"sop-solve --backend {backend} failed: {completed.stderr.strip()}")
+    if "memory-skip" in completed.stderr:
+        raise RuntimeError(f"sop-solve --backend {backend}: {completed.stderr.strip()}")
 
     raw = parse_amplitude(completed.stdout)
     metrics["norm_h"] = norm_h
