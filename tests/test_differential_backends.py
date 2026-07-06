@@ -711,6 +711,57 @@ def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
         raise AssertionError(f"{len(failures)} disconnected-component failure(s)")
 
 
+def test_branch_single_fourier_root_guard_allows_splittable_large_instance(
+    exe: pathlib.Path, verbose: bool = False
+) -> None:
+    """qsop_solve_branch_single_mode's root nvars check must not refuse an instance whose
+    *total* nvars exceeds --max-vars if it splits into components that are each individually
+    small enough to delegate -- otherwise a large instance that's actually a disjoint union of
+    many small sub-circuits would be refused outright before ever attempting the (cheap)
+    component split. Uses an artificially small --max-vars (well under single-fourier's raised
+    default of 4096) so this is exercisable without needing thousands of variables: this
+    instance's total nvars (15, three 5-variable components) exceeds --max-vars=10, but no
+    single component does."""
+    rng = random.Random(SEED + 9)
+    r = rng.choice(MODULI)
+    sizes = [5, 5, 5]
+    inst = disconnected_qsop(rng, sizes, r)
+    assert sum(sizes) > 10 > max(sizes)
+
+    ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+    assert ground_truth_out is not None, "brute-force ground truth failed"
+    counts = parse_residue_vector(ground_truth_out)
+    assert counts is not None, f"could not parse brute-force output: {ground_truth_out!r}"
+    expected = bruteforce_amplitude(counts, inst.r)
+
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(inst.text)
+        qsop_path = f.name
+    result = subprocess.run(
+        [str(exe), "--max-vars", "10", "--backend", "branch", "--solve-mode", "single-fourier",
+         qsop_path],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"branch single-fourier should split a {sum(sizes)}-variable, {len(sizes)}-component "
+        f"instance into per-component delegates each under --max-vars=10, not refuse the whole "
+        f"instance outright; stderr={result.stderr!r}"
+    )
+    parsed = parse_single_fourier_output(result.stdout)
+    assert parsed is not None, f"could not parse output: {result.stdout!r}"
+    actual_re, actual_im, bound = parsed
+    diff = abs(complex(actual_re, actual_im) - expected)
+    tolerance = bound + 1e-6
+    assert diff <= tolerance, (
+        f"expected {expected}, got ({actual_re},{actual_im}), diff={diff}, bound={bound}"
+    )
+    if verbose:
+        print(f"  root guard allows splittable {sum(sizes)}-var instance (diff={diff:.3e})")
+
+
 def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None:
     """When neither treewidth (cap 14) nor rankwidth (cap 12) is viable for a connected
     component, the explicit delegate-only branch single-fourier policy must preserve the old
@@ -976,6 +1027,7 @@ def main(argv: list[str]) -> None:
     )
     test_single_fourier_mode_backends_agree(exe, verbose=verbose)
     test_branch_single_fourier_disconnected_components(exe, verbose=verbose)
+    test_branch_single_fourier_root_guard_allows_splittable_large_instance(exe, verbose=verbose)
     test_branch_single_fourier_refuses_wide_component(exe)
     test_branch_single_fourier_large_component(exe)
     test_branch_single_fourier_residual_fallback(exe)

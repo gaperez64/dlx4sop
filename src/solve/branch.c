@@ -34,6 +34,11 @@
 #define BRANCH_SINGLE_DEFAULT_CACHE_MIN_VARS 12U
 #define BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP 16U
 #define BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP 30U
+/* Purely a defensive bound on the root-level component-split allocation's O(nvars) cost, not
+ * a solvability gate -- that job belongs entirely to the per-component --max-vars check inside
+ * branch_single_mode_delegate_component, which fires before the expensive width diagnostic.
+ * See qsop_solve_branch_single_mode's root nvars check. */
+#define BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER 64U
 
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {
@@ -3663,11 +3668,20 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
   }
   /* Deliberately no `qsop->r > UINT32_MAX` guard here -- that's the entire point of this
    * entry point (see the file-level comment above). */
-  if (qsop->nvars > max_vars) {
+  /* This is deliberately a much looser bound than max_vars: rejecting on the whole instance's
+   * raw nvars here, before ever attempting a component split, would wrongly refuse a large
+   * instance that's actually a disjoint union of many small, easily delegatable components
+   * (e.g. a batch of independent sub-circuits). The component split itself is a cheap O(nvars)
+   * graph traversal, so only guard here against a truly pathological input; the real
+   * accept/reject decision for a component that doesn't split small enough is the per-component
+   * max_vars check inside branch_single_mode_delegate_component, which already fires before the
+   * expensive width diagnostic. */
+  const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER;
+  if ((uint64_t)qsop->nvars > root_sanity_limit) {
     set_error(error,
               "branch single-fourier solver refuses %" PRIu32
-              " variables; pass a larger --max-vars",
-              qsop->nvars);
+              " variables outright (exceeds %ux --max-vars); pass a larger --max-vars",
+              qsop->nvars, BRANCH_SINGLE_ROOT_SANITY_MULTIPLIER);
     return false;
   }
 
