@@ -1,7 +1,7 @@
 project(
   'dlx4sop',
   'c',
-  version: '0.1.1',
+  version: '0.3',
   default_options: ['c_std=c2x', 'warning_level=3'],
 )
 
