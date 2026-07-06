@@ -49,6 +49,32 @@ def forbidden_ops_present(circuit) -> set[str]:
     return {instr.operation.name for instr in circuit.data if instr.operation.name in FORBIDDEN_OPS}
 
 
+def strip_unused_clbits(circuit):
+    """Drop classical registers no instruction actually touches.
+
+    Several MQT-derived QPY payloads carry a dangling `creg` declaration left
+    over from textual measurement-stripping upstream (the source QASM's
+    `measure`/`if` lines were removed but the `creg` line was not). qasm2sop's
+    parser hard-rejects any `creg`/`measure` line as a dynamic/classical
+    feature, even when the register is provably inert, so this preprocessing
+    is required to avoid a false "non-unitary" rejection.
+    """
+    if circuit.num_clbits == 0:
+        return circuit
+    live = any(
+        len(instr.clbits) > 0 or getattr(instr.operation, "condition", None) is not None
+        for instr in circuit.data
+    )
+    if live:
+        return circuit
+    from qiskit import QuantumCircuit
+
+    stripped = QuantumCircuit(*circuit.qregs)
+    for instr in circuit.data:
+        stripped.append(instr.operation, instr.qubits, [])
+    return stripped
+
+
 def load_circuit(payload_path: str):
     from qiskit import qpy
 
@@ -58,6 +84,7 @@ def load_circuit(payload_path: str):
             circuits = qpy.load(handle)
     circuit = circuits[0].copy()
     circuit.remove_final_measurements(inplace=True)
+    circuit = strip_unused_clbits(circuit)
     forbidden = forbidden_ops_present(circuit)
     if forbidden or circuit.num_clbits:
         raise ValueError(
