@@ -21,11 +21,13 @@ FetchContent and needs GMP+GMPXX already installed).
 from __future__ import annotations
 
 import argparse
+import cmath
 import json
 import pathlib
 import subprocess
 import sys
 import warnings
+from decimal import Decimal, getcontext
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -74,6 +76,23 @@ def load_circuit(payload_path: str):
     return circuit
 
 
+def parse_ganak_complex_decimal(text: str) -> tuple[Decimal, Decimal]:
+    """Like bench_wmc_ganak.parse_ganak_complex, but keeps full decimal precision.
+
+    ganak's raw weighted count can reach ~1e300+ on deep circuits, well past a
+    Python float's ~1.8e308 range and, short of outright overflow, past its
+    ~15-17 significant digits of precision -- either way losing digits that
+    matter once the count is scaled back down by 2**(-norm_h/2). Deferring the
+    float conversion until after that scaling (see solve() below) avoids both.
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        match = wmc.GANAK_COMPLEX_PATTERN.match(stripped)
+        if match:
+            return Decimal(match.group(1)), Decimal(match.group(2) or "0")
+    raise ValueError(f"could not parse ganak complex output:\n{text}")
+
+
 def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     zero = "0" * nqubits
     qsop_text, metrics = import_qsop(qasm_text, zero)
@@ -110,9 +129,13 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     )
     if counted.returncode != 0:
         raise RuntimeError(f"ganak --mode 6 failed: {counted.stderr.strip()}")
-    raw = wmc.parse_ganak_complex(counted.stdout + counted.stderr)
-    amplitude = raw * factor
-    return wmc.normalize_amplitude(amplitude, norm_h), metrics
+    raw_re, raw_im = parse_ganak_complex_decimal(counted.stdout + counted.stderr)
+    getcontext().prec = max(50, norm_h // 2 + 50)
+    factor_re, factor_im = Decimal(factor.real), Decimal(factor.imag)
+    amp_re = raw_re * factor_re - raw_im * factor_im
+    amp_im = raw_re * factor_im + raw_im * factor_re
+    scale = Decimal(2) ** (Decimal(-norm_h) / 2)
+    return complex(float(amp_re * scale), float(amp_im * scale)), metrics
 
 
 def main() -> int:
@@ -134,6 +157,12 @@ def main() -> int:
     nqubits = manifest_tool.qasm_qubits(qasm_text)
 
     value, metrics = solve(qasm_text, nqubits)
+    # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
+    # in the qasm2mod.dumps() round-trip above; sop2wmc/ganak then compute the
+    # right amplitude *relative to that dropped phase*. Reapply it here -- it's a
+    # property of the original circuit object, not something the qsop pipeline can
+    # recover from QASM text alone. See adapter.py's solve() for the same fix.
+    value *= cmath.exp(1j * float(circuit.global_phase))
     print(
         json.dumps(
             {

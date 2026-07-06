@@ -18,11 +18,13 @@ header, not from sop-solve's output.
 from __future__ import annotations
 
 import argparse
+import cmath
 import json
 import pathlib
 import subprocess
 import sys
 import warnings
+from decimal import Decimal, getcontext
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -70,6 +72,7 @@ def strip_unused_clbits(circuit):
     from qiskit import QuantumCircuit
 
     stripped = QuantumCircuit(*circuit.qregs)
+    stripped.global_phase = circuit.global_phase
     for instr in circuit.data:
         stripped.append(instr.operation, instr.qubits, [])
     return stripped
@@ -133,7 +136,7 @@ def parse_norm_h(qsop_text: str) -> int:
     raise RuntimeError(f"qsop output has no 'n' (norm_h) header line:\n{qsop_text}")
 
 
-def parse_amplitude(sop_solve_output: str) -> complex:
+def parse_amplitude(sop_solve_output: str) -> tuple[Decimal, Decimal]:
     values: dict[str, str] = {}
     for line in sop_solve_output.splitlines():
         key, sep, value = line.partition(":")
@@ -141,7 +144,7 @@ def parse_amplitude(sop_solve_output: str) -> complex:
             values[key.strip()] = value.strip()
     if "amplitude_re" not in values or "amplitude_im" not in values:
         raise RuntimeError(f"malformed sop-solve output:\n{sop_solve_output}")
-    return complex(float(values["amplitude_re"]), float(values["amplitude_im"]))
+    return Decimal(values["amplitude_re"]), Decimal(values["amplitude_im"])
 
 
 # Rankwidth's join/DP tables have no implicit cap: without this forecast gate,
@@ -178,9 +181,18 @@ def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     if "memory-skip" in completed.stderr:
         raise RuntimeError(f"sop-solve --backend {backend}: {completed.stderr.strip()}")
 
-    raw = parse_amplitude(completed.stdout)
+    raw_re, raw_im = parse_amplitude(completed.stdout)
     metrics["norm_h"] = norm_h
-    return raw * (2.0 ** (-norm_h / 2.0)), metrics
+    # single-fourier's raw amplitude scales like 2**(norm_h/2), which overflows a
+    # Python float (max ~1.8e308) once norm_h exceeds ~2048 -- a real occurrence on
+    # deep circuits that need many rounded phase ops during --approx import. Doing
+    # the scaling in arbitrary-precision decimal arithmetic, and converting to a
+    # plain float only after raw*scale has cancelled back down to a normal
+    # amplitude's magnitude, avoids the silent overflow-to-inf-times-zero-is-nan
+    # that a naive `float(raw_str) * 2.0**(-norm_h/2)` produces.
+    getcontext().prec = max(50, norm_h // 2 + 50)
+    scale = Decimal(2) ** (Decimal(-norm_h) / 2)
+    return complex(float(raw_re * scale), float(raw_im * scale)), metrics
 
 
 def main() -> int:
@@ -204,6 +216,12 @@ def main() -> int:
     nqubits = manifest_tool.qasm_qubits(qasm_text)
 
     value, metrics = solve(args.backend, qasm_text, nqubits)
+    # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
+    # in the qasm2mod.dumps() round-trip above; qasm2sop/sop-solve then compute the
+    # right amplitude *relative to that dropped phase*. Reapply it here -- it's a
+    # property of the original circuit object, not something the qsop pipeline can
+    # recover from QASM text alone.
+    value *= cmath.exp(1j * float(circuit.global_phase))
     print(
         json.dumps(
             {
