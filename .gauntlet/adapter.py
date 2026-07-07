@@ -3,8 +3,8 @@
 
 Speaks the inferq.zero-amplitude.v1 protocol (see qccq-gauntlet's
 docs/adapter-protocol.md): for each request, computes <0^n|C|0^n> by piping
-qasm2sop's output into `sop-solve --backend branch --solve-mode auto
---format amplitude`. qasm2sop is tried exactly first since that yields the
+qasm2sop's output into `sop-solve --format amplitude`. qasm2sop is tried
+exactly first since that yields the
 smallest, most precise modulus; --approx only kicks in if the circuit is not
 exactly representable in the qsop-sign format.
 
@@ -146,17 +146,13 @@ def parse_amplitude(sop_solve_output: str) -> tuple[Decimal, Decimal]:
     return Decimal(values["amplitude_re"]), Decimal(values["amplitude_im"])
 
 
-def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
+def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     zero = "0" * nqubits
     qsop_text, metrics = import_qsop(qasm_text, zero)
     norm_h = parse_norm_h(qsop_text)
 
     command = [
         str(SOP_SOLVE),
-        "--backend",
-        backend,
-        "--solve-mode",
-        "auto",
         "--format",
         "amplitude",
     ]
@@ -171,9 +167,9 @@ def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
         timeout=SUBPROCESS_TIMEOUT_S,
     )
     if completed.returncode != 0:
-        raise RuntimeError(f"sop-solve --backend {backend} failed: {completed.stderr.strip()}")
+        raise RuntimeError(f"sop-solve failed: {completed.stderr.strip()}")
     if "memory-skip" in completed.stderr:
-        raise RuntimeError(f"sop-solve --backend {backend}: {completed.stderr.strip()}")
+        raise RuntimeError(f"sop-solve: {completed.stderr.strip()}")
 
     raw_re, raw_im = parse_amplitude(completed.stdout)
     metrics["norm_h"] = norm_h
@@ -191,8 +187,8 @@ def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", default="branch", choices=["branch"])
-    args = parser.parse_args()
+    parser.add_argument("--backend", default="branch", choices=["branch"], help=argparse.SUPPRESS)
+    parser.parse_args()
 
     if not QASM2SOP.is_file() or not SOP_SOLVE.is_file():
         raise SystemExit(
@@ -209,7 +205,7 @@ def main() -> int:
     qasm_text = manifest_tool.inline_simple_gates(qasm_text)
     nqubits = manifest_tool.qasm_qubits(qasm_text)
 
-    value, metrics = solve(args.backend, qasm_text, nqubits)
+    value, metrics = solve(qasm_text, nqubits)
     # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
     # in the qasm2mod.dumps() round-trip above; qasm2sop/sop-solve then compute the
     # right amplitude *relative to that dropped phase*. Reapply it here -- it's a
