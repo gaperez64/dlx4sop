@@ -138,7 +138,7 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-Comparative benchmarking now lives entirely in
+Comparative benchmarking can be found in
 [qccq-gauntlet](https://qccq-cgd.pages.dev/), an external harness that runs
 the dlx4sop backends and the `sop2wmc` + Ganak pipeline against shared
 datasets/suites on a public leaderboard. `.gauntlet/adapter.py` and
@@ -147,17 +147,3 @@ they import a circuit, run it through `qasm2sop`/`sop-solve` (or
 `sop2wmc` + Ganak), and report back in the protocol gauntlet expects. Both
 adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
 from `scripts/` for OpenQASM munging and Ganak-output parsing.
-
-Local microbenchmarking of the shared SIMD kernels (bitset popcount/xor and
-f64 complex kernels) is still available:
-
-```sh
-meson setup build-bench --buildtype=release -Db_lto=true -Dc_args=-march=x86-64-v2
-meson compile -C build-bench
-build-bench/bench-kernels --quick
-```
-
-`-march=x86-64-v2` enables the hardware `popcnt` instruction (portable across x86 CPUs
-since ~2009); without it `__builtin_popcount` falls back to a slow libgcc routine that
-dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware by
-default, so the `-Dc_args` is unnecessary there.
