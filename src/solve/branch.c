@@ -347,6 +347,12 @@ typedef struct branch_search_stats {
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS (BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
+/* Root-only widening for the top-level treewidth fast path.  This admits the low-width
+ * inferq outliers and qwalk11-sized instances before the coarse root nvars sanity check,
+ * while avoiding several-thousand-variable roots where even computing an order is costly. */
+#define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH 18U
+#define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS (BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH + 1U)
+#define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS 2500U
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 /* When prefix_cut_rank is at most this threshold, bypass the blanket
@@ -2472,13 +2478,20 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   }
   qsop_trace_emit_elapsed(trace, "branch.root_width_probe", 0, width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
-  if (width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+  const uint32_t max_width =
+      qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH
+                                                         : BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint32_t max_bag_vars =
+      qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS
+          ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS
+          : BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS;
+  if (width > max_width) {
     free(order);
     return true;
   }
   /* D5: treewidth is within delegation range but prefix_cut_rank signals rankwidth
    * may win massively (e.g. K_{a,b} uniform with tw = a >> cut_rank = 1).  Check
-   * after the width gate so wide instances (tw > 14) skip this stats call entirely. */
+   * after the width gate so roots outside the admitted cap skip this stats call entirely. */
   qsop_stats_t root_stats = {0};
   qsop_error_t stats_err = {0};
   if (qsop_compute_stats(qsop, &root_stats, &stats_err) &&
@@ -2499,8 +2512,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   const uint64_t solve_start_ns = recording ? qsop_trace_now_ns() : 0;
   const uint64_t solve_start = qsop_trace_begin(trace);
   if (!qsop_solve_treewidth_precomputed_order_mode_trace_stats(
-          qsop, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, width, mode, &result, &delegated,
-          trace, error)) {
+          qsop, max_bag_vars, order, width, mode, &result, &delegated, trace, error)) {
     free(order);
     return false;
   }
@@ -2613,6 +2625,18 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     set_error(error, "internal error: unsupported residual branch solve mode");
     return false;
   }
+  bool root_handled = false;
+  const bool tried_root_treewidth_before_sanity =
+      max_vars > 0U && qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS;
+  if (tried_root_treewidth_before_sanity) {
+    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, o.sink,
+                                             &root_handled, error)) {
+      return false;
+    }
+    if (root_handled) {
+      return true;
+    }
+  }
   /* Deliberately loose (see BRANCH_ROOT_SANITY_MULTIPLIER's comment): rejecting on the whole
    * instance's raw nvars here, before ever attempting a component split, would wrongly refuse a
    * large instance that's actually a disjoint union of many small, easily delegatable
@@ -2629,13 +2653,14 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
               qsop->nvars, BRANCH_ROOT_SANITY_MULTIPLIER);
     return false;
   }
-  bool root_handled = false;
-  if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, o.sink,
-                                           &root_handled, error)) {
-    return false;
-  }
-  if (root_handled) {
-    return true;
+  if (!tried_root_treewidth_before_sanity) {
+    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, o.sink,
+                                             &root_handled, error)) {
+      return false;
+    }
+    if (root_handled) {
+      return true;
+    }
   }
   if (qsop->nvars >= 64U) {
     return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace,

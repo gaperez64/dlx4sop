@@ -959,6 +959,53 @@ def path_qsop(nvars: int, r: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def test_branch_root_treewidth_bypasses_default_root_sanity(exe: pathlib.Path) -> None:
+    """A low-treewidth root just above 24 * BRANCH_ROOT_SANITY_MULTIPLIER should use the
+    treewidth fast path before the coarse count-table root refusal, and branch auto should
+    therefore stay on the count-table kernel instead of falling through to single-fourier."""
+    text = path_qsop(1537, 8)
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(text)
+        qsop_path = f.name
+
+    count_table = subprocess.run(
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "count-table",
+            "--format",
+            "residue-vector",
+            qsop_path,
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert count_table.returncode == 0, (
+        "branch count-table should admit a 1537-variable path through the root treewidth "
+        f"fast path before the default root sanity refusal; stderr={count_table.stderr!r}"
+    )
+
+    auto = subprocess.run(
+        [str(exe), "--backend", "branch", "--format", "amplitude", qsop_path],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert auto.returncode == 0, (
+        f"branch auto amplitude solve failed on low-treewidth 1537-variable path: "
+        f"{auto.stderr!r}"
+    )
+    assert "solve_mode_kernel: count-table" in auto.stdout, (
+        "branch auto should keep the count-table treewidth kernel for low-treewidth roots "
+        f"instead of falling back to single-fourier; output={auto.stdout!r}"
+    )
+
+
 def test_single_fourier_default_max_vars(exe: pathlib.Path) -> None:
     """--max-vars defaults to 24 (a count-table safety valve, since nvars directly
     drives their 2^nvars or O(r) cost). single-fourier mode has no such blowup, so its default
@@ -1111,6 +1158,7 @@ def main(argv: list[str]) -> None:
     test_branch_single_fourier_refuses_wide_component(exe)
     test_branch_single_fourier_large_component(exe)
     test_branch_single_fourier_residual_fallback(exe)
+    test_branch_root_treewidth_bypasses_default_root_sanity(exe)
     test_single_fourier_default_max_vars(exe)
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"

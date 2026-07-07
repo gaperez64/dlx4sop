@@ -130,7 +130,7 @@ sop2wmc = executable(
 
 bench_kernels = executable(
   'bench-kernels',
-  'src/tools/bench_kernels.c',
+  'tests/unit/bench_kernels.c',
   dependencies: dlx4sop_core_dep,
   install: false,
 )
