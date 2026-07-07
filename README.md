@@ -56,23 +56,6 @@ from source:
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at corpus import and validation boundaries.
 
-## Build
-
-```sh
-meson setup build
-meson compile -C build
-meson test -C build --print-errorlogs
-```
-
-The default `build` directory is a debug build (`-O0`, assertions on), which is
-appropriate for development and the test suite.
-
-CI enforces at least 75% line coverage over production `src` files:
-
-```sh
-scripts/check-coverage.sh build-coverage
-```
-
 ## Solver Guide
 
 - `branch --solve-mode auto`: default recommended solver. It tries exact
@@ -82,8 +65,6 @@ scripts/check-coverage.sh build-coverage
   developer/profiling runs.
 - `rankwidth`: decomposition-DP backend with cut-rank diagnostics and
   count-table/Fourier modes; useful for comparison and targeted low-rank cases.
-- `--format amplitude`: default output, shared by all solve modes. Use
-  `--format residue-vector` when a full residue histogram is required.
 
 ## QSOP Format
 
@@ -137,6 +118,24 @@ The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
 `probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
 `sop-solve --include-probability`) outside the counter; the metadata header in
 each CNF block documents the variable map and the final accumulator bits.
+
+
+## Build
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+The default `build` directory is a debug build (`-O0`, assertions on), which is
+appropriate for development and the test suite.
+
+CI enforces at least 75% line coverage over production `src` files:
+
+```sh
+scripts/check-coverage.sh build-coverage
+```
 
 ## Benchmarks
 
