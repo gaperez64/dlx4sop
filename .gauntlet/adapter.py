@@ -41,9 +41,9 @@ FORBIDDEN_OPS = {"measure", "reset", "initialize", "set_density_matrix", "set_st
 # a real registration needs.
 APPROX_EPSILON = 1e-8
 
-# Comfortably under the harness's 120s per-case window (docs/operations.md),
-# leaving headroom for QPY loading and QASM dumping in the same budget.
-SUBPROCESS_TIMEOUT_S = 100.0
+# Slightly above the harness's 120s per-case window so gauntlet, not an inner
+# subprocess timeout, owns timeout classification during benchmark runs.
+SUBPROCESS_TIMEOUT_S = 125.0
 
 
 def forbidden_ops_present(circuit) -> set[str]:

@@ -44,10 +44,9 @@ from adapter import (  # noqa: E402
 SOP2WMC = REPO_ROOT / "build" / "sop2wmc"
 GANAK = REPO_ROOT / ".gauntlet" / "ganak" / "ganak"
 
-# Comfortably under the harness's 120s per-case window (docs/operations.md),
-# leaving headroom for QPY loading, QASM dumping, and two subprocess calls
-# in the same budget.
-SUBPROCESS_TIMEOUT_S = 100.0
+# Slightly above the harness's 120s per-case window so gauntlet, not an inner
+# subprocess timeout, owns timeout classification during benchmark runs.
+SUBPROCESS_TIMEOUT_S = 125.0
 
 
 def load_circuit(payload_path: str):
