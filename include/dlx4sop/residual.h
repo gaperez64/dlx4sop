@@ -56,6 +56,10 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
 bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint32_t removed,
                                           uint64_t *out, qsop_error_t *error);
 
+bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual,
+                                              uint32_t removed, uint32_t *out,
+                                              qsop_error_t *error);
+
 bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v, uint32_t *out,
                                      qsop_error_t *error);
 

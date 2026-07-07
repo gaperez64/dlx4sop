@@ -30,6 +30,6 @@ option('developer_warnings',
 
 option('simd',
        type: 'combo',
-       choices: ['auto', 'scalar', 'neon', 'avx512'],
+       choices: ['auto', 'scalar', 'sse', 'neon', 'avx512'],
        value: 'auto',
-       description: 'SIMD kernels to build/use')
+       description: 'SIMD architecture to compile into the binary')

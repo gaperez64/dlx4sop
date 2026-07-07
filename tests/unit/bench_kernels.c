@@ -53,6 +53,10 @@ static bool parse_simd_kernel(const char *text, qsop_simd_kernel_t *out) {
     *out = QSOP_SIMD_KERNEL_SCALAR;
     return true;
   }
+  if (strcmp(text, "sse") == 0) {
+    *out = QSOP_SIMD_KERNEL_SSE;
+    return true;
+  }
   if (strcmp(text, "neon") == 0) {
     *out = QSOP_SIMD_KERNEL_NEON;
     return true;
@@ -61,13 +65,13 @@ static bool parse_simd_kernel(const char *text, qsop_simd_kernel_t *out) {
     *out = QSOP_SIMD_KERNEL_AVX512;
     return true;
   }
-  fprintf(stderr, "error: --simd requires auto|scalar|neon|avx512\n");
+  fprintf(stderr, "error: --simd requires auto|scalar|sse|neon|avx512\n");
   return false;
 }
 
 static void usage(FILE *file, const char *argv0) {
   fprintf(file,
-          "usage: %s [--simd auto|scalar|neon|avx512] [--words N] [--items N] "
+          "usage: %s [--simd auto|scalar|sse|neon|avx512] [--words N] [--items N] "
           "[--iterations N] [--quick]\n",
           argv0);
 }

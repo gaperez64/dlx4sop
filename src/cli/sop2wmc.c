@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_wmc.h"
+#include "cli_common.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -10,13 +11,34 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop2wmc [--encoding auto|amp-and|amp-soft|amp-block|residue-fourier|residue-accumulator] "
-        "[--wmc-fourier-inner amp-and|amp-soft] "
-        "[--wmc-preprocess none|peel1|peel2-safe] [--residue K|all] "
-        "[--wmc-fourier-mode all|T] [--wmc-peel2-fill-budget N] "
-        "[--wmc-block-min-side N] [--wmc-block-min-savings N] "
-        "[--stats-only] [-o PATH] [--no-metadata] [PATH|-]\n",
-        file);
+  static const char *const core[] = {
+      "--encoding auto|amp-and|amp-soft|amp-block|residue-fourier|residue-accumulator",
+      "--residue K|all",
+      "-o PATH, --output PATH",
+      "--stats-only",
+      "--no-metadata",
+      "--version",
+      "--help",
+      "PATH|-",
+  };
+  static const char *const advanced[] = {
+      "--wmc-fourier-inner amp-and|amp-soft",
+      "--wmc-preprocess none|peel1|peel2-safe",
+      "--wmc-fourier-mode all|T",
+      "--wmc-peel2-fill-budget N",
+      "--wmc-block-min-side N",
+      "--wmc-block-min-savings N",
+  };
+  static const dlx4sop_cli_usage_section_t sections[] = {
+      {.title = "Options", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+      {.title = "Advanced", .items = advanced, .nitems = sizeof(advanced) / sizeof(advanced[0])},
+  };
+  dlx4sop_cli_print_usage(
+      file,
+      "usage: sop2wmc "
+      "[--encoding auto|amp-and|amp-soft|amp-block|residue-fourier|residue-accumulator] "
+      "[--stats-only] [-o PATH] [PATH|-]",
+      sections, sizeof(sections) / sizeof(sections[0]));
 }
 
 static void print_error(const qsop_error_t *error, const char *fallback_path) {
@@ -177,6 +199,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
+      return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "sop2wmc");
       return 0;
     }
     if (strcmp(argv[i], "--encoding") == 0) {

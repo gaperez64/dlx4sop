@@ -90,32 +90,57 @@ const qsop_simd_vtable_t *qsop_simd_scalar_vtable(void) {
   return &vt;
 }
 
-__attribute__((weak)) const qsop_simd_vtable_t *qsop_simd_neon_vtable_if_available(void) {
+__attribute__((weak)) const qsop_simd_vtable_t *qsop_simd_sse_vtable(void) {
   return NULL;
 }
 
-__attribute__((weak)) const qsop_simd_vtable_t *qsop_simd_avx512_vtable_if_available(void) {
+__attribute__((weak)) const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
   return NULL;
+}
+
+__attribute__((weak)) const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void) {
+  return NULL;
+}
+
+qsop_simd_kernel_t qsop_simd_compiled_kernel(void) {
+#if defined(QSOP_SIMD_ARCH_AVX512)
+  return QSOP_SIMD_KERNEL_AVX512;
+#elif defined(QSOP_SIMD_ARCH_SSE)
+  return QSOP_SIMD_KERNEL_SSE;
+#elif defined(QSOP_SIMD_ARCH_NEON)
+  return QSOP_SIMD_KERNEL_NEON;
+#else
+  return QSOP_SIMD_KERNEL_SCALAR;
+#endif
+}
+
+const char *qsop_simd_compiled_arch(void) {
+  return qsop_simd_kernel_name(qsop_simd_resolve(qsop_simd_compiled_kernel()));
+}
+
+static const qsop_simd_vtable_t *compiled_simd_vtable(void) {
+#if defined(QSOP_SIMD_ARCH_AVX512)
+  const qsop_simd_vtable_t *vt = qsop_simd_avx512_vtable();
+  return vt != NULL ? vt : qsop_simd_scalar_vtable();
+#elif defined(QSOP_SIMD_ARCH_SSE)
+  const qsop_simd_vtable_t *vt = qsop_simd_sse_vtable();
+  return vt != NULL ? vt : qsop_simd_scalar_vtable();
+#elif defined(QSOP_SIMD_ARCH_NEON)
+  const qsop_simd_vtable_t *vt = qsop_simd_neon_vtable();
+  return vt != NULL ? vt : qsop_simd_scalar_vtable();
+#else
+  return qsop_simd_scalar_vtable();
+#endif
 }
 
 const qsop_simd_vtable_t *qsop_simd_resolve(qsop_simd_kernel_t requested) {
-  if (requested == QSOP_SIMD_KERNEL_NEON) {
-    return qsop_simd_neon_vtable_if_available();
+  if (requested == QSOP_SIMD_KERNEL_AUTO || requested == qsop_simd_compiled_kernel()) {
+    return compiled_simd_vtable();
   }
-  if (requested == QSOP_SIMD_KERNEL_AVX512) {
-    return qsop_simd_avx512_vtable_if_available();
+  if (requested == QSOP_SIMD_KERNEL_SCALAR) {
+    return qsop_simd_scalar_vtable();
   }
-  if (requested == QSOP_SIMD_KERNEL_AUTO) {
-    const qsop_simd_vtable_t *avx512 = qsop_simd_avx512_vtable_if_available();
-    if (avx512 != NULL) {
-      return avx512;
-    }
-    const qsop_simd_vtable_t *neon = qsop_simd_neon_vtable_if_available();
-    if (neon != NULL) {
-      return neon;
-    }
-  }
-  return qsop_simd_scalar_vtable();
+  return NULL;
 }
 
 const char *qsop_simd_kernel_name(const qsop_simd_vtable_t *vt) {

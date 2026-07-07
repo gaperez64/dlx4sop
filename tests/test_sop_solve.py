@@ -414,6 +414,28 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         )
 
 
+def run_auto_amplitude_handles_large_count_strings(exe: pathlib.Path) -> None:
+    qsop = "p qsop-sign 8 70 0\nn 70\ncst 0\nu 0 4\n"
+    completed = subprocess.run(
+        [str(exe), "--format", "amplitude", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected = {
+        "solve_mode: auto",
+        "solve_mode_kernel: count-table",
+        "amplitude_re: 0",
+        "amplitude_im: 0",
+    }
+    if completed.returncode != 0 or not expected.issubset(set(completed.stdout.splitlines())):
+        raise AssertionError(
+            f"auto amplitude large-count conversion failed\n{completed.stdout}\n{completed.stderr}"
+        )
+
+
 def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     left_edges = [f"e {i} {i + 1}" for i in range(31)]
     right_edges = [f"e {i} {i + 1}" for i in range(32, 63)]
@@ -578,7 +600,18 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
     qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "40", "--format", "residue-vector", "-"],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--branch-rw-source",
+            "auto",
+            "--max-vars",
+            "40",
+            "--format",
+            "residue-vector",
+            "-",
+        ],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -606,6 +639,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "40",
             "--trace",
@@ -651,6 +686,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "40",
             "--solve-mode",
@@ -703,6 +740,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "32",
             "--solve-mode",
@@ -950,6 +989,18 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: sop-solve" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
+    version_result = subprocess.run(
+        [str(exe), "--version"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if version_result.returncode != 0 or version_result.stdout != "sop-solve 0.3\n":
+        raise AssertionError(
+            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
+        )
+
     stdin_result = subprocess.run(
         [str(exe), "--format", "residue-vector", "-"],
         input=qsop.read_text(),
@@ -1007,7 +1058,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--trace"], "requires a value"),
         ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
-        ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
+        ([str(exe), "--max-vars", "-1", str(qsop)], "must be a non-negative"),
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), str(qsop), str(qsop)], "at most one input"),
         ([str(exe), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
@@ -1803,6 +1854,7 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"default branch solve failed\n{expected.stderr}")
 
     for heuristic, reported in [
+        ("delegation-depth", "delegation-depth"),
         ("treewidth", "treewidth"),
         ("cutrank-proxy", "cutrank-proxy"),
     ]:
@@ -2422,6 +2474,16 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(f"--print-kernels failed\n{auto.stdout}\n{auto.stderr}")
     if not any(line.startswith("simd_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    compiled_simd = next(
+        (
+            line.split("=", 1)[1]
+            for line in auto.stdout.splitlines()
+            if line.startswith("simd_compiled=")
+        ),
+        None,
+    )
+    if compiled_simd is None:
+        raise AssertionError(f"--print-kernels missing simd_compiled\n{auto.stdout}")
     if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
 
@@ -2477,6 +2539,19 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     if bad_simd.returncode != 2 or "unsupported --simd" not in bad_simd.stderr:
         raise AssertionError(f"bad --simd diagnostic failed\n{bad_simd.stdout}\n{bad_simd.stderr}")
+
+    if compiled_simd != "sse":
+        sse_simd = subprocess.run(
+            [str(exe), "--simd", "sse", "--print-kernels"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if sse_simd.returncode != 2 or "not compiled into this binary" not in sse_simd.stderr:
+            raise AssertionError(
+                f"uncompiled --simd sse diagnostic failed\n{sse_simd.stdout}\n{sse_simd.stderr}"
+            )
 
     precision_without_mode = subprocess.run(
         [str(exe), "--backend", "treewidth", "--single-mode-precision", "double", "-"],
@@ -2714,6 +2789,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)
     run_large_rankwidth_crt(exe)
+    run_auto_amplitude_handles_large_count_strings(exe)
     run_branch_dp_handoff(exe)
     run_branch_root_treewidth_trace(exe)
     run_branch_rankwidth_handoff(exe)

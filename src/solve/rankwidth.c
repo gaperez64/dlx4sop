@@ -1,6 +1,7 @@
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/bitset.h"
 #include "dlx4sop/residue.h"
+#include "dlx4sop/simd.h"
 #include "trace.h"
 
 #include <float.h>
@@ -222,6 +223,7 @@ typedef struct rw_complex64_context {
   uint64_t r;
   uint32_t target_mode;
   double sign_re;
+  const qsop_simd_vtable_t *simd;
   uint64_t complex_ops;
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
@@ -7481,12 +7483,13 @@ static bool solve_rankwidth_single_mode_once_f64(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     const uint64_t *adj, uint32_t target_mode, double *out_re, double *out_im,
     long double *out_numeric_error_bound, qsop_rankwidth_single_kernel_t kernel,
-    uint64_t materialize_join_max_pairs, qsop_solve_stats_t *stats,
+    uint64_t materialize_join_max_pairs, const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
   rw_complex64_context_t ctx = {
       .r = qsop->r,
       .target_mode = target_mode,
       .sign_re = (target_mode % 2U == 0U) ? 1.0 : -1.0,
+      .simd = simd,
       .stats = stats,
       .trace = trace,
   };
@@ -7503,6 +7506,18 @@ static bool solve_rankwidth_single_mode_once_f64(
     if (stats != NULL) {
       stats->rankwidth_single_complex_kernel = 2U;
       stats->join_pairs = ctx.complex_ops;
+      if (simd != NULL) {
+        const char *name = qsop_simd_kernel_name(simd);
+        if (strcmp(name, "avx512") == 0) {
+          stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
+        } else if (strcmp(name, "sse") == 0) {
+          stats->simd_kernel = QSOP_SIMD_KERNEL_SSE;
+        } else if (strcmp(name, "neon") == 0) {
+          stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
+        } else {
+          stats->simd_kernel = QSOP_SIMD_KERNEL_SCALAR;
+        }
+      }
     }
     if (out_numeric_error_bound != NULL) {
       *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
@@ -7670,6 +7685,18 @@ static bool solve_rankwidth_single_mode_once_f64(
     stats->max_signature_entries = max_signature_entries;
     stats->join_pairs = ctx.complex_ops;
     stats->rankwidth_single_complex_kernel = 2U;
+    if (ctx.simd != NULL) {
+      const char *name = qsop_simd_kernel_name(ctx.simd);
+      if (strcmp(name, "avx512") == 0) {
+        stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
+      } else if (strcmp(name, "sse") == 0) {
+        stats->simd_kernel = QSOP_SIMD_KERNEL_SSE;
+      } else if (strcmp(name, "neon") == 0) {
+        stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
+      } else {
+        stats->simd_kernel = QSOP_SIMD_KERNEL_SCALAR;
+      }
+    }
     stats->rankwidth_transition_bytes += transition_bytes;
     stats->rankwidth_dense_join_events += dense_join_events;
     stats->rankwidth_materialized_join_events += materialized_join_events;
@@ -8062,7 +8089,7 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
       options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = solve_rankwidth_single_mode_once_f64(
       qsop, decomposition, adj, target_mode, &re, &im, &numeric_error_bound, o.kernel,
-      o.materialize_join_max_pairs, stats, trace, error);
+      o.materialize_join_max_pairs, o.simd, stats, trace, error);
   free(adj);
   if (!ok) {
     return false;

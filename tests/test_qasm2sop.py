@@ -58,6 +58,18 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: qasm2sop" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
+    version_result = subprocess.run(
+        [str(exe), "--version"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if version_result.returncode != 0 or version_result.stdout != "qasm2sop 0.3\n":
+        raise AssertionError(
+            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
+        )
+
     stdin_result = subprocess.run(
         [str(exe), "-"],
         input=qasm.read_text(),

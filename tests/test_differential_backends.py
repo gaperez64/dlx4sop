@@ -898,8 +898,11 @@ def test_branch_single_fourier_large_component(exe: pathlib.Path) -> None:
     assert treewidth_parsed is not None, f"could not parse treewidth output: {treewidth_out!r}"
     b_re, b_im, b_bound = branch_parsed
     t_re, t_im, t_bound = treewidth_parsed
-    diff = abs(complex(b_re, b_im) - complex(t_re, t_im))
-    tolerance = b_bound + t_bound + 1e-9
+    branch_value = complex(b_re, b_im)
+    treewidth_value = complex(t_re, t_im)
+    diff = abs(branch_value - treewidth_value)
+    scale = max(1.0, abs(branch_value), abs(treewidth_value))
+    tolerance = b_bound + t_bound + max(1e-9, 1e-14 * scale)
     assert diff <= tolerance, (
         f"branch/treewidth disagree on 100-variable path graph: "
         f"branch=({b_re},{b_im}) treewidth=({t_re},{t_im}) diff={diff}"

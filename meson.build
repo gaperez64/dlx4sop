@@ -7,8 +7,13 @@ project(
 
 cc = meson.get_compiler('c')
 inc = include_directories('include')
+cli_inc = include_directories('src/cli')
 m_dep = cc.find_library('m', required: false)
 simd_option = get_option('simd')
+add_project_arguments(
+  '-DDLX4SOP_VERSION="@0@"'.format(meson.project_version()),
+  language: 'c',
+)
 
 if get_option('developer_warnings')
   warning_flags = [
@@ -42,13 +47,61 @@ dlx4sop_core_sources = files(
     'src/solve/treewidth.c',
 )
 
-simd_link_whole = []
 cpu_family = host_machine.cpu_family()
+simd_link_whole = []
+simd_arch = simd_option
+avx512_args = cc.get_supported_arguments([
+  '-mavx512f',
+  '-mavx512dq',
+  '-mavx512vl',
+  '-mavx512vpopcntdq',
+])
+sse_args = cc.get_supported_arguments([
+  '-msse4.2',
+  '-mpopcnt',
+])
 
-if simd_option == 'neon' or (simd_option == 'auto' and cpu_family in ['aarch64', 'arm'])
+if simd_option == 'auto'
+  if cpu_family in ['aarch64', 'arm']
+    simd_arch = 'neon'
+  elif cpu_family in ['x86', 'x86_64'] and meson.can_run_host_binaries()
+    avx512_probe = '''
+#if defined(__x86_64__) || defined(__i386__)
+int main(void) {
+#if defined(__GNUC__) || defined(__clang__)
+  __builtin_cpu_init();
+  return (__builtin_cpu_supports("avx512f") &&
+          __builtin_cpu_supports("avx512dq") &&
+          __builtin_cpu_supports("avx512vl") &&
+          __builtin_cpu_supports("avx512vpopcntdq")) ? 0 : 1;
+#else
+  return 1;
+#endif
+}
+#else
+int main(void) { return 1; }
+#endif
+'''
+    avx512_host = cc.run(avx512_probe, name: 'AVX-512 host probe')
+    if avx512_args.length() == 4 and avx512_host.compiled() and avx512_host.returncode() == 0
+      simd_arch = 'avx512'
+    elif sse_args.length() == 2
+      simd_arch = 'sse'
+    else
+      simd_arch = 'scalar'
+    endif
+  elif cpu_family in ['x86', 'x86_64'] and sse_args.length() == 2
+    simd_arch = 'scalar'
+  else
+    simd_arch = 'scalar'
+  endif
+endif
+
+if simd_arch == 'neon'
   if cpu_family not in ['aarch64', 'arm']
     error('-Dsimd=neon requires an ARM/AArch64 target')
   endif
+  add_project_arguments('-DQSOP_SIMD_ARCH_NEON', language: 'c')
   simd_neon_lib = static_library(
     'dlx4sop_simd_neon',
     files('src/core/simd_neon.c'),
@@ -57,28 +110,45 @@ if simd_option == 'neon' or (simd_option == 'auto' and cpu_family in ['aarch64',
   simd_link_whole += simd_neon_lib
 endif
 
-if simd_option == 'avx512' or (simd_option == 'auto' and cpu_family in ['x86', 'x86_64'])
+if simd_arch == 'sse'
+  if cpu_family not in ['x86', 'x86_64']
+    error('-Dsimd=sse requires an x86 target')
+  endif
+  if sse_args.length() < 2
+    error('compiler does not support the required SSE flags')
+  endif
+  add_project_arguments('-DQSOP_SIMD_ARCH_SSE', language: 'c')
+  simd_sse_lib = static_library(
+    'dlx4sop_simd_sse',
+    files('src/core/simd_sse.c'),
+    include_directories: inc,
+    c_args: sse_args,
+  )
+  simd_link_whole += simd_sse_lib
+endif
+
+if simd_arch == 'avx512'
   if cpu_family not in ['x86', 'x86_64']
     error('-Dsimd=avx512 requires an x86 target')
   endif
-  avx512_args = cc.get_supported_arguments([
-    '-mavx512f',
-    '-mavx512dq',
-    '-mavx512vl',
-  ])
-  if avx512_args.length() < 3 and simd_option == 'avx512'
+  if avx512_args.length() < 4
     error('compiler does not support the required AVX-512 flags')
   endif
-  if avx512_args.length() == 3
-    simd_avx512_lib = static_library(
-      'dlx4sop_simd_avx512',
-      files('src/core/simd_avx512.c'),
-      include_directories: inc,
-      c_args: avx512_args,
-    )
-    simd_link_whole += simd_avx512_lib
-  endif
+  add_project_arguments('-DQSOP_SIMD_ARCH_AVX512', language: 'c')
+  simd_avx512_lib = static_library(
+    'dlx4sop_simd_avx512',
+    files('src/core/simd_avx512.c'),
+    include_directories: inc,
+    c_args: avx512_args,
+  )
+  simd_link_whole += simd_avx512_lib
 endif
+
+if simd_arch == 'scalar'
+  add_project_arguments('-DQSOP_SIMD_ARCH_SCALAR', language: 'c')
+endif
+
+message('SIMD architecture: ' + simd_arch)
 
 dlx4sop_core = static_library(
   'dlx4sop_core',
@@ -93,38 +163,49 @@ dlx4sop_core_dep = declare_dependency(
   dependencies: m_dep,
 )
 
+dlx4sop_cli = static_library(
+  'dlx4sop_cli',
+  files('src/cli/cli_common.c'),
+  include_directories: cli_inc,
+)
+
+dlx4sop_cli_dep = declare_dependency(
+  include_directories: cli_inc,
+  link_with: dlx4sop_cli,
+)
+
 sop_check = executable(
   'sop-check',
   'src/cli/sop_check.c',
-  dependencies: dlx4sop_core_dep,
+  dependencies: [dlx4sop_core_dep, dlx4sop_cli_dep],
   install: true,
 )
 
 sop_solve = executable(
   'sop-solve',
   'src/cli/sop_solve.c',
-  dependencies: [dlx4sop_core_dep, m_dep],
+  dependencies: [dlx4sop_core_dep, dlx4sop_cli_dep, m_dep],
   install: true,
 )
 
 sop_stats = executable(
   'sop-stats',
   'src/cli/sop_stats.c',
-  dependencies: dlx4sop_core_dep,
+  dependencies: [dlx4sop_core_dep, dlx4sop_cli_dep],
   install: true,
 )
 
 qasm2sop = executable(
   'qasm2sop',
   'src/cli/qasm2sop.c',
-  dependencies: dlx4sop_core_dep,
+  dependencies: [dlx4sop_core_dep, dlx4sop_cli_dep],
   install: true,
 )
 
 sop2wmc = executable(
   'sop2wmc',
   'src/cli/sop2wmc.c',
-  dependencies: dlx4sop_core_dep,
+  dependencies: [dlx4sop_core_dep, dlx4sop_cli_dep],
   install: true,
 )
 

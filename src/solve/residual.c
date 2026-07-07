@@ -1,4 +1,5 @@
 #include "dlx4sop/residual.h"
+#include "dlx4sop/bitset.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -896,6 +897,138 @@ bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint3
   free(neighbors);
   free(is_neighbor);
   *out = fill;
+  return true;
+}
+
+static uint64_t residual_min_fill_edges_for(uint32_t v, const uint64_t *adj, size_t words,
+                                            uint32_t nvars, uint32_t *neighbors) {
+  const uint64_t *row = qsop_bitset_const_row(adj, words, v);
+  uint32_t nneighbors = 0;
+  for (uint32_t u = 0; u < nvars; u++) {
+    if (qsop_bitset_get(row, u)) {
+      neighbors[nneighbors++] = u;
+    }
+  }
+
+  uint64_t fill = 0;
+  for (uint32_t i = 0; i < nneighbors; i++) {
+    const uint64_t *neighbor_row = qsop_bitset_const_row(adj, words, neighbors[i]);
+    for (uint32_t j = i + 1U; j < nneighbors; j++) {
+      if (!qsop_bitset_get(neighbor_row, neighbors[j])) {
+        fill++;
+      }
+    }
+  }
+  return fill;
+}
+
+bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual,
+                                              uint32_t removed, uint32_t *out,
+                                              qsop_error_t *error) {
+  if (out == NULL) {
+    set_error(error, "internal error: null residual min-fill width output");
+    return false;
+  }
+  *out = 0;
+  if (!validate_active_variable(residual, removed, "removed", error)) {
+    return false;
+  }
+
+  if (residual->active_vars <= 1U) {
+    return true;
+  }
+
+  const uint32_t n = residual->active_vars - 1U;
+  const size_t words = qsop_bitset_words(n);
+  uint32_t *map = malloc((residual->nvars == 0 ? 1U : residual->nvars) * sizeof(*map));
+  uint32_t *neighbors = malloc((n == 0 ? 1U : n) * sizeof(*neighbors));
+  uint8_t *active = calloc(n == 0 ? 1U : n, sizeof(*active));
+  uint64_t *adj = calloc((n == 0 ? 1U : (size_t)n) * words, sizeof(*adj));
+  if (map == NULL || neighbors == NULL || active == NULL || adj == NULL) {
+    free(map);
+    free(neighbors);
+    free(active);
+    free(adj);
+    set_error(error, "out of memory while computing residual min-fill probe");
+    return false;
+  }
+
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    map[v] = UINT32_MAX;
+  }
+  uint32_t next = 0;
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    if (v != removed && residual->active_var[v] != 0) {
+      map[v] = next++;
+      active[map[v]] = 1U;
+    }
+  }
+
+  for (uint32_t e = 0; e < residual->nedges; e++) {
+    if (residual->active_edge[e] == 0) {
+      continue;
+    }
+    const uint32_t u = residual->edge_u[e];
+    const uint32_t v = residual->edge_v[e];
+    if (u == removed || v == removed || map[u] == UINT32_MAX || map[v] == UINT32_MAX) {
+      continue;
+    }
+    qsop_bitset_set(qsop_bitset_row(adj, words, map[u]), map[v]);
+    qsop_bitset_set(qsop_bitset_row(adj, words, map[v]), map[u]);
+  }
+
+  uint32_t width = 0;
+  for (uint32_t step = 0; step < n; step++) {
+    bool found = false;
+    uint32_t best = 0;
+    uint64_t best_fill = UINT64_MAX;
+    uint32_t best_degree = UINT32_MAX;
+    for (uint32_t v = 0; v < n; v++) {
+      if (active[v] == 0) {
+        continue;
+      }
+      const uint64_t *row = qsop_bitset_const_row(adj, words, v);
+      uint32_t degree = qsop_bitset_popcount(row, words);
+      const uint64_t fill = residual_min_fill_edges_for(v, adj, words, n, neighbors);
+      if (!found || fill < best_fill || (fill == best_fill && degree < best_degree)) {
+        found = true;
+        best = v;
+        best_fill = fill;
+        best_degree = degree;
+      }
+    }
+    if (!found) {
+      break;
+    }
+    if (best_degree > width) {
+      width = best_degree;
+    }
+
+    uint32_t nneighbors = 0;
+    const uint64_t *best_row = qsop_bitset_const_row(adj, words, best);
+    for (uint32_t u = 0; u < n; u++) {
+      if (qsop_bitset_get(best_row, u)) {
+        neighbors[nneighbors++] = u;
+      }
+    }
+    for (uint32_t i = 0; i < nneighbors; i++) {
+      for (uint32_t j = i + 1U; j < nneighbors; j++) {
+        qsop_bitset_set(qsop_bitset_row(adj, words, neighbors[i]), neighbors[j]);
+        qsop_bitset_set(qsop_bitset_row(adj, words, neighbors[j]), neighbors[i]);
+      }
+    }
+    for (uint32_t v = 0; v < n; v++) {
+      qsop_bitset_clear(qsop_bitset_row(adj, words, v), best);
+    }
+    qsop_bitset_zero(qsop_bitset_row(adj, words, best), words);
+    active[best] = 0U;
+  }
+
+  free(map);
+  free(neighbors);
+  free(active);
+  free(adj);
+  *out = width;
   return true;
 }
 

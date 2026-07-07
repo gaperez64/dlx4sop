@@ -145,6 +145,7 @@ typedef enum qsop_treewidth_order {
 } qsop_treewidth_order_t;
 
 typedef enum qsop_branch_heuristic {
+  QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH,
   QSOP_BRANCH_HEURISTIC_SPLIT,
   QSOP_BRANCH_HEURISTIC_TREEWIDTH,
   QSOP_BRANCH_HEURISTIC_CUTRANK_PROXY,
@@ -172,11 +173,11 @@ typedef struct qsop_rankwidth_single_mode_options {
 /* Policy for how the branch solver sources a rank decomposition when considering
  * rankwidth delegation. */
 typedef enum qsop_branch_rw_source {
-  QSOP_BRANCH_RW_SOURCE_AUTO,           /* default: derive from treewidth elimination tree */
+  QSOP_BRANCH_RW_SOURCE_NONE,           /* default: never attempt rankwidth delegation */
+  QSOP_BRANCH_RW_SOURCE_AUTO,           /* derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_NATIVE,         /* use min-fill-cut (original behavior) */
   QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
-  QSOP_BRANCH_RW_SOURCE_NONE,           /* never attempt rankwidth delegation */
 } qsop_branch_rw_source_t;
 
 typedef struct qsop_solve_trace_event {
@@ -260,6 +261,12 @@ bool qsop_solve_treewidth_precomputed_order_single_mode(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
     uint32_t order_width, uint32_t target_mode, qsop_amplitude_t *out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+
+bool qsop_solve_treewidth_precomputed_order_single_mode_f64(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
+    uint32_t order_width, uint32_t target_mode, const qsop_simd_vtable_t *simd,
+    qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
 
 bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
@@ -390,11 +397,11 @@ typedef struct qsop_branch_policy {
 } qsop_branch_policy_t;
 
 /* Per-solve options for the branch solver.  Zero-initialize for defaults:
- * heuristic=split, rw_source=auto/from-treewidth, mode=count-table,
+ * heuristic=delegation-depth, rw_source=none, mode=count-table,
  * zero policy (all defaults), no sink, no trace. */
 typedef struct qsop_branch_solve_options {
-  qsop_branch_heuristic_t heuristic;    /* default SPLIT (0) */
-  qsop_branch_rw_source_t rw_source;   /* default AUTO (0) */
+  qsop_branch_heuristic_t heuristic;    /* default DELEGATION_DEPTH (0) */
+  qsop_branch_rw_source_t rw_source;   /* default NONE (0) */
   qsop_solve_mode_t mode;              /* default COUNT_TABLE (0) */
   qsop_branch_policy_t policy;         /* all-zero fields take built-in defaults */
   qsop_backend_stats_sink_t *sink;     /* NULL to disable JSONL sink */
@@ -421,11 +428,10 @@ typedef enum qsop_branch_single_precision {
 typedef enum qsop_branch_single_kernel {
   QSOP_BRANCH_SINGLE_KERNEL_AUTO = 0,
   QSOP_BRANCH_SINGLE_KERNEL_SCALAR,
-  QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2,
 } qsop_branch_single_kernel_t;
 
 /* Per-solve options for qsop_solve_branch_single_mode. Zero-initialize for defaults:
- * rw_source=auto/from-treewidth, heuristic=split, fallback=auto, precision/kernel=auto,
+ * rw_source=none, heuristic=delegation-depth, fallback=auto, precision/kernel=auto,
  * and zero numeric caps selecting built-in limits. */
 typedef struct qsop_branch_single_mode_options {
   qsop_branch_rw_source_t rw_source;
@@ -434,6 +440,7 @@ typedef struct qsop_branch_single_mode_options {
   qsop_branch_single_fallback_t fallback;
   qsop_branch_single_precision_t precision;
   qsop_branch_single_kernel_t kernel;
+  const qsop_simd_vtable_t *simd;
 
   uint64_t max_search_nodes;
   uint32_t max_fallback_vars;

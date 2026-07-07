@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_stats.h"
+#include "cli_common.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -14,9 +15,23 @@ typedef enum stats_format {
 } stats_format_t;
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop-stats [--json|--format text|json] [--exact-widths] "
-        "[--exact-width-max-vars N] [PATH|-]\n",
-        file);
+  static const char *const core[] = {
+      "--json",
+      "--format text|json",
+      "--exact-widths",
+      "--exact-width-max-vars N",
+      "--version",
+      "--help",
+      "PATH|-",
+  };
+  static const dlx4sop_cli_usage_section_t sections[] = {
+      {.title = "Options", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+  };
+  dlx4sop_cli_print_usage(
+      file,
+      "usage: sop-stats [--json|--format text|json] [--exact-widths] "
+      "[--exact-width-max-vars N] [PATH|-]",
+      sections, sizeof(sections) / sizeof(sections[0]));
 }
 
 static void print_error(const qsop_error_t *error, const char *fallback_path) {
@@ -40,6 +55,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
+      return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "sop-stats");
       return 0;
     }
     if (strcmp(argv[i], "--json") == 0) {
@@ -71,14 +90,10 @@ int main(int argc, char **argv) {
         fputs("error: --exact-width-max-vars requires a value\n", stderr);
         return 2;
       }
-      char *end = NULL;
-      errno = 0;
-      const unsigned long value = strtoul(argv[++i], &end, 10);
-      if (errno != 0 || end == argv[i] || *end != '\0' || value > UINT32_MAX) {
-        fputs("error: --exact-width-max-vars must be a non-negative integer\n", stderr);
+      if (!dlx4sop_cli_parse_u32("--exact-width-max-vars", argv[++i],
+                                  &options.exact_width_max_vars)) {
         return 2;
       }
-      options.exact_width_max_vars = (uint32_t)value;
       continue;
     }
     if (argv[i][0] == '-') {

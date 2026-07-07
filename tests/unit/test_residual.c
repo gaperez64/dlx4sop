@@ -304,6 +304,7 @@ static int test_component_split_estimate(void) {
   uint32_t largest = 0;
   uint64_t fill = 0;
   uint32_t cut_rank = 0;
+  uint32_t min_fill_width = 0;
   if (!qsop_residual_components_without_var(residual, 0, &components, &error) ||
       expect_u32("split remove0", components, 1) != 0 ||
       !qsop_residual_split_without_var(residual, 0, &components, &largest, &error) ||
@@ -311,6 +312,8 @@ static int test_component_split_estimate(void) {
       expect_u32("split size remove0 largest", largest, 2) != 0 ||
       !qsop_residual_fill_edges_without_var(residual, 0, &fill, &error) ||
       expect_u64("fill remove0", fill, 0) != 0 ||
+      !qsop_residual_min_fill_width_without_var(residual, 0, &min_fill_width, &error) ||
+      expect_u32("min-fill width remove0", min_fill_width, 1) != 0 ||
       !qsop_residual_neighbor_cut_rank(residual, 0, &cut_rank, &error) ||
       expect_u32("cut-rank remove0", cut_rank, 1) != 0 ||
       !qsop_residual_components_without_var(residual, 1, &components, &error) ||
@@ -320,6 +323,8 @@ static int test_component_split_estimate(void) {
       expect_u32("split size remove1 largest", largest, 1) != 0 ||
       !qsop_residual_fill_edges_without_var(residual, 1, &fill, &error) ||
       expect_u64("fill remove1", fill, 1) != 0 ||
+      !qsop_residual_min_fill_width_without_var(residual, 1, &min_fill_width, &error) ||
+      expect_u32("min-fill width remove1", min_fill_width, 0) != 0 ||
       !qsop_residual_neighbor_cut_rank(residual, 1, &cut_rank, &error) ||
       expect_u32("cut-rank remove1", cut_rank, 0) != 0 ||
       !qsop_residual_components_without_var(residual, 2, &components, &error) ||
@@ -353,6 +358,8 @@ static int test_component_split_estimate(void) {
       expect_u32("post-branch split size remove0 largest", largest, 1) != 0 ||
       !qsop_residual_fill_edges_without_var(residual, 0, &fill, &error) ||
       expect_u64("post-branch fill remove0", fill, 0) != 0 ||
+      !qsop_residual_min_fill_width_without_var(residual, 0, &min_fill_width, &error) ||
+      expect_u32("post-branch min-fill width remove0", min_fill_width, 0) != 0 ||
       !qsop_residual_neighbor_cut_rank(residual, 0, &cut_rank, &error) ||
       expect_u32("post-branch cut-rank remove0", cut_rank, 0) != 0 ||
       !qsop_residual_components_without_var(residual, 2, &components, &error) ||

@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "dlx4sop/qsop.h"
+#include "cli_common.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -105,7 +106,21 @@ static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
 }
 
 static void print_usage(FILE *file) {
-  fputs("usage: qasm2sop [--input BITS] [--output BITS] [--approx EPS] [PATH|-]\n", file);
+  static const char *const core[] = {
+      "--input BITS",
+      "--output BITS",
+      "--approx EPS",
+      "--version",
+      "--help",
+      "PATH|-",
+  };
+  static const dlx4sop_cli_usage_section_t sections[] = {
+      {.title = "Options", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+  };
+  dlx4sop_cli_print_usage(file,
+                          "usage: qasm2sop [--input BITS] [--output BITS] [--approx EPS] "
+                          "[PATH|-]",
+                          sections, sizeof(sections) / sizeof(sections[0]));
 }
 
 static char *trim(char *text) {
@@ -3001,6 +3016,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
+      return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "qasm2sop");
       return 0;
     }
     if (strcmp(argv[i], "--input") == 0) {
