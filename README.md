@@ -1,12 +1,14 @@
 # dlx4sop
 
-> **Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
-> the `sop2wmc` + Ganak weighted-model-counting pipeline are ranked on the
-> public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
-
 `dlx4sop` is a C/Meson toolkit for exact finite-modulus quadratic sums of
 powers (QSOPs). The project goal is a competitive exact strong simulator using
 QSOPs with fixed-boundary circuit amplitudes.
+
+
+**Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
+the `sop2wmc` + Ganak weighted-model-counting pipeline (all described below)
+are ranked on the
+public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
 
 ## Tools
 
