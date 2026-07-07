@@ -6,12 +6,10 @@ Usage: python3 tests/test_branch_regression_guard.py <sop-solve>
 """
 
 import pathlib
+import random
 import subprocess
 import sys
 import time
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-CORPUS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
 
 # Structural cap: when rankwidth is never delegated on an instance, the number
 # of rankwidth probes (skips) must stay below this per-instance bound.
@@ -24,32 +22,40 @@ RW_SKIP_CAP_PER_INSTANCE = 10
 # avoid CI flakiness while still catching catastrophic regressions.
 AUTO_TIME_RATIO_CAP = 2.0
 
+# Deterministic fixture generation: several small, structurally-varied instances
+# so the timing-ratio and structural-guard checks below aren't fooled by a single
+# lucky/unlucky shape.
+_FIXTURE_SIZES = [4, 6, 8, 10, 12, 14, 16]
+_FIXTURE_MODULI = [2, 4, 8]
+_FIXTURE_SEED = 20260706
 
-def _find_qsop_files(max_count=8):
-    """Return small corpus files for the regression guard.
 
-    We limit to the two fastest tiers so the guard runs quickly in CI.
-    The A3/A4 veto is a per-call property: if it is broken it shows up
-    on any instance regardless of size.
-    """
+def _random_qsop(rng: random.Random, nvars: int, r: int, edge_density: float = 0.4) -> str:
+    edges = []
+    for u in range(nvars):
+        for v in range(u + 1, nvars):
+            if rng.random() < edge_density:
+                edges.append((u, v))
+    unary = [rng.randint(0, r - 1) for _ in range(nvars)]
+    constant = rng.randint(0, r - 1)
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", f"cst {constant}"]
+    for v in range(nvars):
+        if unary[v] != 0:
+            lines.append(f"u {v} {unary[v]}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_qsop_fixtures(tmp: pathlib.Path) -> list[pathlib.Path]:
+    rng = random.Random(_FIXTURE_SEED)
     files = []
-    fast_tiers = {"tier-1-8", "tier-9-16"}
-    for tier in sorted(CORPUS_DIR.iterdir()):
-        if not tier.is_dir() or tier.name not in fast_tiers:
-            continue
-        for f in sorted(tier.glob("*.qsop")):
-            files.append(f)
-            if len(files) >= max_count:
-                return files
-    # Fallback: accept any tier if the fast ones are missing.
-    if not files:
-        for tier in sorted(CORPUS_DIR.iterdir()):
-            if not tier.is_dir():
-                continue
-            for f in sorted(tier.glob("*.qsop")):
-                files.append(f)
-                if len(files) >= max_count:
-                    return files
+    for i, nvars in enumerate(_FIXTURE_SIZES):
+        r = _FIXTURE_MODULI[i % len(_FIXTURE_MODULI)]
+        text = _random_qsop(rng, nvars, r)
+        path = tmp / f"fixture_{nvars}.qsop"
+        path.write_text(text)
+        files.append(path)
     return files
 
 
@@ -86,10 +92,7 @@ def _run(sop_solve, qsop, rw_source, timeout=30.0):
 
 def test_structural_guard(sop_solve, tmp):
     """If rankwidth_delegations == 0, branch_rankwidth_skips must be bounded."""
-    files = _find_qsop_files()
-    if not files:
-        print("  SKIP: no corpus files found")
-        return
+    files = _write_qsop_fixtures(tmp)
 
     violations = []
     for qsop in files:
@@ -113,10 +116,7 @@ def test_structural_guard(sop_solve, tmp):
 
 def test_timing_overhead(sop_solve, tmp):
     """branch:auto total time must not exceed AUTO_TIME_RATIO_CAP * branch:no-rankwidth."""
-    files = _find_qsop_files()
-    if not files:
-        print("  SKIP: no corpus files found")
-        return
+    files = _write_qsop_fixtures(tmp)
 
     total_auto_ns = 0
     total_norw_ns = 0
@@ -132,12 +132,10 @@ def test_timing_overhead(sop_solve, tmp):
         compared += 1
 
     if compared == 0:
-        print("  SKIP: no comparable pairs")
-        return
+        raise AssertionError("no comparable pairs across fixture instances")
 
     if total_norw_ns == 0:
-        print("  SKIP: no-rankwidth baseline has zero elapsed time")
-        return
+        raise AssertionError("no-rankwidth baseline has zero elapsed time")
 
     ratio = total_auto_ns / total_norw_ns
     if ratio > AUTO_TIME_RATIO_CAP:
@@ -150,10 +148,7 @@ def test_timing_overhead(sop_solve, tmp):
 
 def test_rw_delegation_consistency(sop_solve, tmp):
     """When branch:auto delegates to rankwidth, branch:no-rankwidth must not."""
-    files = _find_qsop_files()
-    if not files:
-        print("  SKIP: no corpus files found")
-        return
+    files = _write_qsop_fixtures(tmp)
 
     for qsop in files:
         _, auto_stats = _run(sop_solve, qsop, "auto")

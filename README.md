@@ -1,5 +1,9 @@
 # dlx4sop
 
+> **Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
+> the `sop2wmc` + Ganak weighted-model-counting pipeline are ranked on the
+> public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
+
 `dlx4sop` is a C/Meson toolkit for exact finite-modulus quadratic sums of
 powers (QSOPs). The project goal is a competitive exact strong simulator using
 QSOPs with fixed-boundary circuit amplitudes.
@@ -42,8 +46,10 @@ from source:
     edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
     and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
     amp-soft output when no profitable block is found.
-- `scripts/*.py`: benchmark runners, scoreboard refresh/render helpers, branch
-  policy retuning, and the qccq-gauntlet coverage scanner.
+- `scripts/build_external_qasm_manifest.py` / `scripts/bench_wmc_ganak.py`:
+  shared OpenQASM-munging and Ganak-output-parsing helpers imported directly
+  by the `.gauntlet/` adapters that back the qccq-gauntlet registration; not
+  standalone CLIs.
 
 The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
 External frameworks stay at corpus import and validation boundaries.
@@ -130,112 +136,26 @@ each CNF block documents the variable map and the final accumulator bits.
 
 ## Benchmarks
 
-The public performance summary is the QSOP
-[scoreboard.md](scoreboard.md).
+Comparative benchmarking now lives entirely in
+[qccq-gauntlet](https://qccq-cgd.pages.dev/), an external harness that runs
+the dlx4sop backends and the `sop2wmc` + Ganak pipeline against shared
+datasets/suites on a public leaderboard. `.gauntlet/adapter.py` and
+`.gauntlet/adapter_wmc.py` are the two integration points gauntlet drives:
+they import a circuit, run it through `qasm2sop`/`sop-solve` (or
+`sop2wmc` + Ganak), and report back in the protocol gauntlet expects. Both
+adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
+from `scripts/` for OpenQASM munging and Ganak-output parsing.
 
-Use an optimized build for timing-sensitive runs:
+Local microbenchmarking of the shared SIMD kernels (bitset popcount/xor and
+f64 complex kernels) is still available:
 
 ```sh
 meson setup build-bench --buildtype=release -Db_lto=true -Dc_args=-march=x86-64-v2
 meson compile -C build-bench
+build-bench/bench-kernels --quick
 ```
 
 `-march=x86-64-v2` enables the hardware `popcnt` instruction (portable across x86 CPUs
 since ~2009); without it `__builtin_popcount` falls back to a slow libgcc routine that
 dominates ordering-heavy solves. On Apple Silicon (arm64) popcount is hardware by
-default, so the `-Dc_args` is unnecessary there. Point the benchmark tooling at the
-optimized binaries, for example `--sop-solve build-bench/sop-solve`.
-
-`scripts/bench.py` is the unified benchmark entry point. It requires only the
-built binaries and the committed QSOP corpus for local runs; external tools
-(Ganak, native simulators, QASM manifests) are only needed for full refreshes.
-
-### Local backend tuning (no external tools)
-
-```sh
-meson compile -C build
-python3 scripts/bench.py local \
-    --tier tier-17-32 \
-    --backend treewidth \
-    --backend rankwidth:from-treewidth \
-    --backend branch:auto \
-    --timeout 5 \
-    --out artifacts/local/tier-17-32.jsonl
-python3 scripts/bench.py render \
-    --artifact-dir artifacts/local \
-    --view local \
-    --output /tmp/local-scoreboard.md
-```
-
-Available backend variants for `--backend`:
-
-```text
-treewidth
-rankwidth:from-treewidth
-rankwidth:best        (best decomposition strategy)
-rankwidth:validate    (cross-check two solve paths for consistency)
-branch:auto
-branch:from-treewidth
-branch:native
-branch:no-rankwidth   (control: branch without rankwidth delegation)
-```
-
-### Full scoreboard refresh (requires Ganak + native simulators)
-
-```sh
-python3 scripts/run_corpus_benchmarks.py \
-    --artifact-dir artifacts/full \
-    --ganak /path/to/ganak
-```
-
-`run_corpus_benchmarks.py` is the single orchestrator. It runs solver, WMC (Ganak),
-and native-simulator jobs for all tiers (including the MQT Bench large tiers) and the
-WMC-vs-solver scaling study, then renders `scoreboard.md`, `scoreboard.json`, and
-flat `scoreboard-assets/` SVGs for the QSOP benchmark set.
-
-`bench.py full` is a thin alias for the same pipeline. Pass `--skip-wmc`,
-`--skip-native`, `--skip-solver`, `--skip-scaling`, or `--skip-scoreboard` to run a
-subset, `--timeout N` to override the default 30 s per-instance timeout, and
-`--scaling-timeout N` / `--clifford-max-qubits N` to tune the scaling study and the
-stabilizer-engine qubit cap.
-
-The native baseline uses dense statevector engines under a qubit cap plus
-`qiskit-clifford` (stabilizer, O(n²) memory) for the large Clifford circuits the
-statevector engines cannot reach. QSOPs are compared against native runs on
-the same boundaries (native amplitudes are the shared ground truth).
-
-#### Scaling study (synthetic family)
-
-The WMC-vs-solver crossover study runs on a committed, frozen synthetic
-phase-polynomial family under `benchmarks/corpus/sop/synthetic/scaling/`
-(the generator that produced it has been removed from `scripts/`).
-
-Real scalable circuit families do not work here: the importable QSOP gate set is
-finite-modulus (Clifford+T and dyadic phases), so the MQT families that scale
-treewidth (qaoa/qft/vqe) are rejected for their continuous angles, while the
-importable ones (ghz/bv/graphstate) are Clifford with trivial treewidth. The
-synthetic family has treewidth growing with qubit count and lets the scoreboard
-compare how the branch and treewidth backends and ganak (WMC) degrade as treewidth
-grows; the [scoreboard](scoreboard.md) reports the measured trend (which depends
-on the build optimization level — the branch backend collapses first in all cases).
-
-### Render from existing artifacts
-
-```sh
-python3 scripts/bench.py render \
-    --artifact-dir /tmp/dlx4sop-artifacts \
-    --view full
-```
-
-This regenerates `scoreboard.md`, `scoreboard.json`, and SVG plots from existing
-JSONL artifacts without re-running any experiments.
-
-### Other benchmark tools
-
-- `build-bench/bench-kernels --quick`: emit JSONL microbenchmarks for shared SIMD
-  kernels (bitset popcount/xor and f64 complex kernels).
-- `scripts/bench_qasm_corpus.py`: run the QSOP importer and solver across a manifest.
-- `scripts/bench_wmc_ganak.py`: drive `sop2wmc` + Ganak and cross-check against `sop-solve`.
-- `scripts/bench_qasm_native_simulator.py`: compare against supported native simulators.
-- `scripts/render_scoreboard.py`: render ad hoc reports (local backend summaries).
-- `scripts/run_corpus_benchmarks.py`: the single full-pipeline orchestrator (`bench.py full` is an alias).
+default, so the `-Dc_args` is unnecessary there.

@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
+"""OpenQASM text-munging helpers shared by the qccq-gauntlet adapters.
 
-import argparse
-import collections
-import json
-import math
-import pathlib
+Not a standalone CLI: `.gauntlet/adapter.py` and `.gauntlet/adapter_wmc.py`
+import this module directly (`sys.path.insert(0, ".../scripts")`) to inline
+simple gate definitions, count qubits, and classify qasm2sop import errors
+before invoking the solver.
+"""
+
 import re
-import subprocess
-import sys
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
+import math
 
 
 QREG_RE = re.compile(r"^qreg\s+([A-Za-z_][A-Za-z0-9_]*)\[(\d+)\]\s*;$")
-
-
-def sanitize_name(text: str) -> str:
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", text)
-    return name.strip("_") or "case"
 
 
 def strip_line_comment(line: str) -> str:
@@ -36,68 +32,8 @@ def qasm_qubits(qasm: str) -> int:
     return total
 
 
-def qasm_qreg_names(qasm: str) -> list[str]:
-    names: list[str] = []
-    for raw in qasm.splitlines():
-        match = QREG_RE.match(strip_line_comment(raw))
-        if match is not None:
-            names.append(match.group(1))
-    return names
-
-
-def repair_single_register_alias(qasm: str, alias: str) -> str:
-    names = sorted(set(qasm_qreg_names(qasm)))
-    if len(names) != 1 or alias in names:
-        return qasm
-    return re.sub(rf"\b{re.escape(alias)}\s*\[", f"{names[0]}[", qasm)
-
-
-def source_files(roots: list[pathlib.Path], include_invalid: bool) -> list[tuple[pathlib.Path, pathlib.Path]]:
-    files: list[tuple[pathlib.Path, pathlib.Path]] = []
-    suffixes = {".qasm"}
-
-    for root in roots:
-        if root.is_file():
-            candidates = [root]
-            base = root.parent
-        else:
-            candidates = sorted(path for path in root.rglob("*") if path.is_file())
-            base = root
-        for path in candidates:
-            if path.suffix.lower() not in suffixes:
-                continue
-            if not include_invalid and "invalid" in path.parts:
-                continue
-            files.append((base, path))
-    return files
-
-
-def load_source(path: pathlib.Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
 def starts_with_keyword(text: str, keyword: str) -> bool:
     return text == keyword or text.startswith(f"{keyword} ") or text.startswith(f"{keyword}\t")
-
-
-def strip_terminal_measurements(qasm: str) -> str:
-    stripped_lines: list[str] = []
-    saw_measurement = False
-    for raw in qasm.splitlines():
-        statement = strip_line_comment(raw)
-        if not statement:
-            stripped_lines.append(raw)
-            continue
-        if starts_with_keyword(statement, "if") or starts_with_keyword(statement, "reset"):
-            raise RuntimeError("cannot strip dynamic OpenQASM with if/reset")
-        if starts_with_keyword(statement, "creg") or starts_with_keyword(statement, "measure"):
-            if starts_with_keyword(statement, "measure"):
-                saw_measurement = True
-            continue
-        if saw_measurement and not starts_with_keyword(statement, "barrier"):
-            raise RuntimeError("cannot strip non-terminal measurement")
-        stripped_lines.append(raw)
-    return "\n".join(stripped_lines).rstrip("\n") + "\n"
 
 
 def parse_csv_operands(text: str) -> list[str]:
@@ -112,13 +48,6 @@ def split_gate_invocation(text: str) -> tuple[str, list[str], str]:
     params = parse_csv_operands(match.group(2) or "")
     operands = (match.group(3) or "").strip()
     return name, params, operands
-
-
-def split_name_params(text: str) -> tuple[str, list[str]]:
-    name, params, operands = split_gate_invocation(text)
-    if operands:
-        raise RuntimeError("invalid parameterized gate name")
-    return name, params
 
 
 def parse_gate_definition(header: str) -> tuple[str, list[str], list[str]]:
@@ -408,39 +337,6 @@ def inline_simple_gates(qasm: str) -> str:
     return "\n".join(output).rstrip("\n") + "\n"
 
 
-def has_gate_definition(qasm: str) -> bool:
-    return any(starts_with_keyword(strip_line_comment(line), "gate") for line in qasm.splitlines())
-
-
-def boundary_pairs(nqubits: int, mode: str) -> list[list[str]]:
-    zero = "0" * nqubits
-    one = "1" * nqubits
-    if mode == "zero":
-        return [[zero, zero]]
-    if mode == "zero-and-one":
-        return [[zero, zero], [one, one]]
-    if mode == "zero-to-one":
-        return [[zero, one]]
-    raise AssertionError(f"unhandled boundary mode {mode}")
-
-
-def qsop_metadata(qsop: str) -> dict[str, int | str]:
-    metadata: dict[str, int | str] | None = None
-    for line in qsop.splitlines():
-        parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["p", "qsop-sign"]:
-            metadata = {
-                "modulus": int(parts[2]),
-                "nvars": int(parts[3]),
-                "nedges": int(parts[4]),
-            }
-            continue
-    if metadata is None:
-        raise RuntimeError("missing QSOP header")
-    metadata["format"] = "qsop-sign"
-    return metadata
-
-
 def classify_error(message: str) -> str:
     if "too_many_vars" in message:
         return "too_many_vars"
@@ -476,267 +372,3 @@ def classify_error(message: str) -> str:
 def diagnostic_from_exception(exc: Exception) -> str:
     message = str(exc).strip().splitlines()
     return message[-1] if message else repr(exc)
-
-
-def relative_path(root: pathlib.Path, path: pathlib.Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.name
-
-
-def import_boundary_metadata(
-    qasm2sop: pathlib.Path, qasm: str, input_bits: str, output_bits: str
-) -> dict[str, int | str]:
-    completed = subprocess.run(
-        [str(qasm2sop), "--input", input_bits, "--output", output_bits, "-"],
-        check=False,
-        input=qasm,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if completed.returncode != 0:
-        diagnostic = completed.stderr.strip().splitlines()[-1] if completed.stderr.strip() else "qasm2sop failed"
-        raise RuntimeError(diagnostic)
-    return qsop_metadata(completed.stdout)
-
-
-def build_case(
-    qasm2sop: pathlib.Path,
-    root: pathlib.Path,
-    path: pathlib.Path,
-    qasm: str,
-    boundaries: list[list[str]],
-    min_vars: int,
-    max_vars: int,
-    source_prefix: str,
-    source_name: str,
-    source_url: str | None,
-) -> tuple[dict | None, str, list[dict[str, int | str]], int, int, str]:
-    max_nvars = 0
-    max_edges = 0
-    boundary_records: list[dict[str, int | str]] = []
-    for input_bits, output_bits in boundaries:
-        metadata = import_boundary_metadata(qasm2sop, qasm, input_bits, output_bits)
-        nvars = int(metadata["nvars"])
-        nedges = int(metadata["nedges"])
-        max_nvars = max(max_nvars, nvars)
-        max_edges = max(max_edges, nedges)
-        boundary_records.append(
-            {
-                "input": input_bits,
-                "output": output_bits,
-                **metadata,
-            }
-        )
-
-    mode = "sign"
-
-    if max_nvars > max_vars:
-        return None, "too_many_vars", boundary_records, max_nvars, max_edges, mode
-    if max_nvars < min_vars:
-        return None, "below_min_vars", boundary_records, max_nvars, max_edges, mode
-
-    relpath = path.relative_to(root)
-    name = sanitize_name(f"{source_prefix}_{relpath.with_suffix('').as_posix()}")
-    case = {
-        "name": name,
-        "source": source_name,
-        "source_path": str(path),
-        "source_relative_path": relpath.as_posix(),
-        "qasm_lines": qasm.rstrip("\n").splitlines(),
-        "boundaries": boundaries,
-        "max_imported_nvars": max_nvars,
-        "max_imported_edges": max_edges,
-    }
-    if source_url is not None:
-        case["source_url"] = source_url
-    return (case, "ok", boundary_records, max_nvars, max_edges, mode)
-
-
-def report_record(
-    root: pathlib.Path,
-    path: pathlib.Path,
-    status: str,
-    source_name: str,
-    source_url: str | None,
-    diagnostic: str | None = None,
-    boundaries: list[dict[str, int | str]] | None = None,
-    max_nvars: int | None = None,
-    max_edges: int | None = None,
-    mode: str | None = None,
-) -> dict:
-    record = {
-        "path": str(path),
-        "relative_path": relative_path(root, path),
-        "source": source_name,
-        "source_type": path.suffix.lower().lstrip(".") or "unknown",
-        "status": status,
-    }
-    if source_url is not None:
-        record["source_url"] = source_url
-    if diagnostic:
-        record["diagnostic"] = diagnostic
-    if boundaries is not None:
-        record["boundaries"] = boundaries
-    if max_nvars is not None:
-        record["max_imported_nvars"] = max_nvars
-    if max_edges is not None:
-        record["max_imported_edges"] = max_edges
-    if mode is not None:
-        record["mode"] = mode
-    return record
-
-
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build a qasm_solver_corpus-compatible manifest from external QASM files."
-    )
-    parser.add_argument("qasm2sop", type=pathlib.Path)
-    parser.add_argument("roots", nargs="+", type=pathlib.Path)
-    parser.add_argument("--include-invalid", action="store_true")
-    parser.add_argument(
-        "--strip-terminal-measurements",
-        action="store_true",
-        help="drop creg declarations and terminal measure statements for strong-simulation imports",
-    )
-    parser.add_argument(
-        "--inline-simple-gates",
-        action="store_true",
-        help="inline non-parameterized OpenQASM gate definitions for benchmark ingestion",
-    )
-    parser.add_argument("--source-prefix", default="external")
-    parser.add_argument("--source-name", help="human-readable source label stored in emitted cases and reports")
-    parser.add_argument("--source-url", help="upstream source repository or benchmark URL stored in reports")
-    parser.add_argument(
-        "--repair-single-register-alias",
-        action="append",
-        default=[],
-        metavar="NAME",
-        help="rewrite NAME[index] to the sole declared qreg name when a source has a known alias typo",
-    )
-    parser.add_argument("--limit", type=int, help="limit source files before import filtering")
-    parser.add_argument("--max-cases", type=int, help="limit emitted manifest cases")
-    parser.add_argument("--min-vars", type=int, default=0, help="only emit cases with at least this many imported SOP variables")
-    parser.add_argument("--max-vars", type=int, default=24)
-    parser.add_argument("--output", type=pathlib.Path, help="write manifest JSON to this path instead of stdout")
-    parser.add_argument("--report", type=pathlib.Path, help="write per-source import classification JSON")
-    parser.add_argument(
-        "--boundaries",
-        choices=("zero", "zero-and-one", "zero-to-one"),
-        default="zero",
-        help="fixed-boundary amplitudes to include per source file",
-    )
-    args = parser.parse_args(argv)
-    if args.limit is not None and args.limit < 0:
-        parser.error("--limit must be non-negative")
-    if args.max_cases is not None and args.max_cases < 0:
-        parser.error("--max-cases must be non-negative")
-    if args.max_vars < 0:
-        parser.error("--max-vars must be non-negative")
-    if args.min_vars < 0:
-        parser.error("--min-vars must be non-negative")
-    if args.min_vars > args.max_vars:
-        parser.error("--min-vars must be less than or equal to --max-vars")
-    args.source_name = args.source_name or args.source_prefix
-    return args
-
-
-def main(argv: list[str]) -> int:
-    args = parse_args(argv)
-    inputs = source_files(args.roots, args.include_invalid)
-    if args.limit is not None:
-        inputs = inputs[: args.limit]
-
-    counts: collections.Counter[str] = collections.Counter()
-    cases = []
-    report_records = []
-    for root, path in inputs:
-        if args.max_cases is not None and len(cases) >= args.max_cases:
-            break
-        qasm = None
-        try:
-            qasm = load_source(path)
-            if args.inline_simple_gates:
-                qasm = inline_simple_gates(qasm)
-            if args.strip_terminal_measurements:
-                qasm = strip_terminal_measurements(qasm)
-            for alias in args.repair_single_register_alias:
-                qasm = repair_single_register_alias(qasm, alias)
-            nqubits = qasm_qubits(qasm)
-            boundaries = boundary_pairs(nqubits, args.boundaries)
-            case, status, boundary_records, max_nvars, max_edges, mode = build_case(
-                args.qasm2sop,
-                root,
-                path,
-                qasm,
-                boundaries,
-                args.min_vars,
-                args.max_vars,
-                args.source_prefix,
-                args.source_name,
-                args.source_url,
-            )
-        except Exception as exc:
-            diagnostic = diagnostic_from_exception(exc)
-            status = classify_error(diagnostic)
-            if status == "parse_error" and qasm is not None and has_gate_definition(qasm):
-                status = "unsupported_gate_definition"
-            counts[status] += 1
-            report_records.append(
-                report_record(
-                    root,
-                    path,
-                    status,
-                    args.source_name,
-                    args.source_url,
-                    diagnostic=diagnostic,
-                )
-            )
-            continue
-
-        counts[status] += 1
-        report_records.append(
-            report_record(
-                root,
-                path,
-                status,
-                args.source_name,
-                args.source_url,
-                boundaries=boundary_records,
-                max_nvars=max_nvars,
-                max_edges=max_edges,
-                mode=mode,
-            )
-        )
-        if case is not None:
-            cases.append(case)
-
-    manifest = json.dumps(cases, indent=2, sort_keys=True) + "\n"
-    if args.output is None:
-        print(manifest, end="")
-    else:
-        args.output.write_text(manifest, encoding="utf-8")
-    if args.report is not None:
-        report = {
-            "roots": [str(root) for root in args.roots],
-            "source": args.source_name,
-            "source_url": args.source_url,
-            "inputs": len(inputs),
-            "emitted": len(cases),
-            "counts": dict(sorted(counts.items())),
-            "records": report_records,
-        }
-        args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(
-        "build_external_qasm_manifest: "
-        f"inputs={len(inputs)} emitted={len(cases)} "
-        + " ".join(f"{key}={counts[key]}" for key in sorted(counts)),
-        file=sys.stderr,
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))

@@ -1,9 +1,0 @@
-{
-  "name": "tier-9-16-star-n9-r16-03",
-  "generator": "build_sop_corpus.py:v2-sign",
-  "r": 16,
-  "nvars": 9,
-  "nedges": 8,
-  "description": "Synthetic star graph, 9 vars, r=16, seed=1042+3",
-  "solvable_without_external_tools": true
-}

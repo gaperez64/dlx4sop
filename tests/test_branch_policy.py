@@ -10,18 +10,20 @@ import sys
 import tempfile
 
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-BENCHMARKS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
-
-
-def _find_small_qsop():
-    """Return a small QSOP file from the corpus for policy testing."""
-    for tier_dir in sorted(BENCHMARKS_DIR.iterdir()):
-        if not tier_dir.is_dir():
-            continue
-        for qsop in sorted(tier_dir.glob("*.qsop"))[:3]:
-            return qsop
-    return None
+def _small_qsop_fixture(tmp: pathlib.Path) -> pathlib.Path:
+    """8-variable path graph plus 2 chords, with a few unary terms."""
+    nvars = 8
+    r = 8
+    edges = [(i, i + 1) for i in range(nvars - 1)] + [(0, 3), (2, 6)]
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", "cst 1"]
+    for i in range(nvars):
+        if i % 2 == 0:
+            lines.append(f"u {i} {(i % (r - 1)) + 1}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    path = tmp / "fixture.qsop"
+    path.write_text("\n".join(lines) + "\n")
+    return path
 
 
 def _run_sop_solve(sop_solve, qsop, extra_args, timeout=10.0):
@@ -48,10 +50,7 @@ def test_binary_exists(sop_solve, tmp):
 
 
 def test_branch_rw_min_treewidth_width_veto(sop_solve, tmp):
-    qsop = _find_small_qsop()
-    if qsop is None:
-        print("  SKIP: no corpus found")
-        return
+    qsop = _small_qsop_fixture(tmp)
     r1 = _run_sop_solve(sop_solve, qsop, [])
     r2 = _run_sop_solve(sop_solve, qsop, ["--branch-rw-min-treewidth-width", "100"])
     if r1["status"] != "ok":
@@ -61,18 +60,14 @@ def test_branch_rw_min_treewidth_width_veto(sop_solve, tmp):
 
 
 def test_branch_rw_min_speedup_high_veto(sop_solve, tmp):
-    qsop = _find_small_qsop()
-    if qsop is None:
-        return
+    qsop = _small_qsop_fixture(tmp)
     result = _run_sop_solve(sop_solve, qsop, ["--branch-rw-min-speedup", "1000.0"])
     if result["status"] != "ok":
         raise AssertionError(f"high-speedup run failed: {result}")
 
 
 def test_branch_no_rankwidth_completes(sop_solve, tmp):
-    qsop = _find_small_qsop()
-    if qsop is None:
-        return
+    qsop = _small_qsop_fixture(tmp)
     cmd = [
         str(sop_solve),
         "--backend", "branch",
@@ -88,9 +83,7 @@ def test_branch_no_rankwidth_completes(sop_solve, tmp):
 
 
 def test_new_policy_options_parse(sop_solve, tmp):
-    qsop = _find_small_qsop()
-    if qsop is None:
-        return
+    qsop = _small_qsop_fixture(tmp)
     policy_args = [
         "--branch-rw-min-treewidth-width", "2",
         "--branch-rw-min-treewidth-forecast", "512",
@@ -107,9 +100,7 @@ def test_new_policy_options_parse(sop_solve, tmp):
 
 
 def test_non_branch_backend_rejects_rw_source(sop_solve, tmp):
-    qsop = _find_small_qsop()
-    if qsop is None:
-        return
+    qsop = _small_qsop_fixture(tmp)
     cmd = [
         str(sop_solve),
         "--backend", "treewidth",

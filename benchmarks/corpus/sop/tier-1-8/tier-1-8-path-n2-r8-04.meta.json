@@ -1,9 +1,0 @@
-{
-  "name": "tier-1-8-path-n2-r8-04",
-  "generator": "build_sop_corpus.py:v1",
-  "r": 8,
-  "nvars": 2,
-  "nedges": 1,
-  "description": "Synthetic path graph, 2 vars, r=8, seed=42+4",
-  "solvable_without_external_tools": true
-}

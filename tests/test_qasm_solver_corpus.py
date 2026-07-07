@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 
-BACKENDS = ["components", "brute-force", "branch", "treewidth"]
+BACKENDS = ["components", "brute-force", "branch", "treewidth", "rankwidth"]
 
 
 def run(cmd: list[str], *, input_text: str | None = None) -> str:
@@ -45,13 +45,16 @@ def qsop_nvars(qsop: str) -> int:
     raise AssertionError(f"missing QSOP header:\n{qsop}")
 
 
+STRING_STATS = {"backend", "treewidth_order", "rankwidth_mode", "rankwidth_decomposition"}
+
+
 def parse_stats(text: str) -> dict[str, int | str]:
     stats: dict[str, int | str] = {}
     for line in text.splitlines():
         if not line:
             continue
         key, value = line.split(": ", 1)
-        stats[key] = value if key in {"backend", "treewidth_order"} else int(value)
+        stats[key] = value if key in STRING_STATS else int(value)
     return stats
 
 

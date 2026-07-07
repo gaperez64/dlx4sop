@@ -64,9 +64,3 @@ __pycache__/
 
 # Local project planning
 tasks.md
-
-# Ephemeral benchmark artifacts (JSONL outputs from bench_* runners)
-# Note: benchmarks/corpus/sop/manifest.jsonl is intentionally tracked.
-results/
-*.bench.jsonl
-scoreboard.md

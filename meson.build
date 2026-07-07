@@ -132,7 +132,7 @@ sop2wmc = executable(
 
 bench_kernels = executable(
   'bench-kernels',
-  'tools/bench_kernels.c',
+  'src/tools/bench_kernels.c',
   dependencies: dlx4sop_core_dep,
   install: false,
 )
@@ -338,265 +338,21 @@ if python3.found()
     depends: [qasm2sop, sop_solve],
   )
   test(
-    'qasm benchmark smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--backend',
-      'branch',
-      '--limit',
-      '1',
-      '--trace',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
-    'qasm benchmark summary smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--backend',
-      'branch',
-      '--limit',
-      '1',
-      '--trace',
-      '--format',
-      'summary',
-      '--top',
-      '1',
-      '--top-metric',
-      'search_nodes',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
-    'qasm benchmark trace metrics',
-    python3,
-    args: [
-      files('tests/test_bench_qasm_corpus.py'),
-      files('scripts/bench_qasm_corpus.py'),
-    ],
-  )
-  test(
-    'qasm rankwidth benchmark smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--backend',
-      'rankwidth',
-      '--limit',
-      '1',
-      '--trace',
-      '--rankwidth-sweep',
-      '--format',
-      'summary',
-      '--top',
-      '1',
-      '--top-metric',
-      'max_table_entries',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
-    'qasm rankwidth diagnostics smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--limit',
-      '1',
-      '--rankwidth-diagnostics',
-      '--format',
-      'summary',
-      '--top',
-      '1',
-      '--top-metric',
-      'solve_elapsed_ns',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
-    'qasm rankwidth comparison smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--limit',
-      '1',
-      '--rankwidth-comparison',
-      '--format',
-      'summary',
-      '--top',
-      '1',
-      '--top-metric',
-      'solve_elapsed_ns',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
-    'qasm treewidth benchmark smoke',
-    python3,
-    args: [
-      files('scripts/bench_qasm_corpus.py'),
-      qasm2sop.full_path(),
-      sop_solve.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--backend',
-      'treewidth',
-      '--treewidth-order',
-      'min-fill',
-      '--treewidth-order',
-      'min-degree',
-      '--treewidth-order',
-      'min-fill-max-degree',
-      '--limit',
-      '1',
-      '--trace',
-      '--format',
-      'summary',
-      '--top',
-      '1',
-      '--top-metric',
-      'treewidth_max_table_entries',
-    ],
-    depends: [qasm2sop, sop_solve],
-  )
-  test(
     'qasm width benchmark smoke',
     python3,
     args: [
-      files('scripts/bench_qasm_widths.py'),
+      files('tests/test_qasm_exact_widths.py'),
       qasm2sop.full_path(),
       sop_stats.full_path(),
-      '--manifest',
-      files('tests/qasm_solver_corpus.json'),
-      '--limit',
-      '1',
-      '--exact-width-max-vars',
-      '12',
-      '--format',
-      'summary',
     ],
     depends: [qasm2sop, sop_stats],
   )
   test(
-    'external manifest smoke',
+    'qasm manifest helpers smoke',
     python3,
     args: [
-      files('tests/test_external_manifest.py'),
+      files('tests/test_qasm_manifest_helpers.py'),
       files('scripts/build_external_qasm_manifest.py'),
-      qasm2sop.full_path(),
-    ],
-    depends: qasm2sop,
-  )
-  test(
-    'qasm report summary smoke',
-    python3,
-    args: [
-      files('tests/test_summarize_qasm_report.py'),
-      files('scripts/summarize_qasm_report.py'),
-    ],
-  )
-  test(
-    'scoreboard render smoke',
-    python3,
-    args: [
-      files('tests/test_render_scoreboard.py'),
-      files('scripts/render_scoreboard.py'),
-    ],
-  )
-  test(
-    'scoreboard refresh smoke',
-    python3,
-    args: [
-      files('tests/test_refresh_scoreboard.py'),
-      files('scripts/refresh_scoreboard.py'),
-    ],
-  )
-  test(
-    'native solver comparison smoke',
-    python3,
-    args: [
-      files('tests/test_compare_native_solver_results.py'),
-      files('scripts/compare_native_solver_results.py'),
-    ],
-  )
-  test(
-    'tune branch thresholds smoke',
-    python3,
-    args: [
-      files('tests/test_tune_branch_thresholds.py'),
-      files('scripts/tune_branch_thresholds.py'),
-    ],
-  )
-  test(
-    'rankwidth generator comparison smoke',
-    python3,
-    args: [
-      files('tests/test_compare_rankwidth_generators.py'),
-      files('scripts/compare_rankwidth_generators.py'),
-    ],
-  )
-  test(
-    'rankwidth backend comparison smoke',
-    python3,
-    args: [
-      files('tests/test_compare_rankwidth_backends.py'),
-      files('scripts/compare_rankwidth_backends.py'),
-    ],
-  )
-  test(
-    'analyze branch regressions smoke',
-    python3,
-    args: [
-      files('tests/test_analyze_branch_regressions.py'),
-    ],
-  )
-  test(
-    'scoreboard json output smoke',
-    python3,
-    args: [
-      files('tests/test_scoreboard_json_output.py'),
-    ],
-  )
-  test(
-    'plot scoreboard smoke',
-    python3,
-    args: [
-      files('tests/test_plot_scoreboard.py'),
-    ],
-  )
-  test(
-    'check generated scoreboard smoke',
-    python3,
-    args: [
-      files('tests/test_check_generated_scoreboard.py'),
-    ],
-  )
-  test(
-    'record qsop mode smoke',
-    python3,
-    args: [
-      files('tests/test_record_qsop_mode.py'),
     ],
   )
   test(
@@ -642,43 +398,11 @@ if python3.found()
     'rankwidth family benchmark smoke',
     python3,
     args: [
-      files('scripts/bench_sop_local.py'),
-      '--sop-solve', sop_solve.full_path(),
-      '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'rankwidth',
-      '--tier', 'tier-rankwidth',
-      '--backend', 'rankwidth:linear',
-      '--backend', 'rankwidth:best',
-      '--backend', 'rankwidth:best:fourier',
-      '--timeout', '5',
-      '--max-vars', '128',
-      '--quiet',
+      files('tests/test_rankwidth_family_backends.py'),
+      sop_solve.full_path(),
     ],
     depends: sop_solve,
     timeout: 60,
-  )
-  test(
-    'qasm native compatibility smoke',
-    python3,
-    args: [
-      files('tests/test_qasm_native_compat.py'),
-      meson.current_source_dir(),
-    ],
-  )
-  test(
-    'native simulator benchmark help',
-    python3,
-    args: [
-      files('scripts/bench_qasm_native_simulator.py'),
-      '--help',
-    ],
-  )
-  test(
-    'wmc ganak benchmark help',
-    python3,
-    args: [
-      files('scripts/bench_wmc_ganak.py'),
-      '--help',
-    ],
   )
   test(
     'wmc ganak benchmark metadata smoke',
@@ -688,37 +412,14 @@ if python3.found()
       files('scripts/bench_wmc_ganak.py'),
     ],
   )
-  test(
-    'wmc runner options smoke',
-    python3,
-    args: [
-      files('tests/test_wmc_runner_options.py'),
-      files('scripts/run_corpus_benchmarks.py'),
-      files('scripts/bench.py'),
-    ],
-  )
-  test(
-    'native simulator benchmark smoke',
-    python3,
-    args: [
-      files('tests/test_native_simulator_benchmark.py'),
-      files('scripts/bench_qasm_native_simulator.py'),
-    ],
-  )
-  # Synthetic scaling family (WMC-vs-solver crossover study): run the committed corpus
+  # Synthetic scaling smoke: a large, low-treewidth synthetic instance built inline, run
   # through sop-solve with a small timeout cap so CI exercises it without long runs.
   test(
     'synthetic scaling smoke',
     python3,
     args: [
-      files('scripts/bench_sop_local.py'),
-      '--sop-solve', sop_solve.full_path(),
-      '--corpus-dir', meson.current_source_dir() / 'benchmarks' / 'corpus' / 'sop' / 'synthetic' / 'scaling',
-      '--tier', 'tier-scaling',
-      '--backend', 'treewidth',
-      '--timeout', '3',
-      '--max-vars', '4096',
-      '--quiet',
+      files('tests/test_treewidth_scaling_smoke.py'),
+      sop_solve.full_path(),
     ],
     depends: [sop_solve],
     timeout: 120,

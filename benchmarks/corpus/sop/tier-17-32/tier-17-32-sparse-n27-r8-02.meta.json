@@ -1,9 +1,0 @@
-{
-  "name": "tier-17-32-sparse-n27-r8-02",
-  "generator": "build_sop_corpus.py:v2-sign",
-  "r": 8,
-  "nvars": 27,
-  "nedges": 52,
-  "description": "Synthetic sparse graph, 27 vars, r=8, seed=2042+2",
-  "solvable_without_external_tools": true
-}

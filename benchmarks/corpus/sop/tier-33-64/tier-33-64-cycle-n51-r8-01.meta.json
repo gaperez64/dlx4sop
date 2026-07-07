@@ -1,9 +1,0 @@
-{
-  "name": "tier-33-64-cycle-n51-r8-01",
-  "generator": "build_sop_corpus.py:v2-sign",
-  "r": 8,
-  "nvars": 51,
-  "nedges": 51,
-  "description": "Synthetic cycle graph, 51 vars, r=8, seed=3042+1",
-  "solvable_without_external_tools": true
-}

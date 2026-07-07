@@ -14,23 +14,63 @@ import subprocess
 import sys
 import tempfile
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-CORPUS_DIR = REPO_ROOT / "benchmarks" / "corpus" / "sop"
-
 # Synthetic sign-edge 4-cycle QSOP: 4 variables in a ring, r=8 (sign coeff = 4).
 # Produces 3 join nodes when rankwidth-generated, which will use the CSR path.
 _SIGN_EDGE_4CYCLE = b"p qsop-sign 8 4 4\nn 1\ne 0 1\ne 1 2\ne 2 3\ne 0 3\n"
 
 
-def _find_rankwidth_instances(max_count=4):
+def _make_signed_star_qsop(nvars: int = 8, r: int = 8) -> str:
+    lines = [f"p qsop-sign {r} {nvars} {nvars - 1}", "n 0", "cst 0"]
+    for i in range(nvars):
+        lines.append(f"u {i} {(i * 3 % (r - 1)) + 1}")
+    for v in range(1, nvars):
+        lines.append(f"e 0 {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _make_signed_path_chords_qsop(nvars: int = 8, r: int = 8) -> str:
+    edges = [(i, i + 1) for i in range(nvars - 1)] + [(0, 3), (2, 6)]
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", "cst 1"]
+    for i in range(nvars):
+        lines.append(f"u {i} {(i % (r - 1)) + 1}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _make_cycle_qsop(nvars: int = 6, r: int = 8) -> str:
+    lines = [f"p qsop-sign {r} {nvars} {nvars}", "n 0", "cst 0"]
+    for i in range(nvars):
+        lines.append(f"e {i} {(i + 1) % nvars}")
+    return "\n".join(lines) + "\n"
+
+
+def _make_wheel_qsop(nvars: int = 8, r: int = 8) -> str:
+    """Wheel graph: an (nvars-1)-cycle rim plus a hub connected to every rim node --
+    denser than a path/star/cycle, giving rankwidth generation real width to work with."""
+    rim = nvars - 1
+    edges = [(i + 1, ((i + 1) % rim) + 1) for i in range(rim)]
+    edges += [(0, v) for v in range(1, nvars)]
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", "n 0", "cst 0"]
+    for i in range(nvars):
+        lines.append(f"u {i} {(i * 5 % (r - 1)) + 1}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_synthetic_fixtures(tmp: pathlib.Path) -> list[pathlib.Path]:
+    fixtures = [
+        ("signed_star", _make_signed_star_qsop()),
+        ("signed_path_chords", _make_signed_path_chords_qsop()),
+        ("cycle", _make_cycle_qsop()),
+        ("wheel", _make_wheel_qsop()),
+    ]
     files = []
-    for tier in sorted(CORPUS_DIR.iterdir()):
-        if not tier.is_dir():
-            continue
-        for f in sorted(tier.glob("*.qsop")):
-            files.append(f)
-            if len(files) >= max_count:
-                return files
+    for name, text in fixtures:
+        path = tmp / f"{name}.qsop"
+        path.write_text(text)
+        files.append(path)
     return files
 
 
@@ -64,11 +104,8 @@ def _residue_vector(result):
     return result.stdout.decode(errors="replace").strip()
 
 
-def run_tests(sop_solve):
-    files = _find_rankwidth_instances()
-    if not files:
-        print("  SKIP: no corpus files found")
-        return True
+def run_tests(sop_solve, tmp):
+    files = _write_synthetic_fixtures(tmp)
 
     all_passed = True
 
@@ -335,7 +372,8 @@ def main():
     if not sop_solve.exists():
         print(f"error: {sop_solve} not found", file=sys.stderr)
         sys.exit(1)
-    ok = run_tests(sop_solve)
+    with tempfile.TemporaryDirectory() as td:
+        ok = run_tests(sop_solve, pathlib.Path(td))
     sys.exit(0 if ok else 1)
 
 

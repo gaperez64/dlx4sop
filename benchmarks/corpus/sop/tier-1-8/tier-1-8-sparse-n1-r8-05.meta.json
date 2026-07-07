@@ -1,9 +1,0 @@
-{
-  "name": "tier-1-8-sparse-n1-r8-05",
-  "generator": "build_sop_corpus.py:v1",
-  "r": 8,
-  "nvars": 1,
-  "nedges": 0,
-  "description": "Synthetic sparse graph, 1 vars, r=8, seed=42+5",
-  "solvable_without_external_tools": true
-}

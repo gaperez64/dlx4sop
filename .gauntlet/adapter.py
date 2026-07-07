@@ -39,7 +39,7 @@ FORBIDDEN_OPS = {"measure", "reset", "initialize", "set_density_matrix", "set_st
 
 # Matches the gauntlet's own zero-amplitude tolerance (1e-8 absolute+relative
 # in every real suite bar "smoke"), so the modulus this buys is exactly what
-# a real registration needs -- see scripts/scan_gauntlet_coverage.py.
+# a real registration needs.
 APPROX_EPSILON = 1e-8
 
 # Comfortably under the harness's 120s per-case window (docs/operations.md),

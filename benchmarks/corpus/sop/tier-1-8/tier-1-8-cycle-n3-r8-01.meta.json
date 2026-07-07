@@ -1,9 +1,0 @@
-{
-  "name": "tier-1-8-cycle-n3-r8-01",
-  "generator": "build_sop_corpus.py:v1",
-  "r": 8,
-  "nvars": 3,
-  "nedges": 3,
-  "description": "Synthetic cycle graph, 3 vars, r=8, seed=42+1",
-  "solvable_without_external_tools": true
-}
