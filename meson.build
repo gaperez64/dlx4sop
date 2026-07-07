@@ -466,18 +466,6 @@ if python3.found()
       files('scripts/bench_wmc_ganak.py'),
     ],
   )
-  test(
-    'branch treewidth benchmark smoke',
-    python3,
-    args: [
-      files('tests/test_bench_branch_treewidth.py'),
-      files('scripts/bench_branch_treewidth.py'),
-      sop_solve.full_path(),
-      meson.current_source_dir(),
-    ],
-    depends: sop_solve,
-    timeout: 40,
-  )
   # Synthetic scaling smoke: a large, low-treewidth synthetic instance built inline, run
   # through sop-solve with a small timeout cap so CI exercises it without long runs.
   test(

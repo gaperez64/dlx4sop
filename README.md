@@ -148,13 +148,3 @@ they import a circuit, run it through `qasm2sop`/`sop-solve` (or
 `sop2wmc` + Ganak), and report back in the protocol gauntlet expects. Both
 adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
 from `scripts/` for OpenQASM munging and Ganak-output parsing.
-
-For bounded local branch-vs-treewidth timing checks on exported `.qsop` files,
-use `scripts/bench_branch_treewidth.py`. It runs one branch pass and one
-treewidth pass per input, sequentially, and can wrap each solver invocation in a
-`systemd-run` memory scope:
-
-```sh
-python3 scripts/bench_branch_treewidth.py --solver build/sop-solve \
-  --timeout 120 --memory-max 8G tests/golden/solve_single.qsop
-```
