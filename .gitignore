@@ -57,6 +57,7 @@ dkms.conf
 # Local build and test artifacts
 build/
 build-*/
+artifacts/
 __pycache__/
 .pytest_cache/
 *.swp

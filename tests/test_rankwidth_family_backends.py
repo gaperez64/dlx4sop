@@ -64,7 +64,15 @@ def _write_fixtures(tmp: pathlib.Path) -> list[pathlib.Path]:
 
 
 def _residue_vector(sop_solve, qsop, extra_args) -> str:
-    cmd = [str(sop_solve), "--backend", "rankwidth", "--max-vars", "64"] + extra_args + [str(qsop)]
+    cmd = [
+        str(sop_solve),
+        "--backend",
+        "rankwidth",
+        "--format",
+        "residue-vector",
+        "--max-vars",
+        "64",
+    ] + extra_args + [str(qsop)]
     result = subprocess.run(cmd, capture_output=True, timeout=30)
     if result.returncode != 0:
         raise AssertionError(

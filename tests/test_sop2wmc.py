@@ -2,11 +2,11 @@
 """Validate the sop2wmc export (residue and amplitude) without an external counter.
 
 Residue encoding: for residue k, the exported CNF must have exactly counts[k]
-models. We brute-force the (tiny) variable space with unit propagation.
+models. We exhaustively enumerate the (tiny) variable space with unit propagation.
 
 Amplitude encoding: the exported WPCNF must produce a WMC sum (multiplied by
 the amplitude_factor from metadata) equal to sop-solve's amplitude
-sum_k counts[k] * omega^k. We brute-force the WMC by directly evaluating the
+sum_k counts[k] * omega^k. We exhaustively evaluate the WMC by directly evaluating the
 literal weight product for each free-variable assignment.
 """
 
@@ -343,7 +343,7 @@ def parse_fourier_blocks(text: str):
 def verify_residue_fourier(
     sop2wmc: pathlib.Path, sop_solve: pathlib.Path, qsop: pathlib.Path
 ) -> None:
-    """Verify residue-fourier: inverse DFT of brute-force amplitudes matches sop-solve counts."""
+    """Verify residue-fourier: inverse DFT of exhaustive amplitudes matches sop-solve counts."""
     ref_counts = reference_counts(sop_solve, qsop)
     r = len(ref_counts)
 
@@ -357,7 +357,7 @@ def verify_residue_fourier(
     if len(blocks) != r:
         raise AssertionError(f"{qsop}: expected {r} fourier blocks, got {len(blocks)}")
 
-    # Compute amplitudes Z_t for each block via brute-force WMC.
+    # Compute amplitudes Z_t for each block via exhaustive WMC.
     omega = cmath.exp(2 * math.pi * 1j / r)
     z_values = []
     for t, block_text in sorted(blocks):
@@ -473,7 +473,7 @@ def verify_amp_block(sop2wmc: pathlib.Path, sop_solve: pathlib.Path,
     """Verify amp-block: WMC matches sop-solve amplitude.
 
     amp-block and its amp-soft fallback both use non-determined soft auxiliaries,
-    so this brute-forces all CNF variables; callers keep fixtures small.
+    so this exhaustively enumerates all CNF variables; callers keep fixtures small.
     """
     ref_amplitude = reference_amplitude(sop_solve, qsop_text)
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
@@ -641,11 +641,18 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
             raise AssertionError("output file missing DIMACS header")
 
     # All valid encodings should succeed.
-    for enc in ("amp-and", "amplitude", "amp-soft", "amp-block", "residue-fourier",
+    for enc in ("auto", "amp-and", "amplitude", "amp-soft", "amp-block", "residue-fourier",
                 "residue-accumulator", "residue"):
         r = run([str(sop2wmc), "--encoding", enc, str(qsop)])
         if r.returncode != 0:
             raise AssertionError(f"--encoding {enc} unexpectedly failed:\n{r.stderr}")
+
+    for enc in ("amp-and", "amp-soft", "amp-block", "residue", "auto"):
+        r = run([str(sop2wmc), "--encoding", enc, "--stats-only", str(qsop)])
+        if r.returncode != 0:
+            raise AssertionError(f"--encoding {enc} --stats-only failed:\n{r.stderr}")
+        if "p cnf" in r.stdout or "encoding:" not in r.stdout or "total_clauses:" not in r.stdout:
+            raise AssertionError(f"bad stats-only output for {enc}:\n{r.stdout}")
 
     # WMC preprocessing should succeed for amplitude encodings and residue-fourier.
     for enc in ("amp-and", "amp-soft", "residue-fourier"):
@@ -682,7 +689,7 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(sop2wmc), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
         ([str(sop2wmc), "-o"], "requires a path"),
         ([str(sop2wmc), "--encoding"], "requires a value"),
-        ([str(sop2wmc), "--encoding", "nope", str(qsop)], "must be 'amp-and'"),
+        ([str(sop2wmc), "--encoding", "nope", str(qsop)], "must be 'auto'"),
         ([str(sop2wmc), "--encoding", "residue-fourier", "--wmc-fourier-mode", "999", str(qsop)],
          "out of range"),
     ]

@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 
-BACKENDS = ["components", "brute-force", "branch", "treewidth", "rankwidth"]
+BACKENDS = ["branch", "treewidth", "rankwidth"]
 
 
 def run(cmd: list[str], *, input_text: str | None = None) -> str:
@@ -45,7 +45,14 @@ def qsop_nvars(qsop: str) -> int:
     raise AssertionError(f"missing QSOP header:\n{qsop}")
 
 
-STRING_STATS = {"backend", "treewidth_order", "rankwidth_mode", "rankwidth_decomposition"}
+STRING_STATS = {
+    "backend",
+    "solve_mode",
+    "solve_mode_kernel",
+    "treewidth_order",
+    "rankwidth_mode",
+    "rankwidth_decomposition",
+}
 
 
 def parse_stats(text: str) -> dict[str, int | str]:
@@ -59,12 +66,12 @@ def parse_stats(text: str) -> dict[str, int | str]:
 
 
 def assert_backend_agreement(sop_solve: pathlib.Path, case: str, boundary: str, qsop: str) -> None:
-    expected = solve(sop_solve, qsop, "components", "residue-vector")
+    expected = solve(sop_solve, qsop, "branch", "residue-vector")
     for backend in BACKENDS:
         actual = solve(sop_solve, qsop, backend, "residue-vector")
         if actual != expected:
             raise AssertionError(
-                f"{case} {boundary}: {backend} disagrees with components\n"
+                f"{case} {boundary}: {backend} disagrees with branch\n"
                 f"expected:\n{expected}\nactual:\n{actual}"
             )
 
@@ -74,24 +81,16 @@ def assert_stats_invariants(
     case: str,
     boundary: str,
     qsop: str,
-    *,
-    expect_component_cache_hit: bool = False,
 ) -> None:
     nvars = qsop_nvars(qsop)
     stats = {
         backend: parse_stats(solve(sop_solve, qsop, backend, "stats")) for backend in BACKENDS
     }
 
-    brute_leaves = stats["brute-force"]["leaf_assignments"]
-    if brute_leaves != 1 << nvars:
-        raise AssertionError(
-            f"{case} {boundary}: brute-force leaves {brute_leaves} do not match 2^{nvars}"
-        )
-
     branch_leaves = stats["branch"]["leaf_assignments"]
-    if branch_leaves > brute_leaves:
+    if branch_leaves > 1 << nvars:
         raise AssertionError(
-            f"{case} {boundary}: branch leaves {branch_leaves} exceed brute {brute_leaves}"
+            f"{case} {boundary}: branch leaves {branch_leaves} exceed 2^{nvars}"
         )
     branch_nodes = stats["branch"]["search_nodes"]
     branch_cache_hits = stats["branch"]["cache_hits"]
@@ -100,23 +99,6 @@ def assert_stats_invariants(
         raise AssertionError(
             f"{case} {boundary}: branch cache hits + misses do not match search nodes"
         )
-
-    component_leaves = stats["components"]["leaf_assignments"]
-    if component_leaves > brute_leaves:
-        raise AssertionError(
-            f"{case} {boundary}: components leaves {component_leaves} exceed brute {brute_leaves}"
-        )
-
-    components = stats["components"]["components"]
-    cache_hits = stats["components"]["cache_hits"]
-    cache_misses = stats["components"]["cache_misses"]
-    if cache_hits + cache_misses != components:
-        raise AssertionError(
-            f"{case} {boundary}: cache hits + misses do not match component count"
-        )
-
-    if expect_component_cache_hit and cache_hits < 1:
-        raise AssertionError(f"{case} {boundary}: expected a component cache hit")
 
     treewidth_width = stats["treewidth"]["decomposition_width"]
     if treewidth_width > nvars:
@@ -148,7 +130,6 @@ def run_corpus(qasm2sop: pathlib.Path, sop_solve: pathlib.Path, manifest: pathli
                 case,
                 boundary,
                 qsop,
-                expect_component_cache_hit=case_data.get("expect_component_cache_hit", False),
             )
 
 

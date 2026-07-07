@@ -51,8 +51,7 @@ def test_jsonl_path_40(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
         assert rec.get("schema") == "sop_solve_backend_stats_v1", \
             f"Wrong schema in record: {rec}"
         assert "backend_chosen" in rec, f"Missing backend_chosen in record: {rec}"
-        assert rec["backend_chosen"] in ("treewidth", "rankwidth", "branch", "components",
-                                          "bruteforce"), \
+        assert rec["backend_chosen"] in ("treewidth", "rankwidth", "branch"), \
             f"Unexpected backend_chosen value: {rec['backend_chosen']}"
         assert "residual_id" in rec, f"Missing residual_id in record: {rec}"
         assert "n_active_vars" in rec, f"Missing n_active_vars in record: {rec}"
@@ -66,7 +65,8 @@ def test_jsonl_disabled_by_default(exe: pathlib.Path, tmpdir: pathlib.Path) -> N
         f.write(make_path_qsop(40))
         qsop_path = f.name
     result = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", qsop_path],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "64",
+         qsop_path],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     assert result.returncode == 0, f"sop-solve failed:\n{result.stderr}"
@@ -83,12 +83,13 @@ def test_jsonl_result_unchanged(exe: pathlib.Path, tmpdir: pathlib.Path) -> None
         qsop_path = f.name
 
     without_jsonl = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", qsop_path],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "64",
+         qsop_path],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     with_jsonl = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", "--stats-jsonl", jsonl_path,
-         qsop_path],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "64",
+         "--stats-jsonl", jsonl_path, qsop_path],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     assert without_jsonl.returncode == 0, f"baseline failed: {without_jsonl.stderr}"
@@ -155,11 +156,12 @@ def test_jsonl_calibrate_output_unchanged(exe: pathlib.Path, tmpdir: pathlib.Pat
         f.write(qsop_text)
         qsop_path = f.name
     without_cal = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", qsop_path],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "64",
+         qsop_path],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     with_cal = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64",
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "64",
          "--branch-calibrate-backends", "--stats-jsonl", jsonl_path, qsop_path],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )

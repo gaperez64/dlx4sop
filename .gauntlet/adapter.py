@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""qccq-gauntlet adapter for dlx4sop's branch/treewidth/rankwidth backends.
+"""qccq-gauntlet adapter for dlx4sop's branch backend.
 
 Speaks the inferq.zero-amplitude.v1 protocol (see qccq-gauntlet's
 docs/adapter-protocol.md): for each request, computes <0^n|C|0^n> by piping
-qasm2sop's output into `sop-solve --solve-mode single-fourier`, the mode that
-keeps working when qasm2sop --approx produces a modulus too large for the
-default count-table mode's O(r) tables. qasm2sop is tried exactly first
-since that yields the smallest, most precise modulus; --approx only kicks in
-if the circuit is not exactly representable in the qsop-sign format.
+qasm2sop's output into `sop-solve --backend branch --solve-mode auto
+--format amplitude`. qasm2sop is tried exactly first since that yields the
+smallest, most precise modulus; --approx only kicks in if the circuit is not
+exactly representable in the qsop-sign format.
 
 single-fourier's reported amplitude is deliberately unnormalized (see
 qsop_amplitude_t in qsop_solve.h) -- callers must scale it by
@@ -147,25 +146,20 @@ def parse_amplitude(sop_solve_output: str) -> tuple[Decimal, Decimal]:
     return Decimal(values["amplitude_re"]), Decimal(values["amplitude_im"])
 
 
-# Rankwidth's join/DP tables have no implicit cap: without this forecast gate,
-# a wide real circuit can drive an unbounded allocation before sop-solve ever
-# gets a chance to report an error. The gate checks the forecast *before*
-# allocating solve state, so this budget must stay comfortably under whatever
-# memory ceiling actually wraps the adapter process.
-RANKWIDTH_MEMORY_BUDGET_MIB = 2048
-
-
 def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     zero = "0" * nqubits
     qsop_text, metrics = import_qsop(qasm_text, zero)
     norm_h = parse_norm_h(qsop_text)
 
-    command = [str(SOP_SOLVE), "--backend", backend, "--solve-mode", "single-fourier"]
-    if backend == "rankwidth":
-        command += [
-            "--rankwidth-memory-budget-mib", str(RANKWIDTH_MEMORY_BUDGET_MIB),
-            "--rankwidth-memory-policy", "skip",
-        ]
+    command = [
+        str(SOP_SOLVE),
+        "--backend",
+        backend,
+        "--solve-mode",
+        "auto",
+        "--format",
+        "amplitude",
+    ]
     command.append("-")
 
     completed = subprocess.run(
@@ -197,7 +191,7 @@ def solve(backend: str, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", required=True, choices=["branch", "treewidth", "rankwidth"])
+    parser.add_argument("--backend", default="branch", choices=["branch"])
     args = parser.parse_args()
 
     if not QASM2SOP.is_file() or not SOP_SOLVE.is_file():

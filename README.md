@@ -75,15 +75,15 @@ scripts/check-coverage.sh build-coverage
 
 ## Solver Guide
 
-- `components`: default robust exact solver.
+- `branch --solve-mode auto`: default recommended solver. It tries exact
+  residue counting first and falls back to single-Fourier amplitude evaluation
+  on safe exact-count refusals.
 - `treewidth --treewidth-order min-fill-max-degree`: direct DP baseline for
-  widened corpus tiers.
-- `branch --branch-heuristic split`: current hybrid backend; it splits
-  components and dispatches eligible residuals to treewidth or rankwidth.
-- `rankwidth`: exact decomposition-DP backend with cut-rank diagnostics and
-  count-table/Fourier modes; useful for comparison and targeted
-  low-rank cases, but not the default corpus winner.
-- `brute-force`: small-instance oracle.
+  developer/profiling runs.
+- `rankwidth`: decomposition-DP backend with cut-rank diagnostics and
+  count-table/Fourier modes; useful for comparison and targeted low-rank cases.
+- `--format amplitude`: default output, shared by all solve modes. Use
+  `--format residue-vector` when a full residue histogram is required.
 
 ## QSOP Format
 
@@ -107,14 +107,16 @@ and canonical output uses dense variable IDs. Solver
 build/sop-check tests/golden/sign_raw.qsop
 build/sop-stats --format json tests/golden/sign_expected.qsop
 build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
-build/sop-solve --backend treewidth --treewidth-order min-fill-max-degree tests/golden/solve_disconnected.qsop
+build/sop-solve tests/golden/solve_disconnected.qsop
+build/sop-solve --format residue-vector tests/golden/solve_disconnected.qsop
 build/sop-solve --format stats --include-result tests/golden/solve_single.qsop
 build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_disconnected.qsop
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
 build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
+build/sop2wmc --encoding auto --stats-only tests/golden/solve_disconnected.qsop
 build/sop2wmc --residue all tests/golden/solve_disconnected.qsop
 build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_disconnected.qsop && ganak residue2.cnf
-build/sop2wmc --encoding amplitude tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
+build/sop2wmc --encoding auto tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
 ```
 
 ### Approximate QASM imports

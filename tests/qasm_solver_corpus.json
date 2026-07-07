@@ -43,8 +43,7 @@
     "boundaries": [
       ["00", "00"],
       ["11", "11"]
-    ],
-    "expect_component_cache_hit": true
+    ]
   },
   {
     "name": "repeated_four_components",
@@ -60,8 +59,7 @@
       ["0000", "0000"],
       ["1111", "1111"],
       ["0101", "1010"]
-    ],
-    "expect_component_cache_hit": true
+    ]
   },
   {
     "name": "paired_phase_components",
@@ -79,8 +77,7 @@
     "boundaries": [
       ["0000", "0000"],
       ["0101", "1111"]
-    ],
-    "expect_component_cache_hit": true
+    ]
   },
   {
     "name": "branch_split_star",

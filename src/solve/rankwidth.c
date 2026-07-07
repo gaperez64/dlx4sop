@@ -7202,7 +7202,7 @@ static bool solve_rankwidth_fourier_mod_once(
 /* Conservative worst-case bound on floating-point error accumulated by the single-mode
  * complex DP -- same derivation as treewidth.c's single_mode_error_bound (standard
  * backward-error analysis for long double arithmetic; validated empirically against
- * exact brute-force reconstruction in the differential tests). Duplicated rather than
+ * exact histogram reconstruction in the differential tests). Duplicated rather than
  * shared across translation units, matching this file's existing convention of
  * duplicating small helpers (e.g. adjacency_bitsets) alongside treewidth.c. */
 static long double single_mode_error_bound(uint64_t complex_ops) {

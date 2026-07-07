@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out);
+static void exhaustive_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out);
 
 static int run_ok(const char *name, const qsop_instance_t *qsop,
                   const qsop_wmc_options_t *options) {
@@ -175,7 +175,7 @@ static int test_peel_forced_conflict_zero(void) {
   qsop_instance_t qsop = {.r = 8, .nvars = 11, .norm_h = 15, .constant = 0,
                           .unary = unary, .nedges = 10, .edge_u = eu, .edge_v = ev};
   double ref_re = 0.0, ref_im = 0.0;
-  brute_force_amplitude(&qsop, &ref_re, &ref_im);
+  exhaustive_amplitude(&qsop, &ref_re, &ref_im);
   if (fabs(ref_re) > 1e-10 || fabs(ref_im) > 1e-10) {
     fprintf(stderr, "forced-conflict: expected brute force zero, got %.6g+%.6gi\n",
             ref_re, ref_im);
@@ -323,10 +323,10 @@ static int test_error_paths(void) {
   return rc;
 }
 
-/* Brute-force amplitude: sum_x omega^P(x) where omega = exp(2*pi*i/r).
+/* Exhaustive amplitude: sum_x omega^P(x) where omega = exp(2*pi*i/r).
  * P(x) = constant + sum_v unary[v]*x_v + (r/2)*sum_e x_u*x_v mod r.
  * Returns re/im via output pointers. */
-static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out) {
+static void exhaustive_amplitude(const qsop_instance_t *qsop, double *re_out, double *im_out) {
   const uint32_t n = qsop->nvars;
   const uint32_t r = (uint32_t)qsop->r;
   double total_re = 0.0, total_im = 0.0;
@@ -353,11 +353,11 @@ static void brute_force_amplitude(const qsop_instance_t *qsop, double *re_out, d
   *im_out = total_im;
 }
 
-/* Check that peel1 encoding matches brute force for a given instance and encoding. */
+/* Check that peel1 encoding matches exhaustive enumeration for a given instance and encoding. */
 static int check_peel1_amplitude(const char *name, const qsop_instance_t *qsop,
                                   qsop_wmc_encoding_t enc) {
   double ref_re, ref_im;
-  brute_force_amplitude(qsop, &ref_re, &ref_im);
+  exhaustive_amplitude(qsop, &ref_re, &ref_im);
 
   /* No-preprocess: use the existing eval_wmc path indirectly by just
    * checking that peel1 run succeeds (functional smoke test). */
@@ -438,7 +438,7 @@ static int test_peel1(void) {
   qsop_instance_t zero_amp = {.r = 8, .nvars = 1, .norm_h = 0, .constant = 0,
                                .unary = za_unary, .nedges = 0};
   double ref_re, ref_im;
-  brute_force_amplitude(&zero_amp, &ref_re, &ref_im);
+  exhaustive_amplitude(&zero_amp, &ref_re, &ref_im);
   if (fabs(ref_re) > 1e-10 || fabs(ref_im) > 1e-10) {
     fprintf(stderr, "zero-amp: expected brute force ~0, got %.6g+%.6gi\n", ref_re, ref_im);
     return 1;

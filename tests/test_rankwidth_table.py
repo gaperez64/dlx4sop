@@ -60,9 +60,10 @@ def run_rankwidth(exe: pathlib.Path, qsop_text: str,
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(qsop_text)
         qsop_path = f.name
-    args = [str(exe), "--backend", "rankwidth", "--max-vars", "64", qsop_path]
+    args = [str(exe), "--backend", "rankwidth", "--format", "residue-vector", "--max-vars", "64"]
     if extra_args:
         args += extra_args
+    args.append(qsop_path)
     return subprocess.run(args, check=False, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True)
 
@@ -72,9 +73,10 @@ def run_treewidth(exe: pathlib.Path, qsop_text: str,
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(qsop_text)
         qsop_path = f.name
-    args = [str(exe), "--backend", "treewidth", "--max-vars", "64", qsop_path]
+    args = [str(exe), "--backend", "treewidth", "--format", "residue-vector", "--max-vars", "64"]
     if extra_args:
         args += extra_args
+    args.append(qsop_path)
     return subprocess.run(args, check=False, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True)
 
@@ -205,12 +207,12 @@ def test_fourier_count_table_agree_sign_edge(exe: pathlib.Path) -> None:
                 qsop_path = f.name
             r_ct = subprocess.run(
                 [str(exe), "--backend", "rankwidth", "--max-vars", "64",
-                 "--solve-mode", "count-table", qsop_path],
+                 "--format", "residue-vector", "--solve-mode", "count-table", qsop_path],
                 check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             r_ft = subprocess.run(
                 [str(exe), "--backend", "rankwidth", "--max-vars", "64",
-                 "--solve-mode", "fourier", qsop_path],
+                 "--format", "residue-vector", "--solve-mode", "fourier", qsop_path],
                 check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             assert r_ct.returncode == 0, (

@@ -26,40 +26,8 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
             f"actual:\n{completed.stdout}\n"
         )
 
-    brute_force = subprocess.run(
-        [str(exe), "--backend", "brute-force", str(qsop)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if brute_force.returncode != 0:
-        raise AssertionError(f"{name}: brute-force backend failed\n{brute_force.stderr}")
-    if brute_force.stdout != expected_text:
-        raise AssertionError(
-            f"{name}: brute-force residue-vector mismatch\n"
-            f"expected:\n{expected_text}\n"
-            f"actual:\n{brute_force.stdout}\n"
-        )
-
-    brute_force_fourier = subprocess.run(
-        [str(exe), "--backend", "brute-force", "--solve-mode", "fourier", str(qsop)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if brute_force_fourier.returncode != 0:
-        raise AssertionError(f"{name}: brute-force Fourier backend failed\n{brute_force_fourier.stderr}")
-    if brute_force_fourier.stdout != expected_text:
-        raise AssertionError(
-            f"{name}: brute-force Fourier residue-vector mismatch\n"
-            f"expected:\n{expected_text}\n"
-            f"actual:\n{brute_force_fourier.stdout}\n"
-        )
-
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", str(qsop)],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", str(qsop)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -75,7 +43,16 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
         )
 
     branch_fourier = subprocess.run(
-        [str(exe), "--backend", "branch", "--solve-mode", "fourier", str(qsop)],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "fourier",
+            "--format",
+            "residue-vector",
+            str(qsop),
+        ],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -92,7 +69,16 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
 
     for rw_source in ("native", "from-treewidth", "both", "auto"):
         branch_rw = subprocess.run(
-            [str(exe), "--backend", "branch", "--branch-rw-source", rw_source, str(qsop)],
+            [
+                str(exe),
+                "--backend",
+                "branch",
+                "--branch-rw-source",
+                rw_source,
+                "--format",
+                "residue-vector",
+                str(qsop),
+            ],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -107,74 +93,6 @@ def run_solve(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
                 f"{name}: branch --branch-rw-source {rw_source} mismatch\n"
                 f"expected:\n{expected_text}\nactual:\n{branch_rw.stdout}\n"
             )
-
-    components_fourier = subprocess.run(
-        [str(exe), "--backend", "components", "--solve-mode", "fourier", str(qsop)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if components_fourier.returncode != 0:
-        raise AssertionError(f"{name}: components Fourier backend failed\n{components_fourier.stderr}")
-    if components_fourier.stdout != expected_text:
-        raise AssertionError(
-            f"{name}: components Fourier residue-vector mismatch\n"
-            f"expected:\n{expected_text}\n"
-            f"actual:\n{components_fourier.stdout}\n"
-        )
-
-    brute_force_fourier_stats = subprocess.run(
-        [
-            str(exe),
-            "--format",
-            "stats",
-            "--backend",
-            "brute-force",
-            "--solve-mode",
-            "fourier",
-            str(qsop),
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if (
-        brute_force_fourier_stats.returncode != 0
-        or "solve_mode: fourier" not in brute_force_fourier_stats.stdout
-        or "solve_mode_kernel: fourier" not in brute_force_fourier_stats.stdout
-    ):
-        raise AssertionError(
-            f"{name}: brute-force Fourier stats failed\n"
-            f"{brute_force_fourier_stats.stdout}\n{brute_force_fourier_stats.stderr}"
-        )
-
-    components_fourier_stats = subprocess.run(
-        [
-            str(exe),
-            "--format",
-            "stats",
-            "--backend",
-            "components",
-            "--solve-mode",
-            "fourier",
-            str(qsop),
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if (
-        components_fourier_stats.returncode != 0
-        or "solve_mode: fourier" not in components_fourier_stats.stdout
-        or "solve_mode_kernel: fourier" not in components_fourier_stats.stdout
-    ):
-        raise AssertionError(
-            f"{name}: components Fourier stats failed\n"
-            f"{components_fourier_stats.stdout}\n{components_fourier_stats.stderr}"
-        )
 
     branch_fourier_stats = subprocess.run(
         [
@@ -214,14 +132,14 @@ def run_max_vars_guard(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if completed.returncode == 0:
         raise AssertionError("max-vars guard unexpectedly allowed solve")
-    if "brute-force solver refuses 1 variables" not in completed.stderr:
+    if "branch single-fourier solver refuses 1 variables" not in completed.stderr:
         raise AssertionError(f"unexpected diagnostic:\n{completed.stderr}")
 
 
 def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
     qsop = "p qsop-sign 16 64 0\nn 0\ncst 0\n"
     completed = subprocess.run(
-        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -267,19 +185,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{rankwidth_stats.stdout}\n{rankwidth_stats.stderr}"
         )
 
-    components = subprocess.run(
-        [str(exe), "--backend", "components", "--max-vars", "64", "-"],
-        input=qsop,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if components.returncode != 0 or components.stdout != expected:
-        raise AssertionError(f"large components CRT solve failed\n{components.stdout}\n{components.stderr}")
-
     default = subprocess.run(
-        [str(exe), "--max-vars", "64", "-"],
+        [str(exe), "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -290,7 +197,7 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         raise AssertionError(f"large default CRT solve failed\n{default.stdout}\n{default.stderr}")
 
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -301,7 +208,7 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         raise AssertionError(f"large branch CRT solve failed\n{branch.stdout}\n{branch.stderr}")
 
     treewidth = subprocess.run(
-        [str(exe), "--backend", "treewidth", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "treewidth", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -320,6 +227,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "fourier",
             "--max-vars",
             "64",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=qsop,
@@ -334,23 +243,9 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             f"{treewidth_fourier.stdout}\n{treewidth_fourier.stderr}"
         )
 
-    brute_force = subprocess.run(
-        [str(exe), "--backend", "brute-force", "--max-vars", "64", "-"],
-        input=qsop,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if brute_force.returncode == 0 or "supports at most 62 variables" not in brute_force.stderr:
-        raise AssertionError(
-            f"brute force did not report the large-variable guard\n"
-            f"{brute_force.stdout}\n{brute_force.stderr}"
-        )
-
     signed_qsop = "p qsop-sign 8 64 1\nn 0\ncst 0\ne 0 1\n"
     signed = subprocess.run(
-        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "rankwidth", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -374,6 +269,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "64",
             "--rankwidth-join-strategy",
             "materialized",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=signed_qsop,
@@ -389,7 +286,7 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         )
 
     signed_branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=signed_qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -411,6 +308,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "fourier",
             "--max-vars",
             "64",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=signed_qsop,
@@ -437,6 +336,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "fourier",
             "--max-vars",
             "64",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=qsop,
@@ -493,6 +394,8 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
             "fourier",
             "--max-vars",
             "64",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=signed_qsop,
@@ -517,7 +420,7 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(left_edges + right_edges)
     qsop = f"p qsop-sign 16 64 62\nn 0\ncst 3\n{edges}\n"
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -525,7 +428,7 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
         text=True,
     )
     treewidth = subprocess.run(
-        [str(exe), "--backend", "treewidth", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "treewidth", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -675,7 +578,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
     qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "40", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "40", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -683,7 +586,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         text=True,
     )
     rankwidth = subprocess.run(
-        [str(exe), "--backend", "rankwidth", "--max-vars", "40", "-"],
+        [str(exe), "--backend", "rankwidth", "--max-vars", "40", "--format", "residue-vector", "-"],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -856,6 +759,8 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 "stats",
                 "--backend",
                 "branch",
+                "--solve-mode",
+                "count-table",
                 str(source_root / "tests" / "golden" / "solve_signed_edge.qsop"),
             ],
             source_root / "tests" / "golden" / "solve_branch.stats",
@@ -867,6 +772,8 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 "stats",
                 "--backend",
                 "branch",
+                "--solve-mode",
+                "count-table",
                 str(source_root / "tests" / "golden" / "solve_isolated_branch.qsop"),
             ],
             source_root / "tests" / "golden" / "solve_isolated_branch.stats",
@@ -878,53 +785,11 @@ def run_solver_stats(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                 "stats",
                 "--backend",
                 "branch",
+                "--solve-mode",
+                "count-table",
                 str(source_root / "tests" / "golden" / "solve_branch_cache.qsop"),
             ],
             source_root / "tests" / "golden" / "solve_branch_cache.stats",
-        ),
-        (
-            [
-                str(exe),
-                "--format",
-                "stats",
-                "--backend",
-                "components",
-                str(source_root / "tests" / "golden" / "solve_disconnected.qsop"),
-            ],
-            source_root / "tests" / "golden" / "solve_components.stats",
-        ),
-        (
-            [
-                str(exe),
-                "--format",
-                "stats",
-                "--backend",
-                "components",
-                str(source_root / "tests" / "golden" / "solve_repeated_components.qsop"),
-            ],
-            source_root / "tests" / "golden" / "solve_repeated_components.stats",
-        ),
-        (
-            [
-                str(exe),
-                "--format",
-                "stats",
-                "--backend",
-                "components",
-                str(source_root / "tests" / "golden" / "solve_mirrored_components.qsop"),
-            ],
-            source_root / "tests" / "golden" / "solve_mirrored_components.stats",
-        ),
-        (
-            [
-                str(exe),
-                "--format",
-                "stats",
-                "--backend",
-                "components",
-                str(source_root / "tests" / "golden" / "solve_mirrored_path_components.qsop"),
-            ],
-            source_root / "tests" / "golden" / "solve_mirrored_path_components.stats",
         ),
     ]
 
@@ -1086,7 +951,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
     stdin_result = subprocess.run(
-        [str(exe), "-"],
+        [str(exe), "--format", "residue-vector", "-"],
         input=qsop.read_text(),
         check=False,
         stdout=subprocess.PIPE,
@@ -1101,7 +966,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--format", "json", str(qsop)], "unsupported format"),
         ([str(exe), "--backend"], "requires a value"),
         ([str(exe), "--backend", "bad", str(qsop)], "unsupported backend"),
-        ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "residual branch solver refuses"),
+        ([str(exe), "--backend", "branch", "--max-vars", "0", str(qsop)], "branch single-fourier solver refuses"),
         ([str(exe), "--rankwidth-decomposition"], "requires a path"),
         (
             [str(exe), "--rankwidth-decomposition", str(qsop), str(qsop)],
@@ -1135,7 +1000,10 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--branch-heuristic"], "requires a value"),
         ([str(exe), "--branch-heuristic", "rankwidth", str(qsop)], "unsupported branch heuristic"),
         ([str(exe), "--branch-heuristic", "cutrank", str(qsop)], "unsupported branch heuristic"),
-        ([str(exe), "--branch-heuristic", "treewidth", str(qsop)], "requires --backend branch"),
+        (
+            [str(exe), "--backend", "treewidth", "--branch-heuristic", "treewidth", str(qsop)],
+            "requires --backend branch",
+        ),
         ([str(exe), "--trace"], "requires a value"),
         ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
@@ -1163,7 +1031,7 @@ def assert_rankwidth_matches(
     *extra_args: str,
 ) -> None:
     completed = subprocess.run(
-        [str(exe), "--backend", "rankwidth", *extra_args, str(qsop)],
+        [str(exe), "--backend", "rankwidth", "--format", "residue-vector", *extra_args, str(qsop)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1207,14 +1075,14 @@ def run_rankwidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_sign_path.qsop"
     decomposition = source_root / "tests" / "golden" / "solve_sign_path.rwdec"
     expected = subprocess.run(
-        [str(exe), "--backend", "brute-force", str(qsop)],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", str(qsop)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     if expected.returncode != 0:
-        raise AssertionError(f"brute force solve failed\n{expected.stderr}")
+        raise AssertionError(f"branch oracle solve failed\n{expected.stderr}")
 
     assert_rankwidth_matches(
         exe,
@@ -1260,14 +1128,14 @@ u 3 4
         disconnected_qsop = pathlib.Path(tmp) / "disconnected.qsop"
         disconnected_qsop.write_text(disconnected)
         disconnected_expected = subprocess.run(
-            [str(exe), "--backend", "brute-force", str(disconnected_qsop)],
+            [str(exe), "--backend", "branch", "--format", "residue-vector", str(disconnected_qsop)],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
         if disconnected_expected.returncode != 0:
-            raise AssertionError(f"brute force disconnected solve failed\n{disconnected_expected.stderr}")
+            raise AssertionError(f"branch disconnected solve failed\n{disconnected_expected.stderr}")
         assert_rankwidth_matches(
             exe,
             disconnected_qsop,
@@ -1567,14 +1435,14 @@ u 3 4
     signed = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     signed_decomposition = source_root / "tests" / "golden" / "solve_signed_edge.rwdec"
     signed_expected = subprocess.run(
-        [str(exe), "--backend", "brute-force", str(signed)],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", str(signed)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     if signed_expected.returncode != 0:
-        raise AssertionError(f"signed brute force solve failed\n{signed_expected.stderr}")
+        raise AssertionError(f"signed branch oracle solve failed\n{signed_expected.stderr}")
     assert_rankwidth_matches(
         exe,
         signed,
@@ -1784,7 +1652,7 @@ e 7 13
 e 10 11
 """
     high_sig_expected = subprocess.run(
-        [str(exe), "--backend", "brute-force", "--max-vars", "16", "-"],
+        [str(exe), "--backend", "branch", "--format", "residue-vector", "--max-vars", "16", "-"],
         input=high_signature_linear,
         check=False,
         stdout=subprocess.PIPE,
@@ -1800,6 +1668,8 @@ e 10 11
             "left-deep",
             "--max-vars",
             "32",
+            "--format",
+            "residue-vector",
             "-",
         ],
         input=high_signature_linear,
@@ -1816,7 +1686,7 @@ e 10 11
         raise AssertionError(
             f"high-signature linear rankwidth mismatch\n"
             f"rankwidth:\n{high_sig_rankwidth.stdout}\n{high_sig_rankwidth.stderr}\n"
-            f"brute force:\n{high_sig_expected.stdout}\n{high_sig_expected.stderr}"
+            f"branch oracle:\n{high_sig_expected.stdout}\n{high_sig_expected.stderr}"
         )
     high_sig_stats = subprocess.run(
         [
@@ -1972,18 +1842,27 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     for name in ["solve_single", "solve_signed_edge", "solve_disconnected"]:
         qsop = source_root / "tests" / "golden" / f"{name}.qsop"
         expected = subprocess.run(
-            [str(exe), "--backend", "brute-force", str(qsop)],
+            [str(exe), "--backend", "branch", "--format", "residue-vector", str(qsop)],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
         if expected.returncode != 0:
-            raise AssertionError(f"{name}: brute-force solve failed\n{expected.stderr}")
+            raise AssertionError(f"{name}: branch oracle solve failed\n{expected.stderr}")
 
         for order in ["min-fill", "min-degree", "min-fill-max-degree"]:
             completed = subprocess.run(
-                [str(exe), "--backend", "treewidth", "--treewidth-order", order, str(qsop)],
+                [
+                    str(exe),
+                    "--backend",
+                    "treewidth",
+                    "--treewidth-order",
+                    order,
+                    "--format",
+                    "residue-vector",
+                    str(qsop),
+                ],
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2003,6 +1882,8 @@ def run_treewidth_backend(exe: pathlib.Path, source_root: pathlib.Path) -> None:
                     order,
                     "--solve-mode",
                     "fourier",
+                    "--format",
+                    "residue-vector",
                     str(qsop),
                 ],
                 check=False,
@@ -2144,7 +2025,18 @@ def run_trace_csv(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     qsop = source_root / "tests" / "golden" / "solve_signed_edge.qsop"
     expected_stats = source_root / "tests" / "golden" / "solve_branch.stats"
     completed = subprocess.run(
-        [str(exe), "--format", "stats", "--backend", "branch", "--trace", "csv", str(qsop)],
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "count-table",
+            "--trace",
+            "csv",
+            str(qsop),
+        ],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -2321,11 +2213,22 @@ def run_branch_large_fourier(exe: pathlib.Path) -> None:
     # when treewidth delegation fires (min_fill=2 <= 14), covering line 1618 in branch.c.
     p20 = _path_qsop(20, 8)
     fourier = subprocess.run(
-        [str(exe), "--backend", "branch", "--solve-mode", "fourier", "--max-vars", "32", "-"],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "fourier",
+            "--max-vars",
+            "32",
+            "--format",
+            "residue-vector",
+            "-",
+        ],
         input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     ct = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "32", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "32", "--format", "residue-vector", "-"],
         input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     if fourier.returncode != 0 or ct.returncode != 0 or fourier.stdout != ct.stdout:
@@ -2345,11 +2248,22 @@ def run_branch_large_fourier(exe: pathlib.Path) -> None:
         + "\n"
     )
     fourier2 = subprocess.run(
-        [str(exe), "--backend", "branch", "--solve-mode", "fourier", "--max-vars", "64", "-"],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "fourier",
+            "--max-vars",
+            "64",
+            "--format",
+            "residue-vector",
+            "-",
+        ],
         input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     ct2 = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
+        [str(exe), "--backend", "branch", "--max-vars", "64", "--format", "residue-vector", "-"],
         input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     if fourier2.returncode != 0 or ct2.returncode != 0 or fourier2.stdout != ct2.stdout:
@@ -2565,7 +2479,7 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(f"bad --simd diagnostic failed\n{bad_simd.stdout}\n{bad_simd.stderr}")
 
     precision_without_mode = subprocess.run(
-        [str(exe), "--single-mode-precision", "double", "-"],
+        [str(exe), "--backend", "treewidth", "--single-mode-precision", "double", "-"],
         input=_path_qsop(3, 8),
         check=False,
         stdout=subprocess.PIPE,
@@ -2574,7 +2488,7 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     if (
         precision_without_mode.returncode != 2
-        or "--single-mode-precision requires --solve-mode single-fourier"
+        or "--single-mode-precision requires --solve-mode single-fourier or auto"
         not in precision_without_mode.stderr
     ):
         raise AssertionError(

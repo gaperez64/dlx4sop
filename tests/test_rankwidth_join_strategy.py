@@ -83,6 +83,8 @@ def _run_rankwidth(sop_solve, qsop, extra_args, format_stats=False):
     ]
     if format_stats:
         cmd += ["--format", "stats"]
+    else:
+        cmd += ["--format", "residue-vector"]
     cmd += extra_args + [str(qsop)]
     return subprocess.run(cmd, capture_output=True, timeout=30)
 
@@ -96,6 +98,8 @@ def _run_rankwidth_stdin(sop_solve, qsop_bytes, extra_args, format_stats=False):
     ]
     if format_stats:
         cmd += ["--format", "stats"]
+    else:
+        cmd += ["--format", "residue-vector"]
     cmd += extra_args + ["-"]
     return subprocess.run(cmd, input=qsop_bytes, capture_output=True, timeout=30)
 

@@ -441,10 +441,12 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
     return state[state_index(output_bits)]
 
 
-def parse_solver_amplitude(output: str) -> complex:
+def parse_solver_amplitude(output: str, norm_h_hint: int | None = None) -> complex:
     modulus = None
     norm_h = None
     counts = None
+    amplitude_re = None
+    amplitude_im = None
     for line in output.splitlines():
         parts = line.split()
         if not parts:
@@ -455,6 +457,15 @@ def parse_solver_amplitude(output: str) -> complex:
             norm_h = int(parts[1])
         elif parts[0] == "counts":
             counts = [int(part) for part in parts[1:]]
+        elif line.startswith("amplitude_re: "):
+            amplitude_re = float(line.split(": ", 1)[1])
+        elif line.startswith("amplitude_im: "):
+            amplitude_im = float(line.split(": ", 1)[1])
+
+    if amplitude_re is not None and amplitude_im is not None:
+        if norm_h_hint is None:
+            raise AssertionError(f"amplitude output needs normalization hint:\n{output}")
+        return complex(amplitude_re, amplitude_im) * (2.0 ** (-norm_h_hint / 2.0))
 
     if modulus is None or norm_h is None or counts is None:
         raise AssertionError(f"malformed solver output:\n{output}")
@@ -502,7 +513,13 @@ def sop_amplitude(
     )
     if solved.returncode != 0:
         raise AssertionError(f"sop-solve failed\n{solved.stderr}\nQSOP:\n{imported.stdout}")
-    return parse_solver_amplitude(solved.stdout)
+    norm_h = None
+    for line in imported.stdout.splitlines():
+        parts = line.split()
+        if parts[:1] == ["n"]:
+            norm_h = int(parts[1])
+            break
+    return parse_solver_amplitude(solved.stdout, norm_h)
 
 
 def assert_close(name: str, expected: complex, actual: complex) -> None:

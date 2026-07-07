@@ -41,14 +41,23 @@ typedef enum {
 
 /* Structural statistics collected during WMC export. */
 typedef struct qsop_wmc_stats {
+  uint64_t r;                /* original modulus */
+  uint64_t norm_h;           /* original normalization exponent */
+  uint32_t original_nvars;   /* original variables */
+  uint32_t original_edges;   /* original quadratic terms */
+  bool is_zero;              /* export was analytically zero */
   uint32_t aux_vars;         /* auxiliary variables introduced */
   uint64_t clauses_unit;     /* unit/forcing clauses */
   uint64_t clauses_binary;   /* binary clauses */
   uint64_t clauses_ternary;  /* ternary clauses */
+  uint64_t total_clauses;    /* total emitted clauses */
+  uint64_t estimated_bytes;  /* rough emitted CNF/WPCNF byte estimate */
   uint32_t encoded_edges;    /* edges with non-trivial auxiliary */
   uint32_t skipped_edges;    /* sign edges absorbed or canceled before export */
   uint32_t block_count;      /* AMP_BLOCK: parity blocks emitted */
   uint32_t block_edges;      /* AMP_BLOCK: sign edges covered by parity blocks */
+  uint32_t max_block_a_size; /* AMP_BLOCK: largest left side */
+  uint32_t max_block_b_size; /* AMP_BLOCK: largest right side */
   uint32_t residual_edges;   /* AMP_BLOCK/preprocess: pair edges emitted individually */
   uint32_t active_vars;      /* variables remaining after preprocessing/export filtering */
   uint32_t eliminated_vars;  /* variables analytically eliminated by preprocessing */

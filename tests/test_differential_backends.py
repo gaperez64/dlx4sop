@@ -2,12 +2,12 @@
 """
 Differential correctness tests: compare every available backend on small random QSOPs.
 
-Ground truth is brute-force (exact for n <= 12).  Every other backend must
-agree on the residue vector for each test instance.
+Ground truth is branch exact count-table.  Every other backend must agree on the
+residue vector for each test instance.
 
 Backends tested:
-  brute-force, components, treewidth (count-table, all orders),
-  treewidth (fourier), branch, rankwidth (all generators, count-table and fourier)
+  branch, treewidth (count-table, all orders), treewidth (fourier),
+  rankwidth (all generators, count-table and fourier)
 
 Moduli tested: r = 2, 3, 4, 5, 8
 Instance sizes: n = 3..10 variables, up to ~m = n edges
@@ -90,8 +90,16 @@ def run_sop_solve(exe: pathlib.Path, qsop_text: str, extra_args: list[str]) -> s
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(qsop_text)
         qsop_path = f.name
+    args = list(extra_args)
+    mode = None
+    if "--solve-mode" in args:
+        mode_index = args.index("--solve-mode")
+        if mode_index + 1 < len(args):
+            mode = args[mode_index + 1]
+    if "--format" not in args and mode != "single-fourier":
+        args = ["--format", "residue-vector"] + args
     result = subprocess.run(
-        [str(exe), "--max-vars", "64"] + extra_args + [qsop_path],
+        [str(exe), "--max-vars", "64"] + args + [qsop_path],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -117,8 +125,9 @@ def parse_residue_vector(output: str) -> list[str] | None:
 def backend_configs(nvars: int, r: int) -> list[tuple[str, list[str]]]:
     """Return (label, args) pairs for all backends to test on this instance."""
     configs = [
-        ("brute-force", ["--backend", "brute-force"]),
-        ("components", ["--backend", "components"]),
+        ("branch", ["--backend", "branch", "--solve-mode", "count-table"]),
+        ("branch:fourier",
+         ["--backend", "branch", "--solve-mode", "fourier"]),
         ("treewidth:min-fill",
          ["--backend", "treewidth", "--treewidth-order", "min-fill"]),
         ("treewidth:min-degree",
@@ -127,9 +136,6 @@ def backend_configs(nvars: int, r: int) -> list[tuple[str, list[str]]]:
          ["--backend", "treewidth", "--treewidth-order", "min-fill-max-degree"]),
         ("treewidth:fourier",
          ["--backend", "treewidth", "--solve-mode", "fourier"]),
-        ("branch", ["--backend", "branch"]),
-        ("branch:fourier",
-         ["--backend", "branch", "--solve-mode", "fourier"]),
         ("rankwidth:left-deep",
          ["--backend", "rankwidth", "--rankwidth-generate", "left-deep"]),
         ("rankwidth:balanced",
@@ -158,25 +164,25 @@ def compare_backends(exe: pathlib.Path, instances: list[SopInstance],
     for idx, inst in enumerate(instances):
         configs = backend_configs(inst.nvars, inst.r)
 
-        # Use brute-force as ground truth
+        # Use branch exact count-table as ground truth
         ground_truth_out = run_sop_solve(exe, inst.text,
-                                         ["--backend", "brute-force"])
+                                         ["--backend", "branch", "--solve-mode", "count-table"])
         if ground_truth_out is None:
             failures.append(
                 f"instance {idx} (nvars={inst.nvars} r={inst.r}): "
-                f"brute-force solver failed"
+                f"branch count-table solver failed"
             )
             continue
         ground_truth = parse_residue_vector(ground_truth_out)
         if ground_truth is None:
             failures.append(
                 f"instance {idx} (nvars={inst.nvars} r={inst.r}): "
-                f"could not parse brute-force output: {ground_truth_out!r}"
+                f"could not parse branch output: {ground_truth_out!r}"
             )
             continue
 
         for label, args in configs:
-            if label == "brute-force":
+            if label == "branch":
                 continue   # already ran this as ground truth
             output = run_sop_solve(exe, inst.text, args)
             if output is None:
@@ -195,7 +201,7 @@ def compare_backends(exe: pathlib.Path, instances: list[SopInstance],
                     f"instance {idx} (nvars={inst.nvars} r={inst.r}) [{label}]: "
                     f"mismatch\n"
                     f"  QSOP: {inst.text.splitlines()[0]}\n"
-                    f"  brute-force: {ground_truth}\n"
+                    f"  branch: {ground_truth}\n"
                     f"  {label}:     {counts}"
                 )
             elif verbose:
@@ -252,8 +258,8 @@ def test_metamorphic_variable_rename(exe: pathlib.Path) -> None:
                 lines_new.append(line)
         renamed_text = "\n".join(lines_new) + "\n"
 
-        orig_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
-        renamed_out = run_sop_solve(exe, renamed_text, ["--backend", "brute-force"])
+        orig_out = run_sop_solve(exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"])
+        renamed_out = run_sop_solve(exe, renamed_text, ["--backend", "branch", "--solve-mode", "count-table"])
         if orig_out is None or renamed_out is None:
             continue
         orig = parse_residue_vector(orig_out)
@@ -284,8 +290,8 @@ def test_metamorphic_duplicate_edge_pair(exe: pathlib.Path) -> None:
         lines.append(f"e {u} {v}")
         modified_text = "\n".join(lines) + "\n"
 
-        orig_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
-        modified_out = run_sop_solve(exe, modified_text, ["--backend", "brute-force"])
+        orig_out = run_sop_solve(exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"])
+        modified_out = run_sop_solve(exe, modified_text, ["--backend", "branch", "--solve-mode", "count-table"])
         if orig_out is None or modified_out is None:
             continue
         orig = parse_residue_vector(orig_out)
@@ -312,7 +318,7 @@ def parse_single_fourier_output(output: str) -> tuple[float, float, float] | Non
     return re_val, im_val, bound_val
 
 
-def bruteforce_amplitude(counts: list[str], r: int) -> complex:
+def histogram_amplitude(counts: list[str], r: int) -> complex:
     """Exact amplitude reconstruction from a full residue histogram (double precision;
     fine here since instances are small enough that counts don't overflow double's
     53-bit mantissa)."""
@@ -323,25 +329,27 @@ def bruteforce_amplitude(counts: list[str], r: int) -> complex:
     return total
 
 
-def test_single_fourier_mode_matches_bruteforce(
+def test_single_fourier_mode_matches_exact_counts(
     exe: pathlib.Path, backend_args: list[str], backend_label: str, seed_offset: int,
     verbose: bool = False,
 ) -> None:
     """The single-mode complex DP (Corollary 1: one complex value per boundary
-    signature, table size independent of r) must agree with the exact brute-force
+    signature, table size independent of r) must agree with the exact count-table
     amplitude reconstruction, within its own reported numeric_error_bound (plus a
     small slack for this test's own double-precision reconstruction, which is less
     precise than the solver's internal long double)."""
     instances = generate_test_suite(INSTANCE_SIZES, MODULI, INSTANCES_PER_BUCKET, SEED + seed_offset)
     failures = []
     for idx, inst in enumerate(instances):
-        ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+        ground_truth_out = run_sop_solve(
+            exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"]
+        )
         if ground_truth_out is None:
             continue
         counts = parse_residue_vector(ground_truth_out)
         if counts is None:
             continue
-        expected = bruteforce_amplitude(counts, inst.r)
+        expected = histogram_amplitude(counts, inst.r)
 
         single_out = run_sop_solve(exe, inst.text, backend_args)
         if single_out is None:
@@ -447,7 +455,7 @@ def test_single_fourier_mode_huge_r_smoke(exe: pathlib.Path, backend_args: list[
     )
 
 
-def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
+def test_count_table_backends_refuse_huge_r(exe: pathlib.Path) -> None:
     """The count-table/all-modes-Fourier backends allocate O(r) or O(r^2) structures, so
     they must cleanly refuse (fast, with a clear error message) rather than hang or crash
     trying to allocate for r = 2^64-2 -- this is the flip side of the single-mode DP's
@@ -457,10 +465,7 @@ def test_old_backends_refuse_huge_r(exe: pathlib.Path) -> None:
         qsop_path = f.name
 
     configs = [
-        ("brute-force", ["--backend", "brute-force"]),
-        ("brute-force:fourier", ["--backend", "brute-force", "--solve-mode", "fourier"]),
-        ("components", ["--backend", "components"]),
-        ("branch", ["--backend", "branch"]),
+        ("branch", ["--backend", "branch", "--solve-mode", "count-table"]),
         ("branch:fourier", ["--backend", "branch", "--solve-mode", "fourier"]),
         ("treewidth", ["--backend", "treewidth"]),
         ("treewidth:fourier", ["--backend", "treewidth", "--solve-mode", "fourier"]),
@@ -584,7 +589,7 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
 def test_single_fourier_mode_backends_agree(exe: pathlib.Path, verbose: bool = False) -> None:
     """Cross-check: every single-mode complex DP implementation (treewidth bucket
     elimination, rankwidth leaf/join, and branch's split-and-delegate-to-either) must
-    agree with each other pairwise, not just with brute-force -- this specifically
+    agree with each other pairwise, not just with exact counts -- this specifically
     exercises the join/crossing-parity code path in solve_join_complex_streaming (no
     treewidth analogue) and branch's own duplicated delegation cost-model (which must
     keep picking a backend that agrees with whichever of treewidth/rankwidth it
@@ -668,7 +673,7 @@ def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
     """branch single-fourier's residual component split and complex-multiply combination step
     have little coverage from test_single_fourier_mode_backends_agree, since that suite's
     random instances are rarely disconnected. Build genuinely multi-component instances (2-4
-    parts) directly and check against brute-force ground truth."""
+    parts) directly and check against exact count-table ground truth."""
     rng = random.Random(SEED + 7)
     failures = []
     shapes = [[3, 4], [2, 2, 2], [5, 3], [2, 3, 4], [1, 1, 6]]
@@ -676,13 +681,15 @@ def test_branch_single_fourier_disconnected_components(exe: pathlib.Path,
         r = rng.choice(MODULI)
         inst = disconnected_qsop(rng, sizes, r)
 
-        ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
+        ground_truth_out = run_sop_solve(
+            exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"]
+        )
         if ground_truth_out is None:
             continue
         counts = parse_residue_vector(ground_truth_out)
         if counts is None:
             continue
-        expected = bruteforce_amplitude(counts, inst.r)
+        expected = histogram_amplitude(counts, inst.r)
 
         branch_out = run_sop_solve(
             exe, inst.text, ["--backend", "branch", "--solve-mode", "single-fourier"]
@@ -728,11 +735,13 @@ def test_branch_single_fourier_root_guard_allows_splittable_large_instance(
     inst = disconnected_qsop(rng, sizes, r)
     assert sum(sizes) > 10 > max(sizes)
 
-    ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
-    assert ground_truth_out is not None, "brute-force ground truth failed"
+    ground_truth_out = run_sop_solve(
+        exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"]
+    )
+    assert ground_truth_out is not None, "branch count-table ground truth failed"
     counts = parse_residue_vector(ground_truth_out)
-    assert counts is not None, f"could not parse brute-force output: {ground_truth_out!r}"
-    expected = bruteforce_amplitude(counts, inst.r)
+    assert counts is not None, f"could not parse branch output: {ground_truth_out!r}"
+    expected = histogram_amplitude(counts, inst.r)
 
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(inst.text)
@@ -777,16 +786,19 @@ def test_branch_root_guard_allows_splittable_large_instance(
     inst = disconnected_qsop(rng, sizes, r)
     assert sum(sizes) > 10 > max(sizes)
 
-    ground_truth_out = run_sop_solve(exe, inst.text, ["--backend", "brute-force"])
-    assert ground_truth_out is not None, "brute-force ground truth failed"
+    ground_truth_out = run_sop_solve(
+        exe, inst.text, ["--backend", "branch", "--solve-mode", "count-table"]
+    )
+    assert ground_truth_out is not None, "branch count-table ground truth failed"
     ground_truth = parse_residue_vector(ground_truth_out)
-    assert ground_truth is not None, f"could not parse brute-force output: {ground_truth_out!r}"
+    assert ground_truth is not None, f"could not parse branch output: {ground_truth_out!r}"
 
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(inst.text)
         qsop_path = f.name
     result = subprocess.run(
-        [str(exe), "--max-vars", "10", "--backend", "branch", qsop_path],
+        [str(exe), "--max-vars", "10", "--format", "residue-vector", "--backend", "branch",
+         "--solve-mode", "count-table", qsop_path],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -799,7 +811,7 @@ def test_branch_root_guard_allows_splittable_large_instance(
     )
     counts = parse_residue_vector(result.stdout)
     assert counts is not None, f"could not parse output: {result.stdout!r}"
-    assert counts == ground_truth, f"mismatch: brute-force={ground_truth} branch={counts}"
+    assert counts == ground_truth, f"mismatch: ground_truth={ground_truth} branch={counts}"
     if verbose:
         print(f"  branch root guard allows splittable {sum(sizes)}-var instance")
 
@@ -948,12 +960,13 @@ def path_qsop(nvars: int, r: int) -> str:
 
 
 def test_single_fourier_default_max_vars(exe: pathlib.Path) -> None:
-    """--max-vars defaults to 24 (a brute-force/count-table safety valve, since nvars directly
+    """--max-vars defaults to 24 (a count-table safety valve, since nvars directly
     drives their 2^nvars or O(r) cost). single-fourier mode has no such blowup, so its default
     is raised to 4096 when the caller doesn't pass --max-vars explicitly (see sop_solve.c's
     comment above `if (single_fourier_mode && !max_vars_set)`). Check both halves: a
     30-variable low-treewidth instance succeeds under single-fourier with no --max-vars flag
-    at all, while the same instance is still refused by count-table mode's unraised default --
+    at all, while a dense 30-variable count-table instance is still refused by the unraised
+    default --
     confirming the raise is scoped to single-fourier, not a global change."""
     text = path_qsop(30, 8)
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
@@ -969,8 +982,32 @@ def test_single_fourier_default_max_vars(exe: pathlib.Path) -> None:
         f"4096), got: {single_fourier.stderr!r}"
     )
 
+    rng = random.Random(0)
+    dense_edges = [
+        (u, v)
+        for u in range(30)
+        for v in range(u + 1, 30)
+        if rng.random() < 0.5
+    ]
+    dense_text = "\n".join(
+        [f"p qsop-sign 8 30 {len(dense_edges)}", "n 0", "cst 0"]
+        + [f"e {u} {v}" for u, v in dense_edges]
+    ) + "\n"
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(dense_text)
+        dense_qsop_path = f.name
+
     count_table = subprocess.run(
-        [str(exe), "--backend", "brute-force", qsop_path],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--solve-mode",
+            "count-table",
+            "--format",
+            "residue-vector",
+            dense_qsop_path,
+        ],
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     assert count_table.returncode != 0 and "refuses" in count_table.stderr, (
@@ -991,15 +1028,15 @@ def main(argv: list[str]) -> None:
     test_all_backends_agree(exe, verbose=verbose)
     test_metamorphic_variable_rename(exe)
     test_metamorphic_duplicate_edge_pair(exe)
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth", 3,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe, ["--backend", "rankwidth", "--solve-mode", "single-fourier"], "rankwidth", 4,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe,
         [
             "--backend",
@@ -1015,7 +1052,7 @@ def main(argv: list[str]) -> None:
         13,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe,
         [
             "--backend",
@@ -1031,7 +1068,7 @@ def main(argv: list[str]) -> None:
         14,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe,
         [
             "--backend",
@@ -1045,7 +1082,7 @@ def main(argv: list[str]) -> None:
         15,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe,
         [
             "--backend",
@@ -1063,7 +1100,7 @@ def main(argv: list[str]) -> None:
         16,
         verbose=verbose,
     )
-    test_single_fourier_mode_matches_bruteforce(
+    test_single_fourier_mode_matches_exact_counts(
         exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch", 6,
         verbose=verbose,
     )
@@ -1205,7 +1242,7 @@ def main(argv: list[str]) -> None:
     test_single_fourier_mode_huge_r_smoke(
         exe, ["--backend", "branch", "--solve-mode", "single-fourier"], "branch"
     )
-    test_old_backends_refuse_huge_r(exe)
+    test_count_table_backends_refuse_huge_r(exe)
     print(f"all differential backend tests passed (seed={SEED})")
 
 

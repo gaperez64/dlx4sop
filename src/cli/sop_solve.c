@@ -11,14 +11,13 @@
 #include <string.h>
 
 typedef enum solve_backend {
-  SOLVE_BACKEND_COMPONENTS,
-  SOLVE_BACKEND_BRUTE_FORCE,
   SOLVE_BACKEND_BRANCH,
   SOLVE_BACKEND_RANKWIDTH,
   SOLVE_BACKEND_TREEWIDTH,
 } solve_backend_t;
 
 typedef enum solve_output_format {
+  SOLVE_FORMAT_AMPLITUDE,
   SOLVE_FORMAT_RESIDUE_VECTOR,
   SOLVE_FORMAT_STATS,
 } solve_output_format_t;
@@ -46,8 +45,8 @@ typedef struct csv_trace_writer {
 } csv_trace_writer_t;
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop-solve [--format residue-vector|stats] "
-        "[--backend components|brute-force|branch|rankwidth|treewidth] "
+  fputs("usage: sop-solve [--format amplitude|residue-vector|stats] "
+        "[--backend branch|treewidth|rankwidth] "
         "[--branch-heuristic split|treewidth|cutrank-proxy] "
         "[--branch-rw-source native|from-treewidth|both|auto] "
         "[--branch-rw-min-treewidth-width N] "
@@ -67,7 +66,7 @@ static void print_usage(FILE *file) {
         "[--branch-single-precision auto|double|long-double] "
         "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
         "[--rankwidth-dump PATH] "
-        "[--solve-mode count-table|fourier|single-fourier] "
+        "[--solve-mode auto|count-table|fourier|single-fourier] "
         "[--fourier-target-mode N] "
         "[--simd auto|scalar|neon|avx512] "
         "[--single-mode-precision auto|double|long-double] "
@@ -100,10 +99,6 @@ static void print_error(const qsop_error_t *error, const char *fallback_path) {
 
 static const char *backend_name(solve_backend_t backend) {
   switch (backend) {
-  case SOLVE_BACKEND_COMPONENTS:
-    return "components";
-  case SOLVE_BACKEND_BRUTE_FORCE:
-    return "brute-force";
   case SOLVE_BACKEND_BRANCH:
     return "branch";
   case SOLVE_BACKEND_RANKWIDTH:
@@ -217,6 +212,10 @@ static const char *solve_mode_name(qsop_solve_mode_t mode) {
   return "unknown";
 }
 
+static const char *solve_mode_display_name(qsop_solve_mode_t mode, bool auto_mode) {
+  return auto_mode ? "auto" : solve_mode_name(mode);
+}
+
 static const char *treewidth_order_name(qsop_treewidth_order_t order) {
   switch (order) {
   case QSOP_TREEWIDTH_ORDER_MIN_FILL:
@@ -238,10 +237,26 @@ static const char *solve_mode_kernel_name(solve_backend_t backend, qsop_solve_mo
   if (mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return "count-table";
   }
-  return backend == SOLVE_BACKEND_COMPONENTS || backend == SOLVE_BACKEND_BRUTE_FORCE ||
-                 backend == SOLVE_BACKEND_RANKWIDTH || backend == SOLVE_BACKEND_TREEWIDTH
+  return backend == SOLVE_BACKEND_RANKWIDTH || backend == SOLVE_BACKEND_TREEWIDTH
              ? "fourier"
              : "hybrid-fourier";
+}
+
+static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
+  const char *message = error != NULL ? error->message : NULL;
+  if (message == NULL) {
+    return false;
+  }
+  return strstr(message, "requires R <= UINT32_MAX") != NULL ||
+         strstr(message, "modulus > 2^32-1") != NULL ||
+         strstr(message, "forecast") != NULL ||
+         strstr(message, "table") != NULL ||
+         strstr(message, "bag") != NULL ||
+         strstr(message, "cap") != NULL ||
+         strstr(message, "refuses") != NULL ||
+         strstr(message, "too large") != NULL ||
+         strstr(message, "memory-skip") != NULL ||
+         strstr(message, "no delegate available") != NULL;
 }
 
 static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
@@ -259,6 +274,7 @@ static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *ev
 
 static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_solve_stats_t *stats,
                                qsop_solve_mode_t solve_mode, bool solve_mode_set,
+                               bool solve_mode_auto,
                                qsop_rankwidth_solve_mode_t rankwidth_mode,
                                const char *rankwidth_decomposition,
                                qsop_treewidth_order_t treewidth_order, qsop_error_t *error) {
@@ -272,8 +288,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
 
   fprintf(file, "backend: %s\n", backend_name(backend));
-  if (solve_mode_set || solve_mode != QSOP_SOLVE_MODE_COUNT_TABLE) {
-    fprintf(file, "solve_mode: %s\n", solve_mode_name(solve_mode));
+  if (solve_mode_auto || solve_mode_set || solve_mode != QSOP_SOLVE_MODE_COUNT_TABLE) {
+    fprintf(file, "solve_mode: %s\n", solve_mode_display_name(solve_mode, solve_mode_auto));
     fprintf(file, "solve_mode_kernel: %s\n", solve_mode_kernel_name(backend, solve_mode));
   }
   if (stats->simd_kernel != 0) {
@@ -302,22 +318,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   if (stats->simd_scalar_fallback_ops != 0) {
     fprintf(file, "simd_scalar_fallback_ops: %" PRIu64 "\n", stats->simd_scalar_fallback_ops);
   }
-  if (backend == SOLVE_BACKEND_COMPONENTS) {
-    fprintf(file, "components: %" PRIu32 "\n", stats->components);
-    fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
-    fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
-    fprintf(file, "cache_entries: %" PRIu64 "\n", stats->cache_entries);
-    fprintf(file, "cache_stored_residue_slots: %" PRIu64 "\n",
-            stats->cache_stored_residue_slots);
-    if (stats->cache_estimated_bytes != 0) {
-      fprintf(file, "cache_key_bytes: %" PRIu64 "\n", stats->cache_key_bytes);
-      fprintf(file, "cache_count_bytes: %" PRIu64 "\n", stats->cache_count_bytes);
-      fprintf(file, "cache_estimated_bytes: %" PRIu64 "\n", stats->cache_estimated_bytes);
-    }
-    fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
-  } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
-    fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
-  } else if (backend == SOLVE_BACKEND_BRANCH) {
+  if (backend == SOLVE_BACKEND_BRANCH) {
     fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
     fprintf(file, "cache_misses: %" PRIu64 "\n", stats->cache_misses);
@@ -494,6 +495,68 @@ static bool result_count_long_double(const qsop_result_t *result, uint32_t resid
   return true;
 }
 
+static bool result_to_amplitude(const qsop_result_t *result, uint32_t target_mode,
+                                qsop_amplitude_t *out, qsop_error_t *error) {
+  if (result == NULL || out == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "internal error: null amplitude conversion argument");
+    return false;
+  }
+  static const long double two_pi =
+      6.283185307179586476925286766559005768394338798750211641949889L;
+  long double real = 0.0L;
+  long double imag = 0.0L;
+  const uint32_t r = result->r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    long double count = 0.0L;
+    if (!result_count_long_double(result, residue, &count, error)) {
+      return false;
+    }
+    const long double angle =
+        two_pi * (long double)(((uint64_t)target_mode * residue) % r) / (long double)r;
+    real += count * cosl(angle);
+    imag += count * sinl(angle);
+  }
+  *out = (qsop_amplitude_t){
+      .re = real,
+      .im = imag,
+      .numeric_error_bound = 0.0L,
+  };
+  return true;
+}
+
+static bool write_amplitude_output(FILE *file, const char *solve_mode,
+                                   const char *solve_mode_kernel, uint32_t target_mode,
+                                   const qsop_amplitude_t *amplitude,
+                                   qsop_error_t *error) {
+  if (file == NULL || solve_mode == NULL || solve_mode_kernel == NULL || amplitude == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "internal error: null amplitude-output argument");
+    return false;
+  }
+  fprintf(file, "mode: amplitude\n");
+  fprintf(file, "solve_mode: %s\n", solve_mode);
+  fprintf(file, "solve_mode_kernel: %s\n", solve_mode_kernel);
+  fprintf(file, "fourier_target_mode: %" PRIu32 "\n", target_mode);
+  fprintf(file, "amplitude_re: %.17Lg\n", amplitude->re);
+  fprintf(file, "amplitude_im: %.17Lg\n", amplitude->im);
+  fprintf(file, "numeric_error_bound: %.17Lg\n", amplitude->numeric_error_bound);
+  if (ferror(file)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "write failed: %s", strerror(errno));
+    return false;
+  }
+  return true;
+}
+
 static bool write_probability_stats(FILE *file, const qsop_result_t *result, qsop_error_t *error) {
   if (file == NULL || result == NULL) {
     error->path = NULL;
@@ -504,37 +567,12 @@ static bool write_probability_stats(FILE *file, const qsop_result_t *result, qso
     return false;
   }
 
-  static const long double two_pi =
-      6.283185307179586476925286766559005768394338798750211641949889L;
-  long double real = 0.0L;
-  long double imag = 0.0L;
-  if (result->r % 2U == 0U) {
-    const uint32_t half = result->r / 2U;
-    for (uint32_t residue = 0; residue < half; residue++) {
-      long double lower = 0.0L;
-      long double upper = 0.0L;
-      if (!result_count_long_double(result, residue, &lower, error) ||
-          !result_count_long_double(result, residue + half, &upper, error)) {
-        return false;
-      }
-      const long double count = lower - upper;
-      const long double angle = two_pi * (long double)residue / (long double)result->r;
-      real += count * cosl(angle);
-      imag += count * sinl(angle);
-    }
-  } else {
-    for (uint32_t residue = 0; residue < result->r; residue++) {
-      long double count = 0.0L;
-      if (!result_count_long_double(result, residue, &count, error)) {
-        return false;
-      }
-      const long double angle = two_pi * (long double)residue / (long double)result->r;
-      real += count * cosl(angle);
-      imag += count * sinl(angle);
-    }
+  qsop_amplitude_t amplitude = {0};
+  if (!result_to_amplitude(result, 1U, &amplitude, error)) {
+    return false;
   }
 
-  const long double unnormalized = real * real + imag * imag;
+  const long double unnormalized = amplitude.re * amplitude.re + amplitude.im * amplitude.im;
   const long double probability = unnormalized * powl(2.0L, -(long double)result->norm_h);
   fprintf(file, "result_probability: %.17Lg\n", probability);
 
@@ -618,7 +656,7 @@ int main(int argc, char **argv) {
   const char *rankwidth_decomposition_label = "left-deep";
   const char *rankwidth_dump_path = NULL;
   uint32_t max_vars = 24;
-  solve_backend_t backend = SOLVE_BACKEND_COMPONENTS;
+  solve_backend_t backend = SOLVE_BACKEND_BRANCH;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
   qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
@@ -643,6 +681,7 @@ int main(int argc, char **argv) {
   bool rankwidth_generator_set = false;
   bool rankwidth_mode_set = false;
   bool solve_mode_set = false;
+  bool solve_mode_auto = false;
   bool max_vars_set = false;
   bool single_fourier_mode = false;
   uint32_t fourier_target_mode = 1;
@@ -667,7 +706,7 @@ int main(int argc, char **argv) {
       QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
   bool rw_fourier_kernel_set = false;
   uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
-  solve_output_format_t format = SOLVE_FORMAT_RESIDUE_VECTOR;
+  solve_output_format_t format = SOLVE_FORMAT_AMPLITUDE;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
   for (int i = 1; i < argc; i++) {
@@ -681,13 +720,15 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *format_value = argv[++i];
-      if (strcmp(format_value, "residue-vector") != 0) {
-        if (strcmp(format_value, "stats") == 0) {
-          format = SOLVE_FORMAT_STATS;
-        } else {
-          fprintf(stderr, "error: unsupported format '%s'\n", format_value);
-          return 2;
-        }
+      if (strcmp(format_value, "amplitude") == 0) {
+        format = SOLVE_FORMAT_AMPLITUDE;
+      } else if (strcmp(format_value, "residue-vector") == 0) {
+        format = SOLVE_FORMAT_RESIDUE_VECTOR;
+      } else if (strcmp(format_value, "stats") == 0) {
+        format = SOLVE_FORMAT_STATS;
+      } else {
+        fprintf(stderr, "error: unsupported format '%s'\n", format_value);
+        return 2;
       }
       continue;
     }
@@ -1054,11 +1095,7 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "components") == 0) {
-        backend = SOLVE_BACKEND_COMPONENTS;
-      } else if (strcmp(value, "brute-force") == 0) {
-        backend = SOLVE_BACKEND_BRUTE_FORCE;
-      } else if (strcmp(value, "branch") == 0) {
+      if (strcmp(value, "branch") == 0) {
         backend = SOLVE_BACKEND_BRANCH;
       } else if (strcmp(value, "rankwidth") == 0) {
         backend = SOLVE_BACKEND_RANKWIDTH;
@@ -1138,14 +1175,21 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "count-table") == 0) {
+      if (strcmp(value, "auto") == 0) {
+        solve_mode_auto = true;
+        solve_mode_set = true;
+      } else if (strcmp(value, "count-table") == 0) {
         solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
+        solve_mode_auto = false;
         solve_mode_set = true;
       } else if (strcmp(value, "fourier") == 0) {
         solve_mode = QSOP_SOLVE_MODE_FOURIER;
+        solve_mode_auto = false;
         solve_mode_set = true;
       } else if (strcmp(value, "single-fourier") == 0) {
         single_fourier_mode = true;
+        solve_mode_auto = false;
+        solve_mode_set = true;
       } else {
         fprintf(stderr, "error: unsupported solve mode '%s'\n", value);
         return 2;
@@ -1246,6 +1290,14 @@ int main(int argc, char **argv) {
     }
     input_path = argv[i];
   }
+  if (!solve_mode_set && backend == SOLVE_BACKEND_BRANCH && format != SOLVE_FORMAT_RESIDUE_VECTOR) {
+    solve_mode_auto = true;
+    solve_mode_set = true;
+  }
+  if (solve_mode_auto && backend != SOLVE_BACKEND_BRANCH) {
+    fputs("error: --solve-mode auto is currently supported only with --backend branch\n", stderr);
+    return 2;
+  }
   if (branch_heuristic_set && backend != SOLVE_BACKEND_BRANCH) {
     fputs("error: --branch-heuristic requires --backend branch\n", stderr);
     return 2;
@@ -1290,12 +1342,12 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-single-kernel requires --backend rankwidth\n", stderr);
     return 2;
   }
-  if (rankwidth_mode_set && solve_mode_set &&
+  if (rankwidth_mode_set && solve_mode_set && !solve_mode_auto &&
       rankwidth_mode != rankwidth_mode_from_solve_mode(solve_mode)) {
     fputs("error: --solve-mode conflicts with --rankwidth-mode\n", stderr);
     return 2;
   }
-  if (backend == SOLVE_BACKEND_RANKWIDTH && solve_mode_set) {
+  if (backend == SOLVE_BACKEND_RANKWIDTH && solve_mode_set && !solve_mode_auto) {
     rankwidth_mode = rankwidth_mode_from_solve_mode(solve_mode);
   }
   if (rankwidth_mode_set && !solve_mode_set) {
@@ -1335,8 +1387,8 @@ int main(int argc, char **argv) {
           stderr);
     return 2;
   }
-  if (branch_single_option_set && !single_fourier_mode) {
-    fputs("error: --branch-single-* options require --solve-mode single-fourier\n", stderr);
+  if (branch_single_option_set && !single_fourier_mode && !solve_mode_auto) {
+    fputs("error: --branch-single-* options require --solve-mode single-fourier or auto\n", stderr);
     return 2;
   }
   if (single_fourier_mode && calibrate_backends) {
@@ -1345,8 +1397,15 @@ int main(int argc, char **argv) {
           stderr);
     return 2;
   }
-  if (fourier_target_mode_set && !single_fourier_mode) {
-    fputs("error: --fourier-target-mode requires --solve-mode single-fourier\n", stderr);
+  if (fourier_target_mode_set && !single_fourier_mode && format != SOLVE_FORMAT_AMPLITUDE) {
+    fputs("error: --fourier-target-mode requires --format amplitude or --solve-mode "
+          "single-fourier\n",
+          stderr);
+    return 2;
+  }
+  if (single_fourier_mode && format == SOLVE_FORMAT_RESIDUE_VECTOR) {
+    fputs("error: --format residue-vector is incompatible with --solve-mode single-fourier\n",
+          stderr);
     return 2;
   }
   if (single_fourier_mode && (include_result || include_probability)) {
@@ -1355,8 +1414,8 @@ int main(int argc, char **argv) {
           stderr);
     return 2;
   }
-  /* --max-vars's default (24) is a brute-force/count-table safety valve, since nvars directly
-   * drives their 2^nvars or O(r) cost there. single-fourier mode has no such blowup -- table
+  /* --max-vars's default (24) is a count-table safety valve, since nvars directly
+   * drives exact residual search cost there. single-fourier mode has no such blowup -- table
    * size is O(2^bagwidth), independent of nvars -- so raise the default when it applies and the
    * caller hasn't overridden it. 4096 is an empirically-tested ceiling, not a guess: real
    * qasm2sop --approx gauntlet circuits up to ~2300 variables were confirmed to complete their
@@ -1368,8 +1427,9 @@ int main(int argc, char **argv) {
     max_vars = 4096;
   }
 
-  if (single_mode_precision_set && !single_fourier_mode && !print_kernels) {
-    fputs("error: --single-mode-precision requires --solve-mode single-fourier\n", stderr);
+  if (single_mode_precision_set && !single_fourier_mode && !solve_mode_auto && !print_kernels) {
+    fputs("error: --single-mode-precision requires --solve-mode single-fourier or auto\n",
+          stderr);
     return 2;
   }
   if (single_mode_precision_set && !branch_single_precision_set) {
@@ -1402,7 +1462,8 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  if (single_fourier_mode && single_mode_precision == SINGLE_MODE_PRECISION_LONG_DOUBLE &&
+  if ((single_fourier_mode || solve_mode_auto) &&
+      single_mode_precision == SINGLE_MODE_PRECISION_LONG_DOUBLE &&
       backend == SOLVE_BACKEND_BRANCH &&
       branch_single_fallback != QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY) {
     fputs("error: --single-mode-precision long-double is not implemented for branch residual "
@@ -1459,8 +1520,66 @@ int main(int argc, char **argv) {
       .user = &csv_trace,
   };
   qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
+  bool result_ready = false;
+  bool auto_fallback_single_fourier = false;
 
-  if (single_fourier_mode) {
+  qsop_backend_stats_sink_t sink = {
+      .file = jsonl_file,
+      .instance = diagnostic_path,
+      .next_id = 0,
+      .calibrate_backends = calibrate_backends,
+  };
+  qsop_backend_stats_sink_t *sink_ptr = jsonl_file != NULL ? &sink : NULL;
+
+  if (solve_mode_auto) {
+    if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
+      fputs("error: --format residue-vector is incompatible with --solve-mode auto; use "
+            "--format amplitude or an explicit exact solve mode\n",
+            stderr);
+      qsop_free(qsop);
+      if (jsonl_file != NULL) {
+        fclose(jsonl_file);
+      }
+      return 2;
+    }
+    qsop_error_t count_error = {0};
+    if (qsop->r <= UINT32_MAX) {
+      ok = qsop_solve_branch(qsop, max_vars,
+                             &(qsop_branch_solve_options_t){
+                                 .heuristic = branch_heuristic,
+                                 .rw_source = branch_rw_source,
+                                 .mode      = QSOP_SOLVE_MODE_COUNT_TABLE,
+                                 .policy    = branch_policy,
+                                 .sink      = sink_ptr,
+                                 .trace     = trace_ptr,
+                             },
+                             &result, &solve_stats, &count_error);
+      if (ok) {
+        result_ready = true;
+        solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
+      } else if (!branch_auto_refusal_is_safe_fallback(&count_error)) {
+        if (jsonl_file != NULL) {
+          fclose(jsonl_file);
+        }
+        print_error(&count_error, diagnostic_path);
+        qsop_free(qsop);
+        return 1;
+      } else {
+        auto_fallback_single_fourier = true;
+        error = (qsop_error_t){0};
+      }
+    } else {
+      auto_fallback_single_fourier = true;
+    }
+    if (auto_fallback_single_fourier) {
+      single_fourier_mode = true;
+      if (!max_vars_set) {
+        max_vars = 4096;
+      }
+    }
+  }
+
+  if (single_fourier_mode && !result_ready) {
     qsop_amplitude_t amplitude = {0};
     qsop_solve_stats_t amp_stats = {0};
     if (backend == SOLVE_BACKEND_RANKWIDTH) {
@@ -1541,15 +1660,21 @@ int main(int argc, char **argv) {
     if (single_mode_precision_set) {
       amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
     }
-    printf("mode: single-fourier\n");
-    printf("fourier_target_mode: %" PRIu32 "\n", fourier_target_mode);
-    printf("amplitude_re: %.17Lg\n", amplitude.re);
-    printf("amplitude_im: %.17Lg\n", amplitude.im);
-    printf("numeric_error_bound: %.17Lg\n", amplitude.numeric_error_bound);
     if (format == SOLVE_FORMAT_STATS) {
-      ok = write_solver_stats(stdout, backend, &amp_stats, solve_mode, solve_mode_set,
-                              rankwidth_mode, rankwidth_decomposition_label, treewidth_order,
-                              &error);
+      ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : "single-fourier",
+                                  "single-fourier", fourier_target_mode, &amplitude, &error);
+      if (ok) {
+        ok = write_solver_stats(stdout, backend, &amp_stats, solve_mode, false, false,
+                                rankwidth_mode, rankwidth_decomposition_label, treewidth_order,
+                                &error);
+      }
+      if (!ok) {
+        print_error(&error, "<stdout>");
+        return 1;
+      }
+    } else {
+      ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : "single-fourier",
+                                  "single-fourier", fourier_target_mode, &amplitude, &error);
       if (!ok) {
         print_error(&error, "<stdout>");
         return 1;
@@ -1558,129 +1683,119 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  qsop_backend_stats_sink_t sink = {
-      .file = jsonl_file,
-      .instance = diagnostic_path,
-      .next_id = 0,
-      .calibrate_backends = calibrate_backends,
-  };
-  qsop_backend_stats_sink_t *sink_ptr = jsonl_file != NULL ? &sink : NULL;
-  if (backend == SOLVE_BACKEND_COMPONENTS) {
-    ok = qsop_solve_components_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
-                                                           &solve_stats, trace_ptr, &error);
-  } else if (backend == SOLVE_BACKEND_BRUTE_FORCE) {
-    ok = qsop_solve_bruteforce_mode_trace_stats(qsop, max_vars, solve_mode, &result,
-                                                &solve_stats, trace_ptr, &error);
-  } else if (backend == SOLVE_BACKEND_BRANCH) {
-    ok = qsop_solve_branch(qsop, max_vars,
-                           &(qsop_branch_solve_options_t){
-                               .heuristic = branch_heuristic,
-                               .rw_source = branch_rw_source,
-                               .mode      = solve_mode,
-                               .policy    = branch_policy,
-                               .sink      = sink_ptr,
-                               .trace     = trace_ptr,
-                           },
-                           &result, &solve_stats, &error);
-  } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
-    if (rankwidth_decomposition_path != NULL) {
-      FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
-      if (decomposition_file == NULL) {
-        fprintf(stderr, "error: %s: %s\n", rankwidth_decomposition_path, strerror(errno));
-        qsop_free(qsop);
-        return 1;
+  if (!result_ready) {
+    if (backend == SOLVE_BACKEND_BRANCH) {
+      ok = qsop_solve_branch(qsop, max_vars,
+                             &(qsop_branch_solve_options_t){
+                                 .heuristic = branch_heuristic,
+                                 .rw_source = branch_rw_source,
+                                 .mode      = solve_mode,
+                                 .policy    = branch_policy,
+                                 .sink      = sink_ptr,
+                                 .trace     = trace_ptr,
+                             },
+                             &result, &solve_stats, &error);
+    } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
+      if (rankwidth_decomposition_path != NULL) {
+        FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
+        if (decomposition_file == NULL) {
+          fprintf(stderr, "error: %s: %s\n", rankwidth_decomposition_path, strerror(errno));
+          qsop_free(qsop);
+          return 1;
+        }
+        ok = qsop_rankwidth_decomposition_parse_file(decomposition_file, rankwidth_decomposition_path,
+                                                     qsop->nvars, &rankwidth_decomposition, &error);
+        fclose(decomposition_file);
+        if (!ok) {
+          print_error(&error, rankwidth_decomposition_path);
+          qsop_free(qsop);
+          return 1;
+        }
+      } else {
+        ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
+                                                   &rankwidth_decomposition, &error);
       }
-      ok = qsop_rankwidth_decomposition_parse_file(decomposition_file, rankwidth_decomposition_path,
-                                                   qsop->nvars, &rankwidth_decomposition, &error);
-      fclose(decomposition_file);
-      if (!ok) {
-        print_error(&error, rankwidth_decomposition_path);
-        qsop_free(qsop);
-        return 1;
+      if (ok && rankwidth_dump_path != NULL) {
+        FILE *dump_file = fopen(rankwidth_dump_path, "w");
+        if (dump_file == NULL) {
+          fprintf(stderr, "error: %s: %s\n", rankwidth_dump_path, strerror(errno));
+          qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+          qsop_free(qsop);
+          return 1;
+        }
+        ok = qsop_rankwidth_decomposition_write_file(dump_file, rankwidth_decomposition, &error);
+        fclose(dump_file);
+        if (!ok) {
+          print_error(&error, rankwidth_dump_path);
+          qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+          qsop_free(qsop);
+          return 1;
+        }
       }
-    } else {
-      ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
-                                                 &rankwidth_decomposition, &error);
-    }
-    if (ok && rankwidth_dump_path != NULL) {
-      FILE *dump_file = fopen(rankwidth_dump_path, "w");
-      if (dump_file == NULL) {
-        fprintf(stderr, "error: %s: %s\n", rankwidth_dump_path, strerror(errno));
-        qsop_rankwidth_decomposition_free(rankwidth_decomposition);
-        qsop_free(qsop);
-        return 1;
-      }
-      ok = qsop_rankwidth_decomposition_write_file(dump_file, rankwidth_decomposition, &error);
-      fclose(dump_file);
-      if (!ok) {
-        print_error(&error, rankwidth_dump_path);
-        qsop_rankwidth_decomposition_free(rankwidth_decomposition);
-        qsop_free(qsop);
-        return 1;
-      }
-    }
-    /* D1: memory budget gate — check forecast before allocating solve state. */
-    if (ok && rw_memory_budget_bytes > 0) {
-      uint64_t fe = 0;
-      uint64_t jp = 0;
-      qsop_error_t fe_err = {0};
-      if (qsop_rankwidth_decomposition_forecast(qsop, rankwidth_decomposition, &fe, &jp,
-                                                &fe_err)) {
-        const uint64_t forecast_bytes = fe * (uint64_t)qsop->r * sizeof(uint64_t);
-        if (forecast_bytes > rw_memory_budget_bytes) {
-          if (rw_memory_policy == RW_MEMORY_POLICY_HARD_ERROR) {
-            fprintf(stderr,
-                    "error: rankwidth memory forecast %" PRIu64 " MiB exceeds budget %" PRIu64
-                    " MiB\n",
-                    (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
-                    (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
-            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
-            qsop_free(qsop);
-            return 1;
-          } else if (rw_memory_policy == RW_MEMORY_POLICY_SKIP) {
-            if (format == SOLVE_FORMAT_STATS) {
-              fprintf(stdout, "backend: %s\n", backend_name(backend));
-              fprintf(stdout, "status: memory-skip\n");
-              fprintf(stdout, "rankwidth_memory_forecast_bytes: %" PRIu64 "\n", forecast_bytes);
-              fprintf(stdout, "rankwidth_memory_budget_bytes: %" PRIu64 "\n",
-                      rw_memory_budget_bytes);
-            } else {
+      /* D1: memory budget gate — check forecast before allocating solve state. */
+      if (ok && rw_memory_budget_bytes > 0) {
+        uint64_t fe = 0;
+        uint64_t jp = 0;
+        qsop_error_t fe_err = {0};
+        if (qsop_rankwidth_decomposition_forecast(qsop, rankwidth_decomposition, &fe, &jp,
+                                                  &fe_err)) {
+          const uint64_t forecast_bytes = fe * (uint64_t)qsop->r * sizeof(uint64_t);
+          if (forecast_bytes > rw_memory_budget_bytes) {
+            if (rw_memory_policy == RW_MEMORY_POLICY_HARD_ERROR) {
               fprintf(stderr,
-                      "rankwidth: memory-skip (forecast %" PRIu64 " MiB > budget %" PRIu64
-                      " MiB)\n",
+                      "error: rankwidth memory forecast %" PRIu64 " MiB exceeds budget %" PRIu64
+                      " MiB\n",
                       (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
                       (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+              qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+              qsop_free(qsop);
+              return 1;
+            } else if (rw_memory_policy == RW_MEMORY_POLICY_SKIP) {
+              if (format == SOLVE_FORMAT_STATS) {
+                fprintf(stdout, "backend: %s\n", backend_name(backend));
+                fprintf(stdout, "status: memory-skip\n");
+                fprintf(stdout, "rankwidth_memory_forecast_bytes: %" PRIu64 "\n", forecast_bytes);
+                fprintf(stdout, "rankwidth_memory_budget_bytes: %" PRIu64 "\n",
+                        rw_memory_budget_bytes);
+              } else {
+                fprintf(stderr,
+                        "rankwidth: memory-skip (forecast %" PRIu64 " MiB > budget %" PRIu64
+                        " MiB)\n",
+                        (uint64_t)(forecast_bytes / (1024ULL * 1024ULL)),
+                        (uint64_t)(rw_memory_budget_bytes / (1024ULL * 1024ULL)));
+              }
+              qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+              qsop_free(qsop);
+              return 0;
+            } else {
+              /* RW_MEMORY_POLICY_FALLBACK: fall through to treewidth below. */
+              qsop_rankwidth_decomposition_free(rankwidth_decomposition);
+              rankwidth_decomposition = NULL;
+              ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order,
+                                                               solve_mode, &result, &solve_stats,
+                                                               trace_ptr, &error);
+              goto rankwidth_done;
             }
-            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
-            qsop_free(qsop);
-            return 0;
-          } else {
-            /* RW_MEMORY_POLICY_FALLBACK: fall through to treewidth below. */
-            qsop_rankwidth_decomposition_free(rankwidth_decomposition);
-            rankwidth_decomposition = NULL;
-            ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order,
-                                                             solve_mode, &result, &solve_stats,
-                                                             trace_ptr, &error);
-            goto rankwidth_done;
           }
         }
       }
+      if (ok) {
+        ok = qsop_solve_rankwidth_options_mode_trace_stats(
+            qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
+            &(qsop_rankwidth_solve_options_t){
+                .join_strategy = rw_join_strategy,
+                .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+                .fourier_kernel = rw_fourier_kernel,
+            },
+            &result, &solve_stats, trace_ptr, &error);
+      }
+  rankwidth_done:;
+    } else {
+      ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,
+                                                       &result, &solve_stats, trace_ptr, &error);
     }
-    if (ok) {
-      ok = qsop_solve_rankwidth_options_mode_trace_stats(
-          qsop, rankwidth_decomposition, max_vars, rankwidth_mode,
-          &(qsop_rankwidth_solve_options_t){
-              .join_strategy = rw_join_strategy,
-              .materialize_join_max_pairs = rw_materialize_join_max_pairs,
-              .fourier_kernel = rw_fourier_kernel,
-          },
-          &result, &solve_stats, trace_ptr, &error);
-    }
-rankwidth_done:;
-  } else {
-    ok = qsop_solve_treewidth_order_mode_trace_stats(qsop, max_vars, treewidth_order, solve_mode,
-                                                     &result, &solve_stats, trace_ptr, &error);
   }
+
   qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);
   if (jsonl_file != NULL) {
@@ -1691,12 +1806,21 @@ rankwidth_done:;
     return 1;
   }
 
-  if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
+  if (format == SOLVE_FORMAT_AMPLITUDE) {
+    qsop_amplitude_t amplitude = {0};
+    ok = result_to_amplitude(result, fourier_target_mode, &amplitude, &error);
+    if (ok) {
+      ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : solve_mode_name(solve_mode),
+                                  solve_mode_kernel_name(backend, solve_mode),
+                                  fourier_target_mode, &amplitude, &error);
+    }
+  } else if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
     ok = qsop_result_write_residue_vector(stdout, result, &error);
   } else {
     ok = write_solver_stats(stdout, backend, &solve_stats, solve_mode, solve_mode_set,
-                            rankwidth_mode,
-                            rankwidth_decomposition_label, treewidth_order, &error);
+                            solve_mode_auto,
+                            rankwidth_mode, rankwidth_decomposition_label, treewidth_order,
+                            &error);
     if (ok && backend == SOLVE_BACKEND_BRANCH && branch_heuristic_set) {
       printf("branch_heuristic: %s\n", branch_heuristic_name(branch_heuristic));
     }

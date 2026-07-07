@@ -28,7 +28,7 @@ typedef struct qsop_amplitude {
 } qsop_amplitude_t;
 
 typedef struct qsop_solve_stats {
-  /* Branch / brute-force search */
+  /* Branch residual search */
   uint64_t search_nodes;
   uint64_t leaf_assignments;
 
@@ -194,38 +194,6 @@ typedef struct qsop_solve_trace {
 } qsop_solve_trace_t;
 
 void qsop_result_free(qsop_result_t *result);
-
-bool qsop_solve_bruteforce(const qsop_instance_t *qsop, uint32_t max_vars, qsop_result_t **out,
-                           qsop_error_t *error);
-
-bool qsop_solve_bruteforce_stats(const qsop_instance_t *qsop, uint32_t max_vars,
-                                 qsop_result_t **out, qsop_solve_stats_t *stats,
-                                 qsop_error_t *error);
-
-bool qsop_solve_bruteforce_trace_stats(const qsop_instance_t *qsop, uint32_t max_vars,
-                                       qsop_result_t **out, qsop_solve_stats_t *stats,
-                                       qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_bruteforce_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_vars, qsop_solve_mode_t mode, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_components_bruteforce(const qsop_instance_t *qsop, uint32_t max_component_vars,
-                                      qsop_result_t **out, qsop_error_t *error);
-
-bool qsop_solve_components_bruteforce_stats(const qsop_instance_t *qsop,
-                                            uint32_t max_component_vars, qsop_result_t **out,
-                                            qsop_solve_stats_t *stats, qsop_error_t *error);
-
-bool qsop_solve_components_bruteforce_trace_stats(const qsop_instance_t *qsop,
-                                                  uint32_t max_component_vars, qsop_result_t **out,
-                                                  qsop_solve_stats_t *stats,
-                                                  qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_components_bruteforce_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_component_vars, qsop_solve_mode_t mode,
-    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
 
 bool qsop_solve_treewidth(const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_result_t **out,
                           qsop_error_t *error);

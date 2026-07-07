@@ -24,7 +24,7 @@ def canonicalize(sop_check: pathlib.Path, text: str) -> str:
 
 
 def solve(sop_solve: pathlib.Path, text: str, backend: str) -> str:
-    return run([str(sop_solve), "--backend", backend, "-"], text)
+    return run([str(sop_solve), "--backend", backend, "--format", "residue-vector", "-"], text)
 
 
 def parse_counts(result_text: str) -> tuple[int, list[int]]:
@@ -62,8 +62,8 @@ def test_solver_agreement(
 ) -> None:
     raw = (source_root / "tests" / "golden" / "sign_raw.qsop").read_text()
     canonical = canonicalize(sop_check, raw)
-    expected = solve(sop_solve, canonical, "components")
-    for backend in ["components", "brute-force", "branch"]:
+    expected = solve(sop_solve, canonical, "branch")
+    for backend in ["branch", "treewidth"]:
         actual = solve(sop_solve, raw, backend)
         if actual != expected:
             raise AssertionError(f"{backend}: raw and canonical solve results differ")
@@ -79,7 +79,7 @@ e 0 1
 """
     shifted = base.replace("cst 0", "cst 3")
 
-    base_modulus, base_counts = parse_counts(solve(sop_solve, base, "brute-force"))
+    base_modulus, base_counts = parse_counts(solve(sop_solve, base, "branch"))
     shifted_modulus, shifted_counts = parse_counts(solve(sop_solve, shifted, "branch"))
     if base_modulus != shifted_modulus:
         raise AssertionError("constant-shift solve changed modulus")

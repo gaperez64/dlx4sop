@@ -1,4 +1,6 @@
 backend: branch
+solve_mode: count-table
+solve_mode_kernel: count-table
 search_nodes: 5
 cache_hits: 0
 cache_misses: 5

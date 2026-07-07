@@ -2411,7 +2411,7 @@ static bool solve_treewidth_fourier_order_policy_once(
  * unit roundoff ~5.42e-20) arithmetic: each complex multiply-accumulate or complex add
  * counted in complex_ops contributes at most a small constant multiple of the unit roundoff
  * to the (unnormalized) result's error. This bound is intentionally not tight -- it is
- * validated empirically against exact brute-force reconstruction in the differential tests. */
+ * validated empirically against exact histogram reconstruction in the differential tests. */
 static long double single_mode_error_bound(uint64_t complex_ops) {
   static const long double ops_per_step = 8.0L; /* complex multiply: 4 mul + 2 add/sub, plus margin */
   return (long double)complex_ops * ops_per_step * LDBL_EPSILON;

@@ -3,8 +3,8 @@
 
 Speaks the inferq.zero-amplitude.v1 protocol (see qccq-gauntlet's
 docs/adapter-protocol.md): for each request, computes <0^n|C|0^n> by piping
-qasm2sop's output into `sop2wmc --encoding amp-and` (a single weighted-CNF
-export with an embedded `amplitude_factor`), then into ganak's
+qasm2sop's output into `sop2wmc --encoding auto` (a single selected
+weighted-CNF export with an embedded `amplitude_factor`), then into ganak's
 `--mode 6` mpfr-complex model counter -- the same pipeline validated by
 scripts/bench_wmc_ganak.py, whose parsing helpers this module reuses
 directly. Frontend circuit handling (QPY loading, clbit stripping, QASM
@@ -43,14 +43,6 @@ from adapter import (  # noqa: E402
 
 SOP2WMC = REPO_ROOT / "build" / "sop2wmc"
 GANAK = REPO_ROOT / ".gauntlet" / "ganak" / "ganak"
-
-# amp-and: single WPCNF with Tseitin AND auxiliaries, one ganak --mode 6 call
-# per case. Chosen over amp-soft/amp-block (untuned alternative encodings)
-# and residue (r separate plain-#SAT calls plus an error-prone DFT
-# recombination on our end -- see scripts/bench_wmc_ganak.py's
-# counts_to_amplitude precision workarounds) as the simplest, most direct
-# path to a single complex amplitude.
-ENCODING = "amp-and"
 
 # Comfortably under the harness's 120s per-case window (docs/operations.md),
 # leaving headroom for QPY loading, QASM dumping, and two subprocess calls
@@ -93,24 +85,38 @@ def parse_ganak_complex_decimal(text: str) -> tuple[Decimal, Decimal]:
     raise ValueError(f"could not parse ganak complex output:\n{text}")
 
 
-def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
+def solve(args: argparse.Namespace, qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     zero = "0" * nqubits
     qsop_text, metrics = import_qsop(qasm_text, zero)
     norm_h = parse_norm_h(qsop_text)
 
+    export_cmd = [str(SOP2WMC), "--encoding", args.encoding]
+    if args.wmc_preprocess is not None:
+        export_cmd += ["--wmc-preprocess", args.wmc_preprocess]
+    if args.wmc_peel2_fill_budget is not None:
+        export_cmd += ["--wmc-peel2-fill-budget", str(args.wmc_peel2_fill_budget)]
+    if args.wmc_block_min_side is not None:
+        export_cmd += ["--wmc-block-min-side", str(args.wmc_block_min_side)]
+    if args.wmc_block_min_savings is not None:
+        export_cmd += ["--wmc-block-min-savings", str(args.wmc_block_min_savings)]
+    export_cmd.append("-")
+
     exported = subprocess.run(
-        [str(SOP2WMC), "--encoding", ENCODING, "-"],
+        export_cmd,
         input=qsop_text,
         check=False,
         capture_output=True,
         text=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
+        timeout=args.ganak_timeout_seconds,
     )
     if exported.returncode != 0:
-        raise RuntimeError(f"sop2wmc --encoding {ENCODING} failed: {exported.stderr.strip()}")
+        raise RuntimeError(
+            f"sop2wmc --encoding {args.encoding} failed: {exported.stderr.strip()}"
+        )
 
     cnf_text = exported.stdout
     metrics.update(wmc.parse_wmc_metadata(cnf_text))
+    metrics["wmc_requested_encoding"] = args.encoding
     metrics["norm_h"] = norm_h
     factor = wmc.parse_amplitude_factor(cnf_text)
 
@@ -125,7 +131,7 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
         check=False,
         capture_output=True,
         text=True,
-        timeout=SUBPROCESS_TIMEOUT_S,
+        timeout=args.ganak_timeout_seconds,
     )
     if counted.returncode != 0:
         raise RuntimeError(f"ganak --mode 6 failed: {counted.stderr.strip()}")
@@ -139,7 +145,18 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
 
 
 def main() -> int:
-    argparse.ArgumentParser().parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--encoding",
+        default="auto",
+        choices=["auto", "amp-and", "amp-soft", "amp-block", "residue", "residue-fourier"],
+    )
+    parser.add_argument("--wmc-preprocess", choices=["none", "peel1", "peel2-safe"])
+    parser.add_argument("--wmc-peel2-fill-budget", type=int)
+    parser.add_argument("--wmc-block-min-side", type=int)
+    parser.add_argument("--wmc-block-min-savings", type=int)
+    parser.add_argument("--ganak-timeout-seconds", type=float, default=SUBPROCESS_TIMEOUT_S)
+    args = parser.parse_args()
 
     if not SOP2WMC.is_file():
         raise SystemExit(f"missing build output: expected {SOP2WMC} (did bootstrap run?)")
@@ -156,7 +173,7 @@ def main() -> int:
     qasm_text = manifest_tool.inline_simple_gates(qasm_text)
     nqubits = manifest_tool.qasm_qubits(qasm_text)
 
-    value, metrics = solve(qasm_text, nqubits)
+    value, metrics = solve(args, qasm_text, nqubits)
     # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
     # in the qasm2mod.dumps() round-trip above; sop2wmc/ganak then compute the
     # right amplitude *relative to that dropped phase*. Reapply it here -- it's a

@@ -305,6 +305,53 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   return options;
 }
 
+static uint64_t wmc_saturating_add(uint64_t a, uint64_t b) {
+  return b > UINT64_MAX - a ? UINT64_MAX : a + b;
+}
+
+static uint64_t wmc_saturating_mul(uint64_t a, uint64_t b) {
+  return a != 0 && b > UINT64_MAX / a ? UINT64_MAX : a * b;
+}
+
+static void wmc_stats_init(qsop_wmc_stats_t *stats, const qsop_instance_t *qsop) {
+  if (stats == NULL) {
+    return;
+  }
+  *stats = (qsop_wmc_stats_t){0};
+  if (qsop != NULL) {
+    stats->r = qsop->r;
+    stats->norm_h = qsop->norm_h;
+    stats->original_nvars = qsop->nvars;
+    stats->original_edges = qsop->nedges;
+  }
+}
+
+static uint64_t wmc_estimate_cnf_bytes(uint32_t nvars, uint64_t clauses, uint64_t literal_slots,
+                                       uint64_t metadata_lines) {
+  uint64_t bytes = 32U; /* p cnf line */
+  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(metadata_lines, 80U));
+  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(clauses, 4U));
+  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(literal_slots, 12U));
+  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(nvars, 24U));
+  return bytes;
+}
+
+static void wmc_stats_finalize(qsop_wmc_stats_t *stats, uint32_t nvars_total,
+                               uint64_t metadata_lines) {
+  if (stats == NULL) {
+    return;
+  }
+  stats->total_clauses = wmc_saturating_add(
+      stats->clauses_unit,
+      wmc_saturating_add(stats->clauses_binary, stats->clauses_ternary));
+  const uint64_t literal_slots =
+      wmc_saturating_add(stats->clauses_unit,
+                         wmc_saturating_add(wmc_saturating_mul(stats->clauses_binary, 2U),
+                                            wmc_saturating_mul(stats->clauses_ternary, 3U)));
+  stats->estimated_bytes =
+      wmc_estimate_cnf_bytes(nvars_total, stats->total_clauses, literal_slots, metadata_lines);
+}
+
 /* omega^k = exp(2*pi*i*k/r); r never sizes an array here, only a divisor, so this is safe
  * for any r that fits in a double's mantissa without needing a modulus ceiling. */
 static void omega_power(uint64_t k, uint64_t r, double *re, double *im) {
@@ -995,7 +1042,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
   }
 
   if (stats_out != NULL) {
-    *stats_out = (qsop_wmc_stats_t){0};
+    wmc_stats_init(stats_out, qsop);
     stats_out->aux_vars = encoded_edges;
     stats_out->clauses_unit = 0;
     stats_out->clauses_binary = 2U * encoded_edges;
@@ -1005,6 +1052,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
     stats_out->residual_edges = encoded_edges;
     stats_out->active_vars = n_active_vars;
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
+    wmc_stats_finalize(stats_out, nvars_total, 6U + n_active_vars);
   }
 
   free(var_dimacs);
@@ -1086,7 +1134,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
   if (stats_out != NULL) {
     const uint32_t total_skipped = qsop->nedges - (uint32_t)fg->npairs + (uint32_t)fg->npairs -
                                     encoded_edges;
-    *stats_out = (qsop_wmc_stats_t){0};
+    wmc_stats_init(stats_out, qsop);
     stats_out->aux_vars = encoded_edges;
     stats_out->clauses_unit = 0;
     stats_out->clauses_binary = 2U * encoded_edges;
@@ -1096,6 +1144,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
     stats_out->residual_edges = encoded_edges;
     stats_out->active_vars = n_active_vars;
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
+    wmc_stats_finalize(stats_out, nvars_total, 6U + n_active_vars);
   }
 
   free(var_dimacs);
@@ -1111,7 +1160,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
  * Emits a trivially unsatisfiable CNF: empty clause (0 0) with amplitude_factor = 0+0i.
  */
 static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool emit_metadata,
-                                  qsop_error_t *error) {
+                                  qsop_wmc_stats_t *stats_out, qsop_error_t *error) {
   fprintf(file, "p cnf 0 1\n");
   if (emit_metadata) {
     fprintf(file,
@@ -1123,6 +1172,14 @@ static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool e
   }
   /* Empty clause (no literals before 0) → UNSAT → WMC = 0. */
   fputs("0\n", file);
+  if (stats_out != NULL) {
+    wmc_stats_init(stats_out, qsop);
+    stats_out->is_zero = true;
+    stats_out->clauses_unit = 1U;
+    stats_out->active_vars = 0U;
+    stats_out->eliminated_vars = qsop->nvars;
+    wmc_stats_finalize(stats_out, 0U, emit_metadata ? 3U : 0U);
+  }
   if (ferror(file)) {
     set_error(error, "write failed: %s", strerror(errno));
     return false;
@@ -1592,7 +1649,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   }
 
   if (stats_out != NULL) {
-    *stats_out = (qsop_wmc_stats_t){0};
+    wmc_stats_init(stats_out, qsop);
     stats_out->aux_vars = b.nvars - n_active_vars;
     stats_out->clauses_binary = 2U * ((uint32_t)blocks.len + n_extra);
     stats_out->clauses_ternary = 4U * parity_aux;
@@ -1602,9 +1659,18 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
                                    : 0U;
     stats_out->block_count = (uint32_t)blocks.len;
     stats_out->block_edges = covered_edges;
+    for (size_t bi = 0; bi < blocks.len; bi++) {
+      if (blocks.items[bi].a_len > stats_out->max_block_a_size) {
+        stats_out->max_block_a_size = blocks.items[bi].a_len;
+      }
+      if (blocks.items[bi].b_len > stats_out->max_block_b_size) {
+        stats_out->max_block_b_size = blocks.items[bi].b_len;
+      }
+    }
     stats_out->residual_edges = n_extra;
     stats_out->active_vars = n_active_vars;
     stats_out->eliminated_vars = qsop->nvars - n_active_vars;
+    wmc_stats_finalize(stats_out, b.nvars, 6U + n_active_vars + (uint64_t)blocks.len);
   }
 
   free(block_var);
@@ -1642,7 +1708,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     }
     bool ok;
     if (fg.is_zero) {
-      ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+      ok = write_zero_amplitude(file, qsop, options->emit_metadata, options->stats_out, error);
     } else {
       ok = write_amp_block(file, qsop, &fg, options->emit_metadata,
                            options->block_min_side, options->block_min_savings,
@@ -1666,7 +1732,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
 
     bool ok;
     if (fg.is_zero) {
-      ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+      ok = write_zero_amplitude(file, qsop, options->emit_metadata, options->stats_out, error);
     } else if (options->encoding == QSOP_WMC_ENCODING_AMPLITUDE) {
       ok = write_amplitude(file, qsop, &fg, options->emit_metadata, options->stats_out, error);
     } else {
@@ -1735,7 +1801,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
 
       bool ok;
       if (fg.is_zero) {
-        ok = write_zero_amplitude(file, qsop, options->emit_metadata, error);
+        ok = write_zero_amplitude(file, qsop, options->emit_metadata, options->stats_out, error);
       } else if (inner == QSOP_WMC_ENCODING_AMPLITUDE) {
         ok = write_amplitude(file, qsop, &fg, options->emit_metadata, NULL, error);
       } else {
@@ -1769,6 +1835,21 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
   if (!build_shared(qsop, &builder, afinal, &w, error)) {
     builder_free(&builder);
     return false;
+  }
+  if (options->stats_out != NULL) {
+    wmc_stats_init(options->stats_out, qsop);
+    options->stats_out->aux_vars =
+        builder.nvars >= qsop->nvars ? builder.nvars - qsop->nvars : 0U;
+    options->stats_out->active_vars = qsop->nvars;
+    options->stats_out->eliminated_vars = 0U;
+    options->stats_out->encoded_edges = qsop->nedges;
+    const uint32_t blocks = options->all_residues ? (uint32_t)qsop->r : 1U;
+    options->stats_out->total_clauses =
+        wmc_saturating_mul((uint64_t)blocks, builder.nclauses + w);
+    options->stats_out->estimated_bytes =
+        wmc_estimate_cnf_bytes(builder.nvars, options->stats_out->total_clauses,
+                               wmc_saturating_mul(options->stats_out->total_clauses, 3U),
+                               options->emit_metadata ? (uint64_t)blocks * (6U + qsop->nvars) : 0U);
   }
 
   bool ok = true;
