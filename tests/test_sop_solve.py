@@ -2467,7 +2467,6 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         text=True,
     )
     expected_auto = {
-        "simd_requested=auto",
         "single_mode_precision=auto",
     }
     if auto.returncode != 0 or not expected_auto.issubset(set(auto.stdout.splitlines())):
@@ -2487,71 +2486,15 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
 
-    scalar = subprocess.run(
+    simd_arg = subprocess.run(
         [str(exe), "--simd", "scalar", "--print-kernels"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    expected_scalar = {
-        "simd_requested=scalar",
-        "simd_kernel=scalar",
-        "bitset_popcount_kernel=scalar",
-    }
-    if scalar.returncode != 0 or not expected_scalar.issubset(set(scalar.stdout.splitlines())):
-        raise AssertionError(f"--simd scalar --print-kernels failed\n{scalar.stdout}\n{scalar.stderr}")
-
-    scalar_stats = subprocess.run(
-        [
-            str(exe),
-            "--format",
-            "stats",
-            "--backend",
-            "treewidth",
-            "--solve-mode",
-            "single-fourier",
-            "--simd",
-            "scalar",
-            "-",
-        ],
-        input=_path_qsop(3, 8),
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    expected_scalar_stats = {"simd_kernel: scalar", "bitset_kernel: scalar"}
-    if (
-        scalar_stats.returncode != 0
-        or not expected_scalar_stats.issubset(set(scalar_stats.stdout.splitlines()))
-    ):
-        raise AssertionError(
-            f"--format stats --simd scalar failed\n{scalar_stats.stdout}\n{scalar_stats.stderr}"
-        )
-
-    bad_simd = subprocess.run(
-        [str(exe), "--simd", "bad", "--print-kernels"],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if bad_simd.returncode != 2 or "unsupported --simd" not in bad_simd.stderr:
-        raise AssertionError(f"bad --simd diagnostic failed\n{bad_simd.stdout}\n{bad_simd.stderr}")
-
-    if compiled_simd != "sse":
-        sse_simd = subprocess.run(
-            [str(exe), "--simd", "sse", "--print-kernels"],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if sse_simd.returncode != 2 or "not compiled into this binary" not in sse_simd.stderr:
-            raise AssertionError(
-                f"uncompiled --simd sse diagnostic failed\n{sse_simd.stdout}\n{sse_simd.stderr}"
-            )
+    if simd_arg.returncode != 2 or "unknown option '--simd'" not in simd_arg.stderr:
+        raise AssertionError(f"--simd should not be accepted\n{simd_arg.stdout}\n{simd_arg.stderr}")
 
     precision_without_mode = subprocess.run(
         [str(exe), "--backend", "treewidth", "--single-mode-precision", "double", "-"],
@@ -2582,8 +2525,6 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
             "-",
         ],
         input=_path_qsop(3, 8),
@@ -2594,7 +2535,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_double_stats = {
         "single_mode_precision: double",
-        "simd_kernel: scalar",
+        f"simd_kernel: {compiled_simd}",
+        f"bitset_kernel: {compiled_simd}",
         "treewidth_single_complex_kernel: 2",
     }
     if (
@@ -2617,8 +2559,6 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
             "-",
         ],
         input=_path_qsop(3, 8),
@@ -2629,7 +2569,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_rankwidth_double_stats = {
         "single_mode_precision: double",
-        "simd_kernel: scalar",
+        f"simd_kernel: {compiled_simd}",
+        f"bitset_kernel: {compiled_simd}",
         "rankwidth_single_complex_kernel: 2",
     }
     if (
@@ -2639,6 +2580,17 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(
             f"rankwidth double precision solve failed\n"
             f"{rankwidth_double.stdout}\n{rankwidth_double.stderr}"
+        )
+    rankwidth_double_stats = parse_solver_stats(rankwidth_double.stdout)
+    if rankwidth_double_stats.get("simd_scalar_fallback_ops", 0) <= 0:
+        raise AssertionError(
+            f"rankwidth double precision should report scalar fallback SIMD work\n"
+            f"{rankwidth_double.stdout}"
+        )
+    if rankwidth_double_stats.get("simd_vectorized_ops", 0) != 0:
+        raise AssertionError(
+            f"rankwidth double precision unexpectedly reported vectorized ops\n"
+            f"{rankwidth_double.stdout}"
         )
 
     rankwidth_materialized = subprocess.run(

@@ -56,10 +56,6 @@ avx512_args = cc.get_supported_arguments([
   '-mavx512vl',
   '-mavx512vpopcntdq',
 ])
-sse_args = cc.get_supported_arguments([
-  '-msse4.2',
-  '-mpopcnt',
-])
 
 if simd_option == 'auto'
   if cpu_family in ['aarch64', 'arm']
@@ -85,13 +81,9 @@ int main(void) { return 1; }
     avx512_host = cc.run(avx512_probe, name: 'AVX-512 host probe')
     if avx512_args.length() == 4 and avx512_host.compiled() and avx512_host.returncode() == 0
       simd_arch = 'avx512'
-    elif sse_args.length() == 2
-      simd_arch = 'sse'
     else
       simd_arch = 'scalar'
     endif
-  elif cpu_family in ['x86', 'x86_64'] and sse_args.length() == 2
-    simd_arch = 'scalar'
   else
     simd_arch = 'scalar'
   endif
@@ -108,23 +100,6 @@ if simd_arch == 'neon'
     include_directories: inc,
   )
   simd_link_whole += simd_neon_lib
-endif
-
-if simd_arch == 'sse'
-  if cpu_family not in ['x86', 'x86_64']
-    error('-Dsimd=sse requires an x86 target')
-  endif
-  if sse_args.length() < 2
-    error('compiler does not support the required SSE flags')
-  endif
-  add_project_arguments('-DQSOP_SIMD_ARCH_SSE', language: 'c')
-  simd_sse_lib = static_library(
-    'dlx4sop_simd_sse',
-    files('src/core/simd_sse.c'),
-    include_directories: inc,
-    c_args: sse_args,
-  )
-  simd_link_whole += simd_sse_lib
 endif
 
 if simd_arch == 'avx512'
@@ -259,7 +234,7 @@ test('branch api unit', test_branch_api)
 test(
   'kernel benchmark smoke',
   bench_kernels,
-  args: ['--simd', 'scalar', '--quick'],
+  args: ['--quick'],
   timeout: 30,
 )
 
@@ -490,6 +465,18 @@ if python3.found()
       files('tests/test_bench_wmc_ganak.py'),
       files('scripts/bench_wmc_ganak.py'),
     ],
+  )
+  test(
+    'branch treewidth benchmark smoke',
+    python3,
+    args: [
+      files('tests/test_bench_branch_treewidth.py'),
+      files('scripts/bench_branch_treewidth.py'),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: sop_solve,
+    timeout: 40,
   )
   # Synthetic scaling smoke: a large, low-treewidth synthetic instance built inline, run
   # through sop-solve with a small timeout cap so CI exercises it without long runs.

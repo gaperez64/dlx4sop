@@ -44,35 +44,9 @@ static bool parse_size_arg(const char *flag, const char *text, size_t *out) {
   return true;
 }
 
-static bool parse_simd_kernel(const char *text, qsop_simd_kernel_t *out) {
-  if (strcmp(text, "auto") == 0) {
-    *out = QSOP_SIMD_KERNEL_AUTO;
-    return true;
-  }
-  if (strcmp(text, "scalar") == 0) {
-    *out = QSOP_SIMD_KERNEL_SCALAR;
-    return true;
-  }
-  if (strcmp(text, "sse") == 0) {
-    *out = QSOP_SIMD_KERNEL_SSE;
-    return true;
-  }
-  if (strcmp(text, "neon") == 0) {
-    *out = QSOP_SIMD_KERNEL_NEON;
-    return true;
-  }
-  if (strcmp(text, "avx512") == 0) {
-    *out = QSOP_SIMD_KERNEL_AVX512;
-    return true;
-  }
-  fprintf(stderr, "error: --simd requires auto|scalar|sse|neon|avx512\n");
-  return false;
-}
-
 static void usage(FILE *file, const char *argv0) {
   fprintf(file,
-          "usage: %s [--simd auto|scalar|sse|neon|avx512] [--words N] [--items N] "
-          "[--iterations N] [--quick]\n",
+          "usage: %s [--words N] [--items N] [--iterations N] [--quick]\n",
           argv0);
 }
 
@@ -165,7 +139,6 @@ static void bench_complex_sum_out(const qsop_simd_vtable_t *vt, const char *simd
 }
 
 int main(int argc, char **argv) {
-  qsop_simd_kernel_t requested = QSOP_SIMD_KERNEL_AUTO;
   size_t words = 4096;
   size_t items = 65536;
   size_t iterations = 1000;
@@ -174,12 +147,6 @@ int main(int argc, char **argv) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
       return 0;
-    }
-    if (strcmp(argv[i], "--simd") == 0) {
-      if (++i >= argc || !parse_simd_kernel(argv[i], &requested)) {
-        return 2;
-      }
-      continue;
     }
     if (strcmp(argv[i], "--words") == 0) {
       if (++i >= argc || !parse_size_arg("--words", argv[i], &words)) {
@@ -219,9 +186,9 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  const qsop_simd_vtable_t *vt = qsop_simd_resolve(requested);
+  const qsop_simd_vtable_t *vt = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
   if (vt == NULL) {
-    fprintf(stderr, "error: requested SIMD kernel is not available\n");
+    fprintf(stderr, "error: compiled SIMD kernel is not available\n");
     return 1;
   }
   const char *simd = qsop_simd_kernel_name(vt);

@@ -23,6 +23,17 @@ static const long double rw_two_pi =
 #define RW_DENSE_REFERENCE_MAX_DIM 22U
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 
+static void add_saturating_u64(uint64_t *dst, uint64_t value) {
+  if (dst == NULL) {
+    return;
+  }
+  if (UINT64_MAX - *dst < value) {
+    *dst = UINT64_MAX;
+  } else {
+    *dst += value;
+  }
+}
+
 typedef enum rw_dense_join_feasibility {
   RW_DENSE_JOIN_FEASIBLE,
   RW_DENSE_JOIN_TOO_LARGE,
@@ -228,6 +239,28 @@ typedef struct rw_complex64_context {
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
 } rw_complex64_context_t;
+
+static void record_rankwidth_f64_simd_kernel(qsop_solve_stats_t *stats,
+                                             const qsop_simd_vtable_t *simd) {
+  if (stats == NULL || simd == NULL) {
+    return;
+  }
+  const char *name = qsop_simd_kernel_name(simd);
+  if (strcmp(name, "avx512") == 0) {
+    stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
+  } else if (strcmp(name, "neon") == 0) {
+    stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
+  } else {
+    stats->simd_kernel = QSOP_SIMD_KERNEL_SCALAR;
+  }
+}
+
+static void note_rankwidth_f64_scalar_fallback(const rw_complex64_context_t *ctx,
+                                               uint64_t ops) {
+  if (ctx != NULL && ctx->stats != NULL) {
+    add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, ops);
+  }
+}
 
 typedef struct rw_dense_basis {
   uint64_t *pivot_rows;
@@ -5321,6 +5354,7 @@ static bool solve_join_complex64_streaming(const qsop_instance_t *qsop, const ui
                                            uint64_t *parent_assignment, size_t words,
                                            qsop_error_t *error) {
   const uint32_t r = (uint32_t)ctx->r;
+  uint64_t scalar_ops = 0;
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = complex64_assignment(left, i, words);
     const double left_re = left->re[i];
@@ -5360,8 +5394,10 @@ static bool solve_join_complex64_streaming(const qsop_instance_t *qsop, const ui
       out->re[out_index] += product_re;
       out->im[out_index] += product_im;
       ctx->complex_ops++;
+      scalar_ops++;
     }
   }
+  note_rankwidth_f64_scalar_fallback(ctx, scalar_ops);
   return true;
 }
 
@@ -5611,6 +5647,7 @@ static bool solve_join_complex64_dense_reference(
   }
 
   const uint32_t r = (uint32_t)ctx->r;
+  uint64_t scalar_ops = 0;
   for (size_t lc = 0; lc < left_signatures; lc++) {
     const uint32_t li = left_index[lc];
     if (li == UINT32_MAX) {
@@ -5665,9 +5702,14 @@ static bool solve_join_complex64_dense_reference(
       out->re[out_index] += product_re;
       out->im[out_index] += product_im;
       ctx->complex_ops++;
+      scalar_ops++;
     }
   }
 
+  /* Dense coordinates make the right-side inputs contiguous, but parent signatures
+   * are still scattered, so the current contiguous f64 SIMD vtable cannot accumulate
+   * this join without a separate scatter/gather kernel. */
+  note_rankwidth_f64_scalar_fallback(ctx, scalar_ops);
   ok = true;
 
 cleanup:
@@ -5961,6 +6003,9 @@ static void rw_execute_complex64_transition_csr(const rw_complex_transition_csr_
       ctx->complex_ops++;
     }
   }
+  /* The materialized transition table removes recomputation, but each product still
+   * accumulates into a possibly scattered parent signature index. */
+  note_rankwidth_f64_scalar_fallback(ctx, csr->transition_count);
 }
 
 /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
@@ -7506,18 +7551,8 @@ static bool solve_rankwidth_single_mode_once_f64(
     if (stats != NULL) {
       stats->rankwidth_single_complex_kernel = 2U;
       stats->join_pairs = ctx.complex_ops;
-      if (simd != NULL) {
-        const char *name = qsop_simd_kernel_name(simd);
-        if (strcmp(name, "avx512") == 0) {
-          stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
-        } else if (strcmp(name, "sse") == 0) {
-          stats->simd_kernel = QSOP_SIMD_KERNEL_SSE;
-        } else if (strcmp(name, "neon") == 0) {
-          stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
-        } else {
-          stats->simd_kernel = QSOP_SIMD_KERNEL_SCALAR;
-        }
-      }
+      record_rankwidth_f64_simd_kernel(stats, simd);
+      add_saturating_u64(&stats->simd_scalar_fallback_ops, ctx.complex_ops);
     }
     if (out_numeric_error_bound != NULL) {
       *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
@@ -7685,18 +7720,7 @@ static bool solve_rankwidth_single_mode_once_f64(
     stats->max_signature_entries = max_signature_entries;
     stats->join_pairs = ctx.complex_ops;
     stats->rankwidth_single_complex_kernel = 2U;
-    if (ctx.simd != NULL) {
-      const char *name = qsop_simd_kernel_name(ctx.simd);
-      if (strcmp(name, "avx512") == 0) {
-        stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
-      } else if (strcmp(name, "sse") == 0) {
-        stats->simd_kernel = QSOP_SIMD_KERNEL_SSE;
-      } else if (strcmp(name, "neon") == 0) {
-        stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
-      } else {
-        stats->simd_kernel = QSOP_SIMD_KERNEL_SCALAR;
-      }
-    }
+    record_rankwidth_f64_simd_kernel(stats, ctx.simd);
     stats->rankwidth_transition_bytes += transition_bytes;
     stats->rankwidth_dense_join_events += dense_join_events;
     stats->rankwidth_materialized_join_events += materialized_join_events;

@@ -69,7 +69,6 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--treewidth-order min-fill|min-degree|min-fill-max-degree",
   };
   static const char *const kernels[] = {
-      "--simd auto|scalar|sse|neon|avx512",
       "--single-mode-precision auto|double|long-double",
       "--branch-single-fourier-fallback auto|delegate-only|always|never|off",
       "--branch-single-kernel auto|scalar",
@@ -210,12 +209,10 @@ static const char *rankwidth_fourier_kernel_name(qsop_rankwidth_fourier_kernel_t
   return "unknown";
 }
 
-static const char *simd_request_name(qsop_simd_kernel_t kernel) {
+static const char *simd_kernel_display_name(qsop_simd_kernel_t kernel) {
   switch (kernel) {
   case QSOP_SIMD_KERNEL_SCALAR:
     return "scalar";
-  case QSOP_SIMD_KERNEL_SSE:
-    return "sse";
   case QSOP_SIMD_KERNEL_AUTO:
     return "auto";
   case QSOP_SIMD_KERNEL_NEON:
@@ -242,9 +239,6 @@ static qsop_simd_kernel_t simd_kernel_from_vtable(const qsop_simd_vtable_t *simd
   const char *name = qsop_simd_kernel_name(simd);
   if (strcmp(name, "neon") == 0) {
     return QSOP_SIMD_KERNEL_NEON;
-  }
-  if (strcmp(name, "sse") == 0) {
-    return QSOP_SIMD_KERNEL_SSE;
   }
   if (strcmp(name, "avx512") == 0) {
     return QSOP_SIMD_KERNEL_AVX512;
@@ -344,7 +338,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
   if (stats->simd_kernel != 0) {
     fprintf(file, "simd_kernel: %s\n",
-            simd_request_name((qsop_simd_kernel_t)stats->simd_kernel));
+            simd_kernel_display_name((qsop_simd_kernel_t)stats->simd_kernel));
   }
   if (stats->single_mode_precision != 0) {
     fprintf(file, "single_mode_precision: %s\n",
@@ -360,7 +354,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
   if (stats->bitset_kernel != 0) {
     fprintf(file, "bitset_kernel: %s\n",
-            simd_request_name((qsop_simd_kernel_t)stats->bitset_kernel));
+            simd_kernel_display_name((qsop_simd_kernel_t)stats->bitset_kernel));
   }
   if (stats->simd_vectorized_ops != 0) {
     fprintf(file, "simd_vectorized_ops: %" PRIu64 "\n", stats->simd_vectorized_ops);
@@ -866,8 +860,6 @@ int main(int argc, char **argv) {
   bool single_fourier_mode = false;
   uint32_t fourier_target_mode = 1;
   bool fourier_target_mode_set = false;
-  qsop_simd_kernel_t simd_request = QSOP_SIMD_KERNEL_AUTO;
-  bool simd_set = false;
   single_mode_precision_cli_t single_mode_precision = SINGLE_MODE_PRECISION_AUTO;
   bool single_mode_precision_set = false;
   bool print_kernels = false;
@@ -1397,30 +1389,6 @@ int main(int argc, char **argv) {
       fourier_target_mode_set = true;
       continue;
     }
-    if (strcmp(argv[i], "--simd") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --simd requires a value\n", stderr);
-        return 2;
-      }
-      const char *value = argv[++i];
-      if (strcmp(value, "auto") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_AUTO;
-      } else if (strcmp(value, "scalar") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_SCALAR;
-      } else if (strcmp(value, "sse") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_SSE;
-      } else if (strcmp(value, "neon") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_NEON;
-      } else if (strcmp(value, "avx512") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_AVX512;
-      } else {
-        fprintf(stderr, "error: unsupported --simd '%s' (expected auto|scalar|sse|neon|avx512)\n",
-                value);
-        return 2;
-      }
-      simd_set = true;
-      continue;
-    }
     if (strcmp(argv[i], "--single-mode-precision") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --single-mode-precision requires a value\n", stderr);
@@ -1638,17 +1606,14 @@ int main(int argc, char **argv) {
     }
   }
 
-  const qsop_simd_vtable_t *simd = qsop_simd_resolve(simd_request);
+  const qsop_simd_vtable_t *simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
   if (simd == NULL) {
-    fprintf(stderr,
-            "error: requested %s SIMD kernel is not compiled into this binary; built with "
-            "-Dsimd=%s\n",
-            simd_request_name(simd_request), qsop_simd_compiled_arch());
+    fprintf(stderr, "error: compiled SIMD kernel '%s' is unavailable\n",
+            qsop_simd_compiled_arch());
     return 2;
   }
 
   if (print_kernels) {
-    printf("simd_requested=%s\n", simd_request_name(simd_request));
     printf("simd_compiled=%s\n", qsop_simd_compiled_arch());
     printf("simd_kernel=%s\n", qsop_simd_kernel_name(simd));
     printf("bitset_popcount_kernel=%s\n", qsop_simd_kernel_name(simd));
@@ -1848,10 +1813,8 @@ int main(int argc, char **argv) {
       print_error(&error, diagnostic_path);
       return 1;
     }
-    if (simd_set) {
-      amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-      amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-    }
+    amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+    amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
     if (single_mode_precision_set) {
       amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
     }

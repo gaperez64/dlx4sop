@@ -7,7 +7,6 @@
 typedef enum qsop_simd_kernel {
   QSOP_SIMD_KERNEL_AUTO = 0,
   QSOP_SIMD_KERNEL_SCALAR,
-  QSOP_SIMD_KERNEL_SSE,
   QSOP_SIMD_KERNEL_NEON,
   QSOP_SIMD_KERNEL_AVX512,
 } qsop_simd_kernel_t;
@@ -42,7 +41,6 @@ qsop_simd_kernel_t qsop_simd_compiled_kernel(void);
 const char *qsop_simd_compiled_arch(void);
 
 const qsop_simd_vtable_t *qsop_simd_scalar_vtable(void);
-const qsop_simd_vtable_t *qsop_simd_sse_vtable(void);
 const qsop_simd_vtable_t *qsop_simd_neon_vtable(void);
 const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void);
 
