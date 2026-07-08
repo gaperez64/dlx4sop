@@ -173,8 +173,8 @@ typedef struct qsop_rankwidth_single_mode_options {
 /* Policy for how the branch solver sources a rank decomposition when considering
  * rankwidth delegation. */
 typedef enum qsop_branch_rw_source {
-  QSOP_BRANCH_RW_SOURCE_NONE,           /* default: never attempt rankwidth delegation */
-  QSOP_BRANCH_RW_SOURCE_AUTO,           /* derive from treewidth elimination tree */
+  QSOP_BRANCH_RW_SOURCE_NONE,           /* never attempt rankwidth delegation */
+  QSOP_BRANCH_RW_SOURCE_AUTO,           /* CLI default: derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_NATIVE,         /* use min-fill-cut (original behavior) */
   QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH, /* derive from treewidth elimination tree */
   QSOP_BRANCH_RW_SOURCE_BOTH,           /* try both; keep better forecast */
@@ -412,6 +412,14 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                        const qsop_branch_solve_options_t *options,
                        qsop_result_t **out, qsop_solve_stats_t *stats,
                        qsop_error_t *error);
+
+/* True when the branch backend's shared pre-probe vetoes make treewidth the clear choice over
+ * rankwidth for a single-Fourier component of the given width/cut-rank; used by the CLI auto
+ * dispatch to decide whether the whole-instance direct treewidth path is safe to take (else the
+ * branch recursion probes rankwidth and the cost model decides). */
+bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
+                                                    uint32_t prefix_cut_rank, uint32_t nvars,
+                                                    const qsop_branch_policy_t *policy);
 
 typedef enum qsop_branch_single_fallback {
   QSOP_BRANCH_SINGLE_FALLBACK_AUTO = 0,

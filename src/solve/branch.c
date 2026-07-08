@@ -1202,6 +1202,38 @@ static bool branch_treewidth_preferred(bool treewidth_available, uint32_t prefix
          treewidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
+/* Shared "treewidth is obviously cheap, don't bother probing rankwidth" pre-probe check
+ * (single-Fourier table forecast, no r factor). */
+static bool branch_treewidth_is_cheap(const qsop_branch_policy_t *pol, bool treewidth_available,
+                                      uint32_t treewidth_width, uint32_t nvars,
+                                      uint32_t prefix_cut_rank) {
+  const bool low_rank_bypass = treewidth_available && prefix_cut_rank <= pol->rw_low_rank_bypass;
+  return treewidth_available && !low_rank_bypass &&
+         (treewidth_width <= pol->rw_min_treewidth_width ||
+          treewidth_single_mode_table_forecast(treewidth_width) <= pol->rw_min_treewidth_forecast ||
+          (nvars < pol->rw_min_residual_vars && treewidth_width <= 5U));
+}
+
+/* Public CLI helper for the single-Fourier auto path: true when the shared pre-probe vetoes make
+ * treewidth the clear choice (obviously-cheap treewidth, or the narrow-treewidth veto), so the
+ * direct whole-instance treewidth path can be taken without missing a rankwidth win. When false,
+ * the caller should fall into the branch recursion, where rankwidth is actually probed and the
+ * shared cost model decides. Mirrors the recursion's pre-probe skip conditions exactly. */
+bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
+                                                    uint32_t prefix_cut_rank, uint32_t nvars,
+                                                    const qsop_branch_policy_t *policy) {
+  const qsop_branch_policy_t pol = branch_policy_normalize(policy);
+  /* Treewidth trivially cheap: for these sizes rankwidth's fixed overhead alone exceeds the
+   * treewidth DP's estimated cost, so the recursion's cost model would always pick treewidth --
+   * take the direct path. Unlike branch_treewidth_is_cheap this ignores the low-rank bypass, which
+   * only matters when rankwidth could plausibly win (it cannot here). */
+  const bool trivially_cheap =
+      treewidth_width <= pol.rw_min_treewidth_width ||
+      treewidth_single_mode_table_forecast(treewidth_width) <= pol.rw_min_treewidth_forecast ||
+      (nvars < pol.rw_min_residual_vars && treewidth_width <= 5U);
+  return trivially_cheap || branch_treewidth_preferred(true, prefix_cut_rank, treewidth_width);
+}
+
 /* Maximum cutrank width tried during calibration runs. Wider sub-problems are
    skipped to bound calibration cost even when policy vetoqs are bypassed. */
 #define BRANCH_CALIBRATION_MAX_WIDTH 20U
@@ -3257,12 +3289,8 @@ static bool branch_single_mode_delegate_component(
   bool setup_ok = true;
 
   if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
-    const bool low_rank_bypass = treewidth_available && prefix_cut_rank <= policy.rw_low_rank_bypass;
-    const bool cheap_treewidth =
-        treewidth_available && !low_rank_bypass &&
-        (treewidth_width <= policy.rw_min_treewidth_width ||
-         treewidth_single_mode_table_forecast(treewidth_width) <= policy.rw_min_treewidth_forecast ||
-         (sub->nvars < policy.rw_min_residual_vars && treewidth_width <= 5U));
+    const bool cheap_treewidth = branch_treewidth_is_cheap(
+        &policy, treewidth_available, treewidth_width, sub->nvars, prefix_cut_rank);
     const bool prefer_treewidth =
         branch_treewidth_preferred(treewidth_available, prefix_cut_rank, treewidth_width);
 
