@@ -172,15 +172,17 @@ that backend): treewidth ≤ 14 (count-table) or ≤ 25 (single-Fourier); a
 single-component root up to width 18 for ≤ 2500 variables; rankwidth cut-rank
 ≤ 12.
 
-**Rankwidth is off by default** (`--branch-rw-source none`): the branch backend
-only competes rankwidth against treewidth when you opt in with
-`--branch-rw-source auto` (or `native` / `from-treewidth` / `both`). On the
-in-repo corpus treewidth has not been beaten by rankwidth, so it is opt-in for
-the specific dense-but-low-rank cases (e.g. complete-bipartite blocks) where
-cut-rank ≪ treewidth.
+**Rankwidth is on by default** (`--branch-rw-source auto`): the branch backend
+competes rankwidth against treewidth per component via the cost model below, and
+delegates to rankwidth only when it wins. This costs almost nothing on the common
+(treewidth-favorable) case — the whole-instance direct treewidth path is still
+taken when treewidth is trivially cheap — while automatically catching the
+dense-but-low-rank cases (e.g. complete-bipartite blocks) where cut-rank ≪
+treewidth and rankwidth's `2^cut-rank` table crushes treewidth's `2^treewidth`.
+Pass `--branch-rw-source none` to disable rankwidth entirely.
 
-**Cost model** (only reached when `--branch-rw-source` ≠ `none`). Rankwidth is
-chosen over treewidth only if it is predicted meaningfully faster:
+**Cost model** (skipped for `--branch-rw-source none`). Rankwidth is chosen over
+treewidth only if it is predicted meaningfully faster:
 
 ```
 rw_est = C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
@@ -201,7 +203,7 @@ Backend / mode:
 `--max-vars N` (default 24; auto single-Fourier raises it to 4096),
 `--treewidth-order min-fill|min-degree|min-fill-max-degree`.
 
-Rankwidth policy (all default-off unless `--branch-rw-source` is set):
+Rankwidth policy (`--branch-rw-source` defaults to `auto`; set `none` to disable):
 `--branch-rw-source`,
 `--branch-rw-min-treewidth-width` (2),
 `--branch-rw-min-treewidth-forecast` (512),
