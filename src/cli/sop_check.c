@@ -1,4 +1,5 @@
 #include "dlx4sop/qsop.h"
+#include "cli_common.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -7,7 +8,18 @@
 #include <string.h>
 
 static void print_usage(FILE *file) {
-  fputs("usage: sop-check [--quiet] [--output PATH] [PATH|-]\n", file);
+  static const char *const core[] = {
+      "--quiet",
+      "--output PATH",
+      "--version",
+      "--help",
+      "PATH|-",
+  };
+  static const dlx4sop_cli_usage_section_t sections[] = {
+      {.title = "Options", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+  };
+  dlx4sop_cli_print_usage(file, "usage: sop-check [--quiet] [--output PATH] [PATH|-]",
+                          sections, sizeof(sections) / sizeof(sections[0]));
 }
 
 static void print_error(const qsop_error_t *error) {
@@ -28,6 +40,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
+      return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "sop-check");
       return 0;
     }
     if (strcmp(argv[i], "--quiet") == 0) {

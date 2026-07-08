@@ -8,16 +8,6 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 
-static int avx512_cpu_available(void) {
-#if defined(__GNUC__) || defined(__clang__)
-  __builtin_cpu_init();
-  return __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq") &&
-         __builtin_cpu_supports("avx512vl");
-#else
-  return 0;
-#endif
-}
-
 static uint32_t simd_avx512_popcount_and_u64(const uint64_t *a, const uint64_t *b,
                                              size_t words) {
   uint32_t count = 0;
@@ -150,10 +140,7 @@ static void simd_avx512_complex_sum_out_pairs_f64(double *restrict out_re,
   }
 }
 
-const qsop_simd_vtable_t *qsop_simd_avx512_vtable_if_available(void) {
-  if (!avx512_cpu_available()) {
-    return NULL;
-  }
+const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "avx512",
       .popcount_and_u64 = simd_avx512_popcount_and_u64,
@@ -168,7 +155,7 @@ const qsop_simd_vtable_t *qsop_simd_avx512_vtable_if_available(void) {
   return &vt;
 }
 #else
-const qsop_simd_vtable_t *qsop_simd_avx512_vtable_if_available(void) {
+const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void) {
   return NULL;
 }
 #endif

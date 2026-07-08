@@ -129,7 +129,7 @@ static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re,
   }
 }
 
-const qsop_simd_vtable_t *qsop_simd_neon_vtable_if_available(void) {
+const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "neon",
       .popcount_and_u64 = simd_neon_popcount_and_u64,
@@ -144,7 +144,7 @@ const qsop_simd_vtable_t *qsop_simd_neon_vtable_if_available(void) {
   return &vt;
 }
 #else
-const qsop_simd_vtable_t *qsop_simd_neon_vtable_if_available(void) {
+const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
   return NULL;
 }
 #endif

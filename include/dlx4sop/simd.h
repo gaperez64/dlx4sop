@@ -37,9 +37,11 @@ typedef struct qsop_simd_vtable {
 
 const qsop_simd_vtable_t *qsop_simd_resolve(qsop_simd_kernel_t requested);
 const char *qsop_simd_kernel_name(const qsop_simd_vtable_t *vt);
+qsop_simd_kernel_t qsop_simd_compiled_kernel(void);
+const char *qsop_simd_compiled_arch(void);
 
 const qsop_simd_vtable_t *qsop_simd_scalar_vtable(void);
-const qsop_simd_vtable_t *qsop_simd_neon_vtable_if_available(void);
-const qsop_simd_vtable_t *qsop_simd_avx512_vtable_if_available(void);
+const qsop_simd_vtable_t *qsop_simd_neon_vtable(void);
+const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void);
 
 #endif

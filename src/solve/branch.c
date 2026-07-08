@@ -353,6 +353,9 @@ typedef struct branch_search_stats {
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH 18U
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS (BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH + 1U)
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS 2500U
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH 25U
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS \
+  (BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 /* When prefix_cut_rank is at most this threshold, bypass the blanket
@@ -365,6 +368,7 @@ typedef struct branch_search_stats {
  * cheap enough that no bypass is warranted (e.g. path/star graphs with tw=1). */
 #define BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH 5U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
+#define BRANCH_DELEGATION_DEPTH_TOP_K 6U
 
 static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
                                              qsop_error_t *error);
@@ -2063,6 +2067,7 @@ typedef struct branch_candidate {
   uint32_t largest_component;
   uint32_t degree;
   uint64_t fill_edges;
+  uint32_t child_width;
   uint32_t cut_rank;
   bool has_unary;
 } branch_candidate_t;
@@ -2088,6 +2093,9 @@ static bool branch_candidate_better(qsop_branch_heuristic_t heuristic,
                                     const branch_candidate_t *candidate,
                                     const branch_candidate_t *best) {
   switch (heuristic) {
+  case QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH:
+    return candidate->child_width < best->child_width ||
+           (candidate->child_width == best->child_width && split_candidate_better(candidate, best));
   case QSOP_BRANCH_HEURISTIC_SPLIT:
     return split_candidate_better(candidate, best);
   case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
@@ -2100,11 +2108,54 @@ static bool branch_candidate_better(qsop_branch_heuristic_t heuristic,
   return split_candidate_better(candidate, best);
 }
 
+static void delegation_top_insert(branch_candidate_t *top, uint32_t *ntop,
+                                  const branch_candidate_t *candidate) {
+  uint32_t pos = *ntop;
+  if (pos < BRANCH_DELEGATION_DEPTH_TOP_K) {
+    top[pos] = *candidate;
+    (*ntop)++;
+  } else if (candidate->fill_edges > top[pos - 1U].fill_edges ||
+             (candidate->fill_edges == top[pos - 1U].fill_edges &&
+              !split_candidate_better(candidate, &top[pos - 1U]))) {
+    return;
+  } else {
+    top[pos - 1U] = *candidate;
+  }
+
+  pos = *ntop;
+  while (pos > 1U) {
+    branch_candidate_t *right = &top[pos - 1U];
+    branch_candidate_t *left = &top[pos - 2U];
+    const bool right_better =
+        right->fill_edges < left->fill_edges ||
+        (right->fill_edges == left->fill_edges && split_candidate_better(right, left));
+    if (!right_better) {
+      break;
+    }
+    const branch_candidate_t tmp = *left;
+    *left = *right;
+    *right = tmp;
+    pos--;
+  }
+}
+
 static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuristic_t heuristic,
                               uint32_t *out, qsop_error_t *error) {
   const uint32_t nvars = qsop_residual_nvars(residual);
   bool found = false;
   branch_candidate_t best = {0};
+  branch_candidate_t top[BRANCH_DELEGATION_DEPTH_TOP_K] = {0};
+  uint32_t ntop = 0;
+  const bool delegation_depth =
+      heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH &&
+      qsop_residual_active_vars(residual) <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS;
+  const bool need_fill_proxy =
+      heuristic == QSOP_BRANCH_HEURISTIC_TREEWIDTH ||
+      heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
+  const qsop_branch_heuristic_t comparison_heuristic =
+      heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH && !delegation_depth
+          ? QSOP_BRANCH_HEURISTIC_TREEWIDTH
+          : heuristic;
 
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_residual_var_active(residual, v)) {
@@ -2124,7 +2175,7 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
           .degree = degree,
           .has_unary = qsop_residual_unary(residual, v) != 0,
       };
-      if (heuristic == QSOP_BRANCH_HEURISTIC_TREEWIDTH &&
+      if (need_fill_proxy &&
           !qsop_residual_fill_edges_without_var(residual, v, &candidate.fill_edges, error)) {
         return false;
       }
@@ -2132,9 +2183,24 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
           !qsop_residual_neighbor_cut_rank(residual, v, &candidate.cut_rank, error)) {
         return false;
       }
-      if (!found || branch_candidate_better(heuristic, &candidate, &best)) {
+      if (delegation_depth) {
+        delegation_top_insert(top, &ntop, &candidate);
+      } else if (!found || branch_candidate_better(comparison_heuristic, &candidate, &best)) {
         found = true;
         best = candidate;
+      }
+    }
+  }
+
+  if (delegation_depth) {
+    for (uint32_t i = 0; i < ntop; i++) {
+      if (!qsop_residual_min_fill_width_without_var(residual, top[i].var, &top[i].child_width,
+                                                    error)) {
+        return false;
+      }
+      if (!found || branch_candidate_better(heuristic, &top[i], &best)) {
+        found = true;
+        best = top[i];
       }
     }
   }
@@ -2784,6 +2850,7 @@ typedef struct branch_single_mode_state {
   qsop_branch_single_fallback_t fallback;
   qsop_branch_single_precision_t precision;
   qsop_branch_single_kernel_t kernel;
+  const qsop_simd_vtable_t *simd;
   uint64_t max_search_nodes;
   uint32_t max_fallback_vars;
   uint32_t max_recursion_depth;
@@ -3103,9 +3170,9 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats, const qsop_solve_
  * reason logging, "calibrating" timing bypass) since --branch-calibrate-backends is rejected
  * together with --solve-mode single-fourier at the CLI layer.
  *
- * NOTE for future maintainers: if branch_try_rankwidth_delegate's cost model / veto constants
- * are ever retuned, update this function to match, or single-fourier and count-table mode will
- * silently pick different backends for the same shaped instance. */
+ * NOTE for future maintainers: if branch_try_rankwidth_delegate's cost model is ever retuned,
+ * update this function too.  The treewidth cap is intentionally wider here than in count-table
+ * mode because single-Fourier table size is independent of the modulus. */
 /* Lazily computes a treewidth elimination order the first time it's actually needed.
  * *order starts out either NULL or the stats-captured order (only valid for nvars <= 63,
  * see the comment in branch_single_mode_delegate_component below); when NULL, this runs
@@ -3248,7 +3315,8 @@ static bool branch_single_mode_delegate_component(
                 cost_model_favors_rw &&
                 (!treewidth_available || rankwidth_table < treewidth_table) &&
                 (!treewidth_available || rankwidth_join <= treewidth_join) &&
-                (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+                (!treewidth_available ||
+                 treewidth_width > BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH ||
                  rankwidth_should_override_treewidth_single(treewidth_width, cutrank_width));
           }
         }
@@ -3257,7 +3325,7 @@ static bool branch_single_mode_delegate_component(
   }
 
   if (setup_ok && !use_rankwidth && treewidth_available &&
-      treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+      treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     setup_ok = branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error);
   }
 
@@ -3266,19 +3334,39 @@ static bool branch_single_mode_delegate_component(
   if (!setup_ok) {
     ok = false;
   } else if (use_rankwidth) {
-    ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                         &delegated, options->trace, error);
+    if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
+      ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
+                                           &delegated, options->trace, error);
+    } else {
+      ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
+                                                options->simd, out, &delegated, options->trace,
+                                                error);
+    }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
-    ok = qsop_solve_treewidth_precomputed_order_single_mode(
-        sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
-        &delegated, options->trace, error);
+  } else if (treewidth_available &&
+             treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH &&
+             order_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+    if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
+      ok = qsop_solve_treewidth_precomputed_order_single_mode(
+          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
+          &delegated, options->trace, error);
+    } else {
+      ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
+          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode,
+          options->simd, out, &delegated, options->trace, error);
+    }
     delegated.treewidth_delegations++;
   } else if (decomposition != NULL && cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
     /* Treewidth unavailable/too wide, but rankwidth is viable even though the cost model
      * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
-    ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                         &delegated, options->trace, error);
+    if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
+      ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
+                                           &delegated, options->trace, error);
+    } else {
+      ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
+                                                options->simd, out, &delegated, options->trace,
+                                                error);
+    }
     delegated.rankwidth_delegations++;
   } else {
     if (fail_on_refusal) {
@@ -3286,8 +3374,8 @@ static bool branch_single_mode_delegate_component(
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
                 "; neither is within its delegate cap (%u / %u) -- no delegate available",
-                sub->nvars, treewidth_width, cutrank_width, BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
-                BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
+                sub->nvars, treewidth_width, cutrank_width,
+                BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH, BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
       ok = false;
     } else {
       ok = true;
@@ -3338,6 +3426,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .fallback = o.fallback,
       .precision = o.precision,
       .kernel = o.kernel,
+      .simd = o.simd,
       .max_search_nodes = o.max_search_nodes != 0 ? o.max_search_nodes
                                                   : BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES,
       .max_fallback_vars = o.max_fallback_vars != 0 ? o.max_fallback_vars
@@ -3512,6 +3601,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .fallback = state->fallback,
       .precision = state->precision,
       .kernel = state->kernel,
+      .simd = state->simd,
       .trace = state->trace,
   };
   const bool ok = branch_single_mode_delegate_component(&sub, state->max_vars, state->target_mode,
@@ -3607,11 +3697,6 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
           set_error(error,
                     "branch single-Fourier residual fallback does not implement "
                     "--branch-single-precision long-double yet");
-          ok = false;
-        } else if (state->kernel == QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2) {
-          set_error(error,
-                    "branch single-Fourier residual fallback does not implement "
-                    "--branch-single-kernel simd-avx2 yet");
           ok = false;
         } else {
           state->branch_fallthroughs++;

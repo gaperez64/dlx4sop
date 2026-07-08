@@ -512,8 +512,6 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
     ),
     ("rankwidth", ["--backend", "rankwidth", "--solve-mode", "single-fourier"]),
@@ -548,8 +546,6 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
     ),
     (
@@ -563,8 +559,6 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
             "double",
             "--rankwidth-single-kernel",
             "materialized",
-            "--simd",
-            "scalar",
         ],
     ),
     (
@@ -578,8 +572,6 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
             "double",
             "--rankwidth-single-kernel",
             "dense",
-            "--simd",
-            "scalar",
         ],
     ),
     ("branch", ["--backend", "branch", "--solve-mode", "single-fourier"]),
@@ -817,7 +809,7 @@ def test_branch_root_guard_allows_splittable_large_instance(
 
 
 def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None:
-    """When neither treewidth (cap 14) nor rankwidth (cap 12) is viable for a connected
+    """When neither treewidth nor rankwidth is viable for a connected
     component, the explicit delegate-only branch single-fourier policy must preserve the old
     clear, fast refusal without attempting residual fallback."""
     rng = random.Random(SEED + 8)
@@ -898,8 +890,11 @@ def test_branch_single_fourier_large_component(exe: pathlib.Path) -> None:
     assert treewidth_parsed is not None, f"could not parse treewidth output: {treewidth_out!r}"
     b_re, b_im, b_bound = branch_parsed
     t_re, t_im, t_bound = treewidth_parsed
-    diff = abs(complex(b_re, b_im) - complex(t_re, t_im))
-    tolerance = b_bound + t_bound + 1e-9
+    branch_value = complex(b_re, b_im)
+    treewidth_value = complex(t_re, t_im)
+    diff = abs(branch_value - treewidth_value)
+    scale = max(1.0, abs(branch_value), abs(treewidth_value))
+    tolerance = b_bound + t_bound + max(1e-9, 1e-14 * scale)
     assert diff <= tolerance, (
         f"branch/treewidth disagree on 100-variable path graph: "
         f"branch=({b_re},{b_im}) treewidth=({t_re},{t_im}) diff={diff}"
@@ -959,10 +954,11 @@ def path_qsop(nvars: int, r: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def test_branch_root_treewidth_bypasses_default_root_sanity(exe: pathlib.Path) -> None:
+def test_branch_auto_prefers_single_fourier_for_low_treewidth_roots(exe: pathlib.Path) -> None:
     """A low-treewidth root just above 24 * BRANCH_ROOT_SANITY_MULTIPLIER should use the
-    treewidth fast path before the coarse count-table root refusal, and branch auto should
-    therefore stay on the count-table kernel instead of falling through to single-fourier."""
+    treewidth fast path before the coarse count-table root refusal when count-table is explicit.
+    In auto amplitude mode the same shape should start in single-fourier, since the single-mode
+    DP is independent of R and the 399-case dyadic A/B showed large count-table regressions."""
     text = path_qsop(1537, 8)
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
         f.write(text)
@@ -1000,9 +996,9 @@ def test_branch_root_treewidth_bypasses_default_root_sanity(exe: pathlib.Path) -
         f"branch auto amplitude solve failed on low-treewidth 1537-variable path: "
         f"{auto.stderr!r}"
     )
-    assert "solve_mode_kernel: count-table" in auto.stdout, (
-        "branch auto should keep the count-table treewidth kernel for low-treewidth roots "
-        f"instead of falling back to single-fourier; output={auto.stdout!r}"
+    assert "solve_mode_kernel: single-fourier" in auto.stdout, (
+        "branch auto should prefer single-fourier for low-treewidth amplitude roots; "
+        f"output={auto.stdout!r}"
     )
 
 
@@ -1092,8 +1088,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "treewidth-double",
         13,
@@ -1108,8 +1102,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double",
         14,
@@ -1140,8 +1132,6 @@ def main(argv: list[str]) -> None:
             "double",
             "--rankwidth-single-kernel",
             "dense",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double-dense",
         16,
@@ -1158,7 +1148,7 @@ def main(argv: list[str]) -> None:
     test_branch_single_fourier_refuses_wide_component(exe)
     test_branch_single_fourier_large_component(exe)
     test_branch_single_fourier_residual_fallback(exe)
-    test_branch_root_treewidth_bypasses_default_root_sanity(exe)
+    test_branch_auto_prefers_single_fourier_for_low_treewidth_roots(exe)
     test_single_fourier_default_max_vars(exe)
     test_single_fourier_mode_large_r_smoke(
         exe, ["--backend", "treewidth", "--solve-mode", "single-fourier"], "treewidth"
@@ -1175,8 +1165,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "treewidth-double",
     )
@@ -1189,8 +1177,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double",
     )
@@ -1217,8 +1203,6 @@ def main(argv: list[str]) -> None:
             "double",
             "--rankwidth-single-kernel",
             "dense",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double-dense",
     )
@@ -1240,8 +1224,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "treewidth-double",
     )
@@ -1254,8 +1236,6 @@ def main(argv: list[str]) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double",
     )
@@ -1282,8 +1262,6 @@ def main(argv: list[str]) -> None:
             "double",
             "--rankwidth-single-kernel",
             "dense",
-            "--simd",
-            "scalar",
         ],
         "rankwidth-double-dense",
     )

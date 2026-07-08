@@ -58,6 +58,18 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: qasm2sop" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
+    version_result = subprocess.run(
+        [str(exe), "--version"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if version_result.returncode != 0 or version_result.stdout != "qasm2sop 0.3\n":
+        raise AssertionError(
+            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
+        )
+
     stdin_result = subprocess.run(
         [str(exe), "-"],
         input=qasm.read_text(),
@@ -190,8 +202,10 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             f"unexpected bad controlled phase result:\n{bad_controlled_phase.stderr}"
         )
 
+    # --no-optimize keeps the sign edge visible: this asserts the *lowering* stays sign-only
+    # (the simplification pass would otherwise collapse the pinned edge into the constant).
     approx_controlled_phase = subprocess.run(
-        [str(exe), "--approx", "5e-2", "--input", "11", "--output", "11", "-"],
+        [str(exe), "--no-optimize", "--approx", "5e-2", "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ncp(pi/3) q[0], q[1];\n",
         check=False,
         stdout=subprocess.PIPE,
@@ -322,7 +336,7 @@ u(0.19,0.23,0.29) q;
     # cphase(pi/4) now lowers through cx + single-qubit phases (same trick as cu/cp), so this
     # imports exactly instead of hitting the old non-sign-quadratic export rejection.
     exact_aliases = subprocess.run(
-        [str(exe), "--input", "11", "--output", "11", "-"],
+        [str(exe), "--no-optimize", "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ngphase(pi/4);\nphase(pi/4) q[0];\ncphase(pi/4) q[0], q[1];\n",
         check=False,
         stdout=subprocess.PIPE,
@@ -357,7 +371,7 @@ u(0.19,0.23,0.29) q;
     # Same pi/4 lowering improvement as exact_aliases above; this case specifically exercises a
     # space between the gate name and its parenthesized angle.
     spaced_controlled_phase = subprocess.run(
-        [str(exe), "--input", "11", "--output", "11", "-"],
+        [str(exe), "--no-optimize", "--input", "11", "--output", "11", "-"],
         input="OPENQASM 2.0;\nqreg q[2];\ncu1 (pi/4) q[0], q[1];\n",
         check=False,
         stdout=subprocess.PIPE,
@@ -594,6 +608,11 @@ def main() -> int:
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_sx")
     run_case(exe, source_root, "qasm_sxdg")
+    # Uncompute identities collapsed by the Hadamard-simplification pass (default-on).
+    run_case(exe, source_root, "qasm_cx_cx")
+    run_case(exe, source_root, "qasm_x_x")
+    run_case(exe, source_root, "qasm_sx_sxdg")
+    run_case(exe, source_root, "qasm_h_h")
     run_case(exe, source_root, "qasm_feynmandd_quadratic")
     run_case(exe, source_root, "qasm_rz")
     run_case(exe, source_root, "qasm_rz_quarter")

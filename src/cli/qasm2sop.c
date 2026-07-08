@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "dlx4sop/qsop.h"
+#include "cli_common.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -105,7 +106,22 @@ static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
 }
 
 static void print_usage(FILE *file) {
-  fputs("usage: qasm2sop [--input BITS] [--output BITS] [--approx EPS] [PATH|-]\n", file);
+  static const char *const core[] = {
+      "--input BITS",
+      "--output BITS",
+      "--approx EPS",
+      "--no-optimize",
+      "--version",
+      "--help",
+      "PATH|-",
+  };
+  static const dlx4sop_cli_usage_section_t sections[] = {
+      {.title = "Options", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+  };
+  dlx4sop_cli_print_usage(file,
+                          "usage: qasm2sop [--input BITS] [--output BITS] [--approx EPS] "
+                          "[--no-optimize] [PATH|-]",
+                          sections, sizeof(sections) / sizeof(sections[0]));
 }
 
 static char *trim(char *text) {
@@ -2781,7 +2797,8 @@ static void write_approx_certificate(FILE *file, const qasm_importer_t *importer
           importer->approx_delta);
 }
 
-static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *error) {
+static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *error,
+                                   bool optimize) {
   char *raw = NULL;
   size_t raw_len = 0;
   FILE *raw_file = open_memstream(&raw, &raw_len);
@@ -2812,6 +2829,15 @@ static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *erro
   fclose(input);
   free(raw);
   if (!ok) {
+    return false;
+  }
+
+  /* Collapse the Hadamard-uncompute variables the parser's parity-dedup cannot reach, so the
+   * emitted instance is smaller (fewer variables/edges, lower treewidth) for the solver. This
+   * is amplitude-exact, so it never invalidates the approx certificate written below. */
+  if (optimize && !qsop_simplify_hadamard(qsop)) {
+    snprintf(error->message, sizeof(error->message), "out of memory while simplifying QSOP");
+    qsop_free(qsop);
     return false;
   }
 
@@ -2998,10 +3024,19 @@ int main(int argc, char **argv) {
   const char *input_bits = NULL;
   const char *output_bits = NULL;
   const char *approx_text = NULL;
+  bool optimize = true;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
       return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "qasm2sop");
+      return 0;
+    }
+    if (strcmp(argv[i], "--no-optimize") == 0) {
+      optimize = false;
+      continue;
     }
     if (strcmp(argv[i], "--input") == 0) {
       if (input_bits != NULL) {
@@ -3202,7 +3237,7 @@ int main(int argc, char **argv) {
   }
 
   qsop_error_t error = {0};
-  ok = canonicalize_to_stdout(&importer, &error);
+  ok = canonicalize_to_stdout(&importer, &error, optimize);
   free_importer(&importer);
   free(source);
   if (!ok) {

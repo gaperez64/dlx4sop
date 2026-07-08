@@ -1,6 +1,7 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/simd.h"
+#include "cli_common.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -44,45 +45,86 @@ typedef struct csv_trace_writer {
   bool wrote_header;
 } csv_trace_writer_t;
 
+static void print_usage_mode(FILE *file, bool advanced) {
+  static const char *const core[] = {
+      "--format amplitude|residue-vector|stats",
+      "--backend branch|treewidth|rankwidth",
+      "--solve-mode auto|count-table|fourier|single-fourier",
+      "--max-vars N",
+      "--fourier-target-mode N",
+      "--include-result",
+      "--include-probability",
+      "--version",
+      "--help",
+      "--help-advanced",
+      "PATH|-",
+  };
+  static const char *const backend[] = {
+      "--branch-heuristic delegation-depth|split|treewidth|cutrank-proxy",
+      "--branch-rw-source none|native|from-treewidth|both|auto",
+      "--rankwidth-decomposition PATH",
+      "--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best",
+      "--rankwidth-dump PATH",
+      "--rankwidth-mode count-table|fourier",
+      "--treewidth-order min-fill|min-degree|min-fill-max-degree",
+  };
+  static const char *const kernels[] = {
+      "--single-mode-precision auto|double|long-double",
+      "--branch-single-fourier-fallback auto|delegate-only|always|never|off",
+      "--branch-single-kernel auto|scalar",
+      "--rankwidth-single-kernel auto|streaming|materialized|dense",
+      "--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference",
+      "--print-kernels",
+  };
+  static const char *const tuning[] = {
+      "--branch-rw-min-treewidth-width N",
+      "--branch-rw-min-treewidth-forecast N",
+      "--branch-rw-min-residual-vars N",
+      "--branch-rw-low-rank-bypass N",
+      "--branch-rw-min-speedup FLOAT",
+      "--branch-rw-fixed-overhead-ns N",
+      "--branch-tw-fixed-overhead-ns N",
+      "--branch-rw-memory-penalty-ns N",
+      "--branch-single-max-fallback-vars N",
+      "--branch-single-max-search-nodes N",
+      "--branch-single-cache-budget-mib N",
+      "--branch-single-cache-min-vars N",
+      "--rankwidth-memory-budget-mib N",
+      "--rankwidth-memory-budget-bytes N",
+      "--rankwidth-memory-policy skip|fallback|hard-error",
+      "--rankwidth-join-strategy auto|materialized|streaming",
+      "--rankwidth-materialize-join-max-pairs N",
+      "--stats-jsonl PATH",
+      "--branch-calibrate-backends",
+      "--trace csv",
+  };
+  const dlx4sop_cli_usage_section_t short_sections[] = {
+      {.title = "Core", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+      {.title = "Backends", .items = backend, .nitems = 3U},
+  };
+  const dlx4sop_cli_usage_section_t advanced_sections[] = {
+      {.title = "Core", .items = core, .nitems = sizeof(core) / sizeof(core[0])},
+      {.title = "Backends", .items = backend, .nitems = sizeof(backend) / sizeof(backend[0])},
+      {.title = "Kernels", .items = kernels, .nitems = sizeof(kernels) / sizeof(kernels[0])},
+      {.title = "Tuning", .items = tuning, .nitems = sizeof(tuning) / sizeof(tuning[0])},
+  };
+  if (advanced) {
+    dlx4sop_cli_print_usage(
+        file,
+        "usage: sop-solve [--format amplitude|residue-vector|stats] "
+        "[--backend branch|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
+        advanced_sections, sizeof(advanced_sections) / sizeof(advanced_sections[0]));
+  } else {
+    dlx4sop_cli_print_usage(
+        file,
+        "usage: sop-solve [--format amplitude|residue-vector|stats] "
+        "[--backend branch|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
+        short_sections, sizeof(short_sections) / sizeof(short_sections[0]));
+  }
+}
+
 static void print_usage(FILE *file) {
-  fputs("usage: sop-solve [--format amplitude|residue-vector|stats] "
-        "[--backend branch|treewidth|rankwidth] "
-        "[--branch-heuristic split|treewidth|cutrank-proxy] "
-        "[--branch-rw-source native|from-treewidth|both|auto] "
-        "[--branch-rw-min-treewidth-width N] "
-        "[--branch-rw-min-treewidth-forecast N] "
-        "[--branch-rw-min-residual-vars N] "
-        "[--branch-rw-low-rank-bypass N] "
-        "[--branch-rw-min-speedup FLOAT] "
-        "[--branch-rw-fixed-overhead-ns N] "
-        "[--branch-tw-fixed-overhead-ns N] "
-        "[--branch-rw-memory-penalty-ns N] "
-        "[--branch-single-fourier-fallback auto|delegate-only|always] "
-        "[--branch-single-max-fallback-vars N] "
-        "[--branch-single-max-search-nodes N] "
-        "[--branch-single-cache-budget-mib N] "
-        "[--branch-single-cache-min-vars N] "
-        "[--branch-single-kernel auto|scalar|simd-avx2] "
-        "[--branch-single-precision auto|double|long-double] "
-        "[--rankwidth-decomposition PATH] [--rankwidth-generate left-deep|balanced|min-fill|min-fill-cut|from-treewidth|min-fill-search|best] "
-        "[--rankwidth-dump PATH] "
-        "[--solve-mode auto|count-table|fourier|single-fourier] "
-        "[--fourier-target-mode N] "
-        "[--simd auto|scalar|neon|avx512] "
-        "[--single-mode-precision auto|double|long-double] "
-        "[--print-kernels] "
-        "[--rankwidth-mode count-table|fourier] "
-        "[--treewidth-order min-fill|min-degree|min-fill-max-degree] "
-        "[--include-result] [--include-probability] "
-        "[--stats-jsonl PATH] [--branch-calibrate-backends] "
-        "[--rankwidth-memory-budget-mib N] [--rankwidth-memory-budget-bytes N] "
-        "[--rankwidth-memory-policy skip|fallback|hard-error] "
-        "[--rankwidth-join-strategy auto|materialized|streaming] "
-        "[--rankwidth-single-kernel auto|streaming|materialized|dense] "
-        "[--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference] "
-        "[--rankwidth-materialize-join-max-pairs N] "
-        "[--max-vars N] [--trace csv] [PATH|-]\n",
-        file);
+  print_usage_mode(file, false);
 }
 
 static void print_error(const qsop_error_t *error, const char *fallback_path) {
@@ -111,6 +153,8 @@ static const char *backend_name(solve_backend_t backend) {
 
 static const char *branch_heuristic_name(qsop_branch_heuristic_t heuristic) {
   switch (heuristic) {
+  case QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH:
+    return "delegation-depth";
   case QSOP_BRANCH_HEURISTIC_SPLIT:
     return "split";
   case QSOP_BRANCH_HEURISTIC_TREEWIDTH:
@@ -165,7 +209,7 @@ static const char *rankwidth_fourier_kernel_name(qsop_rankwidth_fourier_kernel_t
   return "unknown";
 }
 
-static const char *simd_request_name(qsop_simd_kernel_t kernel) {
+static const char *simd_kernel_display_name(qsop_simd_kernel_t kernel) {
   switch (kernel) {
   case QSOP_SIMD_KERNEL_SCALAR:
     return "scalar";
@@ -259,6 +303,71 @@ static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
          strstr(message, "no delegate available") != NULL;
 }
 
+#define BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS 16U
+#define BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH 25U
+#define BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS 4096U
+
+static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop,
+                                                    uint32_t max_vars,
+                                                    bool max_vars_set) {
+  if (qsop == NULL || qsop->nedges == 0 ||
+      qsop->nvars < BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS) {
+    return false;
+  }
+
+  const uint32_t effective_max_vars =
+      max_vars_set ? max_vars : BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
+  if (effective_max_vars == 0 || qsop->nvars > effective_max_vars) {
+    return false;
+  }
+
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  qsop_error_t probe_error = {0};
+  const bool ok = qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                             &order, &width, &probe_error);
+  free(order);
+  return ok && width <= BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH;
+}
+
+static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop,
+                                                 uint32_t max_vars,
+                                                 bool max_vars_set,
+                                                 uint32_t **order_out,
+                                                 uint32_t *width_out) {
+  if (order_out == NULL || width_out == NULL) {
+    return false;
+  }
+  *order_out = NULL;
+  *width_out = 0;
+  if (qsop == NULL || qsop->nedges == 0 ||
+      qsop->nvars < BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS) {
+    return false;
+  }
+
+  const uint32_t effective_max_vars =
+      max_vars_set ? max_vars : BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
+  if (effective_max_vars == 0 || qsop->nvars > effective_max_vars) {
+    return false;
+  }
+
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  qsop_error_t probe_error = {0};
+  if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL, &order, &width,
+                                  &probe_error)) {
+    free(order);
+    return false;
+  }
+  if (width > BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH) {
+    free(order);
+    return false;
+  }
+  *order_out = order;
+  *width_out = width;
+  return true;
+}
+
 static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
   csv_trace_writer_t *writer = user;
   if (writer == NULL || writer->file == NULL || event == NULL) {
@@ -294,7 +403,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
   if (stats->simd_kernel != 0) {
     fprintf(file, "simd_kernel: %s\n",
-            simd_request_name((qsop_simd_kernel_t)stats->simd_kernel));
+            simd_kernel_display_name((qsop_simd_kernel_t)stats->simd_kernel));
   }
   if (stats->single_mode_precision != 0) {
     fprintf(file, "single_mode_precision: %s\n",
@@ -310,7 +419,7 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   }
   if (stats->bitset_kernel != 0) {
     fprintf(file, "bitset_kernel: %s\n",
-            simd_request_name((qsop_simd_kernel_t)stats->bitset_kernel));
+            simd_kernel_display_name((qsop_simd_kernel_t)stats->bitset_kernel));
   }
   if (stats->simd_vectorized_ops != 0) {
     fprintf(file, "simd_vectorized_ops: %" PRIu64 "\n", stats->simd_vectorized_ops);
@@ -495,6 +604,163 @@ static bool result_count_long_double(const qsop_result_t *result, uint32_t resid
   return true;
 }
 
+static bool parse_decimal_limbs(const char *text, uint32_t **out_limbs, size_t *out_nlimbs,
+                                qsop_error_t *error) {
+  const size_t len = strlen(text);
+  if (len == 0) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "empty exact count string");
+    return false;
+  }
+  for (size_t i = 0; i < len; i++) {
+    if (text[i] < '0' || text[i] > '9') {
+      error->path = NULL;
+      error->line = 0;
+      error->column = 0;
+      snprintf(error->message, sizeof(error->message), "invalid exact count string");
+      return false;
+    }
+  }
+
+  const size_t cap = (len + 8U) / 9U;
+  uint32_t *limbs = calloc(cap == 0 ? 1U : cap, sizeof(*limbs));
+  if (limbs == NULL) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "out of memory while parsing exact count");
+    return false;
+  }
+
+  size_t nlimbs = 0;
+  for (size_t end = len; end > 0;) {
+    const size_t start = end > 9U ? end - 9U : 0U;
+    uint32_t limb = 0;
+    for (size_t i = start; i < end; i++) {
+      limb = limb * 10U + (uint32_t)(text[i] - '0');
+    }
+    limbs[nlimbs++] = limb;
+    end = start;
+  }
+  while (nlimbs > 0 && limbs[nlimbs - 1U] == 0) {
+    nlimbs--;
+  }
+
+  *out_limbs = limbs;
+  *out_nlimbs = nlimbs;
+  return true;
+}
+
+static int compare_limbs(const uint32_t *a, size_t na, const uint32_t *b, size_t nb) {
+  if (na != nb) {
+    return na > nb ? 1 : -1;
+  }
+  while (na > 0) {
+    na--;
+    if (a[na] != b[na]) {
+      return a[na] > b[na] ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+static void subtract_limbs(const uint32_t *larger, size_t nlarger, const uint32_t *smaller,
+                           size_t nsmaller, uint32_t *out, size_t *out_n) {
+  int64_t borrow = 0;
+  for (size_t i = 0; i < nlarger; i++) {
+    int64_t value = (int64_t)larger[i] - borrow;
+    if (i < nsmaller) {
+      value -= (int64_t)smaller[i];
+    }
+    if (value < 0) {
+      value += 1000000000LL;
+      borrow = 1;
+    } else {
+      borrow = 0;
+    }
+    out[i] = (uint32_t)value;
+  }
+  size_t n = nlarger;
+  while (n > 0 && out[n - 1U] == 0) {
+    n--;
+  }
+  *out_n = n;
+}
+
+static long double limbs_to_long_double(const uint32_t *limbs, size_t nlimbs) {
+  long double value = 0.0L;
+  while (nlimbs > 0) {
+    nlimbs--;
+    value = value * 1000000000.0L + (long double)limbs[nlimbs];
+  }
+  return value;
+}
+
+static bool result_count_difference_long_double(const qsop_result_t *result, uint32_t left,
+                                                uint32_t right, long double *out,
+                                                qsop_error_t *error) {
+  if (result->count_strings == NULL) {
+    long double a = 0.0L;
+    long double b = 0.0L;
+    if (!result_count_long_double(result, left, &a, error) ||
+        !result_count_long_double(result, right, &b, error)) {
+      return false;
+    }
+    *out = a - b;
+    return true;
+  }
+
+  uint32_t *left_limbs = NULL;
+  uint32_t *right_limbs = NULL;
+  uint32_t *diff_limbs = NULL;
+  size_t left_n = 0;
+  size_t right_n = 0;
+  bool ok = parse_decimal_limbs(result->count_strings[left], &left_limbs, &left_n, error) &&
+            parse_decimal_limbs(result->count_strings[right], &right_limbs, &right_n, error);
+  if (!ok) {
+    free(left_limbs);
+    free(right_limbs);
+    return false;
+  }
+
+  const int cmp = compare_limbs(left_limbs, left_n, right_limbs, right_n);
+  if (cmp == 0) {
+    free(left_limbs);
+    free(right_limbs);
+    *out = 0.0L;
+    return true;
+  }
+
+  const size_t diff_cap = left_n > right_n ? left_n : right_n;
+  diff_limbs = calloc(diff_cap == 0 ? 1U : diff_cap, sizeof(*diff_limbs));
+  if (diff_limbs == NULL) {
+    free(left_limbs);
+    free(right_limbs);
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "out of memory while subtracting exact counts");
+    return false;
+  }
+
+  size_t diff_n = 0;
+  if (cmp > 0) {
+    subtract_limbs(left_limbs, left_n, right_limbs, right_n, diff_limbs, &diff_n);
+    *out = limbs_to_long_double(diff_limbs, diff_n);
+  } else {
+    subtract_limbs(right_limbs, right_n, left_limbs, left_n, diff_limbs, &diff_n);
+    *out = -limbs_to_long_double(diff_limbs, diff_n);
+  }
+
+  free(left_limbs);
+  free(right_limbs);
+  free(diff_limbs);
+  return true;
+}
+
 static bool result_to_amplitude(const qsop_result_t *result, uint32_t target_mode,
                                 qsop_amplitude_t *out, qsop_error_t *error) {
   if (result == NULL || out == NULL) {
@@ -510,6 +776,27 @@ static bool result_to_amplitude(const qsop_result_t *result, uint32_t target_mod
   long double real = 0.0L;
   long double imag = 0.0L;
   const uint32_t r = result->r;
+  if (result->count_strings != NULL && r % 2U == 0U && target_mode % 2U == 1U) {
+    const uint32_t half = r / 2U;
+    for (uint32_t residue = 0; residue < half; residue++) {
+      long double count = 0.0L;
+      if (!result_count_difference_long_double(result, residue, residue + half, &count,
+                                               error)) {
+        return false;
+      }
+      const long double angle =
+          two_pi * (long double)(((uint64_t)target_mode * residue) % r) / (long double)r;
+      real += count * cosl(angle);
+      imag += count * sinl(angle);
+    }
+    *out = (qsop_amplitude_t){
+        .re = real,
+        .im = imag,
+        .numeric_error_bound = 0.0L,
+    };
+    return true;
+  }
+
   for (uint32_t residue = 0; residue < r; residue++) {
     long double count = 0.0L;
     if (!result_count_long_double(result, residue, &count, error)) {
@@ -587,67 +874,19 @@ static bool write_probability_stats(FILE *file, const qsop_result_t *result, qso
 }
 
 static bool parse_max_vars(const char *text, uint32_t *out) {
-  if (text == NULL || text[0] == '-' || text[0] == '\0') {
-    return false;
-  }
-
-  errno = 0;
-  char *end = NULL;
-  unsigned long value = strtoul(text, &end, 10);
-  if (errno != 0 || end == text || *end != '\0' || value > UINT32_MAX) {
-    return false;
-  }
-
-  *out = (uint32_t)value;
-  return true;
+  return dlx4sop_cli_parse_u32("--max-vars", text, out);
 }
 
 static bool parse_u32_arg(const char *flag, const char *text, uint32_t *out) {
-  if (text == NULL || text[0] == '-' || text[0] == '\0') {
-    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
-    return false;
-  }
-  errno = 0;
-  char *end = NULL;
-  unsigned long v = strtoul(text, &end, 10);
-  if (errno != 0 || end == text || *end != '\0' || v > UINT32_MAX) {
-    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
-    return false;
-  }
-  *out = (uint32_t)v;
-  return true;
+  return dlx4sop_cli_parse_u32(flag, text, out);
 }
 
 static bool parse_u64_arg(const char *flag, const char *text, uint64_t *out) {
-  if (text == NULL || text[0] == '-' || text[0] == '\0') {
-    fprintf(stderr, "error: %s requires a non-negative integer\n", flag);
-    return false;
-  }
-  errno = 0;
-  char *end = NULL;
-  unsigned long long v = strtoull(text, &end, 10);
-  if (errno != 0 || end == text || *end != '\0') {
-    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
-    return false;
-  }
-  *out = (uint64_t)v;
-  return true;
+  return dlx4sop_cli_parse_u64(flag, text, out);
 }
 
 static bool parse_double_arg(const char *flag, const char *text, double *out) {
-  if (text == NULL || text[0] == '\0') {
-    fprintf(stderr, "error: %s requires a numeric value\n", flag);
-    return false;
-  }
-  errno = 0;
-  char *end = NULL;
-  double v = strtod(text, &end);
-  if (errno != 0 || end == text || *end != '\0') {
-    fprintf(stderr, "error: %s: invalid value '%s'\n", flag, text);
-    return false;
-  }
-  *out = v;
-  return true;
+  return dlx4sop_cli_parse_double(flag, text, out);
 }
 
 int main(int argc, char **argv) {
@@ -658,8 +897,8 @@ int main(int argc, char **argv) {
   uint32_t max_vars = 24;
   solve_backend_t backend = SOLVE_BACKEND_BRANCH;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
-  qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
-  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
+  qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
+  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NONE;
   qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
   qsop_branch_single_fallback_t branch_single_fallback =
       QSOP_BRANCH_SINGLE_FALLBACK_AUTO;
@@ -672,6 +911,7 @@ int main(int argc, char **argv) {
   uint64_t branch_single_cache_budget_mib = 0;
   uint32_t branch_single_cache_min_vars = 0;
   bool branch_single_option_set = false;
+  bool branch_single_fallback_set = false;
   bool branch_single_precision_set = false;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
@@ -686,8 +926,6 @@ int main(int argc, char **argv) {
   bool single_fourier_mode = false;
   uint32_t fourier_target_mode = 1;
   bool fourier_target_mode_set = false;
-  qsop_simd_kernel_t simd_request = QSOP_SIMD_KERNEL_AUTO;
-  bool simd_set = false;
   single_mode_precision_cli_t single_mode_precision = SINGLE_MODE_PRECISION_AUTO;
   bool single_mode_precision_set = false;
   bool print_kernels = false;
@@ -712,6 +950,14 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(stdout);
+      return 0;
+    }
+    if (strcmp(argv[i], "--help-advanced") == 0) {
+      print_usage_mode(stdout, true);
+      return 0;
+    }
+    if (dlx4sop_cli_is_version_arg(argv[i])) {
+      dlx4sop_cli_print_version(stdout, "sop-solve");
       return 0;
     }
     if (strcmp(argv[i], "--format") == 0) {
@@ -741,12 +987,14 @@ int main(int argc, char **argv) {
       continue;
     }
     if (strcmp(argv[i], "--max-vars") == 0) {
-      if (i + 1 >= argc || !parse_max_vars(argv[i + 1], &max_vars)) {
+      if (i + 1 >= argc) {
         fputs("error: --max-vars requires a non-negative uint32 value\n", stderr);
         return 2;
       }
+      if (!parse_max_vars(argv[++i], &max_vars)) {
+        return 2;
+      }
       max_vars_set = true;
-      i++;
       continue;
     }
     if (strcmp(argv[i], "--trace") == 0) {
@@ -896,7 +1144,9 @@ int main(int argc, char **argv) {
         return 2;
       }
       const char *value = argv[++i];
-      if (strcmp(value, "split") == 0) {
+      if (strcmp(value, "delegation-depth") == 0) {
+        branch_heuristic = QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
+      } else if (strcmp(value, "split") == 0) {
         branch_heuristic = QSOP_BRANCH_HEURISTIC_SPLIT;
       } else if (strcmp(value, "treewidth") == 0) {
         branch_heuristic = QSOP_BRANCH_HEURISTIC_TREEWIDTH;
@@ -1002,6 +1252,7 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_single_option_set = true;
+      branch_single_fallback_set = true;
       continue;
     }
     if (strcmp(argv[i], "--branch-single-max-fallback-vars") == 0) {
@@ -1054,12 +1305,10 @@ int main(int argc, char **argv) {
         branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_AUTO;
       } else if (strcmp(value, "scalar") == 0) {
         branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_SCALAR;
-      } else if (strcmp(value, "simd-avx2") == 0) {
-        branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_SIMD_AVX2;
       } else {
         fprintf(stderr,
                 "error: unsupported --branch-single-kernel '%s' "
-                "(expected auto|scalar|simd-avx2)\n",
+                "(expected auto|scalar)\n",
                 value);
         return 2;
       }
@@ -1205,28 +1454,6 @@ int main(int argc, char **argv) {
         return 2;
       }
       fourier_target_mode_set = true;
-      continue;
-    }
-    if (strcmp(argv[i], "--simd") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --simd requires a value\n", stderr);
-        return 2;
-      }
-      const char *value = argv[++i];
-      if (strcmp(value, "auto") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_AUTO;
-      } else if (strcmp(value, "scalar") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_SCALAR;
-      } else if (strcmp(value, "neon") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_NEON;
-      } else if (strcmp(value, "avx512") == 0) {
-        simd_request = QSOP_SIMD_KERNEL_AVX512;
-      } else {
-        fprintf(stderr, "error: unsupported --simd '%s' (expected auto|scalar|neon|avx512)\n",
-                value);
-        return 2;
-      }
-      simd_set = true;
       continue;
     }
     if (strcmp(argv[i], "--single-mode-precision") == 0) {
@@ -1446,16 +1673,15 @@ int main(int argc, char **argv) {
     }
   }
 
-  const qsop_simd_vtable_t *simd = qsop_simd_resolve(simd_request);
-  if ((simd_request == QSOP_SIMD_KERNEL_NEON || simd_request == QSOP_SIMD_KERNEL_AVX512) &&
-      simd == NULL) {
-    fprintf(stderr, "error: requested %s SIMD kernel is not available on this CPU\n",
-            simd_request_name(simd_request));
+  const qsop_simd_vtable_t *simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
+  if (simd == NULL) {
+    fprintf(stderr, "error: compiled SIMD kernel '%s' is unavailable\n",
+            qsop_simd_compiled_arch());
     return 2;
   }
 
   if (print_kernels) {
-    printf("simd_requested=%s\n", simd_request_name(simd_request));
+    printf("simd_compiled=%s\n", qsop_simd_compiled_arch());
     printf("simd_kernel=%s\n", qsop_simd_kernel_name(simd));
     printf("bitset_popcount_kernel=%s\n", qsop_simd_kernel_name(simd));
     printf("single_mode_precision=%s\n", single_mode_precision_name(single_mode_precision));
@@ -1522,6 +1748,9 @@ int main(int argc, char **argv) {
   qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
   bool result_ready = false;
   bool auto_fallback_single_fourier = false;
+  bool auto_direct_treewidth_single = false;
+  uint32_t *auto_treewidth_order = NULL;
+  uint32_t auto_treewidth_order_width = 0;
 
   qsop_backend_stats_sink_t sink = {
       .file = jsonl_file,
@@ -1543,7 +1772,20 @@ int main(int argc, char **argv) {
       return 2;
     }
     qsop_error_t count_error = {0};
-    if (qsop->r <= UINT32_MAX) {
+    if (sink_ptr == NULL && branch_rw_source == QSOP_BRANCH_RW_SOURCE_NONE &&
+        !branch_single_option_set &&
+        branch_auto_prepare_treewidth_single(qsop, max_vars, max_vars_set,
+                                             &auto_treewidth_order,
+                                             &auto_treewidth_order_width)) {
+      auto_fallback_single_fourier = true;
+      auto_direct_treewidth_single = true;
+    } else if (sink_ptr == NULL &&
+               branch_auto_should_start_single_fourier(qsop, max_vars, max_vars_set)) {
+      auto_fallback_single_fourier = true;
+      if (!branch_single_fallback_set) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY;
+      }
+    } else if (qsop->r <= UINT32_MAX) {
       ok = qsop_solve_branch(qsop, max_vars,
                              &(qsop_branch_solve_options_t){
                                  .heuristic = branch_heuristic,
@@ -1620,6 +1862,21 @@ int main(int argc, char **argv) {
             &rankwidth_single_options, &amplitude, &amp_stats, trace_ptr, &error);
       }
       qsop_rankwidth_decomposition_free(single_mode_decomposition);
+    } else if (backend == SOLVE_BACKEND_BRANCH && auto_direct_treewidth_single) {
+      if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+        ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
+            qsop, BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH + 1U, auto_treewidth_order,
+            auto_treewidth_order_width, fourier_target_mode, simd, &amplitude, &amp_stats,
+            trace_ptr, &error);
+      } else {
+        ok = qsop_solve_treewidth_precomputed_order_single_mode(
+            qsop, BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH + 1U, auto_treewidth_order,
+            auto_treewidth_order_width, fourier_target_mode, &amplitude, &amp_stats, trace_ptr,
+            &error);
+      }
+      if (ok) {
+        amp_stats.treewidth_delegations = 1;
+      }
     } else if (backend == SOLVE_BACKEND_BRANCH) {
       const qsop_branch_single_mode_options_t branch_single_mode_options = {
           .rw_source = branch_rw_source,
@@ -1628,6 +1885,7 @@ int main(int argc, char **argv) {
           .fallback = branch_single_fallback,
           .precision = branch_single_precision,
           .kernel = branch_single_kernel,
+          .simd = simd,
           .max_search_nodes = branch_single_max_search_nodes,
           .max_fallback_vars = branch_single_max_fallback_vars,
           .cache_budget_mib = branch_single_cache_budget_mib,
@@ -1645,6 +1903,8 @@ int main(int argc, char **argv) {
       ok = qsop_solve_treewidth_single_mode(qsop, max_vars, treewidth_order, fourier_target_mode,
                                            &amplitude, &amp_stats, trace_ptr, &error);
     }
+    free(auto_treewidth_order);
+    auto_treewidth_order = NULL;
     qsop_free(qsop);
     if (jsonl_file != NULL) {
       fclose(jsonl_file);
@@ -1653,10 +1913,8 @@ int main(int argc, char **argv) {
       print_error(&error, diagnostic_path);
       return 1;
     }
-    if (simd_set) {
-      amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-      amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-    }
+    amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+    amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
     if (single_mode_precision_set) {
       amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
     }

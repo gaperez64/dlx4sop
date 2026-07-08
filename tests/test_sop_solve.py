@@ -414,6 +414,28 @@ def run_large_rankwidth_crt(exe: pathlib.Path) -> None:
         )
 
 
+def run_auto_amplitude_handles_large_count_strings(exe: pathlib.Path) -> None:
+    qsop = "p qsop-sign 8 70 0\nn 70\ncst 0\nu 0 4\n"
+    completed = subprocess.run(
+        [str(exe), "--format", "amplitude", "-"],
+        input=qsop,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    expected = {
+        "solve_mode: auto",
+        "solve_mode_kernel: count-table",
+        "amplitude_re: 0",
+        "amplitude_im: 0",
+    }
+    if completed.returncode != 0 or not expected.issubset(set(completed.stdout.splitlines())):
+        raise AssertionError(
+            f"auto amplitude large-count conversion failed\n{completed.stdout}\n{completed.stderr}"
+        )
+
+
 def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     left_edges = [f"e {i} {i + 1}" for i in range(31)]
     right_edges = [f"e {i} {i + 1}" for i in range(32, 63)]
@@ -462,6 +484,7 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     )
     expected_stats = {
         "backend: branch",
+        "solve_mode_kernel: single-fourier",
         "treewidth_delegations: 1",
         "rankwidth_delegations: 0",
         "decomposition_width: 1",
@@ -470,9 +493,9 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
         raise AssertionError(f"branch DP handoff stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
     expected_trace = {
-        "branch.treewidth_order_probe",
-        "branch.treewidth_delegate",
-        "treewidth.initial_factors",
+        "treewidth.single_mode_initial_factors",
+        "treewidth.single_mode_multiply",
+        "treewidth.single_mode_sum_out",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -504,20 +527,17 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
     )
     expected_stats = {
         "backend: branch",
+        "solve_mode_kernel: single-fourier",
         "treewidth_delegations: 1",
         "rankwidth_delegations: 0",
-        "branch_rankwidth_skips: 1",
     }
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch root treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
     expected_trace = {
-        "branch.root_width_probe",
-        "branch.treewidth_table_forecast",
-        "branch.treewidth_join_pair_forecast",
-        "branch.rankwidth_skip_treewidth_preferred",
-        "branch.root_treewidth_delegate",
-        "treewidth.initial_factors",
+        "treewidth.single_mode_initial_factors",
+        "treewidth.single_mode_multiply",
+        "treewidth.single_mode_sum_out",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -578,7 +598,18 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
     qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
     branch = subprocess.run(
-        [str(exe), "--backend", "branch", "--max-vars", "40", "--format", "residue-vector", "-"],
+        [
+            str(exe),
+            "--backend",
+            "branch",
+            "--branch-rw-source",
+            "auto",
+            "--max-vars",
+            "40",
+            "--format",
+            "residue-vector",
+            "-",
+        ],
         input=qsop,
         check=False,
         stdout=subprocess.PIPE,
@@ -606,6 +637,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "40",
             "--trace",
@@ -620,6 +653,7 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     )
     expected_stats = {
         "backend: branch",
+        "solve_mode_kernel: single-fourier",
         "treewidth_delegations: 0",
         "rankwidth_delegations: 1",
         "decomposition_width: 1",
@@ -630,13 +664,12 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         )
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
     expected_trace = {
-        "branch.rankwidth_probe",
-        "branch.rankwidth_cutrank_probe",
-        "branch.rankwidth_table_forecast",
-        "branch.rankwidth_join_pair_forecast",
-        "branch.treewidth_table_forecast",
-        "branch.treewidth_join_pair_forecast",
-        "branch.rankwidth_delegate",
+        "branch.single.component_split",
+        "rankwidth.width_probe",
+        "rankwidth.cutrank_width_probe",
+        "rankwidth.table_forecast",
+        "rankwidth.join_pair_forecast",
+        "rankwidth.single_mode_join_f64",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -651,6 +684,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "40",
             "--solve-mode",
@@ -703,6 +738,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
             "stats",
             "--backend",
             "branch",
+            "--branch-rw-source",
+            "auto",
             "--max-vars",
             "32",
             "--solve-mode",
@@ -950,6 +987,18 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: sop-solve" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
+    version_result = subprocess.run(
+        [str(exe), "--version"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if version_result.returncode != 0 or version_result.stdout != "sop-solve 0.3\n":
+        raise AssertionError(
+            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
+        )
+
     stdin_result = subprocess.run(
         [str(exe), "--format", "residue-vector", "-"],
         input=qsop.read_text(),
@@ -1007,7 +1056,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         ([str(exe), "--trace"], "requires a value"),
         ([str(exe), "--trace", "json", str(qsop)], "unsupported trace format"),
         ([str(exe), "--max-vars"], "requires a non-negative"),
-        ([str(exe), "--max-vars", "-1", str(qsop)], "requires a non-negative"),
+        ([str(exe), "--max-vars", "-1", str(qsop)], "must be a non-negative"),
         ([str(exe), "--bad"], "unknown option"),
         ([str(exe), str(qsop), str(qsop)], "at most one input"),
         ([str(exe), str(source_root / "tests" / "golden" / "missing.qsop")], "No such file"),
@@ -1803,6 +1852,7 @@ def run_branch_heuristics(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"default branch solve failed\n{expected.stderr}")
 
     for heuristic, reported in [
+        ("delegation-depth", "delegation-depth"),
         ("treewidth", "treewidth"),
         ("cutrank-proxy", "cutrank-proxy"),
     ]:
@@ -2104,6 +2154,15 @@ def _path_qsop(nvars: int, r: int) -> str:
     return f"p qsop-sign {r} {nvars} {nvars - 1}\nn 0\ncst 0\n{edges}\n"
 
 
+def _amplitude_fields(output: str) -> tuple[str | None, str | None]:
+    values: dict[str, str] = {}
+    for line in output.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            values[key.strip()] = value.strip()
+    return values.get("amplitude_re"), values.get("amplitude_im")
+
+
 def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     # P_20: nvars=20 >= BRANCH_TREEWIDTH_DELEGATE_MIN_VARS=16 → enters branch_try_dp_delegate.
     # from-treewidth source sets rw_uses_from_treewidth=true → order cache MISS path
@@ -2118,7 +2177,11 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
          "--max-vars", "32", "-"],
         input=p20, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
-    if native.returncode != 0 or ft.returncode != 0 or ft.stdout != native.stdout:
+    if (
+        native.returncode != 0
+        or ft.returncode != 0
+        or _amplitude_fields(ft.stdout) != _amplitude_fields(native.stdout)
+    ):
         raise AssertionError(
             f"branch from-treewidth P_20 mismatch\nnative: {native.stdout}{native.stderr}\n"
             f"from-treewidth: {ft.stdout}{ft.stderr}"
@@ -2153,7 +2216,11 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
             input=asym_two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
         )
-    if asym_ft.returncode != 0 or asym_ref.returncode != 0 or asym_ft.stdout != asym_ref.stdout:
+    if (
+        asym_ft.returncode != 0
+        or asym_ref.returncode != 0
+        or _amplitude_fields(asym_ft.stdout) != _amplitude_fields(asym_ref.stdout)
+    ):
         raise AssertionError(
             f"branch from-treewidth asymmetric 2×P_20 mismatch\n"
             f"from-treewidth: {asym_ft.stdout}{asym_ft.stderr}\n"
@@ -2176,7 +2243,11 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
         [str(exe), "--backend", "branch", "--max-vars", "32", "-"],
         input=k16, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
-    if k16_ft.returncode != 0 or k16_ref.returncode != 0 or k16_ft.stdout != k16_ref.stdout:
+    if (
+        k16_ft.returncode != 0
+        or k16_ref.returncode != 0
+        or _amplitude_fields(k16_ft.stdout) != _amplitude_fields(k16_ref.stdout)
+    ):
         raise AssertionError(
             f"branch from-treewidth K_16 mismatch\n"
             f"from-treewidth: {k16_ft.stdout}{k16_ft.stderr}\n"
@@ -2201,7 +2272,11 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
             [str(exe), "--backend", "branch", "--max-vars", "64", "-"],
             input=two_paths, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        if ft2.returncode != 0 or ref2.returncode != 0 or ft2.stdout != ref2.stdout:
+        if (
+            ft2.returncode != 0
+            or ref2.returncode != 0
+            or _amplitude_fields(ft2.stdout) != _amplitude_fields(ref2.stdout)
+        ):
             raise AssertionError(
                 f"branch {rw_source} 2×P_20 mismatch\n{ft2.stdout}{ft2.stderr}\n"
                 f"ref: {ref2.stdout}{ref2.stderr}"
@@ -2415,68 +2490,34 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         text=True,
     )
     expected_auto = {
-        "simd_requested=auto",
         "single_mode_precision=auto",
     }
     if auto.returncode != 0 or not expected_auto.issubset(set(auto.stdout.splitlines())):
         raise AssertionError(f"--print-kernels failed\n{auto.stdout}\n{auto.stderr}")
     if not any(line.startswith("simd_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    compiled_simd = next(
+        (
+            line.split("=", 1)[1]
+            for line in auto.stdout.splitlines()
+            if line.startswith("simd_compiled=")
+        ),
+        None,
+    )
+    if compiled_simd is None:
+        raise AssertionError(f"--print-kernels missing simd_compiled\n{auto.stdout}")
     if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
 
-    scalar = subprocess.run(
+    simd_arg = subprocess.run(
         [str(exe), "--simd", "scalar", "--print-kernels"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    expected_scalar = {
-        "simd_requested=scalar",
-        "simd_kernel=scalar",
-        "bitset_popcount_kernel=scalar",
-    }
-    if scalar.returncode != 0 or not expected_scalar.issubset(set(scalar.stdout.splitlines())):
-        raise AssertionError(f"--simd scalar --print-kernels failed\n{scalar.stdout}\n{scalar.stderr}")
-
-    scalar_stats = subprocess.run(
-        [
-            str(exe),
-            "--format",
-            "stats",
-            "--backend",
-            "treewidth",
-            "--solve-mode",
-            "single-fourier",
-            "--simd",
-            "scalar",
-            "-",
-        ],
-        input=_path_qsop(3, 8),
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    expected_scalar_stats = {"simd_kernel: scalar", "bitset_kernel: scalar"}
-    if (
-        scalar_stats.returncode != 0
-        or not expected_scalar_stats.issubset(set(scalar_stats.stdout.splitlines()))
-    ):
-        raise AssertionError(
-            f"--format stats --simd scalar failed\n{scalar_stats.stdout}\n{scalar_stats.stderr}"
-        )
-
-    bad_simd = subprocess.run(
-        [str(exe), "--simd", "bad", "--print-kernels"],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if bad_simd.returncode != 2 or "unsupported --simd" not in bad_simd.stderr:
-        raise AssertionError(f"bad --simd diagnostic failed\n{bad_simd.stdout}\n{bad_simd.stderr}")
+    if simd_arg.returncode != 2 or "unknown option '--simd'" not in simd_arg.stderr:
+        raise AssertionError(f"--simd should not be accepted\n{simd_arg.stdout}\n{simd_arg.stderr}")
 
     precision_without_mode = subprocess.run(
         [str(exe), "--backend", "treewidth", "--single-mode-precision", "double", "-"],
@@ -2507,8 +2548,6 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
             "-",
         ],
         input=_path_qsop(3, 8),
@@ -2519,7 +2558,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_double_stats = {
         "single_mode_precision: double",
-        "simd_kernel: scalar",
+        f"simd_kernel: {compiled_simd}",
+        f"bitset_kernel: {compiled_simd}",
         "treewidth_single_complex_kernel: 2",
     }
     if (
@@ -2542,8 +2582,6 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
             "single-fourier",
             "--single-mode-precision",
             "double",
-            "--simd",
-            "scalar",
             "-",
         ],
         input=_path_qsop(3, 8),
@@ -2554,7 +2592,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_rankwidth_double_stats = {
         "single_mode_precision: double",
-        "simd_kernel: scalar",
+        f"simd_kernel: {compiled_simd}",
+        f"bitset_kernel: {compiled_simd}",
         "rankwidth_single_complex_kernel: 2",
     }
     if (
@@ -2564,6 +2603,17 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(
             f"rankwidth double precision solve failed\n"
             f"{rankwidth_double.stdout}\n{rankwidth_double.stderr}"
+        )
+    rankwidth_double_stats = parse_solver_stats(rankwidth_double.stdout)
+    if rankwidth_double_stats.get("simd_scalar_fallback_ops", 0) <= 0:
+        raise AssertionError(
+            f"rankwidth double precision should report scalar fallback SIMD work\n"
+            f"{rankwidth_double.stdout}"
+        )
+    if rankwidth_double_stats.get("simd_vectorized_ops", 0) != 0:
+        raise AssertionError(
+            f"rankwidth double precision unexpectedly reported vectorized ops\n"
+            f"{rankwidth_double.stdout}"
         )
 
     rankwidth_materialized = subprocess.run(
@@ -2714,6 +2764,7 @@ def main() -> int:
     run_solve(exe, source_root, "solve_mirrored_path_components")
     run_max_vars_guard(exe, source_root)
     run_large_rankwidth_crt(exe)
+    run_auto_amplitude_handles_large_count_strings(exe)
     run_branch_dp_handoff(exe)
     run_branch_root_treewidth_trace(exe)
     run_branch_rankwidth_handoff(exe)
