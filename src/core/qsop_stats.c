@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/bitset.h"
+#include "dlx4sop/min_fill.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -84,247 +85,23 @@ static uint32_t gf2_rank_masks(uint64_t *rows, uint32_t nrows, uint32_t nvars) {
   return rank;
 }
 
-static uint64_t min_fill_edges_for(uint32_t v, const uint64_t *adj, uint64_t active) {
-  uint64_t neighbors = adj[v] & active;
-  uint64_t fill = 0;
-  while (neighbors != 0) {
-    const uint32_t u = first_set_bit_u64(neighbors);
-    neighbors &= ~bit_for_var(u);
-    const uint64_t missing = neighbors & ~adj[u];
-    fill += popcount_u64(missing);
-  }
-  return fill;
-}
-
-static uint64_t bitset_missing_edges_for(uint32_t v, const uint64_t *work,
-                                         const uint64_t *active, uint64_t *remaining,
-                                         size_t words, uint32_t nvars) {
-  const uint64_t *neighbors = qsop_bitset_const_row(work, words, v);
-  for (size_t w = 0; w < words; w++) {
-    remaining[w] = neighbors[w] & active[w];
-  }
-
-  uint64_t fill = 0;
-  for (uint32_t u = 0; u < nvars; u++) {
-    if (!qsop_bitset_get(remaining, u)) {
-      continue;
-    }
-    qsop_bitset_clear(remaining, u);
-    const uint64_t *u_neighbors = qsop_bitset_const_row(work, words, u);
-    for (size_t w = 0; w < words; w++) {
-      fill += popcount_u64(remaining[w] & ~u_neighbors[w]);
-    }
-  }
-  return fill;
-}
-
-static bool compute_large_width_diagnostics(const qsop_instance_t *qsop, qsop_stats_t *stats,
-                                            qsop_error_t *error) {
-  const size_t words = qsop_bitset_words(qsop->nvars);
-  uint64_t *adj = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*adj));
-  uint64_t *work = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*work));
-  uint64_t *rows = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*rows));
-  uint64_t *active = calloc(words == 0 ? 1U : words, sizeof(*active));
-  uint64_t *right = calloc(words == 0 ? 1U : words, sizeof(*right));
-  uint64_t *scratch = calloc(words == 0 ? 1U : words, sizeof(*scratch));
-  if (adj == NULL || work == NULL || rows == NULL || active == NULL || right == NULL ||
-      scratch == NULL) {
-    free(adj);
-    free(work);
-    free(rows);
-    free(active);
-    free(right);
-    free(scratch);
-    set_error(error, "out of memory while computing large width diagnostics");
-    return false;
-  }
-
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    qsop_bitset_set(qsop_bitset_row(adj, words, qsop->edge_u[e]), qsop->edge_v[e]);
-    qsop_bitset_set(qsop_bitset_row(adj, words, qsop->edge_v[e]), qsop->edge_u[e]);
-  }
-
-  for (uint32_t cut = 1; cut < qsop->nvars; cut++) {
-    memset(rows, 0, (size_t)qsop->nvars * words * sizeof(*rows));
-    memset(right, 0, words * sizeof(*right));
-    for (uint32_t v = cut; v < qsop->nvars; v++) {
-      qsop_bitset_set(right, v);
-    }
-    for (uint32_t v = 0; v < cut; v++) {
-      const uint64_t *source = qsop_bitset_const_row(adj, words, v);
-      uint64_t *target = qsop_bitset_row(rows, words, v);
-      for (size_t w = 0; w < words; w++) {
-        target[w] = source[w] & right[w];
-      }
-    }
-    const uint32_t rank = qsop_gf2_rank_bitsets(rows, cut, qsop->nvars, words);
-    if (rank > stats->prefix_cut_rank) {
-      stats->prefix_cut_rank = rank;
-    }
-  }
-
-  memcpy(work, adj, (size_t)qsop->nvars * words * sizeof(*work));
-  memset(active, 0, words * sizeof(*active));
-  for (uint32_t v = 0; v < qsop->nvars; v++) {
-    qsop_bitset_set(active, v);
-  }
-
-  uint32_t remaining_active = qsop->nvars;
-  while (remaining_active != 0) {
-    bool found = false;
-    uint32_t best = 0;
-    uint64_t best_fill = UINT64_MAX;
-    uint32_t best_degree = UINT32_MAX;
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      if (!qsop_bitset_get(active, v)) {
-        continue;
-      }
-      const uint32_t degree =
-          qsop_bitset_popcount_intersection(qsop_bitset_const_row(work, words, v), active, words);
-      const uint64_t fill =
-          bitset_missing_edges_for(v, work, active, scratch, words, qsop->nvars);
-      if (!found || fill < best_fill || (fill == best_fill && degree < best_degree)) {
-        found = true;
-        best = v;
-        best_fill = fill;
-        best_degree = degree;
-      }
-    }
-    if (!found) {
-      break;
-    }
-    if (best_degree > stats->min_fill_width) {
-      stats->min_fill_width = best_degree;
-    }
-    stats->min_fill_edges += best_fill;
-
-    uint64_t *best_neighbors = scratch;
-    const uint64_t *best_row = qsop_bitset_const_row(work, words, best);
-    for (size_t w = 0; w < words; w++) {
-      best_neighbors[w] = best_row[w] & active[w];
-    }
-    for (uint32_t u = 0; u < qsop->nvars; u++) {
-      if (!qsop_bitset_get(best_neighbors, u)) {
-        continue;
-      }
-      uint64_t *u_row = qsop_bitset_row(work, words, u);
-      for (size_t w = 0; w < words; w++) {
-        u_row[w] |= best_neighbors[w];
-        u_row[w] &= active[w];
-      }
-      qsop_bitset_clear(u_row, u);
-    }
-    qsop_bitset_clear(active, best);
-    remaining_active--;
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      uint64_t *row = qsop_bitset_row(work, words, v);
-      for (size_t w = 0; w < words; w++) {
-        row[w] &= active[w];
-      }
-    }
-  }
-
-  stats->width_diagnostics_available = true;
-  free(adj);
-  free(work);
-  free(rows);
-  free(active);
-  free(right);
-  free(scratch);
-  return true;
-}
-
 static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
                                                   uint32_t *order, qsop_error_t *error) {
-  if (qsop->nvars > 63U) {
-    return compute_large_width_diagnostics(qsop, stats, error);
-  }
-
-  uint64_t *adj = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*adj));
-  uint64_t *work = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*work));
-  uint64_t *rows = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*rows));
-  if (adj == NULL || work == NULL || rows == NULL) {
-    free(adj);
-    free(work);
-    free(rows);
-    set_error(error, "out of memory while computing width diagnostics");
+  /* Exact prefix cut rank via the incremental GF(2) core (was a dense O(nvars^4/64) rebuild per
+   * cut). */
+  if (!qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
+                            &stats->prefix_cut_rank, error)) {
     return false;
   }
-
-  for (uint32_t e = 0; e < qsop->nedges; e++) {
-    adj[qsop->edge_u[e]] |= bit_for_var(qsop->edge_v[e]);
-    adj[qsop->edge_v[e]] |= bit_for_var(qsop->edge_u[e]);
+  /* Min-fill width/fill/order via the shared sparse core. The elimination order is only captured
+   * for the small (<=63-var) case, matching the historical contract. */
+  uint32_t *order_out = qsop->nvars <= 63U ? order : NULL;
+  if (!qsop_min_fill_eliminate(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
+                               QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, order_out,
+                               &stats->min_fill_width, &stats->min_fill_edges, NULL, error)) {
+    return false;
   }
-
-  const uint64_t all = all_vars_mask(qsop->nvars);
-  for (uint32_t cut = 1; cut < qsop->nvars; cut++) {
-    const uint64_t left = all_vars_mask(cut);
-    const uint64_t right = all & ~left;
-    uint32_t nrows = 0;
-    for (uint32_t v = 0; v < cut; v++) {
-      rows[nrows++] = adj[v] & right;
-    }
-    const uint32_t rank = gf2_rank_masks(rows, nrows, qsop->nvars);
-    if (rank > stats->prefix_cut_rank) {
-      stats->prefix_cut_rank = rank;
-    }
-  }
-
-  memcpy(work, adj, (qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*work));
-  uint64_t active = all;
-  uint32_t step = 0;
-  while (active != 0) {
-    bool found = false;
-    uint32_t best = 0;
-    uint64_t best_fill = UINT64_MAX;
-    uint32_t best_degree = UINT32_MAX;
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      if ((active & bit_for_var(v)) == 0) {
-        continue;
-      }
-      const uint32_t degree = popcount_u64(work[v] & active);
-      const uint64_t fill = min_fill_edges_for(v, work, active);
-      if (!found || fill < best_fill || (fill == best_fill && degree < best_degree)) {
-        found = true;
-        best = v;
-        best_fill = fill;
-        best_degree = degree;
-      }
-    }
-    if (!found) {
-      break;
-    }
-    if (best_degree > stats->min_fill_width) {
-      stats->min_fill_width = best_degree;
-    }
-    stats->min_fill_edges += best_fill;
-    if (order != NULL && step < qsop->nvars) {
-      order[step] = best;
-    }
-    step++;
-
-    uint64_t neighbors = work[best] & active;
-    for (uint32_t u = 0; u < qsop->nvars; u++) {
-      if ((neighbors & bit_for_var(u)) == 0) {
-        continue;
-      }
-      for (uint32_t v = u + 1U; v < qsop->nvars; v++) {
-        if ((neighbors & bit_for_var(v)) != 0) {
-          work[u] |= bit_for_var(v);
-          work[v] |= bit_for_var(u);
-        }
-      }
-    }
-    active &= ~bit_for_var(best);
-    for (uint32_t v = 0; v < qsop->nvars; v++) {
-      work[v] &= active;
-    }
-  }
-
   stats->width_diagnostics_available = true;
-  free(adj);
-  free(work);
-  free(rows);
   return true;
 }
 

@@ -37,6 +37,7 @@ dlx4sop_core_sources = files(
     'src/core/simd_scalar.c',
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
+    'src/core/min_fill.c',
     'src/core/qsop_simplify.c',
     'src/core/qsop_stats.c',
     'src/core/qsop_wmc.c',
@@ -231,6 +232,14 @@ test_qsop_simplify = executable(
 )
 
 test('qsop simplify unit', test_qsop_simplify)
+
+test_min_fill = executable(
+  'test-min-fill',
+  'tests/unit/test_min_fill.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('min-fill unit', test_min_fill)
 
 test_branch_api = executable(
   'test-branch-api',
