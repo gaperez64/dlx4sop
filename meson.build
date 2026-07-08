@@ -37,6 +37,7 @@ dlx4sop_core_sources = files(
     'src/core/simd_scalar.c',
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
+    'src/core/qsop_simplify.c',
     'src/core/qsop_stats.c',
     'src/core/qsop_wmc.c',
     'src/core/qsop_write.c',
@@ -223,6 +224,14 @@ test_wmc = executable(
 
 test('wmc unit', test_wmc)
 
+test_qsop_simplify = executable(
+  'test-qsop-simplify',
+  'tests/unit/test_qsop_simplify.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('qsop simplify unit', test_qsop_simplify)
+
 test_branch_api = executable(
   'test-branch-api',
   'tests/unit/test_branch_api.c',
@@ -366,6 +375,18 @@ if python3.found()
       meson.current_source_dir(),
     ],
     depends: [sop2wmc, sop_solve],
+  )
+  test(
+    'qasm2sop optimize differential',
+    python3,
+    args: [
+      files('tests/test_qasm2sop_optimize.py'),
+      qasm2sop.full_path(),
+      sop_solve.full_path(),
+      meson.current_source_dir(),
+    ],
+    depends: [qasm2sop, sop_solve],
+    timeout: 120,
   )
   test(
     'qasm2sop amplitudes',
