@@ -95,9 +95,19 @@ def load_circuit(payload_path: str):
     return circuit
 
 
+def _is_phase_representability_error(stderr: str) -> bool:
+    """--approx only rescues circuits that fail the *exact* import because a phase/angle falls
+    outside qasm2sop's finite grid (odd cp/cu1, non-pi/8 rz/rx/ry/u/p, non-sign quadratic). It
+    does NOT add gate support or fix parse / non-unitary (creg/measure) rejections, so retrying
+    those with --approx just burns a second qasm2sop run and yields a misleading combined error.
+    Every exact-mode angle rejection names "angle" or "non-sign quadratic"; nothing else does."""
+    return "angle" in stderr or "non-sign quadratic" in stderr
+
+
 def import_qsop(qasm_text: str, zero: str) -> tuple[str, dict]:
     """Import qasm_text at the all-zero boundary. Tries an exact import first,
-    falling back to --approx only if qasm2sop cannot represent it exactly."""
+    falling back to --approx only if the exact failure is a phase/angle-representability
+    issue (the only thing --approx can rescue). Shared by adapter.py and adapter_wmc.py."""
     exact = subprocess.run(
         [str(QASM2SOP), "--input", zero, "--output", zero, "-"],
         input=qasm_text,
@@ -109,6 +119,8 @@ def import_qsop(qasm_text: str, zero: str) -> tuple[str, dict]:
     if exact.returncode == 0:
         return exact.stdout, {"import_mode": "exact"}
     exact_diagnostic = manifest_tool.diagnostic_from_exception(RuntimeError(exact.stderr))
+    if not _is_phase_representability_error(exact.stderr):
+        raise RuntimeError(f"qasm2sop failed and is not phase-approximable: {exact_diagnostic!r}")
 
     approx = subprocess.run(
         [str(QASM2SOP), "--approx", repr(APPROX_EPSILON), "--input", zero, "--output", zero, "-"],
