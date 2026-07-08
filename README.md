@@ -66,7 +66,90 @@ External frameworks stay at corpus import and validation boundaries.
 - `rankwidth`: decomposition-DP backend with cut-rank diagnostics and
   count-table/Fourier modes; useful for comparison and targeted low-rank cases.
 
-### How the branch backend decides what to run
+## QSOP Format
+
+```text
+p qsop-sign <r> <variables> <sign_edges>
+n <normalization_h>
+cst <constant_mod_r>
+u <vertex> <unary_coefficient_mod_r>
+e <u> <v>
+f <vertex> <0 | 1>
+```
+
+Quadratic terms are sign edges with implicit coefficient `r/2`;
+duplicate sign edges cancel by parity. Pins (`f`) are applied during parsing,
+and canonical output uses dense variable IDs. Solver
+`counts` are ordinary assignment counts bucketed by phase residue modulo `r`.
+
+## Examples
+
+```sh
+build/sop-check tests/golden/sign_raw.qsop
+build/sop-stats --format json tests/golden/sign_expected.qsop
+build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
+build/sop-solve tests/golden/solve_disconnected.qsop
+build/sop-solve --format residue-vector tests/golden/solve_disconnected.qsop
+build/sop-solve --format stats --include-result tests/golden/solve_single.qsop
+build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_disconnected.qsop
+build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
+build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
+build/sop2wmc --encoding auto --stats-only tests/golden/solve_disconnected.qsop
+build/sop2wmc --residue all tests/golden/solve_disconnected.qsop
+build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_disconnected.qsop && ganak residue2.cnf
+build/sop2wmc --encoding auto tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
+```
+
+### Approximate QASM imports
+
+`qasm2sop` is exact by default: circuits with phases outside the supported
+finite grid are rejected. Use `--approx X` to opt in to phase rounding, where
+`X` is a positive additive amplitude error budget. Scientific notation is
+accepted, for example:
+
+```sh
+build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
+```
+
+Approximate output includes comment lines recording the chosen modulus, rounded
+phase count, and certified additive amplitude error bound.
+
+The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
+`probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
+`sop-solve --include-probability`) outside the counter; the metadata header in
+each CNF block documents the variable map and the final accumulator bits.
+
+
+## Build
+
+```sh
+meson setup build
+meson compile -C build
+meson test -C build --print-errorlogs
+```
+
+The default `build` directory is a debug build (`-O0`, assertions on), which is
+appropriate for development and the test suite.
+
+CI enforces at least 75% line coverage over production `src` files:
+
+```sh
+scripts/check-coverage.sh build-coverage
+```
+
+## Benchmarks
+
+Comparative benchmarking can be found in
+[qccq-gauntlet](https://qccq-cgd.pages.dev/), an external harness that runs
+the dlx4sop backends and the `sop2wmc` + Ganak pipeline against shared
+datasets/suites on a public leaderboard. `.gauntlet/adapter.py` and
+`.gauntlet/adapter_wmc.py` are the two integration points gauntlet drives:
+they import a circuit, run it through `qasm2sop`/`sop-solve` (or
+`sop2wmc` + Ganak), and report back in the protocol gauntlet expects. Both
+adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
+from `scripts/` for OpenQASM munging and Ganak-output parsing.
+
+## The branch backend: what and why does it run?
 
 The `branch` backend recursively branches on variables and delegates connected
 components to the treewidth or rankwidth DP once a component is cheap enough. It
@@ -175,97 +258,3 @@ accuracy). `--trace csv` writes a `phase,depth,items,elapsed_ns` row per phase
 to stderr (e.g. `branch.width_probe`, `branch.treewidth_delegate`,
 `rankwidth.width_probe`) to localize time. Per-decision `veto_reason` strings
 are only emitted via `--stats-jsonl`.
-
-### Feasibility limit (be realistic)
-
-The DP is exponential in width: the count-table table is `~ r · 2^(treewidth+1)`
-and single-Fourier is `~ 2^(treewidth+1)` (rankwidth uses `2^cutrank` in place of
-`2^treewidth`). So instances whose treewidth is beyond roughly 20 (count-table)
-or 25 (single-Fourier) — and whose cut-rank is beyond 12 — are out of reach for
-exact solving *regardless of variable count*; no amount of deeper branching
-helps, because a single connected component that does not split just hands the
-same wide DP to the delegate. Use `sop-stats --format json` (reports
-`min_fill_width` and `prefix_cut_rank`) to check feasibility before a long run.
-
-## QSOP Format
-
-```text
-p qsop-sign <r> <variables> <sign_edges>
-n <normalization_h>
-cst <constant_mod_r>
-u <vertex> <unary_coefficient_mod_r>
-e <u> <v>
-f <vertex> <0 | 1>
-```
-
-Quadratic terms are sign edges with implicit coefficient `r/2`;
-duplicate sign edges cancel by parity. Pins (`f`) are applied during parsing,
-and canonical output uses dense variable IDs. Solver
-`counts` are ordinary assignment counts bucketed by phase residue modulo `r`.
-
-## Examples
-
-```sh
-build/sop-check tests/golden/sign_raw.qsop
-build/sop-stats --format json tests/golden/sign_expected.qsop
-build/sop-stats --exact-widths --exact-width-max-vars 12 tests/golden/solve_sign_path.qsop
-build/sop-solve tests/golden/solve_disconnected.qsop
-build/sop-solve --format residue-vector tests/golden/solve_disconnected.qsop
-build/sop-solve --format stats --include-result tests/golden/solve_single.qsop
-build/sop-solve --format stats --backend treewidth --solve-mode fourier tests/golden/solve_disconnected.qsop
-build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm
-build/qasm2sop --input 1 --output 1 tests/golden/qasm_h_boundary.qasm | build/sop-solve --format stats --include-probability -
-build/sop2wmc --encoding auto --stats-only tests/golden/solve_disconnected.qsop
-build/sop2wmc --residue all tests/golden/solve_disconnected.qsop
-build/sop2wmc --residue 2 -o residue2.cnf tests/golden/solve_disconnected.qsop && ganak residue2.cnf
-build/sop2wmc --encoding auto tests/golden/solve_disconnected.qsop | ganak --mode 6 --verb 0 -
-```
-
-### Approximate QASM imports
-
-`qasm2sop` is exact by default: circuits with phases outside the supported
-finite grid are rejected. Use `--approx X` to opt in to phase rounding, where
-`X` is a positive additive amplitude error budget. Scientific notation is
-accepted, for example:
-
-```sh
-build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
-```
-
-Approximate output includes comment lines recording the chosen modulus, rounded
-phase count, and certified additive amplitude error bound.
-
-The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
-`probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
-`sop-solve --include-probability`) outside the counter; the metadata header in
-each CNF block documents the variable map and the final accumulator bits.
-
-
-## Build
-
-```sh
-meson setup build
-meson compile -C build
-meson test -C build --print-errorlogs
-```
-
-The default `build` directory is a debug build (`-O0`, assertions on), which is
-appropriate for development and the test suite.
-
-CI enforces at least 75% line coverage over production `src` files:
-
-```sh
-scripts/check-coverage.sh build-coverage
-```
-
-## Benchmarks
-
-Comparative benchmarking can be found in
-[qccq-gauntlet](https://qccq-cgd.pages.dev/), an external harness that runs
-the dlx4sop backends and the `sop2wmc` + Ganak pipeline against shared
-datasets/suites on a public leaderboard. `.gauntlet/adapter.py` and
-`.gauntlet/adapter_wmc.py` are the two integration points gauntlet drives:
-they import a circuit, run it through `qasm2sop`/`sop-solve` (or
-`sop2wmc` + Ganak), and report back in the protocol gauntlet expects. Both
-adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
-from `scripts/` for OpenQASM munging and Ganak-output parsing.
