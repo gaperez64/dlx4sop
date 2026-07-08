@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_solve.h"
+#include "dlx4sop/min_fill.h"
 #include "dlx4sop/simd.h"
 #include "cli_common.h"
 
@@ -333,6 +334,8 @@ static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop,
 static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop,
                                                  uint32_t max_vars,
                                                  bool max_vars_set,
+                                                 qsop_branch_rw_source_t rw_source,
+                                                 const qsop_branch_policy_t *policy,
                                                  uint32_t **order_out,
                                                  uint32_t *width_out) {
   if (order_out == NULL || width_out == NULL) {
@@ -362,6 +365,21 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop,
   if (width > BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH) {
     free(order);
     return false;
+  }
+  /* With rankwidth enabled, only take the direct whole-instance treewidth path when the shared
+   * cost-model pre-probe vetoes make treewidth the clear winner; otherwise defer to the branch
+   * recursion so rankwidth gets probed (dense-but-low-rank components where cut-rank << treewidth,
+   * e.g. complete-bipartite blocks). Cut-rank is cheap (incremental GF(2)); if it can't be computed
+   * fall back to taking the direct treewidth path. */
+  if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
+    uint32_t cut_rank = 0;
+    qsop_error_t cut_rank_error = {0};
+    if (qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges, &cut_rank,
+                             &cut_rank_error) &&
+        !qsop_branch_single_treewidth_clearly_preferred(width, cut_rank, qsop->nvars, policy)) {
+      free(order);
+      return false;
+    }
   }
   *order_out = order;
   *width_out = width;
@@ -898,7 +916,7 @@ int main(int argc, char **argv) {
   solve_backend_t backend = SOLVE_BACKEND_BRANCH;
   qsop_solve_mode_t solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
   qsop_branch_heuristic_t branch_heuristic = QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
-  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_NONE;
+  qsop_branch_rw_source_t branch_rw_source = QSOP_BRANCH_RW_SOURCE_AUTO;
   qsop_branch_policy_t branch_policy = {0};  /* zeros → defaults applied in branch.c */
   qsop_branch_single_fallback_t branch_single_fallback =
       QSOP_BRANCH_SINGLE_FALLBACK_AUTO;
@@ -1772,10 +1790,9 @@ int main(int argc, char **argv) {
       return 2;
     }
     qsop_error_t count_error = {0};
-    if (sink_ptr == NULL && branch_rw_source == QSOP_BRANCH_RW_SOURCE_NONE &&
-        !branch_single_option_set &&
-        branch_auto_prepare_treewidth_single(qsop, max_vars, max_vars_set,
-                                             &auto_treewidth_order,
+    if (sink_ptr == NULL && !branch_single_option_set &&
+        branch_auto_prepare_treewidth_single(qsop, max_vars, max_vars_set, branch_rw_source,
+                                             &branch_policy, &auto_treewidth_order,
                                              &auto_treewidth_order_width)) {
       auto_fallback_single_fourier = true;
       auto_direct_treewidth_single = true;
