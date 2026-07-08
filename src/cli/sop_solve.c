@@ -303,6 +303,71 @@ static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
          strstr(message, "no delegate available") != NULL;
 }
 
+#define BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS 16U
+#define BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH 25U
+#define BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS 4096U
+
+static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop,
+                                                    uint32_t max_vars,
+                                                    bool max_vars_set) {
+  if (qsop == NULL || qsop->nedges == 0 ||
+      qsop->nvars < BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS) {
+    return false;
+  }
+
+  const uint32_t effective_max_vars =
+      max_vars_set ? max_vars : BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
+  if (effective_max_vars == 0 || qsop->nvars > effective_max_vars) {
+    return false;
+  }
+
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  qsop_error_t probe_error = {0};
+  const bool ok = qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
+                                             &order, &width, &probe_error);
+  free(order);
+  return ok && width <= BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH;
+}
+
+static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop,
+                                                 uint32_t max_vars,
+                                                 bool max_vars_set,
+                                                 uint32_t **order_out,
+                                                 uint32_t *width_out) {
+  if (order_out == NULL || width_out == NULL) {
+    return false;
+  }
+  *order_out = NULL;
+  *width_out = 0;
+  if (qsop == NULL || qsop->nedges == 0 ||
+      qsop->nvars < BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS) {
+    return false;
+  }
+
+  const uint32_t effective_max_vars =
+      max_vars_set ? max_vars : BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
+  if (effective_max_vars == 0 || qsop->nvars > effective_max_vars) {
+    return false;
+  }
+
+  uint32_t *order = NULL;
+  uint32_t width = 0;
+  qsop_error_t probe_error = {0};
+  if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL, &order, &width,
+                                  &probe_error)) {
+    free(order);
+    return false;
+  }
+  if (width > BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH) {
+    free(order);
+    return false;
+  }
+  *order_out = order;
+  *width_out = width;
+  return true;
+}
+
 static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *event) {
   csv_trace_writer_t *writer = user;
   if (writer == NULL || writer->file == NULL || event == NULL) {
@@ -846,6 +911,7 @@ int main(int argc, char **argv) {
   uint64_t branch_single_cache_budget_mib = 0;
   uint32_t branch_single_cache_min_vars = 0;
   bool branch_single_option_set = false;
+  bool branch_single_fallback_set = false;
   bool branch_single_precision_set = false;
   qsop_rankwidth_generator_t rankwidth_generator = QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP;
   qsop_rankwidth_solve_mode_t rankwidth_mode = QSOP_RANKWIDTH_SOLVE_COUNT_TABLE;
@@ -1186,6 +1252,7 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_single_option_set = true;
+      branch_single_fallback_set = true;
       continue;
     }
     if (strcmp(argv[i], "--branch-single-max-fallback-vars") == 0) {
@@ -1681,6 +1748,9 @@ int main(int argc, char **argv) {
   qsop_solve_trace_t *trace_ptr = trace_format == SOLVE_TRACE_NONE ? NULL : &trace;
   bool result_ready = false;
   bool auto_fallback_single_fourier = false;
+  bool auto_direct_treewidth_single = false;
+  uint32_t *auto_treewidth_order = NULL;
+  uint32_t auto_treewidth_order_width = 0;
 
   qsop_backend_stats_sink_t sink = {
       .file = jsonl_file,
@@ -1702,7 +1772,20 @@ int main(int argc, char **argv) {
       return 2;
     }
     qsop_error_t count_error = {0};
-    if (qsop->r <= UINT32_MAX) {
+    if (sink_ptr == NULL && branch_rw_source == QSOP_BRANCH_RW_SOURCE_NONE &&
+        !branch_single_option_set &&
+        branch_auto_prepare_treewidth_single(qsop, max_vars, max_vars_set,
+                                             &auto_treewidth_order,
+                                             &auto_treewidth_order_width)) {
+      auto_fallback_single_fourier = true;
+      auto_direct_treewidth_single = true;
+    } else if (sink_ptr == NULL &&
+               branch_auto_should_start_single_fourier(qsop, max_vars, max_vars_set)) {
+      auto_fallback_single_fourier = true;
+      if (!branch_single_fallback_set) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY;
+      }
+    } else if (qsop->r <= UINT32_MAX) {
       ok = qsop_solve_branch(qsop, max_vars,
                              &(qsop_branch_solve_options_t){
                                  .heuristic = branch_heuristic,
@@ -1779,6 +1862,21 @@ int main(int argc, char **argv) {
             &rankwidth_single_options, &amplitude, &amp_stats, trace_ptr, &error);
       }
       qsop_rankwidth_decomposition_free(single_mode_decomposition);
+    } else if (backend == SOLVE_BACKEND_BRANCH && auto_direct_treewidth_single) {
+      if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+        ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
+            qsop, BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH + 1U, auto_treewidth_order,
+            auto_treewidth_order_width, fourier_target_mode, simd, &amplitude, &amp_stats,
+            trace_ptr, &error);
+      } else {
+        ok = qsop_solve_treewidth_precomputed_order_single_mode(
+            qsop, BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH + 1U, auto_treewidth_order,
+            auto_treewidth_order_width, fourier_target_mode, &amplitude, &amp_stats, trace_ptr,
+            &error);
+      }
+      if (ok) {
+        amp_stats.treewidth_delegations = 1;
+      }
     } else if (backend == SOLVE_BACKEND_BRANCH) {
       const qsop_branch_single_mode_options_t branch_single_mode_options = {
           .rw_source = branch_rw_source,
@@ -1805,6 +1903,8 @@ int main(int argc, char **argv) {
       ok = qsop_solve_treewidth_single_mode(qsop, max_vars, treewidth_order, fourier_target_mode,
                                            &amplitude, &amp_stats, trace_ptr, &error);
     }
+    free(auto_treewidth_order);
+    auto_treewidth_order = NULL;
     qsop_free(qsop);
     if (jsonl_file != NULL) {
       fclose(jsonl_file);

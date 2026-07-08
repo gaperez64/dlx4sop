@@ -353,6 +353,9 @@ typedef struct branch_search_stats {
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH 18U
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS (BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH + 1U)
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS 2500U
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH 25U
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS \
+  (BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
 /* When prefix_cut_rank is at most this threshold, bypass the blanket
@@ -3167,9 +3170,9 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats, const qsop_solve_
  * reason logging, "calibrating" timing bypass) since --branch-calibrate-backends is rejected
  * together with --solve-mode single-fourier at the CLI layer.
  *
- * NOTE for future maintainers: if branch_try_rankwidth_delegate's cost model / veto constants
- * are ever retuned, update this function to match, or single-fourier and count-table mode will
- * silently pick different backends for the same shaped instance. */
+ * NOTE for future maintainers: if branch_try_rankwidth_delegate's cost model is ever retuned,
+ * update this function too.  The treewidth cap is intentionally wider here than in count-table
+ * mode because single-Fourier table size is independent of the modulus. */
 /* Lazily computes a treewidth elimination order the first time it's actually needed.
  * *order starts out either NULL or the stats-captured order (only valid for nvars <= 63,
  * see the comment in branch_single_mode_delegate_component below); when NULL, this runs
@@ -3312,7 +3315,8 @@ static bool branch_single_mode_delegate_component(
                 cost_model_favors_rw &&
                 (!treewidth_available || rankwidth_table < treewidth_table) &&
                 (!treewidth_available || rankwidth_join <= treewidth_join) &&
-                (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+                (!treewidth_available ||
+                 treewidth_width > BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH ||
                  rankwidth_should_override_treewidth_single(treewidth_width, cutrank_width));
           }
         }
@@ -3321,7 +3325,7 @@ static bool branch_single_mode_delegate_component(
   }
 
   if (setup_ok && !use_rankwidth && treewidth_available &&
-      treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+      treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     setup_ok = branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error);
   }
 
@@ -3339,14 +3343,16 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+  } else if (treewidth_available &&
+             treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH &&
+             order_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
-          sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
+          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
           &delegated, options->trace, error);
     } else {
       ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
-          sub, BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode,
+          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode,
           options->simd, out, &delegated, options->trace, error);
     }
     delegated.treewidth_delegations++;
@@ -3368,8 +3374,8 @@ static bool branch_single_mode_delegate_component(
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
                 "; neither is within its delegate cap (%u / %u) -- no delegate available",
-                sub->nvars, treewidth_width, cutrank_width, BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
-                BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
+                sub->nvars, treewidth_width, cutrank_width,
+                BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH, BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
       ok = false;
     } else {
       ok = true;
