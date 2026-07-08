@@ -66,6 +66,127 @@ External frameworks stay at corpus import and validation boundaries.
 - `rankwidth`: decomposition-DP backend with cut-rank diagnostics and
   count-table/Fourier modes; useful for comparison and targeted low-rank cases.
 
+### How the branch backend decides what to run
+
+The `branch` backend recursively branches on variables and delegates connected
+components to the treewidth or rankwidth DP once a component is cheap enough. It
+never solves a component itself if it can hand it off. The ordered decision, per
+component (from first check to last):
+
+1. **Base cases** — no variables (constant), or no edges (closed-form product).
+2. **Component split** — a disconnected residual is split and each component is
+   solved independently, then combined.
+3. **Treewidth / rankwidth delegation** — a cost model (below) picks between the
+   two DP backends when the component's treewidth or cut-rank is within the
+   delegation caps.
+4. **Per-component refusal** — a non-delegatable component larger than
+   `--max-vars` is refused (rather than branched into an exponential recursion).
+5. **Branching fallback** — otherwise pick a branch variable and recurse on
+   `0`/`1`.
+
+**Delegation caps** (hard limits; a component wider than these is not handed to
+that backend): treewidth ≤ 14 (count-table) or ≤ 25 (single-Fourier); a
+single-component root up to width 18 for ≤ 2500 variables; rankwidth cut-rank
+≤ 12.
+
+**Rankwidth is off by default** (`--branch-rw-source none`): the branch backend
+only competes rankwidth against treewidth when you opt in with
+`--branch-rw-source auto` (or `native` / `from-treewidth` / `both`). On the
+in-repo corpus treewidth has not been beaten by rankwidth, so it is opt-in for
+the specific dense-but-low-rank cases (e.g. complete-bipartite blocks) where
+cut-rank ≪ treewidth.
+
+**Cost model** (only reached when `--branch-rw-source` ≠ `none`). Rankwidth is
+chosen over treewidth only if it is predicted meaningfully faster:
+
+```
+rw_est = C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
+         + rw_fixed_overhead_ns + rw_memory_penalty_ns
+tw_est = C_tw_table*tw_table + C_tw_join*tw_join + tw_fixed_overhead_ns
+choose rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
+```
+
+before which several cheap vetoes short-circuit it (treewidth already cheap;
+treewidth width within the delegate band; a low-rank bypass when the cut-rank
+proxy is small).
+
+### Runtime tuning (`--help-advanced` lists all flags)
+
+Backend / mode:
+`--backend branch|treewidth|rankwidth` (default `branch`),
+`--solve-mode auto|count-table|fourier|single-fourier`,
+`--max-vars N` (default 24; auto single-Fourier raises it to 4096),
+`--treewidth-order min-fill|min-degree|min-fill-max-degree`.
+
+Rankwidth policy (all default-off unless `--branch-rw-source` is set):
+`--branch-rw-source`,
+`--branch-rw-min-treewidth-width` (2),
+`--branch-rw-min-treewidth-forecast` (512),
+`--branch-rw-min-residual-vars` (16),
+`--branch-rw-low-rank-bypass` (4),
+`--branch-rw-min-speedup` (1.1),
+`--branch-rw-fixed-overhead-ns` (20000),
+`--branch-tw-fixed-overhead-ns` (10000),
+`--branch-rw-memory-penalty-ns` (0).
+
+Single-Fourier fallback: `--branch-single-fourier-fallback`,
+`--branch-single-max-fallback-vars`, `--branch-single-max-search-nodes`,
+`--branch-single-cache-budget-mib`, `--branch-single-precision`,
+`--single-mode-precision`.
+
+Rankwidth backend: `--rankwidth-generate`, `--rankwidth-mode`,
+`--rankwidth-memory-budget-mib`, `--rankwidth-memory-policy`,
+`--rankwidth-join-strategy`, `--rankwidth-single-kernel`,
+`--rankwidth-fourier-kernel`.
+
+The five cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
+`C_tw_table` / `C_tw_join` have **no CLI flag**; they are ns-per-unit constants
+(`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by editing
+that file. `sop-solve` reads no environment variables.
+
+### Retuning the cost model
+
+The coefficients above are fit from measured backend timings. To collect data,
+run with the calibration harness (requires the JSONL sink, branch backend, not
+single-Fourier):
+
+```sh
+build/sop-solve --backend branch --branch-calibrate-backends \
+  --stats-jsonl calib.jsonl <instance.qsop>
+```
+
+With calibration on, the losing backend is executed too, so each per-residual
+JSONL record carries both the *predicted* forecasts (`treewidth_forecast_*`,
+`rankwidth_forecast_*`) and the *measured* wall time
+(`treewidth_actual_ms`, `rankwidth_actual_ms`, `treewidth_probe_ms`,
+`rankwidth_generation_ms`). Fit the ns-per-table-entry / ns-per-join ratios and
+overheads from those, then feed the overhead/threshold/speedup back via the
+`--branch-rw-*` / `--branch-tw-*` flags and the `C_*` constants back into
+`branch.c`.
+
+### Observing a run
+
+`--format stats` prints what the backend did:
+`treewidth_delegations` / `rankwidth_delegations` / `branch_fallthroughs`
+(where each residual went), `branch_treewidth_skips` / `branch_rankwidth_skips`
+(vetoes), `decomposition_width` vs `rankwidth_cutrank_width` (the competing
+widths), and `table_entries` / `join_pairs` vs their `*_forecast` (forecast
+accuracy). `--trace csv` writes a `phase,depth,items,elapsed_ns` row per phase
+to stderr (e.g. `branch.width_probe`, `branch.treewidth_delegate`,
+`rankwidth.width_probe`) to localize time. Per-decision `veto_reason` strings
+are only emitted via `--stats-jsonl`.
+
+### Feasibility limit (be realistic)
+
+The DP is exponential in width: the count-table table is `~ r · 2^(treewidth+1)`
+and single-Fourier is `~ 2^(treewidth+1)` (rankwidth uses `2^cutrank` in place of
+`2^treewidth`). So instances whose treewidth is beyond roughly 20 (count-table)
+or 25 (single-Fourier) — and whose cut-rank is beyond 12 — are out of reach for
+exact solving *regardless of variable count*; no amount of deeper branching
+helps, because a single connected component that does not split just hands the
+same wide DP to the delegate. Use `sop-stats --format json` (reports
+`min_fill_width` and `prefix_cut_rank`) to check feasibility before a long run.
+
 ## QSOP Format
 
 ```text
