@@ -149,7 +149,7 @@ they import a circuit, run it through `qasm2sop`/`sop-solve` (or
 adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
 from `scripts/` for OpenQASM munging and Ganak-output parsing.
 
-## The branch backend: what and why does it run?
+## Branch backend: what and why does it run?
 
 The `branch` backend recursively branches on variables and delegates connected
 components to the treewidth or rankwidth DP once a component is cheap enough. It
