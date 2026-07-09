@@ -143,6 +143,10 @@ class Bench:
         except subprocess.TimeoutExpired:
             return "timeout", self.timeout, {}
         elapsed = time.monotonic() - started
+        if completed.returncode < 0:
+            # Killed by a signal, with no diagnostic of its own. Almost always the OOM killer on a
+            # wide DP -- do not report it as a solver refusal.
+            return f"killed:sig{-completed.returncode}", elapsed, {}
         if completed.returncode != 0:
             return f"refused:{refusal_reason(completed.stderr)}", elapsed, {}
 
@@ -199,8 +203,10 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=120.0,
                         help="per-subprocess timeout in seconds (default: the gauntlet's 120)")
     parser.add_argument("--jobs", type=int, default=1,
-                        help="run this many cases in parallel; wall times are only comparable "
-                             "across runs at the same --jobs")
+                        help="run this many cases in parallel. Only for triage: a wide DP holds "
+                             "gigabytes, so parallel cases contend for bandwidth and can OOM, "
+                             "which lands in the CSV as a refusal or a timeout that a serial run "
+                             "solves. Any number you intend to publish wants --jobs 1")
     parser.add_argument("--build", type=pathlib.Path, default=REPO_ROOT / "build")
     parser.add_argument("--solve-arg", action="append", default=[], dest="solve_args",
                         help="extra flag forwarded to sop-solve; repeatable")

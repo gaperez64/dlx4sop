@@ -1683,9 +1683,11 @@ static void note_complex64_factor_table(const tw_complex64_context_t *ctx,
 /* proj[p] is what output bit position p adds to an operand's assignment index (0 when the operand
  * does not contain that variable); pref[p] is the running sum below p. Both are indexed by output
  * bit position, so at most `arity` entries. */
+/* One entry past the widest scope, because pref is indexed at `log_block`, which reaches `arity`
+ * when the whole scope is one class. */
 typedef struct tw_projection {
-  size_t proj[TW_MAX_SCOPE_BITS];
-  size_t pref[TW_MAX_SCOPE_BITS];
+  size_t proj[TW_MAX_SCOPE_BITS + 1U];
+  size_t pref[TW_MAX_SCOPE_BITS + 1U];
   uint64_t mask;
 } tw_projection_t;
 
@@ -1697,9 +1699,9 @@ static void tw_projection_build(tw_projection_t *p, const uint32_t *positions, u
   }
   size_t running = 0;
   size_t bit = 1;
-  for (uint32_t pos = 0; pos < out_arity; pos++) {
+  for (uint32_t pos = 0; pos <= out_arity; pos++) {
     p->pref[pos] = running;
-    if ((p->mask >> pos) & 1U) {
+    if (pos < out_arity && ((p->mask >> pos) & 1U) != 0) {
       p->proj[pos] = bit;
       bit <<= 1U;
     } else {
@@ -1709,8 +1711,10 @@ static void tw_projection_build(tw_projection_t *p, const uint32_t *positions, u
   }
 }
 
-/* Advance a block base across the b-th block boundary: bit `log_block + ctz(b)` of the assignment
- * turns on and every lower bit above `log_block` turns off, exactly as in a binary counter. */
+/* Advance a block base across the b-th block boundary: assignment bit `pos` = log_block + ctz(b)
+ * turns on and every lower bit down to log_block turns off, exactly as in a binary counter. The
+ * result is a signed delta held in a size_t, so a base that decreases relies on unsigned wraparound
+ * -- which is well defined, and exact, since the true base never leaves range. */
 static inline size_t tw_projection_step(const tw_projection_t *p, uint32_t pos, uint32_t log_block) {
   return p->proj[pos] - (p->pref[pos] - p->pref[log_block]);
 }
