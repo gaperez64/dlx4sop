@@ -137,6 +137,62 @@ static int test_rank_wrapper(const qsop_simd_vtable_t *simd, const char *name) {
   return expect_u32(label, vector_rank, scalar_rank);
 }
 
+static int test_scalar_fallback_wrappers(void) {
+  const uint64_t src[] = {
+      UINT64_C(0x1111111111111111),
+      UINT64_C(0xffff0000ffff0000),
+  };
+  const uint64_t base[] = {
+      UINT64_C(0xf0f0f0f0f0f0f0f0),
+      UINT64_C(0x0123456789abcdef),
+  };
+  uint64_t row[2];
+  uint64_t expected[2];
+  const size_t words = sizeof(src) / sizeof(src[0]);
+
+  memcpy(row, base, sizeof(row));
+  for (size_t w = 0; w < words; w++) {
+    expected[w] = base[w] | src[w];
+  }
+  qsop_bitset_or_simd(row, src, words, NULL);
+  if (expect_words("null simd or fallback", row, expected, words) != 0) {
+    return 1;
+  }
+
+  memcpy(row, base, sizeof(row));
+  for (size_t w = 0; w < words; w++) {
+    expected[w] = base[w] & src[w];
+  }
+  qsop_bitset_and_simd(row, src, words, NULL);
+  if (expect_words("null simd and fallback", row, expected, words) != 0) {
+    return 1;
+  }
+
+  memcpy(row, base, sizeof(row));
+  for (size_t w = 0; w < words; w++) {
+    expected[w] = base[w] & ~src[w];
+  }
+  qsop_bitset_and_not_simd(row, src, words, NULL);
+  if (expect_words("null simd and-not fallback", row, expected, words) != 0) {
+    return 1;
+  }
+
+  const uint32_t expected_intersection = qsop_bitset_popcount_intersection(base, src, words);
+  if (expect_u32("null simd intersection fallback",
+                 qsop_bitset_popcount_intersection_simd(base, src, words, NULL),
+                 expected_intersection) != 0) {
+    return 1;
+  }
+
+  uint32_t expected_andnot = 0;
+  for (size_t w = 0; w < words; w++) {
+    expected_andnot += qsop_popcount_u64(base[w] & ~src[w]);
+  }
+  return expect_u32("null simd andnot fallback",
+                    qsop_bitset_popcount_andnot_simd(base, src, words, NULL),
+                    expected_andnot);
+}
+
 static int run_for_kernel(const qsop_simd_vtable_t *simd, const char *name) {
   int failures = 0;
   failures += test_popcount_wrappers(simd, name);
@@ -147,6 +203,7 @@ static int run_for_kernel(const qsop_simd_vtable_t *simd, const char *name) {
 
 int main(void) {
   int failures = 0;
+  failures += test_scalar_fallback_wrappers();
   failures += run_for_kernel(qsop_simd_scalar_vtable(), "scalar");
 
   const qsop_simd_vtable_t *auto_simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);

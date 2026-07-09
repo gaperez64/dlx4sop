@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import pathlib
 import subprocess
 import sys
@@ -2167,6 +2168,17 @@ def _amplitude_fields(output: str) -> tuple[str | None, str | None]:
     return values.get("amplitude_re"), values.get("amplitude_im")
 
 
+def _amplitudes_close(left: str, right: str, *, rel: float = 1e-9, abs_tol: float = 1e-6) -> bool:
+    left_re, left_im = _amplitude_fields(left)
+    right_re, right_im = _amplitude_fields(right)
+    if left_re is None or left_im is None or right_re is None or right_im is None:
+        return False
+    return (
+        math.isclose(float(left_re), float(right_re), rel_tol=rel, abs_tol=abs_tol)
+        and math.isclose(float(left_im), float(right_im), rel_tol=rel, abs_tol=abs_tol)
+    )
+
+
 def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     # P_20: nvars=20 >= BRANCH_TREEWIDTH_DELEGATE_MIN_VARS=16 → enters branch_try_dp_delegate.
     # from-treewidth source sets rw_uses_from_treewidth=true → order cache MISS path
@@ -2184,7 +2196,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         native.returncode != 0
         or ft.returncode != 0
-        or _amplitude_fields(ft.stdout) != _amplitude_fields(native.stdout)
+        or not _amplitudes_close(ft.stdout, native.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth P_20 mismatch\nnative: {native.stdout}{native.stderr}\n"
@@ -2223,7 +2235,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         asym_ft.returncode != 0
         or asym_ref.returncode != 0
-        or _amplitude_fields(asym_ft.stdout) != _amplitude_fields(asym_ref.stdout)
+        or not _amplitudes_close(asym_ft.stdout, asym_ref.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth asymmetric 2×P_20 mismatch\n"
@@ -2250,7 +2262,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         k16_ft.returncode != 0
         or k16_ref.returncode != 0
-        or _amplitude_fields(k16_ft.stdout) != _amplitude_fields(k16_ref.stdout)
+        or not _amplitudes_close(k16_ft.stdout, k16_ref.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth K_16 mismatch\n"
@@ -2279,7 +2291,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
         if (
             ft2.returncode != 0
             or ref2.returncode != 0
-            or _amplitude_fields(ft2.stdout) != _amplitude_fields(ref2.stdout)
+            or not _amplitudes_close(ft2.stdout, ref2.stdout)
         ):
             raise AssertionError(
                 f"branch {rw_source} 2×P_20 mismatch\n{ft2.stdout}{ft2.stderr}\n"

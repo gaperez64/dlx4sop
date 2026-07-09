@@ -1,7 +1,9 @@
 #include "dlx4sop/qsop.h"
+#include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/residue.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -203,6 +205,37 @@ static int test_qsop_write_errors(void) {
     return 1;
   }
 
+  error = (qsop_error_t){0};
+  if (qsop_result_write_residue_vector(NULL, NULL, &error)) {
+    fprintf(stderr, "qsop_result_write_residue_vector accepted null arguments\n");
+    return 1;
+  }
+  if (strstr(error.message, "null residue-vector write argument") == NULL) {
+    fprintf(stderr, "qsop_result_write_residue_vector returned unexpected null error: %s\n",
+            error.message);
+    return 1;
+  }
+
+  qsop_result_t *result = calloc(1, sizeof(*result));
+  if (result == NULL) {
+    return 1;
+  }
+  result->r = 2;
+  result->count_strings = calloc(result->r, sizeof(*result->count_strings));
+  if (result->count_strings == NULL) {
+    qsop_result_free(result);
+    return 1;
+  }
+  result->count_strings[0] = malloc(2);
+  result->count_strings[1] = malloc(2);
+  if (result->count_strings[0] == NULL || result->count_strings[1] == NULL) {
+    qsop_result_free(result);
+    return 1;
+  }
+  strcpy(result->count_strings[0], "1");
+  strcpy(result->count_strings[1], "3");
+  qsop_result_free(result);
+
   uint64_t unary[] = {1, 0};
   uint32_t edge_u[] = {0};
   uint32_t edge_v[] = {1};
@@ -236,6 +269,98 @@ static int test_qsop_write_errors(void) {
   return 0;
 }
 
+static int expect_close_ld(const char *name, long double actual, long double expected) {
+  if (fabsl(actual - expected) > 1e-12L) {
+    fprintf(stderr, "%s: expected %.17Lg got %.17Lg\n", name, expected, actual);
+    return 1;
+  }
+  return 0;
+}
+
+static int test_amplitude_helpers(void) {
+  qsop_amplitude_renormalize(NULL);
+  qsop_amplitude_t amp = {.re = 0.0L, .im = 0.0L, .scale_exp2 = 7};
+  qsop_amplitude_renormalize(&amp);
+  if (amp.scale_exp2 != 7) {
+    fprintf(stderr, "zero amplitude changed scale exponent\n");
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 1.25L, .im = 0.0L, .scale_exp2 = 3};
+  qsop_amplitude_renormalize(&amp);
+  if (amp.scale_exp2 != 3 || expect_close_ld("unit renormalize re", amp.re, 1.25L) != 0) {
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 8.0L, .im = -4.0L, .scale_exp2 = 1};
+  qsop_amplitude_renormalize(&amp);
+  if (amp.scale_exp2 != 4 || expect_close_ld("renormalized re", amp.re, 1.0L) != 0 ||
+      expect_close_ld("renormalized im", amp.im, -0.5L) != 0) {
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 0.5L, .im = -0.25L, .scale_exp2 = 4};
+  qsop_amplitude_renormalize(&amp);
+  if (amp.scale_exp2 != 3 || expect_close_ld("small renormalized re", amp.re, 1.0L) != 0 ||
+      expect_close_ld("small renormalized im", amp.im, -0.5L) != 0) {
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = INFINITY, .im = 1.0L, .scale_exp2 = 2};
+  qsop_amplitude_renormalize(&amp);
+  if (amp.scale_exp2 != 2 || !isinf(amp.re)) {
+    fprintf(stderr, "non-finite amplitude should not renormalize\n");
+    return 1;
+  }
+
+  qsop_amplitude_scale_pow2(NULL, 5);
+  amp = (qsop_amplitude_t){.re = 1.0L, .im = -0.5L, .scale_exp2 = 0};
+  qsop_amplitude_scale_pow2(&amp, -3);
+  if (amp.scale_exp2 != -3) {
+    fprintf(stderr, "scale_pow2 did not update exponent\n");
+    return 1;
+  }
+
+  long double re = 99.0L;
+  long double im = 99.0L;
+  if (qsop_amplitude_normalized(NULL, 0, &re, &im) ||
+      qsop_amplitude_normalized(&amp, 0, NULL, &im) ||
+      qsop_amplitude_normalized(&amp, 0, &re, NULL)) {
+    fprintf(stderr, "normalized accepted null arguments\n");
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 0.0L, .im = 0.0L, .scale_exp2 = 123};
+  if (!qsop_amplitude_normalized(&amp, 7, &re, &im) || re != 0.0L || im != 0.0L) {
+    fprintf(stderr, "zero normalized amplitude failed\n");
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 1.0L, .im = -0.5L, .scale_exp2 = 3};
+  if (!qsop_amplitude_normalized(&amp, 3, &re, &im) ||
+      expect_close_ld("normalized odd re", re, 2.8284271247461901L) != 0 ||
+      expect_close_ld("normalized odd im", im, -1.4142135623730951L) != 0) {
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = 1.0L, .im = 0.0L, .scale_exp2 = 2000000};
+  if (qsop_amplitude_normalized(&amp, 0, &re, &im)) {
+    fprintf(stderr, "normalized accepted excessive exponent\n");
+    return 1;
+  }
+  if (qsop_amplitude_normalized(&amp, UINT64_C(1) << 22, &re, &im)) {
+    fprintf(stderr, "normalized accepted excessive normalization\n");
+    return 1;
+  }
+
+  amp = (qsop_amplitude_t){.re = NAN, .im = 0.0L, .scale_exp2 = 0};
+  if (qsop_amplitude_normalized(&amp, 0, &re, &im)) {
+    fprintf(stderr, "normalized accepted non-finite value\n");
+    return 1;
+  }
+  return 0;
+}
+
 int main(void) {
   if (test_shift_add() != 0) {
     return 1;
@@ -262,6 +387,9 @@ int main(void) {
     return 1;
   }
   if (test_qsop_write_errors() != 0) {
+    return 1;
+  }
+  if (test_amplitude_helpers() != 0) {
     return 1;
   }
   return 0;
