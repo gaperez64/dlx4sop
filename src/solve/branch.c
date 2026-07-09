@@ -3246,9 +3246,13 @@ static bool branch_single_mode_delegate_component(
 
   const qsop_branch_policy_t policy = branch_policy_normalize(&options->policy);
   const qsop_branch_rw_source_t rw_source = options->rw_source;
-  const uint32_t tw_cap = options->treewidth_delegate_max_width != 0
-                              ? options->treewidth_delegate_max_width
-                              : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  /* A caller wanting "no cap" naturally writes UINT32_MAX, and tw_cap + 1 is the bag-variable limit
+   * handed to the DP -- which would wrap to zero and make it refuse every non-constant instance.
+   * Saturate, so an absurd cap means "as wide as the DP will go" rather than "nothing at all". */
+  const uint32_t tw_cap_requested = options->treewidth_delegate_max_width != 0
+                                        ? options->treewidth_delegate_max_width
+                                        : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint32_t tw_cap = tw_cap_requested == UINT32_MAX ? UINT32_MAX - 1U : tw_cap_requested;
   const uint32_t rw_cap = options->rankwidth_delegate_max_width != 0
                               ? options->rankwidth_delegate_max_width
                               : BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
