@@ -49,6 +49,12 @@ struct qsop_residual {
   uint32_t active_vars;
   uint32_t active_edges;
 
+  /* Scratch for qsop_residual_propagate, sized nvars once so the propagation worklist costs no
+   * allocation per search node. `propagate_stacked` dedupes pushes, bounding the stack by nvars. */
+  uint32_t *propagate_stack;
+  uint8_t *propagate_stacked;
+  uint32_t *propagate_neighbors;
+
   trail_entry_t *trail;
   size_t trail_len;
   size_t trail_cap;
@@ -139,8 +145,7 @@ static bool set_constant(qsop_residual_t *residual, uint64_t value, qsop_error_t
   return true;
 }
 
-static bool set_unary(qsop_residual_t *residual, uint32_t v, uint64_t value,
-                      qsop_error_t *error) {
+static bool set_unary(qsop_residual_t *residual, uint32_t v, uint64_t value, qsop_error_t *error) {
   if (residual->unary[v] == value) {
     return true;
   }
@@ -174,8 +179,8 @@ static bool set_active_incident_head(qsop_residual_t *residual, uint32_t v, uint
   if (residual->active_incident_head[v] == value) {
     return true;
   }
-  if (!push_trail(residual, TRAIL_SET_ACTIVE_INCIDENT_HEAD, v,
-                  residual->active_incident_head[v], error)) {
+  if (!push_trail(residual, TRAIL_SET_ACTIVE_INCIDENT_HEAD, v, residual->active_incident_head[v],
+                  error)) {
     return false;
   }
   residual->active_incident_head[v] = value;
@@ -187,8 +192,7 @@ static bool set_incident_next(qsop_residual_t *residual, uint32_t slot, uint32_t
   if (residual->incident_next[slot] == value) {
     return true;
   }
-  if (!push_trail(residual, TRAIL_SET_INCIDENT_NEXT, slot, residual->incident_next[slot],
-                  error)) {
+  if (!push_trail(residual, TRAIL_SET_INCIDENT_NEXT, slot, residual->incident_next[slot], error)) {
     return false;
   }
   residual->incident_next[slot] = value;
@@ -200,16 +204,14 @@ static bool set_incident_prev(qsop_residual_t *residual, uint32_t slot, uint32_t
   if (residual->incident_prev[slot] == value) {
     return true;
   }
-  if (!push_trail(residual, TRAIL_SET_INCIDENT_PREV, slot, residual->incident_prev[slot],
-                  error)) {
+  if (!push_trail(residual, TRAIL_SET_INCIDENT_PREV, slot, residual->incident_prev[slot], error)) {
     return false;
   }
   residual->incident_prev[slot] = value;
   return true;
 }
 
-static bool unlink_incidence_slot(qsop_residual_t *residual, uint32_t slot,
-                                  qsop_error_t *error) {
+static bool unlink_incidence_slot(qsop_residual_t *residual, uint32_t slot, qsop_error_t *error) {
   if (slot == RESIDUAL_NIL) {
     return true;
   }
@@ -217,8 +219,7 @@ static bool unlink_incidence_slot(qsop_residual_t *residual, uint32_t slot,
   const uint32_t var = residual->incident_var[slot];
   const uint32_t prev = residual->incident_prev[slot];
   const uint32_t next = residual->incident_next[slot];
-  if ((prev == RESIDUAL_NIL &&
-       !set_active_incident_head(residual, var, next, error)) ||
+  if ((prev == RESIDUAL_NIL && !set_active_incident_head(residual, var, next, error)) ||
       (prev != RESIDUAL_NIL && !set_incident_next(residual, prev, next, error)) ||
       (next != RESIDUAL_NIL && !set_incident_prev(residual, next, prev, error)) ||
       !set_incident_prev(residual, slot, RESIDUAL_NIL, error) ||
@@ -257,8 +258,8 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
   const bool self_loop = u == v;
   const size_t incidence_entries = self_loop ? 4U : 8U;
   const size_t trail_entries = (self_loop ? 2U : 3U) + incidence_entries;
-  if (!active && (residual->active_degree[u] == 0 ||
-                  (!self_loop && residual->active_degree[v] == 0))) {
+  if (!active &&
+      (residual->active_degree[u] == 0 || (!self_loop && residual->active_degree[v] == 0))) {
     set_error(error, "internal error: residual degree underflow");
     return false;
   }
@@ -313,21 +314,16 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
 
   residual->incident_offset =
       calloc((size_t)residual->nvars + 1U, sizeof(*residual->incident_offset));
-  residual->incident_edge =
-      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
-             sizeof(*residual->incident_edge));
-  residual->incident_var =
-      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
-             sizeof(*residual->incident_var));
-  residual->incident_next =
-      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
-             sizeof(*residual->incident_next));
-  residual->incident_prev =
-      malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
-             sizeof(*residual->incident_prev));
-  residual->active_incident_head =
-      malloc((residual->nvars == 0 ? 1U : residual->nvars) *
-             sizeof(*residual->active_incident_head));
+  residual->incident_edge = malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+                                   sizeof(*residual->incident_edge));
+  residual->incident_var = malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+                                  sizeof(*residual->incident_var));
+  residual->incident_next = malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+                                   sizeof(*residual->incident_next));
+  residual->incident_prev = malloc((incidence_count == 0 ? 1U : (size_t)incidence_count) *
+                                   sizeof(*residual->incident_prev));
+  residual->active_incident_head = malloc((residual->nvars == 0 ? 1U : residual->nvars) *
+                                          sizeof(*residual->active_incident_head));
   residual->edge_slot_u =
       malloc((residual->nedges == 0 ? 1U : residual->nedges) * sizeof(*residual->edge_slot_u));
   residual->edge_slot_v =
@@ -390,8 +386,7 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
   return true;
 }
 
-bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
-                          qsop_error_t *error) {
+bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out, qsop_error_t *error) {
   if (out == NULL) {
     set_error(error, "internal error: null residual output");
     return false;
@@ -423,8 +418,16 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
       malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*residual->active_var));
   residual->active_edge =
       malloc((qsop->nedges == 0 ? 1U : qsop->nedges) * sizeof(*residual->active_edge));
+  residual->propagate_stack =
+      malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*residual->propagate_stack));
+  residual->propagate_stacked =
+      calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*residual->propagate_stacked));
+  residual->propagate_neighbors =
+      malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*residual->propagate_neighbors));
   if (residual->unary == NULL || residual->edge_u == NULL || residual->edge_v == NULL ||
-      residual->active_var == NULL || residual->active_edge == NULL) {
+      residual->active_var == NULL || residual->active_edge == NULL ||
+      residual->propagate_stack == NULL || residual->propagate_stacked == NULL ||
+      residual->propagate_neighbors == NULL) {
     qsop_residual_free(residual);
     set_error(error, "out of memory while copying residual state");
     return false;
@@ -465,6 +468,9 @@ void qsop_residual_free(qsop_residual_t *residual) {
   free(residual->active_degree);
   free(residual->active_var);
   free(residual->active_edge);
+  free(residual->propagate_stack);
+  free(residual->propagate_stacked);
+  free(residual->propagate_neighbors);
   free(residual->trail);
   free(residual);
 }
@@ -571,8 +577,7 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
 
       if (other != UINT32_MAX && residual->active_var[other] != 0 &&
           !set_unary(residual, other,
-                     add_mod_u64(residual->unary[other], residual->r / 2U, residual->r),
-                     error)) {
+                     add_mod_u64(residual->unary[other], residual->r / 2U, residual->r), error)) {
         return false;
       }
     }
@@ -588,6 +593,145 @@ bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
   }
 
   return set_var_active(residual, v, false, error);
+}
+
+/* The single active neighbour of a degree-1 variable, or RESIDUAL_NIL. */
+static uint32_t residual_only_neighbor(const qsop_residual_t *residual, uint32_t v) {
+  for (uint32_t slot = residual->active_incident_head[v]; slot != RESIDUAL_NIL;
+       slot = residual->incident_next[slot]) {
+    const uint32_t e = residual->incident_edge[slot];
+    uint32_t other = RESIDUAL_NIL;
+    if (residual->edge_u[e] == v) {
+      other = residual->edge_v[e];
+    } else if (residual->edge_v[e] == v) {
+      other = residual->edge_u[e];
+    }
+    if (other != RESIDUAL_NIL && other != v && residual->active_var[other] != 0) {
+      return other;
+    }
+  }
+  return RESIDUAL_NIL;
+}
+
+/* Sum out, to a fixpoint, every active variable v whose unary coefficient is a multiple of r/2 and
+ * whose active degree is at most 1. Because omega^(r/2) = -1, writing s = 2*unary[v]/r in {0,1} and
+ * S for the sum of v's active neighbours,
+ *
+ *   sum_{x_v} omega^{x_v*(unary[v] + (r/2)*S)} = 1 + (-1)^(s + S) = 2 * [S == s (mod 2)],
+ *
+ * so v factors out exactly, doubling the amplitude and imposing S == s. At degree 0 that constraint
+ * reads 0 == s: a factor of 2 when s == 0, and *zero amplitude* when s == 1 -- the conflict that
+ * lets a whole subtree be pruned. At degree 1 it pins the neighbour to s.
+ *
+ * This is the search-time twin of qsop_simplify_hadamard, and the same caveat applies: it is exact
+ * for the amplitude (and for any odd Fourier mode), not for the residue histogram, because it drops
+ * assignment pairs that cancel in the amplitude while landing in distinct residues. Callers must
+ * gate on an odd target mode.
+ *
+ * *out_doublings receives the number of eliminations, so the caller multiplies its amplitude by
+ * 2^doublings; the residual itself is only ever shrunk, through the ordinary trail-recorded
+ * qsop_residual_branch, so a checkpoint taken beforehand undoes the whole cascade.
+ *
+ * The degree-2 (merge) rule that qsop_simplify_hadamard also implements is deliberately absent: it
+ * rewires edges, and the branch backend relies on the residual staying an induced subgraph. */
+bool qsop_residual_propagate(qsop_residual_t *residual, uint32_t *out_doublings, bool *out_zero,
+                             qsop_error_t *error) {
+  if (residual == NULL || out_doublings == NULL || out_zero == NULL) {
+    set_error(error, "internal error: null residual propagate argument");
+    return false;
+  }
+  *out_doublings = 0;
+  *out_zero = false;
+  if (residual->r < 2U || (residual->r % 2U) != 0U) {
+    return true; /* the sign format needs an even modulus; nothing safe to fold otherwise */
+  }
+  const uint64_t half = residual->r / 2U;
+
+  /* Eligibility is unary[v] mod (r/2), which branching never changes: qsop_residual_branch only
+   * ever adds r/2 to a neighbour. So a variable's eligibility is fixed, and only its degree moves.
+   * That is why the worklist below is seeded once and then fed purely by degree changes. */
+  uint32_t top = 0;
+  for (uint32_t v = 0; v < residual->nvars; v++) {
+    if (residual->active_var[v] != 0 && residual->active_degree[v] <= 1U &&
+        residual->unary[v] % half == 0U) {
+      residual->propagate_stack[top++] = v;
+      residual->propagate_stacked[v] = 1U;
+    }
+  }
+
+  bool ok = true;
+  while (top != 0 && ok) {
+    const uint32_t v = residual->propagate_stack[--top];
+    residual->propagate_stacked[v] = 0U;
+    if (residual->active_var[v] == 0 || residual->active_degree[v] > 1U ||
+        residual->unary[v] % half != 0U) {
+      continue;
+    }
+
+    const uint8_t pin_value = residual->unary[v] == half ? 1U : 0U;
+
+    if (residual->active_degree[v] == 0U) {
+      if (pin_value == 1U) {
+        /* factor 1 + omega^(r/2) == 0 */
+        *out_zero = true;
+        break;
+      }
+      ok = qsop_residual_branch(residual, v, 0U, error);
+      if (ok) {
+        (*out_doublings)++;
+      }
+      continue;
+    }
+
+    const uint32_t a = residual_only_neighbor(residual, v);
+    if (a == RESIDUAL_NIL) {
+      set_error(error, "internal error: residual degree-1 variable has no active neighbour");
+      return false;
+    }
+
+    /* Snapshot a's other neighbours: pinning a deactivates it and its edges, after which its
+     * incidence list can no longer be walked, yet those are exactly the variables whose degree
+     * (and, when pin_value is 1, unary) just changed. */
+    uint32_t nrelated = 0;
+    for (uint32_t slot = residual->active_incident_head[a]; slot != RESIDUAL_NIL;
+         slot = residual->incident_next[slot]) {
+      const uint32_t e = residual->incident_edge[slot];
+      uint32_t other = RESIDUAL_NIL;
+      if (residual->edge_u[e] == a) {
+        other = residual->edge_v[e];
+      } else if (residual->edge_v[e] == a) {
+        other = residual->edge_u[e];
+      }
+      if (other != RESIDUAL_NIL && other != a && other != v && residual->active_var[other] != 0) {
+        residual->propagate_neighbors[nrelated++] = other;
+      }
+    }
+
+    /* Branching v to 0 retires it and its single edge without touching the constant or any unary --
+     * exactly the "sum x_v out" step, whose factor of 2 is accounted separately. Then apply the
+     * constraint it left behind. */
+    ok = qsop_residual_branch(residual, v, 0U, error) &&
+         qsop_residual_branch(residual, a, pin_value, error);
+    if (!ok) {
+      break;
+    }
+    (*out_doublings)++;
+
+    for (uint32_t i = 0; i < nrelated; i++) {
+      const uint32_t w = residual->propagate_neighbors[i];
+      if (residual->active_var[w] != 0 && residual->propagate_stacked[w] == 0U) {
+        residual->propagate_stack[top++] = w;
+        residual->propagate_stacked[w] = 1U;
+      }
+    }
+  }
+
+  /* The stack is abandoned on a zero certificate or an error; clear the dedupe marks so the next
+   * call starts clean. */
+  while (top != 0) {
+    residual->propagate_stacked[residual->propagate_stack[--top]] = 0U;
+  }
+  return ok;
 }
 
 uint64_t qsop_residual_modulus(const qsop_residual_t *residual) {
@@ -818,8 +962,8 @@ bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint3
   return qsop_residual_split_without_var(residual, removed, out, &largest, error);
 }
 
-static bool validate_active_variable(const qsop_residual_t *residual, uint32_t v,
-                                     const char *what, qsop_error_t *error) {
+static bool validate_active_variable(const qsop_residual_t *residual, uint32_t v, const char *what,
+                                     qsop_error_t *error) {
   if (residual == NULL) {
     set_error(error, "internal error: null residual state");
     return false;
@@ -901,9 +1045,8 @@ bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint3
   return true;
 }
 
-bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual,
-                                              uint32_t removed, uint32_t *out,
-                                              qsop_error_t *error) {
+bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                              uint32_t *out, qsop_error_t *error) {
   if (out == NULL) {
     set_error(error, "internal error: null residual min-fill width output");
     return false;

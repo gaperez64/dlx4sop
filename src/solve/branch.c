@@ -1,8 +1,8 @@
+#include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
-#include "component_key.h"
 #include "trace.h"
 
 #include <float.h>
@@ -16,18 +16,18 @@
 /* ---------------------------------------------------------------------------
  * Private policy defaults (kept out of the public header).
  * --------------------------------------------------------------------------- */
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH       2U
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST    512UL
-#define BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS  16U
-#define BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS    4U
-#define BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS  20000UL
-#define BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS  10000UL
-#define BRANCH_POLICY_DEFAULT_C_RW_TABLE             80UL
-#define BRANCH_POLICY_DEFAULT_C_RW_JOIN              40UL
-#define BRANCH_POLICY_DEFAULT_C_RW_SIG             2000UL
-#define BRANCH_POLICY_DEFAULT_C_TW_TABLE             20UL
-#define BRANCH_POLICY_DEFAULT_C_TW_JOIN              10UL
-#define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP        1.1
+#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH 2U
+#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST 512UL
+#define BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS 16U
+#define BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS 4U
+#define BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS 20000UL
+#define BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS 10000UL
+#define BRANCH_POLICY_DEFAULT_C_RW_TABLE 80UL
+#define BRANCH_POLICY_DEFAULT_C_RW_JOIN 40UL
+#define BRANCH_POLICY_DEFAULT_C_RW_SIG 2000UL
+#define BRANCH_POLICY_DEFAULT_C_TW_TABLE 20UL
+#define BRANCH_POLICY_DEFAULT_C_TW_JOIN 10UL
+#define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP 1.1
 #define BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS 64U
 #define BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES UINT64_C(10000000)
 #define BRANCH_SINGLE_DEFAULT_CACHE_BUDGET_MIB 256U
@@ -45,18 +45,30 @@
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {
   qsop_branch_policy_t p = in != NULL ? *in : (qsop_branch_policy_t){0};
-  if (!p.rw_min_treewidth_width)    p.rw_min_treewidth_width    = BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH;
-  if (!p.rw_min_treewidth_forecast) p.rw_min_treewidth_forecast = BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST;
-  if (!p.rw_min_residual_vars)      p.rw_min_residual_vars      = BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS;
-  if (!p.rw_low_rank_bypass)        p.rw_low_rank_bypass        = BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS;
-  if (!p.rw_fixed_overhead_ns)      p.rw_fixed_overhead_ns      = BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS;
-  if (!p.tw_fixed_overhead_ns)      p.tw_fixed_overhead_ns      = BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS;
-  if (!p.C_rw_table)                p.C_rw_table                = BRANCH_POLICY_DEFAULT_C_RW_TABLE;
-  if (!p.C_rw_join)                 p.C_rw_join                 = BRANCH_POLICY_DEFAULT_C_RW_JOIN;
-  if (!p.C_rw_sig)                  p.C_rw_sig                  = BRANCH_POLICY_DEFAULT_C_RW_SIG;
-  if (!p.C_tw_table)                p.C_tw_table                = BRANCH_POLICY_DEFAULT_C_TW_TABLE;
-  if (!p.C_tw_join)                 p.C_tw_join                 = BRANCH_POLICY_DEFAULT_C_TW_JOIN;
-  if (p.rw_min_speedup <= 0.0)      p.rw_min_speedup            = BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP;
+  if (!p.rw_min_treewidth_width)
+    p.rw_min_treewidth_width = BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH;
+  if (!p.rw_min_treewidth_forecast)
+    p.rw_min_treewidth_forecast = BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST;
+  if (!p.rw_min_residual_vars)
+    p.rw_min_residual_vars = BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS;
+  if (!p.rw_low_rank_bypass)
+    p.rw_low_rank_bypass = BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS;
+  if (!p.rw_fixed_overhead_ns)
+    p.rw_fixed_overhead_ns = BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS;
+  if (!p.tw_fixed_overhead_ns)
+    p.tw_fixed_overhead_ns = BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS;
+  if (!p.C_rw_table)
+    p.C_rw_table = BRANCH_POLICY_DEFAULT_C_RW_TABLE;
+  if (!p.C_rw_join)
+    p.C_rw_join = BRANCH_POLICY_DEFAULT_C_RW_JOIN;
+  if (!p.C_rw_sig)
+    p.C_rw_sig = BRANCH_POLICY_DEFAULT_C_RW_SIG;
+  if (!p.C_tw_table)
+    p.C_tw_table = BRANCH_POLICY_DEFAULT_C_TW_TABLE;
+  if (!p.C_tw_join)
+    p.C_tw_join = BRANCH_POLICY_DEFAULT_C_TW_JOIN;
+  if (p.rw_min_speedup <= 0.0)
+    p.rw_min_speedup = BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP;
   return p;
 }
 
@@ -97,15 +109,13 @@ static void branch_jsonl_write_string(FILE *f, const char *s) {
   fputc('"', f);
 }
 
-static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink,
-                                     uint32_t n_active_vars, uint32_t n_active_edges,
-                                     uint32_t modulus_r, const char *backend_chosen,
-                                     const char *veto_reason, double tw_probe_ms,
-                                     bool tw_width_set, uint32_t tw_width,
+static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink, uint32_t n_active_vars,
+                                     uint32_t n_active_edges, uint32_t modulus_r,
+                                     const char *backend_chosen, const char *veto_reason,
+                                     double tw_probe_ms, bool tw_width_set, uint32_t tw_width,
                                      bool tw_forecast_set, uint64_t tw_forecast_entries,
                                      uint64_t tw_forecast_join_pairs, bool tw_actual_set,
-                                     double tw_actual_ms,
-                                     const branch_rw_decision_data_t *rw) {
+                                     double tw_actual_ms, const branch_rw_decision_data_t *rw) {
   if (sink == NULL || sink->file == NULL) {
     return;
   }
@@ -243,11 +253,15 @@ typedef struct branch_order_cache {
 
 static uint64_t branch_order_adj_fp(const qsop_instance_t *sub) {
   uint64_t fp = UINT64_C(1469598103934665603);
-  fp ^= (uint64_t)sub->nvars;  fp *= UINT64_C(1099511628211);
-  fp ^= (uint64_t)sub->nedges; fp *= UINT64_C(1099511628211);
+  fp ^= (uint64_t)sub->nvars;
+  fp *= UINT64_C(1099511628211);
+  fp ^= (uint64_t)sub->nedges;
+  fp *= UINT64_C(1099511628211);
   for (uint32_t e = 0; e < sub->nedges; e++) {
-    fp ^= (uint64_t)sub->edge_u[e]; fp *= UINT64_C(1099511628211);
-    fp ^= (uint64_t)sub->edge_v[e]; fp *= UINT64_C(1099511628211);
+    fp ^= (uint64_t)sub->edge_u[e];
+    fp *= UINT64_C(1099511628211);
+    fp ^= (uint64_t)sub->edge_v[e];
+    fp *= UINT64_C(1099511628211);
   }
   return fp;
 }
@@ -260,9 +274,8 @@ static void branch_order_cache_free_entries(branch_order_cache_t *c) {
 }
 
 /* Returns a malloc'd copy of a cached order; NULL if not found. */
-static uint32_t *branch_order_cache_lookup(branch_order_cache_t *c,
-                                            const qsop_instance_t *sub, uint64_t fp,
-                                            uint32_t *width_out) {
+static uint32_t *branch_order_cache_lookup(branch_order_cache_t *c, const qsop_instance_t *sub,
+                                           uint64_t fp, uint32_t *width_out) {
   for (uint32_t i = 0; i < BRANCH_ORDER_CACHE_CAP; i++) {
     const branch_order_cache_entry_t *e = &c->slots[i];
     if (e->order != NULL && e->fp == fp && e->nvars == sub->nvars && e->nedges == sub->nedges) {
@@ -279,7 +292,7 @@ static uint32_t *branch_order_cache_lookup(branch_order_cache_t *c,
 }
 
 static void branch_order_cache_insert(branch_order_cache_t *c, const qsop_instance_t *sub,
-                                       uint64_t fp, const uint32_t *order, uint32_t width) {
+                                      uint64_t fp, const uint32_t *order, uint32_t width) {
   const uint32_t slot = c->next % BRANCH_ORDER_CACHE_CAP;
   free(c->slots[slot].order);
   c->slots[slot].order = NULL;
@@ -330,7 +343,7 @@ typedef struct branch_search_stats {
   qsop_backend_stats_sink_t *sink;
   qsop_branch_heuristic_t heuristic;
   qsop_branch_rw_source_t rw_source;
-  qsop_branch_policy_t policy;  /* effective tuning policy (defaults resolved at init) */
+  qsop_branch_policy_t policy; /* effective tuning policy (defaults resolved at init) */
   qsop_solve_mode_t mode;
   uint64_t count_modulus;
   uint32_t depth;
@@ -354,7 +367,7 @@ typedef struct branch_search_stats {
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS (BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH + 1U)
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS 2500U
 #define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH 25U
-#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS \
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS                                              \
   (BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
@@ -371,7 +384,7 @@ typedef struct branch_search_stats {
 #define BRANCH_DELEGATION_DEPTH_TOP_K 6U
 
 static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
-                                             qsop_error_t *error);
+                                              qsop_error_t *error);
 
 static void free_subinstance(qsop_instance_t *sub) {
   if (sub == NULL) {
@@ -521,9 +534,8 @@ static bool add_counts(uint32_t r, uint64_t *dst, const uint64_t *src,
   return true;
 }
 
-static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src,
-                                    uint32_t shift, const branch_search_stats_t *stats,
-                                    qsop_error_t *error) {
+static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
+                                    const branch_search_stats_t *stats, qsop_error_t *error) {
   if (r == 0 || dst == NULL || src == NULL) {
     set_error(error, "internal error: invalid branch residue shift-add argument");
     return false;
@@ -543,8 +555,8 @@ static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *s
 }
 
 static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
-                                   const uint64_t *right,
-                                   const branch_search_stats_t *stats, qsop_error_t *error) {
+                                   const uint64_t *right, const branch_search_stats_t *stats,
+                                   qsop_error_t *error) {
   if (r == 0 || dst == NULL || left == NULL || right == NULL) {
     set_error(error, "internal error: invalid branch residue convolution argument");
     return false;
@@ -594,8 +606,8 @@ static bool branch_counts_to_fourier(uint32_t r, const uint64_t *counts, const u
   return true;
 }
 
-static bool branch_fourier_multiply(uint32_t r, uint64_t *acc, const uint64_t *part,
-                                    uint64_t prime, qsop_error_t *error) {
+static bool branch_fourier_multiply(uint32_t r, uint64_t *acc, const uint64_t *part, uint64_t prime,
+                                    qsop_error_t *error) {
   if (r == 0 || acc == NULL || part == NULL) {
     set_error(error, "internal error: invalid branch Fourier multiply argument");
     return false;
@@ -741,15 +753,14 @@ static bool residual_cache_key_create_canonical_small(const qsop_residual_t *res
   if (!build_active_residual_subinstance(residual, &sub, error)) {
     return false;
   }
-  const bool ok = residual_cache_key_create_from_instance(
-      &sub, qsop_residual_constant(residual), key, error);
+  const bool ok =
+      residual_cache_key_create_from_instance(&sub, qsop_residual_constant(residual), key, error);
   free_subinstance(&sub);
   return ok;
 }
 
 static bool residual_cache_key_create_for_store(const qsop_residual_t *residual,
-                                                residual_cache_key_t *key,
-                                                qsop_error_t *error) {
+                                                residual_cache_key_t *key, qsop_error_t *error) {
   if (qsop_residual_active_vars(residual) <= BRANCH_SMALL_COMPONENT_CANONICAL_NVARS) {
     return residual_cache_key_create_canonical_small(residual, key, error);
   }
@@ -820,8 +831,8 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
 }
 
 static bool residual_cache_find(const residual_cache_t *cache, const qsop_residual_t *residual,
-                                const residual_cache_entry_t **out,
-                                bool *out_canonical_lookup, qsop_error_t *error) {
+                                const residual_cache_entry_t **out, bool *out_canonical_lookup,
+                                qsop_error_t *error) {
   *out = NULL;
   if (out_canonical_lookup != NULL) {
     *out_canonical_lookup = false;
@@ -1002,15 +1013,12 @@ static uint64_t residual_cache_key_bytes(const residual_cache_t *cache) {
   uint64_t bytes = 0;
   for (size_t i = 0; i < cache->len; i++) {
     const residual_cache_key_t *key = &cache->entries[i].key;
-    add_saturating_u64(&bytes,
-                       saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
+    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
     add_saturating_u64(&bytes,
                        saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
-    add_saturating_u64(&bytes,
-                       saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
-    add_saturating_u64(
-        &bytes, saturating_mul_u64(saturating_mul_u64((uint64_t)key->nedges, 3U),
-                                   sizeof(*key->edge_u)));
+    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
+    add_saturating_u64(&bytes, saturating_mul_u64(saturating_mul_u64((uint64_t)key->nedges, 3U),
+                                                  sizeof(*key->edge_u)));
   }
   return bytes;
 }
@@ -1018,17 +1026,16 @@ static uint64_t residual_cache_key_bytes(const residual_cache_t *cache) {
 static uint64_t residual_cache_count_bytes(const residual_cache_t *cache) {
   uint64_t bytes = 0;
   for (size_t i = 0; i < cache->len; i++) {
-    add_saturating_u64(
-        &bytes, saturating_mul_u64((uint64_t)cache->entries[i].key.r,
-                                   sizeof(*cache->entries[i].counts)));
+    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)cache->entries[i].key.r,
+                                                  sizeof(*cache->entries[i].counts)));
   }
   return bytes;
 }
 
 static uint64_t residual_cache_estimated_bytes(const residual_cache_t *cache) {
   uint64_t bytes = saturating_mul_u64((uint64_t)cache->cap, sizeof(*cache->entries));
-  add_saturating_u64(
-      &bytes, saturating_mul_u64((uint64_t)cache->bucket_count, sizeof(*cache->buckets)));
+  add_saturating_u64(&bytes,
+                     saturating_mul_u64((uint64_t)cache->bucket_count, sizeof(*cache->buckets)));
   add_saturating_u64(&bytes, residual_cache_key_bytes(cache));
   add_saturating_u64(&bytes, residual_cache_count_bytes(cache));
   return bytes;
@@ -1108,7 +1115,7 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
 }
 
 static bool build_active_residual_subinstance(const qsop_residual_t *residual, qsop_instance_t *sub,
-                                             qsop_error_t *error) {
+                                              qsop_error_t *error) {
   const uint32_t nvars = qsop_residual_nvars(residual);
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
   if (component == NULL) {
@@ -1123,8 +1130,7 @@ static bool build_active_residual_subinstance(const qsop_residual_t *residual, q
   return ok;
 }
 
-static void merge_delegated_stats(branch_search_stats_t *stats,
-                                  const qsop_solve_stats_t *delegated,
+static void merge_delegated_stats(branch_search_stats_t *stats, const qsop_solve_stats_t *delegated,
                                   uint32_t delegated_nvars) {
   add_saturating_u64(&stats->leaves, assignment_count(delegated_nvars));
   add_saturating_u64(&stats->treewidth_delegations, delegated->treewidth_delegations);
@@ -1179,8 +1185,8 @@ static bool rankwidth_should_override_treewidth(uint32_t treewidth_width, uint32
  * formula are identical. With no treewidth competitor, rankwidth is favored. */
 static bool branch_cost_model_favors_rankwidth(const qsop_branch_policy_t *pol,
                                                bool treewidth_available, uint64_t rw_table,
-                                               uint64_t rw_join, uint64_t rw_sig,
-                                               uint64_t tw_table, uint64_t tw_join) {
+                                               uint64_t rw_join, uint64_t rw_sig, uint64_t tw_table,
+                                               uint64_t tw_join) {
   if (!treewidth_available) {
     return true;
   }
@@ -1241,14 +1247,12 @@ bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
 /* precomputed_order: if non-NULL, used instead of running min-fill inside the from-treewidth
  * generator (D2 optimization: share one min-fill run with the treewidth solver path). */
 static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
-                                          uint32_t treewidth_width,
-                                          uint32_t prefix_cut_rank,
-                                          bool treewidth_available,
-                                          uint32_t constant_shift,
+                                          uint32_t treewidth_width, uint32_t prefix_cut_rank,
+                                          bool treewidth_available, uint32_t constant_shift,
                                           const uint32_t *precomputed_order,
                                           branch_search_stats_t *stats,
-                                          branch_rw_decision_data_t *rw_data,
-                                          bool *out_delegated, qsop_error_t *error) {
+                                          branch_rw_decision_data_t *rw_data, bool *out_delegated,
+                                          qsop_error_t *error) {
   *out_delegated = false;
   /* NONE policy: skip rankwidth entirely without any attempt. */
   if (stats->rw_source == QSOP_BRANCH_RW_SOURCE_NONE) {
@@ -1290,8 +1294,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       return true;
     }
     if (treewidth_table <= pol->rw_min_treewidth_forecast) {
-      note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_forecast_cheap",
-                          treewidth_table);
+      note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_forecast_cheap", treewidth_table);
       if (rw_data != NULL) {
         rw_data->veto_reason = "treewidth-forecast-cheap";
         rw_data->attempted = false;
@@ -1300,8 +1303,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     }
     const uint32_t n_active = sub->nvars;
     if (n_active < pol->rw_min_residual_vars && treewidth_width <= 5U) {
-      note_rankwidth_skip(stats, "branch.rankwidth_skip_small_residual_treewidth_cheap",
-                          n_active);
+      note_rankwidth_skip(stats, "branch.rankwidth_skip_small_residual_treewidth_cheap", n_active);
       if (rw_data != NULL) {
         rw_data->veto_reason = "small-residual-treewidth-cheap";
         rw_data->attempted = false;
@@ -1349,8 +1351,7 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
   const uint64_t generate_start_ns = qsop_trace_now_ns();
   const uint64_t generate_start = qsop_trace_begin(stats->trace);
   const bool use_precomputed =
-      precomputed_order != NULL &&
-      primary_gen == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
+      precomputed_order != NULL && primary_gen == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
   const bool gen_ok =
       use_precomputed
           ? qsop_rankwidth_decomposition_from_order(sub, precomputed_order, &decomposition, error)
@@ -1391,7 +1392,8 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
       if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join,
                                                 NULL)) {
         if (native_table < rankwidth_table_forecast ||
-            (native_table == rankwidth_table_forecast && native_join < rankwidth_join_pair_forecast)) {
+            (native_table == rankwidth_table_forecast &&
+             native_join < rankwidth_join_pair_forecast)) {
           qsop_rankwidth_decomposition_free(decomposition);
           decomposition = native_dec;
           native_dec = NULL;
@@ -1434,14 +1436,13 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     /* Signature count estimate: 2^cutrank_width (table forecast carries an extra r factor). */
     const uint64_t sig_est = sub->r > 0 ? (rankwidth_table_forecast / sub->r)
                                         : binary_assignment_forecast(cutrank_width);
-    cost_model_rejects = !branch_cost_model_favors_rankwidth(
-        pol, true, rankwidth_table_forecast, rankwidth_join_pair_forecast, sig_est, treewidth_table,
-        treewidth_join_pairs);
+    cost_model_rejects = !branch_cost_model_favors_rankwidth(pol, true, rankwidth_table_forecast,
+                                                             rankwidth_join_pair_forecast, sig_est,
+                                                             treewidth_table, treewidth_join_pairs);
   }
 
   const bool use_rankwidth =
-      !cost_model_rejects &&
-      rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
+      !cost_model_rejects && rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
       (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
        rankwidth_should_override_treewidth(treewidth_width, cutrank_width, treewidth_table));
   if (!use_rankwidth || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
@@ -1555,15 +1556,13 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
    * When min_fill_width <= cap, we still want MIN_FILL_MAX_DEGREE order for treewidth quality,
    * so we use qsop_treewidth_order_alloc as before.
    * For nvars > 63, compute_width_diagnostics uses the large path and cannot capture the order. */
-  const bool rw_uses_from_treewidth =
-      (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
-       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
-       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH);
+  const bool rw_uses_from_treewidth = (stats->rw_source == QSOP_BRANCH_RW_SOURCE_FROM_TREEWIDTH ||
+                                       stats->rw_source == QSOP_BRANCH_RW_SOURCE_AUTO ||
+                                       stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH);
   /* Allocate a buffer for the stats order before calling compute_stats_with_order.
    * Only useful for wide instances (treewidth won't be tried) with nvars <= 63. */
   uint32_t *order_from_stats = NULL;
-  const bool want_stats_order =
-      rw_uses_from_treewidth && sub.nvars > 0 && sub.nvars <= 63U;
+  const bool want_stats_order = rw_uses_from_treewidth && sub.nvars > 0 && sub.nvars <= 63U;
   if (want_stats_order) {
     order_from_stats = calloc(sub.nvars, sizeof(*order_from_stats));
     if (order_from_stats == NULL) {
@@ -1602,8 +1601,8 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     const uint64_t order_start_ns_pre = recording ? qsop_trace_now_ns() : 0;
     const uint64_t order_start_pre = qsop_trace_begin(stats->trace);
     shared_order_adj_fp = branch_order_adj_fp(&sub);
-    shared_order = branch_order_cache_lookup(&stats->order_cache, &sub,
-                                             shared_order_adj_fp, &shared_order_width);
+    shared_order = branch_order_cache_lookup(&stats->order_cache, &sub, shared_order_adj_fp,
+                                             &shared_order_width);
     if (shared_order != NULL) {
       free(order_from_stats);
       order_from_stats = NULL;
@@ -1612,19 +1611,19 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       shared_order = order_from_stats;
       order_from_stats = NULL;
       shared_order_width = sub_stats.min_fill_width;
-      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp,
-                                shared_order, shared_order_width);
+      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp, shared_order,
+                                shared_order_width);
     } else {
       /* Narrow instance: use MIN_FILL_MAX_DEGREE for best treewidth bag quality. */
       free(order_from_stats);
       order_from_stats = NULL;
-      if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
-                                      &shared_order, &shared_order_width, error)) {
+      if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &shared_order,
+                                      &shared_order_width, error)) {
         free_subinstance(&sub);
         return false;
       }
-      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp,
-                                shared_order, shared_order_width);
+      branch_order_cache_insert(&stats->order_cache, &sub, shared_order_adj_fp, shared_order,
+                                shared_order_width);
     }
     qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
                             shared_order_width, order_start_pre);
@@ -1638,11 +1637,10 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   bool delegated = false;
   branch_rw_decision_data_t rw_data = {0};
   branch_rw_decision_data_t *rw_ptr = recording ? &rw_data : NULL;
-  if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
-                                     sub_stats.prefix_cut_rank,
-                                     sub_stats.width_diagnostics_available,
-                                     (uint32_t)qsop_residual_constant(residual), shared_order,
-                                     stats, rw_ptr, &delegated, error)) {
+  if (!branch_try_rankwidth_delegate(
+          &sub, counts, sub_stats.min_fill_width, sub_stats.prefix_cut_rank,
+          sub_stats.width_diagnostics_available, (uint32_t)qsop_residual_constant(residual),
+          shared_order, stats, rw_ptr, &delegated, error)) {
     free(shared_order);
     free_subinstance(&sub);
     return false;
@@ -1652,8 +1650,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     double tw_cal_ms = 0.0;
     bool tw_cal_set = false;
     uint32_t tw_cal_width = shared_order_width;
-    const bool rw_won_fourier =
-        stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
+    const bool rw_won_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
     if (!rw_won_fourier && calibrate && sub_stats.width_diagnostics_available &&
         sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
       /* Reuse shared_order if precomputed; otherwise compute fresh. */
@@ -1661,8 +1658,8 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       bool cal_order_owned = false;
       if (cal_order == NULL) {
         qsop_error_t cal_err = {0};
-        if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE,
-                                        &cal_order, &tw_cal_width, &cal_err)) {
+        if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &cal_order,
+                                        &tw_cal_width, &cal_err)) {
           cal_order = NULL;
         } else {
           cal_order_owned = true;
@@ -1684,18 +1681,17 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       } else {
         tw_cal_width = 0;
       }
-      if (cal_order_owned) free(cal_order);
+      if (cal_order_owned)
+        free(cal_order);
     }
     if (recording) {
       const uint64_t tw_fe =
           tw_cal_set ? treewidth_table_forecast(tw_cal_width, (uint32_t)sub.r) : 0;
-      const uint64_t tw_jp =
-          tw_cal_set ? treewidth_join_pair_forecast(tw_cal_width, sub.nvars) : 0;
-      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
-                               "rankwidth", NULL,
+      const uint64_t tw_jp = tw_cal_set ? treewidth_join_pair_forecast(tw_cal_width, sub.nvars) : 0;
+      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r, "rankwidth", NULL,
                                probe_ms, sub_stats.width_diagnostics_available,
-                               sub_stats.min_fill_width,
-                               tw_cal_set, tw_fe, tw_jp, tw_cal_set, tw_cal_ms, &rw_data);
+                               sub_stats.min_fill_width, tw_cal_set, tw_fe, tw_jp, tw_cal_set,
+                               tw_cal_ms, &rw_data);
     }
     free(shared_order);
     free_subinstance(&sub);
@@ -1708,12 +1704,10 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     const bool unavail = !sub_stats.width_diagnostics_available;
     const char *tw_veto = unavail ? "tw_width_unavailable" : "tw_width_above_cap";
     note_treewidth_skip(
-        stats,
-        unavail ? "branch.treewidth_skip_unavailable" : "branch.treewidth_skip_width",
+        stats, unavail ? "branch.treewidth_skip_unavailable" : "branch.treewidth_skip_width",
         unavail ? 0 : sub_stats.min_fill_width);
     if (recording) {
-      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
-                               "branch", tw_veto,
+      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r, "branch", tw_veto,
                                probe_ms, sub_stats.width_diagnostics_available,
                                sub_stats.min_fill_width, false, 0, 0, false, 0.0, &rw_data);
     }
@@ -1740,17 +1734,16 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       }
       branch_order_cache_insert(&stats->order_cache, &sub, tw_adj_fp, order, order_width);
     }
-    qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth,
-                            order_width, order_start);
+    qsop_trace_emit_elapsed(stats->trace, "branch.treewidth_order_probe", stats->depth, order_width,
+                            order_start);
     order_probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(order_start_ns)) : 0.0;
   }
   if (order_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     note_treewidth_skip(stats, "branch.treewidth_skip_order_width", order_width);
     if (recording) {
-      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
-                               "branch", "tw_order_width_above_cap",
-                               probe_ms + order_probe_ms, true, order_width,
-                               false, 0, 0, false, 0.0, &rw_data);
+      branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r, "branch",
+                               "tw_order_width_above_cap", probe_ms + order_probe_ms, true,
+                               order_width, false, 0, 0, false, 0.0, &rw_data);
     }
     free(order);
     free_subinstance(&sub);
@@ -1822,11 +1815,10 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   }
 
   if (recording) {
-    branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r,
-                             "treewidth", NULL,
-                             probe_ms + order_probe_ms, true, order_width,
-                             true, tw_forecast_entries, tw_forecast_join_pairs,
-                             true, tw_actual_ms, &rw_data);
+    branch_emit_jsonl_record(stats->sink, active_vars, active_edges, modulus_r, "treewidth", NULL,
+                             probe_ms + order_probe_ms, true, order_width, true,
+                             tw_forecast_entries, tw_forecast_join_pairs, true, tw_actual_ms,
+                             &rw_data);
   }
 
   const uint64_t *delegate_counts = use_fourier ? part_result->counts : part_counts;
@@ -1864,10 +1856,9 @@ static void branch_search_free(branch_search_stats_t *search) {
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
                                      uint32_t max_vars, qsop_branch_heuristic_t heuristic,
                                      qsop_branch_rw_source_t rw_source,
-                                     const qsop_branch_policy_t *policy,
-                                     qsop_solve_mode_t mode, uint64_t *counts,
-                                     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                                     qsop_backend_stats_sink_t *sink,
+                                     const qsop_branch_policy_t *policy, qsop_solve_mode_t mode,
+                                     uint64_t *counts, qsop_solve_stats_t *stats,
+                                     qsop_solve_trace_t *trace, qsop_backend_stats_sink_t *sink,
                                      qsop_error_t *error) {
   qsop_residual_t *residual = NULL;
   branch_search_stats_t search = {
@@ -1906,8 +1897,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_canonical_stores = search.cache_canonical_stores;
     stats->cache_entries = (uint64_t)search.cache.len;
     stats->cache_canonical_entries = residual_cache_canonical_entries(&search.cache);
-    stats->cache_stored_residue_slots =
-        saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
+    stats->cache_stored_residue_slots = saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
     stats->cache_key_bytes = residual_cache_key_bytes(&search.cache);
     stats->cache_count_bytes = residual_cache_count_bytes(&search.cache);
     stats->cache_estimated_bytes = residual_cache_estimated_bytes(&search.cache);
@@ -2043,10 +2033,9 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
 
     const uint64_t combine_start = qsop_trace_begin(stats->trace);
     const bool combined =
-        use_fourier
-            ? (branch_counts_to_fourier(r, part_counts, powers, prime, tmp, error) &&
-               branch_fourier_multiply(r, acc, tmp, prime, error))
-            : branch_counts_convolve(r, tmp, acc, part_counts, stats, error);
+        use_fourier ? (branch_counts_to_fourier(r, part_counts, powers, prime, tmp, error) &&
+                       branch_fourier_multiply(r, acc, tmp, prime, error))
+                    : branch_counts_convolve(r, tmp, acc, part_counts, stats, error);
     if (!combined) {
       free_subinstance(&sub);
       free(part_counts);
@@ -2069,11 +2058,10 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
   }
 
   const bool finalized =
-      use_fourier
-          ? qsop_fourier_inverse_counts(r, acc, (uint32_t)qsop_residual_constant(residual), powers,
-                                        inv_powers, prime, counts, error)
-          : branch_counts_shift_add(r, counts, acc, (uint32_t)qsop_residual_constant(residual),
-                                    stats, error);
+      use_fourier ? qsop_fourier_inverse_counts(r, acc, (uint32_t)qsop_residual_constant(residual),
+                                                powers, inv_powers, prime, counts, error)
+                  : branch_counts_shift_add(
+                        r, counts, acc, (uint32_t)qsop_residual_constant(residual), stats, error);
   if (!finalized) {
     free(component);
     free(acc);
@@ -2104,7 +2092,8 @@ typedef struct branch_candidate {
 
 static bool split_candidate_better(const branch_candidate_t *candidate,
                                    const branch_candidate_t *best) {
-  /* One-variable balance gains can add component subsolves without reducing current corpus search. */
+  /* One-variable balance gains can add component subsolves without reducing current corpus search.
+   */
   const uint32_t min_balance_gain = 2;
   const bool materially_better_balance =
       best->largest_component >= min_balance_gain &&
@@ -2179,9 +2168,8 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
   const bool delegation_depth =
       heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH &&
       qsop_residual_active_vars(residual) <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS;
-  const bool need_fill_proxy =
-      heuristic == QSOP_BRANCH_HEURISTIC_TREEWIDTH ||
-      heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
+  const bool need_fill_proxy = heuristic == QSOP_BRANCH_HEURISTIC_TREEWIDTH ||
+                               heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH;
   const qsop_branch_heuristic_t comparison_heuristic =
       heuristic == QSOP_BRANCH_HEURISTIC_DELEGATION_DEPTH && !delegation_depth
           ? QSOP_BRANCH_HEURISTIC_TREEWIDTH
@@ -2292,8 +2280,7 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
                                 branch_search_stats_t *stats, qsop_error_t *error) {
   if (qsop_residual_active_vars(residual) == 0) {
     stats->leaves++;
-    return branch_count_add(stats, &counts[(uint32_t)qsop_residual_constant(residual)], 1,
-                            error);
+    return branch_count_add(stats, &counts[(uint32_t)qsop_residual_constant(residual)], 1, error);
   }
   if (qsop_residual_active_edges(residual) == 0) {
     return edge_free_sum(residual, counts, stats, error);
@@ -2371,10 +2358,9 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
   if (canonical_lookup) {
     stats->cache_canonical_lookups++;
   }
-  qsop_trace_emit_elapsed(stats->trace,
-                          canonical_lookup ? "branch.cache_canonical_lookup"
-                                           : "branch.cache_lookup",
-                          stats->depth, stats->cache.len, lookup_start);
+  qsop_trace_emit_elapsed(
+      stats->trace, canonical_lookup ? "branch.cache_canonical_lookup" : "branch.cache_lookup",
+      stats->depth, stats->cache.len, lookup_start);
   if (entry != NULL) {
     stats->cache_hits++;
     if (entry->key.canonical) {
@@ -2410,8 +2396,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     stats->cache_canonical_stores++;
   }
   qsop_trace_emit_elapsed(stats->trace,
-                          canonical_store ? "branch.cache_canonical_store"
-                                          : "branch.cache_store",
+                          canonical_store ? "branch.cache_canonical_store" : "branch.cache_store",
                           stats->depth, stats->cache.len, store_start);
 
   if (!add_counts(r, counts, computed, stats, error)) {
@@ -2423,10 +2408,10 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 }
 
 static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
-                             qsop_branch_heuristic_t heuristic,
-                             qsop_branch_rw_source_t rw_source, qsop_result_t **out,
-                             qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                             qsop_backend_stats_sink_t *sink, qsop_error_t *error) {
+                             qsop_branch_heuristic_t heuristic, qsop_branch_rw_source_t rw_source,
+                             qsop_result_t **out, qsop_solve_stats_t *stats,
+                             qsop_solve_trace_t *trace, qsop_backend_stats_sink_t *sink,
+                             qsop_error_t *error) {
   uint64_t *primes = NULL;
   size_t nprimes = 0;
   if (!qsop_crt_find_primes_for_nvars(qsop->nvars, &primes, &nprimes, error)) {
@@ -2466,9 +2451,8 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     qsop_backend_stats_sink_t *sink_for_prime = p == 0 ? sink : NULL;
     if (!branch_solve_counts_once(qsop, primes[p], max_vars, heuristic, rw_source, NULL,
-                                  QSOP_SOLVE_MODE_COUNT_TABLE,
-                                  &all_counts[p * (size_t)qsop->r], stats_for_prime,
-                                  trace_for_prime, sink_for_prime, error)) {
+                                  QSOP_SOLVE_MODE_COUNT_TABLE, &all_counts[p * (size_t)qsop->r],
+                                  stats_for_prime, trace_for_prime, sink_for_prime, error)) {
       free(primes);
       free(all_counts);
       free(residues);
@@ -2481,8 +2465,8 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     for (size_t p = 0; p < nprimes; p++) {
       residues[p] = all_counts[p * (size_t)qsop->r + residue];
     }
-    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes,
-                                      &result->count_strings[residue], error)) {
+    if (!qsop_crt_reconstruct_decimal(residues, primes, nprimes, &result->count_strings[residue],
+                                      error)) {
       free(primes);
       free(all_counts);
       free(residues);
@@ -2546,10 +2530,9 @@ static bool support_component_count(const qsop_instance_t *qsop, uint32_t *out,
 
 static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qsop_result_t **out,
                                                 qsop_solve_stats_t *stats,
-                                                qsop_solve_trace_t *trace,
-                                                qsop_solve_mode_t mode,
-                                                qsop_backend_stats_sink_t *sink,
-                                                bool *out_handled, qsop_error_t *error) {
+                                                qsop_solve_trace_t *trace, qsop_solve_mode_t mode,
+                                                qsop_backend_stats_sink_t *sink, bool *out_handled,
+                                                qsop_error_t *error) {
   *out_handled = false;
   if (qsop->nvars < BRANCH_TREEWIDTH_DELEGATE_MIN_VARS || qsop->nedges == 0) {
     return true;
@@ -2574,13 +2557,12 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   }
   qsop_trace_emit_elapsed(trace, "branch.root_width_probe", 0, width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
-  const uint32_t max_width =
-      qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH
-                                                         : BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
-  const uint32_t max_bag_vars =
-      qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS
-          ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS
-          : BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS;
+  const uint32_t max_width = qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS
+                                 ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH
+                                 : BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint32_t max_bag_vars = qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS
+                                    ? BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS
+                                    : BRANCH_TREEWIDTH_DELEGATE_MAX_BAG_VARS;
   if (width > max_width) {
     free(order);
     return true;
@@ -2590,12 +2572,11 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
    * after the width gate so roots outside the admitted cap skip this stats call entirely. */
   qsop_stats_t root_stats = {0};
   qsop_error_t stats_err = {0};
-  if (qsop_compute_stats(qsop, &root_stats, &stats_err) &&
-      root_stats.width_diagnostics_available &&
+  if (qsop_compute_stats(qsop, &root_stats, &stats_err) && root_stats.width_diagnostics_available &&
       root_stats.prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
       root_stats.min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH) {
     free(order);
-    return true;  /* not handled: let main recursion try rankwidth */
+    return true; /* not handled: let main recursion try rankwidth */
   }
   qsop_trace_emit(trace, "branch.treewidth_table_forecast", 0,
                   treewidth_table_forecast(width, (uint32_t)qsop->r), 0);
@@ -2614,8 +2595,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   }
   free(order);
   qsop_trace_emit_elapsed(trace, "branch.root_treewidth_delegate", 0, qsop->nvars, solve_start);
-  const double actual_ms =
-      recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(solve_start_ns)) : 0.0;
+  const double actual_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(solve_start_ns)) : 0.0;
 
   if (stats != NULL) {
     *stats = delegated;
@@ -2665,8 +2645,8 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
             qsop_solve_stats_t cal_stats = {0};
             const uint64_t t0 = qsop_trace_now_ns();
             if (qsop_counts_alloc((uint32_t)qsop->r, &cal_counts, &cal_err) &&
-                qsop_solve_rankwidth_count_table_mod_stats(qsop, cal_decomp, cal_modulus,
-                                                           cal_counts, &cal_stats, NULL, &cal_err)) {
+                qsop_solve_rankwidth_count_table_mod_stats(
+                    qsop, cal_decomp, cal_modulus, cal_counts, &cal_stats, NULL, &cal_err)) {
               rw_data.actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(t0));
             }
             free(cal_counts);
@@ -2680,12 +2660,9 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   if (recording) {
     const uint64_t tw_fe = treewidth_table_forecast(width, (uint32_t)qsop->r);
     const uint64_t tw_jp = treewidth_join_pair_forecast(width, qsop->nvars);
-    branch_emit_jsonl_record(sink, qsop->nvars, qsop->nedges, (uint32_t)qsop->r,
-                             "treewidth", "rw_treewidth_preferred",
-                             probe_ms, true, width,
-                             true, tw_fe, tw_jp,
-                             true, actual_ms,
-                             rw_data.attempted ? &rw_data : NULL);
+    branch_emit_jsonl_record(sink, qsop->nvars, qsop->nedges, (uint32_t)qsop->r, "treewidth",
+                             "rw_treewidth_preferred", probe_ms, true, width, true, tw_fe, tw_jp,
+                             true, actual_ms, rw_data.attempted ? &rw_data : NULL);
   }
 
   *out = result;
@@ -2694,9 +2671,8 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
 }
 
 bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
-                       const qsop_branch_solve_options_t *options,
-                       qsop_result_t **out, qsop_solve_stats_t *stats,
-                       qsop_error_t *error) {
+                       const qsop_branch_solve_options_t *options, qsop_result_t **out,
+                       qsop_solve_stats_t *stats, qsop_error_t *error) {
   const qsop_branch_solve_options_t o =
       options != NULL ? *options : (qsop_branch_solve_options_t){0};
   if (stats != NULL) {
@@ -2712,9 +2688,8 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
   if (qsop->r > UINT32_MAX) {
-    set_error(error,
-              "count-table/all-modes branch backend requires R <= UINT32_MAX; use "
-              "--solve-mode single-fourier");
+    set_error(error, "count-table/all-modes branch backend requires R <= UINT32_MAX; use "
+                     "--solve-mode single-fourier");
     return false;
   }
   if (o.mode != QSOP_SOLVE_MODE_COUNT_TABLE && o.mode != QSOP_SOLVE_MODE_FOURIER) {
@@ -2759,8 +2734,8 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     }
   }
   if (qsop->nvars >= 64U) {
-    return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace,
-                            o.sink, error);
+    return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace, o.sink,
+                            error);
   }
 
   qsop_result_t *result = calloc(1, sizeof(*result));
@@ -2801,7 +2776,8 @@ static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, l
    * independently defined in treewidth.c/rankwidth.c too, rather than shared. */
   static const long double branch_two_pi =
       6.283185307179586476925286766559005768394338798750211641949889L;
-  const long double angle = branch_two_pi * (long double)target_mode * (long double)k / (long double)r;
+  const long double angle =
+      branch_two_pi * (long double)target_mode * (long double)k / (long double)r;
   *re = cosl(angle);
   *im = sinl(angle);
 }
@@ -2884,6 +2860,9 @@ typedef struct branch_single_mode_state {
   uint64_t max_search_nodes;
   uint32_t max_fallback_vars;
   uint32_t max_recursion_depth;
+  /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
+   * target mode (an even mode kills the sign edges outright and the rule changes shape). */
+  bool propagate;
 
   branch_phase_cache_t phase_cache;
   branch_amp_cache_t amp_cache;
@@ -2895,6 +2874,8 @@ typedef struct branch_single_mode_state {
   uint64_t cache_avoided_nodes;
   uint64_t cache_stores;
   uint64_t branch_fallthroughs;
+  uint64_t propagations;
+  uint64_t zero_prunes;
   uint32_t depth;
   long double numeric_error_bound;
 
@@ -2909,9 +2890,8 @@ static uint64_t branch_hash_u64(uint64_t x) {
   return x ^ (x >> 31U);
 }
 
-static bool branch_phase_cache_init(branch_phase_cache_t *cache, uint64_t r,
-                                    uint32_t target_mode, uint32_t lg_cap,
-                                    qsop_error_t *error) {
+static bool branch_phase_cache_init(branch_phase_cache_t *cache, uint64_t r, uint32_t target_mode,
+                                    uint32_t lg_cap, qsop_error_t *error) {
   *cache = (branch_phase_cache_t){.r = r, .target_mode = target_mode};
   if (lg_cap == 0) {
     lg_cap = BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP;
@@ -3001,10 +2981,8 @@ static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t re
     return c64_one();
   }
   residue %= cache->r;
-  if (residue == 0 ||
-      (((cache->r & 1U) == 0) && residue == cache->r / 2U) ||
-      (((cache->r & 3U) == 0) &&
-       (residue == cache->r / 4U || residue == 3U * (cache->r / 4U)))) {
+  if (residue == 0 || (((cache->r & 1U) == 0) && residue == cache->r / 2U) ||
+      (((cache->r & 3U) == 0) && (residue == cache->r / 4U || residue == 3U * (cache->r / 4U)))) {
     return branch_phase_compute(cache->r, cache->target_mode, residue);
   }
   if (cache->cap == 0) {
@@ -3098,12 +3076,10 @@ static bool branch_amp_cache_rehash(branch_amp_cache_t *cache, size_t bucket_cou
   return true;
 }
 
-static bool branch_amp_cache_find(const branch_amp_cache_t *cache,
-                                  const qsop_residual_t *residual,
+static bool branch_amp_cache_find(const branch_amp_cache_t *cache, const qsop_residual_t *residual,
                                   const branch_amp_cache_entry_t **out) {
   *out = NULL;
-  if (cache->bucket_count == 0 ||
-      qsop_residual_active_vars(residual) < cache->min_vars) {
+  if (cache->bucket_count == 0 || qsop_residual_active_vars(residual) < cache->min_vars) {
     return true;
   }
   const uint64_t fingerprint = qsop_residual_fingerprint(residual);
@@ -3134,11 +3110,9 @@ static bool branch_amp_cache_store(branch_amp_cache_t *cache, const qsop_residua
   if (!residual_cache_key_create(residual, &entry.key, error)) {
     return false;
   }
-  const uint64_t entry_bytes =
-      sizeof(entry) + residual_key_estimated_bytes(&entry.key);
-  if (cache->budget_bytes != 0 &&
-      (entry_bytes > cache->budget_bytes ||
-       cache->estimated_bytes > cache->budget_bytes - entry_bytes)) {
+  const uint64_t entry_bytes = sizeof(entry) + residual_key_estimated_bytes(&entry.key);
+  if (cache->budget_bytes != 0 && (entry_bytes > cache->budget_bytes ||
+                                   cache->estimated_bytes > cache->budget_bytes - entry_bytes)) {
     residual_cache_key_free(&entry.key);
     return true;
   }
@@ -3151,8 +3125,7 @@ static bool branch_amp_cache_store(branch_amp_cache_t *cache, const qsop_residua
       residual_cache_key_free(&entry.key);
       return false;
     }
-  } else if (cache->bucket_count <= SIZE_MAX / 2U &&
-             cache->len + 1U > cache->bucket_count * 2U &&
+  } else if (cache->bucket_count <= SIZE_MAX / 2U && cache->len + 1U > cache->bucket_count * 2U &&
              !branch_amp_cache_rehash(cache, cache->bucket_count * 2U, error)) {
     residual_cache_key_free(&entry.key);
     return false;
@@ -3169,7 +3142,8 @@ static bool branch_amp_cache_store(branch_amp_cache_t *cache, const qsop_residua
 /* Accumulate one delegated component's stats into the running total, mirroring the spirit of
  * merge_delegated_stats above but typed for plain qsop_solve_stats_t on both sides (this path
  * has no branch_search_stats_t -- no residual search, no leaf/fallthrough counters to merge). */
-static void merge_single_mode_stats(qsop_solve_stats_t *stats, const qsop_solve_stats_t *delegated) {
+static void merge_single_mode_stats(qsop_solve_stats_t *stats,
+                                    const qsop_solve_stats_t *delegated) {
   if (stats == NULL || delegated == NULL) {
     return;
   }
@@ -3218,7 +3192,7 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
   uint32_t *fresh = NULL;
   uint32_t width = 0;
   if (!qsop_treewidth_order_alloc(sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &fresh, &width,
-                                 error)) {
+                                  error)) {
     return false;
   }
   *order = fresh;
@@ -3229,9 +3203,8 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
 
 static bool branch_single_mode_delegate_component(
     const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
-    const qsop_branch_single_mode_options_t *options, bool fail_on_refusal,
-    bool *out_delegated, qsop_amplitude_t *out, qsop_solve_stats_t *io_stats,
-    qsop_error_t *error) {
+    const qsop_branch_single_mode_options_t *options, bool fail_on_refusal, bool *out_delegated,
+    qsop_amplitude_t *out, qsop_solve_stats_t *io_stats, qsop_error_t *error) {
   if (out_delegated != NULL) {
     *out_delegated = false;
   }
@@ -3295,11 +3268,11 @@ static bool branch_single_mode_delegate_component(
         branch_treewidth_preferred(treewidth_available, prefix_cut_rank, treewidth_width);
 
     if (!cheap_treewidth && !prefer_treewidth) {
-      const qsop_rankwidth_generator_t generator =
-          (rw_source == QSOP_BRANCH_RW_SOURCE_NATIVE) ? QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT
+      const qsop_rankwidth_generator_t generator = (rw_source == QSOP_BRANCH_RW_SOURCE_NATIVE)
+                                                       ? QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT
                                                        : QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
-      const bool use_from_treewidth = generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH &&
-                                      treewidth_available;
+      const bool use_from_treewidth =
+          generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH && treewidth_available;
       if (use_from_treewidth &&
           !branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error)) {
         setup_ok = false;
@@ -3324,17 +3297,18 @@ static bool branch_single_mode_delegate_component(
             const uint64_t treewidth_join =
                 treewidth_available ? treewidth_join_pair_forecast(treewidth_width, sub->nvars) : 0;
             rankwidth_table = binary_assignment_forecast(cutrank_width);
-            /* sig_est = 2^cutrank = rankwidth_table (single-Fourier forecasts omit the r factor). */
+            /* sig_est = 2^cutrank = rankwidth_table (single-Fourier forecasts omit the r factor).
+             */
             const bool cost_model_favors_rw = branch_cost_model_favors_rankwidth(
                 &policy, treewidth_available, rankwidth_table, rankwidth_join, rankwidth_table,
                 treewidth_table, treewidth_join);
-            use_rankwidth =
-                cost_model_favors_rw &&
-                (!treewidth_available || rankwidth_table < treewidth_table) &&
-                (!treewidth_available || rankwidth_join <= treewidth_join) &&
-                (!treewidth_available ||
-                 treewidth_width > BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-                 rankwidth_should_override_treewidth(treewidth_width, cutrank_width, treewidth_table));
+            use_rankwidth = cost_model_favors_rw &&
+                            (!treewidth_available || rankwidth_table < treewidth_table) &&
+                            (!treewidth_available || rankwidth_join <= treewidth_join) &&
+                            (!treewidth_available ||
+                             treewidth_width > BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH ||
+                             rankwidth_should_override_treewidth(treewidth_width, cutrank_width,
+                                                                 treewidth_table));
           }
         }
       }
@@ -3353,15 +3327,14 @@ static bool branch_single_mode_delegate_component(
   } else if (use_rankwidth) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                           &delegated, options->trace, error);
+                                            &delegated, options->trace, error);
     } else {
       ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
                                                 options->simd, out, &delegated, options->trace,
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_available &&
-             treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH &&
+  } else if (treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH &&
              order_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
@@ -3378,7 +3351,7 @@ static bool branch_single_mode_delegate_component(
      * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                           &delegated, options->trace, error);
+                                            &delegated, options->trace, error);
     } else {
       ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
                                                 options->simd, out, &delegated, options->trace,
@@ -3416,8 +3389,7 @@ static bool branch_single_mode_delegate_component(
   return ok;
 }
 
-static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
-                                       branch_single_mode_state_t *state,
+static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_mode_state_t *state,
                                        branch_c64_t *out, qsop_error_t *error);
 
 static uint64_t branch_cache_budget_bytes(uint64_t mib) {
@@ -3425,12 +3397,10 @@ static uint64_t branch_cache_budget_bytes(uint64_t mib) {
 }
 
 static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
-                                          const qsop_instance_t *qsop,
-                                          uint32_t max_vars,
+                                          const qsop_instance_t *qsop, uint32_t max_vars,
                                           uint32_t target_mode,
                                           const qsop_branch_single_mode_options_t *options,
-                                          qsop_solve_stats_t *stats,
-                                          qsop_error_t *error) {
+                                          qsop_solve_stats_t *stats, qsop_error_t *error) {
   const qsop_branch_single_mode_options_t o =
       options != NULL ? *options : (qsop_branch_single_mode_options_t){0};
   *state = (branch_single_mode_state_t){
@@ -3444,11 +3414,15 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .precision = o.precision,
       .kernel = o.kernel,
       .simd = o.simd,
-      .max_search_nodes = o.max_search_nodes != 0 ? o.max_search_nodes
-                                                  : BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES,
-      .max_fallback_vars = o.max_fallback_vars != 0 ? o.max_fallback_vars
-                                                    : BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS,
+      .max_search_nodes =
+          o.max_search_nodes != 0 ? o.max_search_nodes : BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES,
+      .max_fallback_vars =
+          o.max_fallback_vars != 0 ? o.max_fallback_vars : BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS,
       .max_recursion_depth = o.max_recursion_depth != 0 ? o.max_recursion_depth : qsop->nvars,
+      /* The rule rests on omega^(r/2) = -1 raised to an odd power; an even target mode turns
+       * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
+      .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
+                   (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .stats = stats,
       .trace = o.trace,
   };
@@ -3458,8 +3432,8 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .budget_bytes = branch_cache_budget_bytes(cache_budget_mib),
       .min_vars = o.cache_min_vars != 0 ? o.cache_min_vars : BRANCH_SINGLE_DEFAULT_CACHE_MIN_VARS,
   };
-  if (!branch_phase_cache_init(&state->phase_cache, qsop->r, target_mode,
-                               o.phase_cache_lg_cap, error)) {
+  if (!branch_phase_cache_init(&state->phase_cache, qsop->r, target_mode, o.phase_cache_lg_cap,
+                               error)) {
     return false;
   }
   return true;
@@ -3487,6 +3461,8 @@ static void branch_single_mode_merge_final_stats(branch_single_mode_state_t *sta
   stats->cache_key_bytes = state->amp_cache.estimated_bytes;
   stats->cache_estimated_bytes = state->amp_cache.estimated_bytes;
   stats->branch_fallthroughs = state->branch_fallthroughs;
+  stats->branch_propagations = state->propagations;
+  stats->branch_zero_prunes = state->zero_prunes;
 }
 
 static void branch_single_note_residual_shape(branch_single_mode_state_t *state,
@@ -3499,13 +3475,11 @@ static void branch_single_note_residual_shape(branch_single_mode_state_t *state,
 }
 
 static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
-                                         branch_single_mode_state_t *state,
-                                         branch_c64_t *out,
+                                         branch_single_mode_state_t *state, branch_c64_t *out,
                                          qsop_error_t *error) {
   (void)error;
   const uint64_t edge_free_start = qsop_trace_begin(state->trace);
-  branch_c64_t z =
-      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  branch_c64_t z = branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
   const uint64_t r = qsop_residual_modulus(residual);
   for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
     if (!qsop_residual_var_active(residual, v)) {
@@ -3536,8 +3510,7 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
 }
 
 static bool branch_solve_component_single_mode(const qsop_instance_t *sub,
-                                               branch_single_mode_state_t *state,
-                                               branch_c64_t *out,
+                                               branch_single_mode_state_t *state, branch_c64_t *out,
                                                qsop_error_t *error) {
   qsop_residual_t *component_residual = NULL;
   if (!qsop_residual_create(sub, &component_residual, error)) {
@@ -3551,10 +3524,8 @@ static bool branch_solve_component_single_mode(const qsop_instance_t *sub,
 }
 
 static bool branch_sum_components_single_mode(qsop_residual_t *residual,
-                                              branch_single_mode_state_t *state,
-                                              bool *out_split,
-                                              branch_c64_t *out,
-                                              qsop_error_t *error) {
+                                              branch_single_mode_state_t *state, bool *out_split,
+                                              branch_c64_t *out, qsop_error_t *error) {
   *out_split = false;
   const uint32_t nvars = qsop_residual_nvars(residual);
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
@@ -3572,15 +3543,14 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   if (state->stats != NULL) {
     max_u32(&state->stats->max_residual_components, ncomponents);
   }
-  qsop_trace_emit_elapsed(state->trace, "branch.single.component_split", state->depth,
-                          ncomponents, split_start);
+  qsop_trace_emit_elapsed(state->trace, "branch.single.component_split", state->depth, ncomponents,
+                          split_start);
   if (ncomponents <= 1U) {
     free(component);
     return true;
   }
 
-  branch_c64_t acc =
-      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  branch_c64_t acc = branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
   for (uint32_t c = 0; c < ncomponents; c++) {
     qsop_instance_t sub = {0};
     branch_c64_t part = c64_zero();
@@ -3601,10 +3571,8 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
 }
 
 static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
-                                            branch_single_mode_state_t *state,
-                                            bool *out_delegated,
-                                            branch_c64_t *out,
-                                            qsop_error_t *error) {
+                                            branch_single_mode_state_t *state, bool *out_delegated,
+                                            branch_c64_t *out, qsop_error_t *error) {
   *out_delegated = false;
   qsop_instance_t sub = {0};
   qsop_amplitude_t delegated_amp = {0};
@@ -3621,12 +3589,10 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .simd = state->simd,
       .trace = state->trace,
   };
-  const bool ok = branch_single_mode_delegate_component(&sub, state->max_vars, state->target_mode,
-                                                        &delegate_options,
-                                                        state->fallback ==
-                                                            QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY,
-                                                        out_delegated, &delegated_amp,
-                                                        state->stats, error);
+  const bool ok = branch_single_mode_delegate_component(
+      &sub, state->max_vars, state->target_mode, &delegate_options,
+      state->fallback == QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY, out_delegated, &delegated_amp,
+      state->stats, error);
   free_subinstance(&sub);
   if (!ok || !*out_delegated) {
     return ok;
@@ -3642,8 +3608,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
 }
 
 static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
-                                            const qsop_residual_t *residual,
-                                            branch_c64_t *out) {
+                                            const qsop_residual_t *residual, branch_c64_t *out) {
   if (qsop_residual_active_vars(residual) < state->amp_cache.min_vars) {
     return false;
   }
@@ -3662,22 +3627,11 @@ static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
   return true;
 }
 
-static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
-                                       branch_single_mode_state_t *state,
-                                       branch_c64_t *out,
-                                       qsop_error_t *error) {
-  if (state->max_recursion_depth != 0 && state->depth > state->max_recursion_depth) {
-    set_error(error, "branch single-Fourier recursion-depth cap exceeded");
-    return false;
-  }
-  state->nodes++;
-  if (state->max_search_nodes != 0 && state->nodes > state->max_search_nodes) {
-    set_error(error,
-              "branch single-Fourier search-node cap exceeded (%" PRIu64
-              "); try --branch-single-max-search-nodes with a larger value",
-              state->max_search_nodes);
-    return false;
-  }
+/* The amplitude of `residual` exactly as it stands: propagation, node and depth accounting all
+ * belong to branch_sum_rec_single_mode below, which wraps this. */
+static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
+                                            branch_single_mode_state_t *state, branch_c64_t *out,
+                                            qsop_error_t *error) {
   branch_single_note_residual_shape(state, residual);
 
   if (branch_single_mode_cache_lookup(state, residual, out)) {
@@ -3711,9 +3665,8 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
                     qsop_residual_active_vars(residual));
           ok = false;
         } else if (state->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
-          set_error(error,
-                    "branch single-Fourier residual fallback does not implement "
-                    "--branch-single-precision long-double yet");
+          set_error(error, "branch single-Fourier residual fallback does not implement "
+                           "--branch-single-precision long-double yet");
           ok = false;
         } else {
           state->branch_fallthroughs++;
@@ -3724,8 +3677,8 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
           if (!choose_branch_var(residual, state->heuristic, &v, error)) {
             ok = false;
           } else {
-            qsop_trace_emit_elapsed(state->trace, "branch.single.select_variable",
-                                    state->depth, v, select_start);
+            qsop_trace_emit_elapsed(state->trace, "branch.single.select_variable", state->depth, v,
+                                    select_start);
             branch_c64_t amp0 = c64_zero();
             branch_c64_t amp1 = c64_zero();
             for (uint8_t value = 0; ok && value <= 1U; value++) {
@@ -3764,8 +3717,8 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
 
   const uint64_t subtree_nodes = state->nodes - subtree_start_nodes + 1U;
   const long double subtree_error = state->numeric_error_bound - subtree_start_error;
-  if (!branch_amp_cache_store(&state->amp_cache, residual, *out, subtree_error,
-                              subtree_nodes, error)) {
+  if (!branch_amp_cache_store(&state->amp_cache, residual, *out, subtree_error, subtree_nodes,
+                              error)) {
     return false;
   }
   if (qsop_residual_active_vars(residual) >= state->amp_cache.min_vars) {
@@ -3776,11 +3729,75 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual,
   return true;
 }
 
+/* Unit propagation, in the SAT sense, for sum-over-paths: before doing anything expensive at a
+ * node, sum out every variable that the Hadamard rule can eliminate outright, cascading through the
+ * pins it creates. Two payoffs. The residual shrinks, so the delegate probe below may now find a
+ * component narrow enough to hand off. And the cascade can derive an isolated variable with unary
+ * r/2 -- factor 1 + omega^(r/2) = 0 -- which is a conflict: the amplitude of this whole subtree is
+ * exactly zero and none of it needs exploring.
+ *
+ * Each elimination doubles the amplitude, so the subtree's value is scaled by 2^doublings on the
+ * way out; the cached value belongs to the propagated residual, which is what the recursion below
+ * and the cache both see. Undoing the checkpoint restores the caller's residual, so this composes
+ * with the trail exactly like an ordinary branch. */
+static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_mode_state_t *state,
+                                       branch_c64_t *out, qsop_error_t *error) {
+  if (state->max_recursion_depth != 0 && state->depth > state->max_recursion_depth) {
+    set_error(error, "branch single-Fourier recursion-depth cap exceeded");
+    return false;
+  }
+  state->nodes++;
+  if (state->max_search_nodes != 0 && state->nodes > state->max_search_nodes) {
+    set_error(error,
+              "branch single-Fourier search-node cap exceeded (%" PRIu64
+              "); try --branch-single-max-search-nodes with a larger value",
+              state->max_search_nodes);
+    return false;
+  }
+
+  if (!state->propagate) {
+    return branch_sum_rec_single_mode_node(residual, state, out, error);
+  }
+
+  const size_t checkpoint = qsop_residual_checkpoint(residual);
+  uint32_t doublings = 0;
+  bool zero = false;
+  const uint64_t propagate_start = qsop_trace_begin(state->trace);
+  if (!qsop_residual_propagate(residual, &doublings, &zero, error)) {
+    return false;
+  }
+  qsop_trace_emit_elapsed(state->trace, "branch.single.propagate", state->depth, doublings,
+                          propagate_start);
+  state->propagations += doublings;
+
+  if (zero) {
+    state->zero_prunes++;
+    qsop_trace_emit(state->trace, "branch.single.zero_prune", state->depth,
+                    qsop_residual_active_vars(residual), 0);
+    *out = c64_zero();
+    return qsop_residual_undo(residual, checkpoint, error);
+  }
+
+  branch_c64_t amp = c64_zero();
+  if (!branch_sum_rec_single_mode_node(residual, state, &amp, error)) {
+    return false;
+  }
+  if (!qsop_residual_undo(residual, checkpoint, error)) {
+    return false;
+  }
+  if (doublings != 0) {
+    const long double factor = ldexpl(1.0L, (int)doublings);
+    amp.re *= factor;
+    amp.im *= factor;
+  }
+  *out = amp;
+  return true;
+}
+
 static bool branch_solve_single_mode_residual(const qsop_instance_t *qsop, uint32_t max_vars,
                                               uint32_t target_mode,
                                               const qsop_branch_single_mode_options_t *options,
-                                              qsop_amplitude_t *out,
-                                              qsop_solve_stats_t *stats,
+                                              qsop_amplitude_t *out, qsop_solve_stats_t *stats,
                                               qsop_error_t *error) {
   branch_single_mode_state_t state = {0};
   qsop_residual_t *residual = NULL;

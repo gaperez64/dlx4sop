@@ -111,18 +111,16 @@ if build_avx512
   add_project_arguments('-DQSOP_SIMD_HAVE_AVX512', language: 'c')
 endif
 
-# Each kernel lives in its own translation unit compiled with its own -m flags, and LTO is disabled
-# for those units: with LTO on, the per-function target attributes GCC derives from the command line
-# are the only thing stopping it from inlining zmm code into a caller that may run on a CPU without
-# AVX-512. Not worth the risk for two hot loops.
-simd_kernel_overrides = ['b_lto=false']
-
+# Each kernel is its own translation unit compiled with its own -m flags, and keeps LTO on. The
+# per-function target attributes GCC derives from those flags are what stop it from inlining zmm
+# code into a caller that may run on a CPU without AVX-512; verified on the fat build by
+# disassembling and checking that every zmm/ymm instruction lives inside a simd_avx512_*/simd_avx2_*
+# function. (A weak-symbol dispatch would break this -- see simd_scalar.c.)
 if build_neon
   simd_link_whole += static_library(
     'dlx4sop_simd_neon',
     files('src/core/simd_neon.c'),
     include_directories: inc,
-    override_options: simd_kernel_overrides,
   )
 endif
 
@@ -132,7 +130,6 @@ if build_avx2
     files('src/core/simd_avx2.c'),
     include_directories: inc,
     c_args: avx2_args,
-    override_options: simd_kernel_overrides,
   )
 endif
 
@@ -142,7 +139,6 @@ if build_avx512
     files('src/core/simd_avx512.c'),
     include_directories: inc,
     c_args: avx512_args,
-    override_options: simd_kernel_overrides,
   )
 endif
 
@@ -288,6 +284,14 @@ test_branch_api = executable(
 )
 
 test('branch api unit', test_branch_api)
+
+test_branch_propagate = executable(
+  'test-branch-propagate',
+  'tests/unit/test_branch_propagate.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch propagate unit', test_branch_propagate, timeout: 120)
 
 test(
   'kernel benchmark smoke',

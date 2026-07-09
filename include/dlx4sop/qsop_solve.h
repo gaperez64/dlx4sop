@@ -78,6 +78,10 @@ typedef struct qsop_solve_stats {
   uint64_t branch_treewidth_skips;
   uint64_t branch_rankwidth_skips;
 
+  /* Branch single-Fourier propagation (see qsop_residual_propagate) */
+  uint64_t branch_propagations;
+  uint64_t branch_zero_prunes;
+
   /* Branch residual sizing */
   uint32_t max_residual_vars;
   uint32_t max_residual_edges;
@@ -159,8 +163,8 @@ typedef enum qsop_rankwidth_join_strategy {
 
 /* Per-solve options for the rankwidth solver.  Zero-initialize for defaults. */
 typedef struct qsop_rankwidth_solve_options {
-  qsop_rankwidth_join_strategy_t join_strategy; /* default AUTO */
-  uint64_t materialize_join_max_pairs;           /* 0 = use built-in default */
+  qsop_rankwidth_join_strategy_t join_strategy;   /* default AUTO */
+  uint64_t materialize_join_max_pairs;            /* 0 = use built-in default */
   qsop_rankwidth_fourier_kernel_t fourier_kernel; /* default AUTO */
 } qsop_rankwidth_solve_options_t;
 
@@ -207,20 +211,21 @@ bool qsop_solve_treewidth_trace_stats(const qsop_instance_t *qsop, uint32_t max_
                                       qsop_result_t **out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
-bool qsop_solve_treewidth_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_solve_mode_t mode,
-    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
+bool qsop_solve_treewidth_mode_trace_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                           qsop_solve_mode_t mode, qsop_result_t **out,
+                                           qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                           qsop_error_t *error);
 
-bool qsop_solve_treewidth_order_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
-    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
+bool qsop_solve_treewidth_order_trace_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                            qsop_treewidth_order_t order, qsop_result_t **out,
+                                            qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                            qsop_error_t *error);
 
-bool qsop_solve_treewidth_order_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_treewidth_order_t order,
-    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error);
+bool qsop_solve_treewidth_order_mode_trace_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
+                                                 qsop_treewidth_order_t order,
+                                                 qsop_solve_mode_t mode, qsop_result_t **out,
+                                                 qsop_solve_stats_t *stats,
+                                                 qsop_solve_trace_t *trace, qsop_error_t *error);
 
 /* Compute a single Fourier mode (target_mode, typically 1 for one amplitude) directly via
  * a complex-arithmetic dynamic program: table size is O(2^k) per elimination step,
@@ -233,46 +238,41 @@ bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_treewidth_single_mode_f64(const qsop_instance_t *qsop, uint32_t max_bag_vars,
-                                          qsop_treewidth_order_t order_policy,
-                                          uint32_t target_mode,
-                                          const qsop_simd_vtable_t *simd,
-                                          qsop_amplitude_t *out, qsop_solve_stats_t *stats,
-                                          qsop_solve_trace_t *trace, qsop_error_t *error);
+                                          qsop_treewidth_order_t order_policy, uint32_t target_mode,
+                                          const qsop_simd_vtable_t *simd, qsop_amplitude_t *out,
+                                          qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                          qsop_error_t *error);
 
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order,
-                                uint32_t **order_out, uint32_t *width_out,
-                                qsop_error_t *error);
+                                uint32_t **order_out, uint32_t *width_out, qsop_error_t *error);
 
 bool qsop_solve_treewidth_precomputed_order_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
-    uint32_t order_width, qsop_result_t **out, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error);
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
+    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
-    uint32_t order_width, qsop_solve_mode_t mode, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
+    qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 /* Precomputed-order sibling of qsop_solve_treewidth_single_mode: lets a caller (the branch
  * backend's single-fourier delegation) share one min-fill elimination order across the
  * treewidth delegate and the from-treewidth rankwidth generator, exactly as it already does
  * for count-table/all-modes-Fourier via qsop_solve_treewidth_precomputed_order_mode_trace_stats. */
 bool qsop_solve_treewidth_precomputed_order_single_mode(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
-    uint32_t order_width, uint32_t target_mode, qsop_amplitude_t *out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
+    uint32_t target_mode, qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_treewidth_precomputed_order_single_mode_f64(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
-    uint32_t order_width, uint32_t target_mode, const qsop_simd_vtable_t *simd,
-    qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
-
-bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
-    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order,
-    uint32_t order_width, uint64_t count_modulus, uint64_t *counts,
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
+    uint32_t target_mode, const qsop_simd_vtable_t *simd, qsop_amplitude_t *out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
 
+bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
+    const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
+    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error);
 
 bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint32_t nvars,
                                              qsop_rankwidth_decomposition_t **out,
@@ -285,37 +285,38 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
 
 /* Build a from-treewidth rankwidth decomposition from a precomputed elimination order,
  * avoiding a second min-fill run when the caller already holds a treewidth order. */
-bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop,
-                                             const uint32_t *order,
+bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const uint32_t *order,
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error);
 
-bool qsop_rankwidth_decomposition_width(
-    const qsop_instance_t *qsop, qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t *cutrank_width_out, qsop_error_t *error);
+bool qsop_rankwidth_decomposition_width(const qsop_instance_t *qsop,
+                                        qsop_rankwidth_decomposition_t *decomposition,
+                                        uint32_t *cutrank_width_out, qsop_error_t *error);
 
-bool qsop_rankwidth_decomposition_forecast(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint64_t *max_table_entries_out, uint64_t *join_pairs_out, qsop_error_t *error);
+bool qsop_rankwidth_decomposition_forecast(const qsop_instance_t *qsop,
+                                           const qsop_rankwidth_decomposition_t *decomposition,
+                                           uint64_t *max_table_entries_out,
+                                           uint64_t *join_pairs_out, qsop_error_t *error);
 
 void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposition);
 
-bool qsop_solve_rankwidth_count_table_mod_stats(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error);
+bool qsop_solve_rankwidth_count_table_mod_stats(const qsop_instance_t *qsop,
+                                                const qsop_rankwidth_decomposition_t *decomposition,
+                                                uint64_t count_modulus, uint64_t *counts,
+                                                qsop_solve_stats_t *stats,
+                                                qsop_solve_trace_t *trace, qsop_error_t *error);
 
-bool qsop_solve_rankwidth_mode_trace_stats(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t max_vars, qsop_rankwidth_solve_mode_t mode, qsop_result_t **out,
-    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error);
+bool qsop_solve_rankwidth_mode_trace_stats(const qsop_instance_t *qsop,
+                                           const qsop_rankwidth_decomposition_t *decomposition,
+                                           uint32_t max_vars, qsop_rankwidth_solve_mode_t mode,
+                                           qsop_result_t **out, qsop_solve_stats_t *stats,
+                                           qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_rankwidth_options_mode_trace_stats(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint32_t max_vars, qsop_rankwidth_solve_mode_t mode,
-    const qsop_rankwidth_solve_options_t *options,
-    qsop_result_t **out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
+    const qsop_rankwidth_solve_options_t *options, qsop_result_t **out, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
                                       const qsop_rankwidth_decomposition_t *decomposition,
@@ -333,24 +334,23 @@ bool qsop_solve_rankwidth_single_mode(const qsop_instance_t *qsop,
                                       qsop_amplitude_t *out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error);
 
-bool qsop_solve_rankwidth_single_mode_options(
-    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t max_vars, uint32_t target_mode,
-    const qsop_rankwidth_single_mode_options_t *options,
-    qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error);
+bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
+                                              const qsop_rankwidth_decomposition_t *decomposition,
+                                              uint32_t max_vars, uint32_t target_mode,
+                                              const qsop_rankwidth_single_mode_options_t *options,
+                                              qsop_amplitude_t *out, qsop_solve_stats_t *stats,
+                                              qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool qsop_solve_rankwidth_single_mode_f64(const qsop_instance_t *qsop,
                                           const qsop_rankwidth_decomposition_t *decomposition,
                                           uint32_t max_vars, uint32_t target_mode,
-                                          const qsop_simd_vtable_t *simd,
-                                          qsop_amplitude_t *out, qsop_solve_stats_t *stats,
-                                          qsop_solve_trace_t *trace, qsop_error_t *error);
+                                          const qsop_simd_vtable_t *simd, qsop_amplitude_t *out,
+                                          qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                                          qsop_error_t *error);
 
 bool qsop_solve_rankwidth_single_mode_f64_options(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    uint32_t max_vars, uint32_t target_mode,
-    const qsop_rankwidth_single_mode_options_t *options,
+    uint32_t max_vars, uint32_t target_mode, const qsop_rankwidth_single_mode_options_t *options,
     qsop_amplitude_t *out, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error);
 
@@ -369,10 +369,10 @@ bool qsop_result_write_residue_vector(FILE *file, const qsop_result_t *result, q
  * --------------------------------------------------------------------------- */
 
 typedef struct qsop_backend_stats_sink {
-  FILE *file;               /* JSONL output file — NULL disables emission */
-  const char *instance;     /* value for the "instance" JSON field */
-  uint64_t next_id;         /* monotone record counter, incremented per record */
-  bool calibrate_backends;  /* if true, run the losing backend too for timing data */
+  FILE *file;              /* JSONL output file — NULL disables emission */
+  const char *instance;    /* value for the "instance" JSON field */
+  uint64_t next_id;        /* monotone record counter, incremented per record */
+  bool calibrate_backends; /* if true, run the losing backend too for timing data */
 } qsop_backend_stats_sink_t;
 
 /* Tuning policy for the branch solver's rankwidth delegation decision.
@@ -382,36 +382,35 @@ typedef struct qsop_branch_policy {
   uint32_t rw_min_treewidth_width;    /* veto when tw_width <= this (default 2) */
   uint64_t rw_min_treewidth_forecast; /* veto when tw_table_forecast <= this (default 512) */
   uint32_t rw_min_residual_vars;      /* veto small-residual when tw_width <= 5 (default 16) */
-  uint32_t rw_low_rank_bypass;        /* bypass cheap-tw veto when prefix_cut_rank <= this (default 4) */
+  uint32_t rw_low_rank_bypass; /* bypass cheap-tw veto when prefix_cut_rank <= this (default 4) */
 
   /* Cost-model coefficients for choosing rw vs tw. */
-  uint64_t rw_fixed_overhead_ns;  /* fixed rw overhead (default 20000) */
-  uint64_t tw_fixed_overhead_ns;  /* fixed tw overhead (default 10000) */
-  uint64_t C_rw_table;            /* ns per rw table entry (default 80) */
-  uint64_t C_rw_join;             /* ns per rw join pair (default 40) */
-  uint64_t C_rw_sig;              /* ns per rw signature (default 2000) */
-  uint64_t C_tw_table;            /* ns per tw table entry (default 20) */
-  uint64_t C_tw_join;             /* ns per tw join pair (default 10) */
-  double   rw_min_speedup;        /* select rw only when rw_est * speedup < tw_est (default 1.1) */
-  uint64_t rw_memory_penalty_ns;  /* extra cost added to rw estimate for memory risk (default 0) */
+  uint64_t rw_fixed_overhead_ns; /* fixed rw overhead (default 20000) */
+  uint64_t tw_fixed_overhead_ns; /* fixed tw overhead (default 10000) */
+  uint64_t C_rw_table;           /* ns per rw table entry (default 80) */
+  uint64_t C_rw_join;            /* ns per rw join pair (default 40) */
+  uint64_t C_rw_sig;             /* ns per rw signature (default 2000) */
+  uint64_t C_tw_table;           /* ns per tw table entry (default 20) */
+  uint64_t C_tw_join;            /* ns per tw join pair (default 10) */
+  double rw_min_speedup;         /* select rw only when rw_est * speedup < tw_est (default 1.1) */
+  uint64_t rw_memory_penalty_ns; /* extra cost added to rw estimate for memory risk (default 0) */
 } qsop_branch_policy_t;
 
 /* Per-solve options for the branch solver.  Zero-initialize for defaults:
  * heuristic=delegation-depth, rw_source=none, mode=count-table,
  * zero policy (all defaults), no sink, no trace. */
 typedef struct qsop_branch_solve_options {
-  qsop_branch_heuristic_t heuristic;    /* default DELEGATION_DEPTH (0) */
-  qsop_branch_rw_source_t rw_source;   /* default NONE (0) */
-  qsop_solve_mode_t mode;              /* default COUNT_TABLE (0) */
-  qsop_branch_policy_t policy;         /* all-zero fields take built-in defaults */
-  qsop_backend_stats_sink_t *sink;     /* NULL to disable JSONL sink */
-  qsop_solve_trace_t *trace;           /* NULL to disable tracing */
+  qsop_branch_heuristic_t heuristic; /* default DELEGATION_DEPTH (0) */
+  qsop_branch_rw_source_t rw_source; /* default NONE (0) */
+  qsop_solve_mode_t mode;            /* default COUNT_TABLE (0) */
+  qsop_branch_policy_t policy;       /* all-zero fields take built-in defaults */
+  qsop_backend_stats_sink_t *sink;   /* NULL to disable JSONL sink */
+  qsop_solve_trace_t *trace;         /* NULL to disable tracing */
 } qsop_branch_solve_options_t;
 
 bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
-                       const qsop_branch_solve_options_t *options,
-                       qsop_result_t **out, qsop_solve_stats_t *stats,
-                       qsop_error_t *error);
+                       const qsop_branch_solve_options_t *options, qsop_result_t **out,
+                       qsop_solve_stats_t *stats, qsop_error_t *error);
 
 /* True when the branch backend's shared pre-probe vetoes make treewidth the clear choice over
  * rankwidth for a single-Fourier component of the given width/cut-rank; used by the CLI auto
@@ -438,6 +437,13 @@ typedef enum qsop_branch_single_kernel {
   QSOP_BRANCH_SINGLE_KERNEL_SCALAR,
 } qsop_branch_single_kernel_t;
 
+/* AUTO enables qsop_residual_propagate at every search node when it is exact -- even modulus and an
+ * odd target mode. OFF is for A/B measurement and for the regression guards. */
+typedef enum qsop_branch_single_propagate {
+  QSOP_BRANCH_SINGLE_PROPAGATE_AUTO = 0,
+  QSOP_BRANCH_SINGLE_PROPAGATE_OFF,
+} qsop_branch_single_propagate_t;
+
 /* Per-solve options for qsop_solve_branch_single_mode. Zero-initialize for defaults:
  * rw_source=none, heuristic=delegation-depth, fallback=auto, precision/kernel=auto,
  * and zero numeric caps selecting built-in limits. */
@@ -448,6 +454,7 @@ typedef struct qsop_branch_single_mode_options {
   qsop_branch_single_fallback_t fallback;
   qsop_branch_single_precision_t precision;
   qsop_branch_single_kernel_t kernel;
+  qsop_branch_single_propagate_t propagate;
   const qsop_simd_vtable_t *simd;
 
   uint64_t max_search_nodes;
