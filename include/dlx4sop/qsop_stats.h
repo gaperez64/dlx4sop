@@ -18,6 +18,9 @@ typedef struct qsop_stats {
   bool width_diagnostics_available;
   uint32_t min_fill_width;
   uint64_t min_fill_edges;
+  /* DP table entries a treewidth solve over the min-fill order would touch: sum over elimination
+   * steps of 2^(bag size). Tight, unlike nvars * 2^(width+1). */
+  uint64_t min_fill_dp_work;
   uint32_t prefix_cut_rank;
   bool exact_widths_requested;
   bool exact_widths_available;
@@ -39,8 +42,8 @@ bool qsop_compute_stats_with_order(const qsop_instance_t *qsop, qsop_stats_t *st
                                    uint32_t *order, qsop_error_t *error);
 
 bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
-                                     const qsop_stats_options_t *options,
-                                     qsop_stats_t *stats, qsop_error_t *error);
+                                     const qsop_stats_options_t *options, qsop_stats_t *stats,
+                                     qsop_error_t *error);
 
 bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *error);
 

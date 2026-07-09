@@ -1098,7 +1098,8 @@ static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_ord
   /* Delegates to the shared sparse min-fill core (byte-identical selection to the old dense
    * bitset loop, per the qsop_treewidth_order_t tie-break). */
   return qsop_min_fill_eliminate(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
-                                 order_policy, UINT32_MAX, order, width_out, NULL, NULL, error);
+                                 order_policy, UINT32_MAX, order, width_out, NULL, NULL, NULL,
+                                 error);
 }
 
 /* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this

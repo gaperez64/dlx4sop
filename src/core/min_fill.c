@@ -129,7 +129,8 @@ static bool gf2_basis_add(gf2_basis_t *b, uint64_t *row, qsop_error_t *error) {
     }
   }
   if (b->len == b->cap) {
-    const uint32_t ncap = b->cap == 0U ? 16U : (b->cap > UINT32_MAX / 2U ? UINT32_MAX : b->cap * 2U);
+    const uint32_t ncap =
+        b->cap == 0U ? 16U : (b->cap > UINT32_MAX / 2U ? UINT32_MAX : b->cap * 2U);
     uint64_t *nr = realloc(b->rows, (size_t)ncap * words * sizeof(*nr));
     uint32_t *np = realloc(b->pivot, (size_t)ncap * sizeof(*np));
     if (nr != NULL) {
@@ -236,8 +237,11 @@ bool qsop_prefix_cut_rank(uint32_t nvars, const uint32_t *edge_u, const uint32_t
 bool qsop_min_fill_eliminate(uint32_t nvars, const uint32_t *edge_u, const uint32_t *edge_v,
                              uint32_t nedges, qsop_treewidth_order_t tie_break,
                              uint32_t width_abort_threshold, uint32_t *order_out,
-                             uint32_t *width_out, uint64_t *fill_edges_out,
+                             uint32_t *width_out, uint64_t *fill_edges_out, uint64_t *dp_work_out,
                              bool *width_capped_out, qsop_error_t *error) {
+  if (dp_work_out != NULL) {
+    *dp_work_out = 0;
+  }
   if (width_out != NULL) {
     *width_out = 0;
   }
@@ -328,6 +332,16 @@ bool qsop_min_fill_eliminate(uint32_t nvars, const uint32_t *edge_u, const uint3
       }
       if (fill_edges_out != NULL) {
         *fill_edges_out += best_fill;
+      }
+      if (dp_work_out != NULL && *dp_work_out != UINT64_MAX) {
+        /* The bag eliminated at this step has best_degree + 1 variables. */
+        const uint64_t entries =
+            best_degree >= 63U ? UINT64_MAX : (UINT64_C(1) << (best_degree + 1U));
+        if (entries == UINT64_MAX || *dp_work_out > UINT64_MAX - entries) {
+          *dp_work_out = UINT64_MAX;
+        } else {
+          *dp_work_out += entries;
+        }
       }
 
       /* Eliminate `best`: drop it from each neighbour, then make N(best) a clique. */

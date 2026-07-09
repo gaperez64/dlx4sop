@@ -187,7 +187,7 @@ static int check(const char *name, uint32_t n, const uint32_t *eu, const uint32_
     bool capped = false;
     qsop_error_t error = {0};
     ref_eliminate(n, eu, ev, ne, policy, ref_order, &ref_w, &ref_f);
-    if (!qsop_min_fill_eliminate(n, eu, ev, ne, policy, UINT32_MAX, got_order, &got_w, &got_f,
+    if (!qsop_min_fill_eliminate(n, eu, ev, ne, policy, UINT32_MAX, got_order, &got_w, &got_f, NULL,
                                  &capped, &error)) {
       fprintf(stderr, "%s[p%d]: core failed: %s\n", name, pi, error.message);
       rc = 1;
@@ -336,7 +336,7 @@ int main(void) {
     uint32_t w = 0;
     bool capped = false;
     qsop_error_t error = {0};
-    qsop_min_fill_eliminate(10, eu, ev, 9, QSOP_TREEWIDTH_ORDER_MIN_FILL, 0, NULL, &w, NULL,
+    qsop_min_fill_eliminate(10, eu, ev, 9, QSOP_TREEWIDTH_ORDER_MIN_FILL, 0, NULL, &w, NULL, NULL,
                             &capped, &error);
     if (!capped || w <= 0) {
       fprintf(stderr, "early-abort threshold 0: expected cap with width>0, got capped=%d w=%u\n",
@@ -344,7 +344,7 @@ int main(void) {
       rc = 1;
     }
     capped = false;
-    qsop_min_fill_eliminate(10, eu, ev, 9, QSOP_TREEWIDTH_ORDER_MIN_FILL, 1, NULL, &w, NULL,
+    qsop_min_fill_eliminate(10, eu, ev, 9, QSOP_TREEWIDTH_ORDER_MIN_FILL, 1, NULL, &w, NULL, NULL,
                             &capped, &error);
     if (capped || w != 1) {
       fprintf(stderr, "early-abort threshold 1: expected no cap width 1, got capped=%d w=%u\n",

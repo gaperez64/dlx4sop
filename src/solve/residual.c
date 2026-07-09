@@ -1101,7 +1101,7 @@ bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, u
   }
 
   const bool ok = qsop_min_fill_eliminate(n, ce_u, ce_v, nce, QSOP_TREEWIDTH_ORDER_MIN_FILL,
-                                          UINT32_MAX, NULL, out, NULL, NULL, error);
+                                          UINT32_MAX, NULL, out, NULL, NULL, NULL, error);
   free(map);
   free(ce_u);
   free(ce_v);
