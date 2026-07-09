@@ -140,6 +140,7 @@ static void simd_avx2_complex_sum_out_pairs_f64(double *restrict out_re, double 
 const qsop_simd_vtable_t *qsop_simd_avx2_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "avx2",
+      .min_lanes = 4,
       .popcount_and_u64 = simd_avx2_popcount_and_u64,
       .popcount_andnot_u64 = simd_avx2_popcount_andnot_u64,
       .xor_u64 = simd_avx2_xor_u64,

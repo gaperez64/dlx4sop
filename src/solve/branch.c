@@ -3261,6 +3261,10 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats,
   if (delegated->rankwidth_cutrank_width > stats->rankwidth_cutrank_width) {
     stats->rankwidth_cutrank_width = delegated->rankwidth_cutrank_width;
   }
+  /* Without these the branch backend reports 0/0 SIMD work for its delegates, so `simd_kernel:
+   * avx2` in --format stats reads like a claim the kernels ran when nothing was measured. */
+  add_saturating_u64(&stats->simd_vectorized_ops, delegated->simd_vectorized_ops);
+  add_saturating_u64(&stats->simd_scalar_fallback_ops, delegated->simd_scalar_fallback_ops);
 }
 
 /* Per-component delegate-or-error decision. Duplicates (does not share) the veto/cost-model

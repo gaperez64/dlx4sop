@@ -17,6 +17,11 @@ typedef enum qsop_simd_kernel {
 typedef struct qsop_simd_vtable {
   const char *name;
 
+  /* Doubles per vector. Call sites gate on this rather than a hard-coded 8: the guards were
+   * written for AVX-512's 8-wide registers, so on a 4-wide AVX2 or 2-wide NEON kernel every run
+   * of 4 to 7 elements fell to the scalar tail for no reason. */
+  size_t min_lanes;
+
   uint32_t (*popcount_and_u64)(const uint64_t *a, const uint64_t *b, size_t words);
   uint32_t (*popcount_andnot_u64)(const uint64_t *a, const uint64_t *b, size_t words);
 

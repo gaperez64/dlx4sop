@@ -8,8 +8,7 @@
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 
-static uint32_t simd_avx512_popcount_and_u64(const uint64_t *a, const uint64_t *b,
-                                             size_t words) {
+static uint32_t simd_avx512_popcount_and_u64(const uint64_t *a, const uint64_t *b, size_t words) {
   uint32_t count = 0;
   size_t w = 0;
 #if defined(__AVX512VPOPCNTDQ__)
@@ -92,23 +91,19 @@ static void simd_avx512_andnot_u64(uint64_t *dst, const uint64_t *src, size_t wo
   }
 }
 
-static void simd_avx512_complex_mul_assign_f64(double *restrict out_re,
-                                               double *restrict out_im,
+static void simd_avx512_complex_mul_assign_f64(double *restrict out_re, double *restrict out_im,
                                                const double *restrict left_re,
                                                const double *restrict left_im,
                                                const double *restrict right_re,
-                                               const double *restrict right_im,
-                                               size_t n) {
+                                               const double *restrict right_im, size_t n) {
   size_t i = 0;
   for (; i + 8U <= n; i += 8U) {
     const __m512d lre = _mm512_loadu_pd(left_re + i);
     const __m512d lim = _mm512_loadu_pd(left_im + i);
     const __m512d rre = _mm512_loadu_pd(right_re + i);
     const __m512d rim = _mm512_loadu_pd(right_im + i);
-    _mm512_storeu_pd(out_re + i,
-                     _mm512_sub_pd(_mm512_mul_pd(lre, rre), _mm512_mul_pd(lim, rim)));
-    _mm512_storeu_pd(out_im + i,
-                     _mm512_add_pd(_mm512_mul_pd(lre, rim), _mm512_mul_pd(lim, rre)));
+    _mm512_storeu_pd(out_re + i, _mm512_sub_pd(_mm512_mul_pd(lre, rre), _mm512_mul_pd(lim, rim)));
+    _mm512_storeu_pd(out_im + i, _mm512_add_pd(_mm512_mul_pd(lre, rim), _mm512_mul_pd(lim, rre)));
   }
   for (; i < n; i++) {
     const double lre = left_re[i];
@@ -120,19 +115,15 @@ static void simd_avx512_complex_mul_assign_f64(double *restrict out_re,
   }
 }
 
-static void simd_avx512_complex_sum_out_pairs_f64(double *restrict out_re,
-                                                  double *restrict out_im,
+static void simd_avx512_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                   const double *restrict in_re,
-                                                  const double *restrict in_im,
-                                                  size_t pairs) {
+                                                  const double *restrict in_im, size_t pairs) {
   size_t i = 0;
   for (; i + 8U <= pairs; i += 8U) {
     _mm512_storeu_pd(out_re + i,
-                     _mm512_add_pd(_mm512_loadu_pd(in_re + i),
-                                   _mm512_loadu_pd(in_re + pairs + i)));
+                     _mm512_add_pd(_mm512_loadu_pd(in_re + i), _mm512_loadu_pd(in_re + pairs + i)));
     _mm512_storeu_pd(out_im + i,
-                     _mm512_add_pd(_mm512_loadu_pd(in_im + i),
-                                   _mm512_loadu_pd(in_im + pairs + i)));
+                     _mm512_add_pd(_mm512_loadu_pd(in_im + i), _mm512_loadu_pd(in_im + pairs + i)));
   }
   for (; i < pairs; i++) {
     out_re[i] = in_re[i] + in_re[pairs + i];
@@ -143,6 +134,7 @@ static void simd_avx512_complex_sum_out_pairs_f64(double *restrict out_re,
 const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "avx512",
+      .min_lanes = 8,
       .popcount_and_u64 = simd_avx512_popcount_and_u64,
       .popcount_andnot_u64 = simd_avx512_popcount_andnot_u64,
       .xor_u64 = simd_avx512_xor_u64,

@@ -17,8 +17,7 @@ static uint32_t neon_popcount_u64x2(uint64x2_t value) {
   return (uint32_t)(vgetq_lane_u64(cnt64, 0) + vgetq_lane_u64(cnt64, 1));
 }
 
-static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b,
-                                           size_t words) {
+static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b, size_t words) {
   uint32_t count = 0;
   size_t w = 0;
   for (; w + 2U <= words; w += 2U) {
@@ -32,8 +31,7 @@ static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b,
   return count;
 }
 
-static uint32_t simd_neon_popcount_andnot_u64(const uint64_t *a, const uint64_t *b,
-                                              size_t words) {
+static uint32_t simd_neon_popcount_andnot_u64(const uint64_t *a, const uint64_t *b, size_t words) {
   uint32_t count = 0;
   size_t w = 0;
   for (; w + 2U <= words; w += 2U) {
@@ -87,13 +85,11 @@ static void simd_neon_andnot_u64(uint64_t *dst, const uint64_t *src, size_t word
   }
 }
 
-static void simd_neon_complex_mul_assign_f64(double *restrict out_re,
-                                             double *restrict out_im,
+static void simd_neon_complex_mul_assign_f64(double *restrict out_re, double *restrict out_im,
                                              const double *restrict left_re,
                                              const double *restrict left_im,
                                              const double *restrict right_re,
-                                             const double *restrict right_im,
-                                             size_t n) {
+                                             const double *restrict right_im, size_t n) {
   size_t i = 0;
   for (; i + 2U <= n; i += 2U) {
     const float64x2_t lre = vld1q_f64(left_re + i);
@@ -113,11 +109,9 @@ static void simd_neon_complex_mul_assign_f64(double *restrict out_re,
   }
 }
 
-static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re,
-                                                double *restrict out_im,
+static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                 const double *restrict in_re,
-                                                const double *restrict in_im,
-                                                size_t pairs) {
+                                                const double *restrict in_im, size_t pairs) {
   size_t i = 0;
   for (; i + 2U <= pairs; i += 2U) {
     vst1q_f64(out_re + i, vaddq_f64(vld1q_f64(in_re + i), vld1q_f64(in_re + pairs + i)));
@@ -132,6 +126,7 @@ static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re,
 const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "neon",
+      .min_lanes = 2,
       .popcount_and_u64 = simd_neon_popcount_and_u64,
       .popcount_andnot_u64 = simd_neon_popcount_andnot_u64,
       .xor_u64 = simd_neon_xor_u64,

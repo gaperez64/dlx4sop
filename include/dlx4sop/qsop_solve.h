@@ -196,7 +196,9 @@ typedef struct qsop_rankwidth_solve_options {
 typedef struct qsop_rankwidth_single_mode_options {
   qsop_rankwidth_single_kernel_t kernel; /* default AUTO */
   uint64_t materialize_join_max_pairs;   /* 0 = use built-in default */
-  const qsop_simd_vtable_t *simd;        /* optional; used by f64 kernels */
+  /* Recorded in stats->simd_kernel, but the rankwidth joins are signature-keyed CSR gathers and
+   * currently call no vectorized kernel: stats->simd_vectorized_ops stays 0 on this backend. */
+  const qsop_simd_vtable_t *simd;
 } qsop_rankwidth_single_mode_options_t;
 
 /* Policy for how the branch solver sources a rank decomposition when considering

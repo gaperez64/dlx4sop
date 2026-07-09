@@ -1675,7 +1675,7 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
   const bool identity_maps = projection_map_is_identity(left_map, out->assignments) &&
                              projection_map_is_identity(right_map, out->assignments);
   if (identity_maps && ctx->simd != NULL && ctx->simd->complex_mul_assign_f64 != NULL &&
-      out->assignments >= 8U) {
+      out->assignments >= ctx->simd->min_lanes) {
     ctx->simd->complex_mul_assign_f64(out->re, out->im, left->re, left->im, right->re, right->im,
                                       out->assignments);
     add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
@@ -1744,7 +1744,8 @@ static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_
   const size_t block = stride << 1U;
   for (size_t base = 0; base < input->assignments; base += block) {
     const size_t out_base = base >> 1U;
-    if (ctx->simd != NULL && ctx->simd->complex_sum_out_pairs_f64 != NULL && stride >= 8U) {
+    if (ctx->simd != NULL && ctx->simd->complex_sum_out_pairs_f64 != NULL &&
+        stride >= ctx->simd->min_lanes) {
       ctx->simd->complex_sum_out_pairs_f64(out->re + out_base, out->im + out_base, input->re + base,
                                            input->im + base, stride);
       if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
@@ -1840,10 +1841,11 @@ static void factor_complex64_list_free(tw_factor_complex64_list_t *list) {
 }
 
 static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t var,
-                                          uint32_t target_mode, tw_factor_complex64_list_t *list,
-                                          qsop_error_t *error) {
+                                          const uint32_t *relabel, uint32_t target_mode,
+                                          tw_factor_complex64_list_t *list, qsop_error_t *error) {
   tw_factor_complex64_t factor = {0};
-  if (!factor_complex64_alloc_scope(&var, 1, &factor, error)) {
+  const uint32_t scope_var = relabel[var];
+  if (!factor_complex64_alloc_scope(&scope_var, 1, &factor, error)) {
     return false;
   }
   factor.re[0] = 1.0;
@@ -1858,9 +1860,9 @@ static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t 
 }
 
 static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t edge,
-                                         uint32_t target_mode, tw_factor_complex64_list_t *list,
-                                         qsop_error_t *error) {
-  uint32_t vars[2] = {qsop->edge_u[edge], qsop->edge_v[edge]};
+                                         const uint32_t *relabel, uint32_t target_mode,
+                                         tw_factor_complex64_list_t *list, qsop_error_t *error) {
+  uint32_t vars[2] = {relabel[qsop->edge_u[edge]], relabel[qsop->edge_v[edge]]};
   if (vars[0] > vars[1]) {
     const uint32_t tmp = vars[0];
     vars[0] = vars[1];
@@ -1885,15 +1887,23 @@ static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t e
   return true;
 }
 
-static bool build_initial_factors_complex64(const qsop_instance_t *qsop, uint32_t target_mode,
-                                            tw_factor_complex64_list_t *list, qsop_error_t *error) {
+/* Scopes are kept sorted by variable id, and `relabel` maps each variable to the *reverse* of its
+ * elimination rank. So the variable eliminated at any step is the largest id still present, which
+ * puts it last in every scope it appears in -- and factor_sum_out then folds a single contiguous
+ * half against the other, stride = assignments/2, instead of interleaving at whatever position the
+ * variable's original id happened to give it. That position was effectively a lottery on variable
+ * numbering, and it was deciding whether the SIMD kernel ran at all: measured 4-15% of complex ops
+ * vectorized before this. */
+static bool build_initial_factors_complex64(const qsop_instance_t *qsop, const uint32_t *relabel,
+                                            uint32_t target_mode, tw_factor_complex64_list_t *list,
+                                            qsop_error_t *error) {
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    if (!append_unary_factor_complex64(qsop, v, target_mode, list, error)) {
+    if (!append_unary_factor_complex64(qsop, v, relabel, target_mode, list, error)) {
       return false;
     }
   }
   for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (!append_edge_factor_complex64(qsop, e, target_mode, list, error)) {
+    if (!append_edge_factor_complex64(qsop, e, relabel, target_mode, list, error)) {
       return false;
     }
   }
@@ -2427,17 +2437,30 @@ static bool solve_treewidth_single_mode_once_f64(
     stats->treewidth_single_complex_kernel = 2U;
   }
 
+  /* relabel[order[t]] = nvars-1-t: the variable eliminated at step t becomes the largest id still
+   * live, hence last in every scope. See build_initial_factors_complex64. */
+  uint32_t *relabel = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*relabel));
+  if (relabel == NULL) {
+    set_error(error, "out of memory while relabelling treewidth single-mode variables");
+    return false;
+  }
+  for (uint32_t t = 0; t < qsop->nvars; t++) {
+    relabel[order[t]] = qsop->nvars - 1U - t;
+  }
+
   tw_factor_complex64_list_t factors = {0};
   const uint64_t factors_start = qsop_trace_begin(trace);
-  if (!build_initial_factors_complex64(qsop, target_mode, &factors, error)) {
+  if (!build_initial_factors_complex64(qsop, relabel, target_mode, &factors, error)) {
+    free(relabel);
     factor_complex64_list_free(&factors);
     return false;
   }
+  free(relabel);
   qsop_trace_emit_elapsed(trace, "treewidth.single_mode_initial_factors_f64", 0, factors.len,
                           factors_start);
 
   for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
-    if (!eliminate_variable_complex64(&factors, order[pos], &ctx, error)) {
+    if (!eliminate_variable_complex64(&factors, qsop->nvars - 1U - pos, &ctx, error)) {
       factor_complex64_list_free(&factors);
       return false;
     }

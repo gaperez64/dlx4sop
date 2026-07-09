@@ -492,10 +492,12 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch DP handoff stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    # --single-mode-precision auto resolves to the f64 tables: they are the only precision with
+    # SIMD kernels, and long double is opt-in now that the DP carries a binary exponent for range.
     expected_trace = {
-        "treewidth.single_mode_initial_factors",
-        "treewidth.single_mode_multiply",
-        "treewidth.single_mode_sum_out",
+        "treewidth.single_mode_initial_factors_f64",
+        "treewidth.single_mode_multiply_f64",
+        "treewidth.single_mode_sum_out_f64",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -534,10 +536,12 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch root treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    # --single-mode-precision auto resolves to the f64 tables: they are the only precision with
+    # SIMD kernels, and long double is opt-in now that the DP carries a binary exponent for range.
     expected_trace = {
-        "treewidth.single_mode_initial_factors",
-        "treewidth.single_mode_multiply",
-        "treewidth.single_mode_sum_out",
+        "treewidth.single_mode_initial_factors_f64",
+        "treewidth.single_mode_multiply_f64",
+        "treewidth.single_mode_sum_out_f64",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(

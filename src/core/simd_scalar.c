@@ -75,6 +75,7 @@ static void simd_scalar_complex_sum_out_pairs_f64(double *restrict out_re, doubl
 const qsop_simd_vtable_t *qsop_simd_scalar_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "scalar",
+      .min_lanes = 1,
       .popcount_and_u64 = simd_scalar_popcount_and_u64,
       .popcount_andnot_u64 = simd_scalar_popcount_andnot_u64,
       .xor_u64 = simd_scalar_xor_u64,

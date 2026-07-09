@@ -440,10 +440,13 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "bitset_kernel: %s\n",
             simd_kernel_display_name((qsop_simd_kernel_t)stats->bitset_kernel));
   }
-  if (stats->simd_vectorized_ops != 0) {
+  /* Printed whenever any complex op was counted, so a zero is visible: `simd_kernel: avx2` with no
+   * vectorized ops means the active precision or backend has no kernels, not that they were fast.
+   */
+  if (stats->simd_vectorized_ops != 0 || stats->simd_scalar_fallback_ops != 0) {
     fprintf(file, "simd_vectorized_ops: %" PRIu64 "\n", stats->simd_vectorized_ops);
   }
-  if (stats->simd_scalar_fallback_ops != 0) {
+  if (stats->simd_scalar_fallback_ops != 0 || stats->simd_vectorized_ops != 0) {
     fprintf(file, "simd_scalar_fallback_ops: %" PRIu64 "\n", stats->simd_scalar_fallback_ops);
   }
   if (backend == SOLVE_BACKEND_BRANCH) {
@@ -1942,7 +1945,7 @@ int main(int argc, char **argv) {
           .materialize_join_max_pairs = rw_materialize_join_max_pairs,
           .simd = simd,
       };
-      if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+      if (single_mode_precision != SINGLE_MODE_PRECISION_LONG_DOUBLE) {
         ok = qsop_solve_rankwidth_single_mode_f64_options(
             qsop, single_mode_decomposition, max_vars, fourier_target_mode,
             &rankwidth_single_options, &amplitude, &amp_stats, trace_ptr, &error);
@@ -1953,7 +1956,11 @@ int main(int argc, char **argv) {
       }
       qsop_rankwidth_decomposition_free(single_mode_decomposition);
     } else if (backend == SOLVE_BACKEND_BRANCH && auto_direct_treewidth_single) {
-      if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+      /* AUTO takes the f64 tables. Long double used to be the safe default because the raw
+       * amplitude overflowed a double past ~1024 variables; the DP now carries a binary exponent,
+       * so double has all the range it needs -- and it is the only precision with SIMD kernels,
+       * at half the table memory. */
+      if (single_mode_precision != SINGLE_MODE_PRECISION_LONG_DOUBLE) {
         ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
             qsop, BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH + 1U, auto_treewidth_order,
             auto_treewidth_order_width, fourier_target_mode, simd, &amplitude, &amp_stats,
@@ -1986,7 +1993,7 @@ int main(int argc, char **argv) {
       ok = qsop_solve_branch_single_mode(qsop, max_vars, fourier_target_mode,
                                          &branch_single_mode_options, &amplitude, &amp_stats,
                                          &error);
-    } else if (single_mode_precision == SINGLE_MODE_PRECISION_DOUBLE) {
+    } else if (single_mode_precision != SINGLE_MODE_PRECISION_LONG_DOUBLE) {
       ok =
           qsop_solve_treewidth_single_mode_f64(qsop, max_vars, treewidth_order, fourier_target_mode,
                                                simd, &amplitude, &amp_stats, trace_ptr, &error);
