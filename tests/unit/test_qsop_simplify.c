@@ -86,8 +86,8 @@ static int check_case(const char *name, qsop_instance_t *q, uint32_t want_nvars,
   }
   if (q->nvars != want_nvars || q->nedges != want_nedges || q->norm_h != want_norm_h) {
     fprintf(stderr,
-            "%s: shape nvars=%" PRIu32 " nedges=%" PRIu32 " norm_h=%" PRIu64
-            " (wanted %" PRIu32 "/%" PRIu32 "/%" PRIu64 ")\n",
+            "%s: shape nvars=%" PRIu32 " nedges=%" PRIu32 " norm_h=%" PRIu64 " (wanted %" PRIu32
+            "/%" PRIu32 "/%" PRIu64 ")\n",
             name, q->nvars, q->nedges, q->norm_h, want_nvars, want_nedges, want_norm_h);
     rc = 1;
   }
@@ -153,8 +153,8 @@ static int check_random(void) {
 
     uint64_t unary[8];
     for (uint32_t v = 0; v < n; v++) {
-      unary[v] = (xorshift(&seed) % 2U) == 0U ? (xorshift(&seed) % 2U) * (r / 2U)
-                                              : xorshift(&seed) % r;
+      unary[v] =
+          (xorshift(&seed) % 2U) == 0U ? (xorshift(&seed) % 2U) * (r / 2U) : xorshift(&seed) % r;
     }
 
     uint32_t eu[64];
@@ -290,7 +290,8 @@ int main(void) {
     const uint64_t unary[] = {4, 1, 5};
     const uint32_t eu[] = {0, 0, 1};
     const uint32_t ev[] = {1, 2, 2};
-    rc |= check_case("sign_unary_merge_chord", make_instance(8, 3, 2, 0, unary, 3, eu, ev), 1, 0, 0);
+    rc |=
+        check_case("sign_unary_merge_chord", make_instance(8, 3, 2, 0, unary, 3, eu, ev), 1, 0, 0);
   }
 
   /* An isolated variable with unary r/2 has factor 1 + omega^(r/2) == 0, so the whole amplitude
@@ -319,8 +320,8 @@ int main(void) {
    * surviving variable's unary 3 is not a multiple of r/2, so the pass stops there. */
   {
     const uint64_t unary[] = {0, 3};
-    rc |= check_case("isolated_zero_unary", make_instance(8, 2, 4, 1, unary, 0, NULL, NULL), 1, 0,
-                     2);
+    rc |=
+        check_case("isolated_zero_unary", make_instance(8, 2, 4, 1, unary, 0, NULL, NULL), 1, 0, 2);
   }
 
   /* Self-loops and parity-cancelling duplicate edges are folded away before any degree is read;

@@ -220,6 +220,8 @@ static const char *simd_kernel_display_name(qsop_simd_kernel_t kernel) {
     return "neon";
   case QSOP_SIMD_KERNEL_AVX512:
     return "avx512";
+  case QSOP_SIMD_KERNEL_AVX2:
+    return "avx2";
   }
   return "unknown";
 }
@@ -243,6 +245,9 @@ static qsop_simd_kernel_t simd_kernel_from_vtable(const qsop_simd_vtable_t *simd
   }
   if (strcmp(name, "avx512") == 0) {
     return QSOP_SIMD_KERNEL_AVX512;
+  }
+  if (strcmp(name, "avx2") == 0) {
+    return QSOP_SIMD_KERNEL_AVX2;
   }
   return QSOP_SIMD_KERNEL_SCALAR;
 }
@@ -1691,9 +1696,11 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* AUTO always resolves -- scalar is the floor -- but keep the guard so a future kernel that
+   * fails its own runtime probe surfaces here instead of dereferencing NULL. */
   const qsop_simd_vtable_t *simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
   if (simd == NULL) {
-    fprintf(stderr, "error: compiled SIMD kernel '%s' is unavailable\n",
+    fprintf(stderr, "error: no usable SIMD kernel; compiled kernels are '%s'\n",
             qsop_simd_compiled_arch());
     return 2;
   }

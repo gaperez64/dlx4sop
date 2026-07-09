@@ -51,7 +51,10 @@ dlx4sop_core_sources = files(
 
 cpu_family = host_machine.cpu_family()
 simd_link_whole = []
-simd_arch = simd_option
+is_arm = cpu_family in ['aarch64', 'arm']
+is_x86 = cpu_family in ['x86', 'x86_64']
+
+avx2_args = cc.get_supported_arguments(['-mavx2'])
 avx512_args = cc.get_supported_arguments([
   '-mavx512f',
   '-mavx512dq',
@@ -59,73 +62,102 @@ avx512_args = cc.get_supported_arguments([
   '-mavx512vpopcntdq',
 ])
 
-if simd_option == 'auto'
-  if cpu_family in ['aarch64', 'arm']
-    simd_arch = 'neon'
-  elif cpu_family in ['x86', 'x86_64'] and meson.can_run_host_binaries()
-    avx512_probe = '''
-#if defined(__x86_64__) || defined(__i386__)
-int main(void) {
-#if defined(__GNUC__) || defined(__clang__)
-  __builtin_cpu_init();
-  return (__builtin_cpu_supports("avx512f") &&
-          __builtin_cpu_supports("avx512dq") &&
-          __builtin_cpu_supports("avx512vl") &&
-          __builtin_cpu_supports("avx512vpopcntdq")) ? 0 : 1;
-#else
-  return 1;
-#endif
-}
-#else
-int main(void) { return 1; }
-#endif
-'''
-    avx512_host = cc.run(avx512_probe, name: 'AVX-512 host probe')
-    if avx512_args.length() == 4 and avx512_host.compiled() and avx512_host.returncode() == 0
-      simd_arch = 'avx512'
-    else
-      simd_arch = 'scalar'
-    endif
-  else
-    simd_arch = 'scalar'
-  endif
-endif
+# Which kernels get *compiled in*. Which one actually runs is decided at run time by
+# qsop_simd_runtime_kernel() against __builtin_cpu_supports, so `auto` can safely carry every
+# kernel the compiler can emit: an AVX-512 binary now falls back instead of trapping on a host
+# without AVX-512. Naming a kernel explicitly still pins the build to just that one, which is what
+# distro packaging and reproducible builds want.
+build_neon = false
+build_avx2 = false
+build_avx512 = false
 
-if simd_arch == 'neon'
-  if cpu_family not in ['aarch64', 'arm']
+if simd_option == 'auto'
+  build_neon = is_arm
+  build_avx2 = is_x86 and avx2_args.length() == 1
+  build_avx512 = is_x86 and avx512_args.length() == 4
+elif simd_option == 'neon'
+  if not is_arm
     error('-Dsimd=neon requires an ARM/AArch64 target')
   endif
-  add_project_arguments('-DQSOP_SIMD_ARCH_NEON', language: 'c')
-  simd_neon_lib = static_library(
-    'dlx4sop_simd_neon',
-    files('src/core/simd_neon.c'),
-    include_directories: inc,
-  )
-  simd_link_whole += simd_neon_lib
-endif
-
-if simd_arch == 'avx512'
-  if cpu_family not in ['x86', 'x86_64']
+  build_neon = true
+elif simd_option == 'avx2'
+  if not is_x86
+    error('-Dsimd=avx2 requires an x86 target')
+  endif
+  if avx2_args.length() < 1
+    error('compiler does not support -mavx2')
+  endif
+  build_avx2 = true
+elif simd_option == 'avx512'
+  if not is_x86
     error('-Dsimd=avx512 requires an x86 target')
   endif
   if avx512_args.length() < 4
     error('compiler does not support the required AVX-512 flags')
   endif
-  add_project_arguments('-DQSOP_SIMD_ARCH_AVX512', language: 'c')
-  simd_avx512_lib = static_library(
+  build_avx512 = true
+endif
+
+# These tell simd_scalar.c's dispatcher which __builtin_cpu_supports probes it may compile: the
+# feature strings only exist on toolchains new enough to emit the corresponding kernel. Must be
+# added before any build target is declared.
+if build_neon
+  add_project_arguments('-DQSOP_SIMD_HAVE_NEON', language: 'c')
+endif
+if build_avx2
+  add_project_arguments('-DQSOP_SIMD_HAVE_AVX2', language: 'c')
+endif
+if build_avx512
+  add_project_arguments('-DQSOP_SIMD_HAVE_AVX512', language: 'c')
+endif
+
+# Each kernel lives in its own translation unit compiled with its own -m flags, and LTO is disabled
+# for those units: with LTO on, the per-function target attributes GCC derives from the command line
+# are the only thing stopping it from inlining zmm code into a caller that may run on a CPU without
+# AVX-512. Not worth the risk for two hot loops.
+simd_kernel_overrides = ['b_lto=false']
+
+if build_neon
+  simd_link_whole += static_library(
+    'dlx4sop_simd_neon',
+    files('src/core/simd_neon.c'),
+    include_directories: inc,
+    override_options: simd_kernel_overrides,
+  )
+endif
+
+if build_avx2
+  simd_link_whole += static_library(
+    'dlx4sop_simd_avx2',
+    files('src/core/simd_avx2.c'),
+    include_directories: inc,
+    c_args: avx2_args,
+    override_options: simd_kernel_overrides,
+  )
+endif
+
+if build_avx512
+  simd_link_whole += static_library(
     'dlx4sop_simd_avx512',
     files('src/core/simd_avx512.c'),
     include_directories: inc,
     c_args: avx512_args,
+    override_options: simd_kernel_overrides,
   )
-  simd_link_whole += simd_avx512_lib
 endif
 
-if simd_arch == 'scalar'
-  add_project_arguments('-DQSOP_SIMD_ARCH_SCALAR', language: 'c')
+simd_compiled = []
+if build_avx512
+  simd_compiled += 'avx512'
 endif
-
-message('SIMD architecture: ' + simd_arch)
+if build_avx2
+  simd_compiled += 'avx2'
+endif
+if build_neon
+  simd_compiled += 'neon'
+endif
+simd_compiled += 'scalar'
+message('SIMD kernels compiled in (best supported is chosen at run time): ' + ', '.join(simd_compiled))
 
 dlx4sop_core = static_library(
   'dlx4sop_core',
@@ -216,6 +248,14 @@ test_bitset = executable(
 )
 
 test('bitset unit', test_bitset)
+
+test_simd_kernels = executable(
+  'test-simd-kernels',
+  'tests/unit/test_simd_kernels.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('simd kernels unit', test_simd_kernels)
 
 test_wmc = executable(
   'test-wmc',

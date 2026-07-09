@@ -17,9 +17,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `auto` compiles every kernel the toolchain can emit and picks the best one this CPU
+          # supports at run time. The artifact used to be pinned to -Dsimd=avx512, which meant it
+          # died with SIGILL on any host without AVX-512F/DQ/VL/VPOPCNTDQ -- there is no runtime
+          # dispatch in a pinned build, so the zmm code was entered unconditionally.
           - os: ubuntu-24.04
             target: linux-x86_64
-            simd: avx512
+            simd: auto
           - os: macos-14
             target: macos-arm64
             simd: neon

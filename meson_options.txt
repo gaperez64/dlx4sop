@@ -30,6 +30,6 @@ option('developer_warnings',
 
 option('simd',
        type: 'combo',
-       choices: ['auto', 'scalar', 'neon', 'avx512'],
+       choices: ['auto', 'scalar', 'neon', 'avx2', 'avx512'],
        value: 'auto',
-       description: 'SIMD architecture to compile into the binary')
+       description: 'SIMD kernels to compile in; the best one this CPU supports is selected at run time. "auto" compiles every kernel the compiler can emit for the target')

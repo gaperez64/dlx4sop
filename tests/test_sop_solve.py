@@ -2494,8 +2494,9 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     }
     if auto.returncode != 0 or not expected_auto.issubset(set(auto.stdout.splitlines())):
         raise AssertionError(f"--print-kernels failed\n{auto.stdout}\n{auto.stderr}")
-    if not any(line.startswith("simd_kernel=") for line in auto.stdout.splitlines()):
-        raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    # simd_compiled is the set of kernels linked into the binary; simd_kernel is the one this CPU
+    # actually selected at run time. On a fat build they differ (e.g. compiled avx512,avx2,scalar
+    # but running avx2), so the stats assertions below must key off the active kernel.
     compiled_simd = next(
         (
             line.split("=", 1)[1]
@@ -2506,6 +2507,20 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     if compiled_simd is None:
         raise AssertionError(f"--print-kernels missing simd_compiled\n{auto.stdout}")
+    active_simd = next(
+        (
+            line.split("=", 1)[1]
+            for line in auto.stdout.splitlines()
+            if line.startswith("simd_kernel=")
+        ),
+        None,
+    )
+    if active_simd is None:
+        raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    if active_simd not in compiled_simd.split(","):
+        raise AssertionError(
+            f"active simd kernel {active_simd!r} is not among compiled {compiled_simd!r}"
+        )
     if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
 
@@ -2558,8 +2573,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_double_stats = {
         "single_mode_precision: double",
-        f"simd_kernel: {compiled_simd}",
-        f"bitset_kernel: {compiled_simd}",
+        f"simd_kernel: {active_simd}",
+        f"bitset_kernel: {active_simd}",
         "treewidth_single_complex_kernel: 2",
     }
     if (
@@ -2592,8 +2607,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_rankwidth_double_stats = {
         "single_mode_precision: double",
-        f"simd_kernel: {compiled_simd}",
-        f"bitset_kernel: {compiled_simd}",
+        f"simd_kernel: {active_simd}",
+        f"bitset_kernel: {active_simd}",
         "rankwidth_single_complex_kernel: 2",
     }
     if (
