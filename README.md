@@ -114,10 +114,22 @@ build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
 Approximate output includes comment lines recording the chosen modulus, rounded
 phase count, and certified additive amplitude error bound.
 
-The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
-`probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
+The WMC export reconstructs `raw_amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
+`probability = |raw_amplitude|^2 * 2^(-norm_h)` (the same convention as
 `sop-solve --include-probability`) outside the counter; the metadata header in
 each CNF block documents the variable map and the final accumulator bits.
+
+## Amplitudes are normalized
+
+`sop-solve --format amplitude` reports the **normalized** amplitude
+`raw_amplitude * 2^(-norm_h/2)` -- the physical `<y|C|x>`, whose modulus is at most 1
+-- alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
+amplitude grows like `2^nvars`: qccq-gauntlet's `qwalk-noancilla_11` has
+`|raw_amplitude|` around `2^29670`, so no fixed-exponent floating type can hold it, and
+a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`. Internally the solvers
+carry a mantissa and a separate binary exponent (`qsop_amplitude_t.scale_exp2`), which
+also lets the branch backend multiply per-component amplitudes without any of them
+overflowing on its own. Scaling by a power of two is exact, so nothing is lost.
 
 
 ## Build

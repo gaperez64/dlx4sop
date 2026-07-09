@@ -143,19 +143,26 @@ int main(void) {
       nonzero_cases++;
     }
 
+    /* qsop_amplitude_t is a mantissa plus a binary exponent; these instances are tiny, so the
+     * raw value it denotes is always representable. */
+    const double on_re = (double)ldexpl(on.re, on.scale_exp2);
+    const double on_im = (double)ldexpl(on.im, on.scale_exp2);
+    const double off_re = (double)ldexpl(off.re, off.scale_exp2);
+    const double off_im = (double)ldexpl(off.im, off.scale_exp2);
+
     const double tol = 1e-6 * (1.0 + fabs(want_re) + fabs(want_im));
-    if (fabs((double)on.re - want_re) > tol || fabs((double)on.im - want_im) > tol) {
+    if (fabs(on_re - want_re) > tol || fabs(on_im - want_im) > tol) {
       fprintf(stderr,
               "trial %" PRIu32 " (r=%" PRIu64 " n=%" PRIu32 " mode=%" PRIu32
               "): propagate=auto gave (%.9g,%.9g), exhaustive says (%.9g,%.9g)\n",
-              trial, r, n, target_mode, (double)on.re, (double)on.im, want_re, want_im);
+              trial, r, n, target_mode, on_re, on_im, want_re, want_im);
       qsop_free(q);
       return 1;
     }
-    if (fabs((double)off.re - want_re) > tol || fabs((double)off.im - want_im) > tol) {
+    if (fabs(off_re - want_re) > tol || fabs(off_im - want_im) > tol) {
       fprintf(stderr,
               "trial %" PRIu32 ": propagate=off gave (%.9g,%.9g), exhaustive says (%.9g,%.9g)\n",
-              trial, (double)off.re, (double)off.im, want_re, want_im);
+              trial, off_re, off_im, want_re, want_im);
       qsop_free(q);
       return 1;
     }

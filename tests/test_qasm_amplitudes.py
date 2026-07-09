@@ -463,9 +463,9 @@ def parse_solver_amplitude(output: str, norm_h_hint: int | None = None) -> compl
             amplitude_im = float(line.split(": ", 1)[1])
 
     if amplitude_re is not None and amplitude_im is not None:
-        if norm_h_hint is None:
-            raise AssertionError(f"amplitude output needs normalization hint:\n{output}")
-        return complex(amplitude_re, amplitude_im) * (2.0 ** (-norm_h_hint / 2.0))
+        # sop-solve --format amplitude already reports the normalized amplitude
+        # (amp * 2^(-norm_h/2)); only the residue-vector path below still needs scaling.
+        return complex(amplitude_re, amplitude_im)
 
     if modulus is None or norm_h is None or counts is None:
         raise AssertionError(f"malformed solver output:\n{output}")

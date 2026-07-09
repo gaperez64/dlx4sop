@@ -183,18 +183,15 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     if "memory-skip" in completed.stderr:
         raise RuntimeError(f"sop-solve: {completed.stderr.strip()}")
 
-    raw_re, raw_im = parse_amplitude(completed.stdout)
+    amp_re, amp_im = parse_amplitude(completed.stdout)
     metrics["norm_h"] = norm_h
-    # single-fourier's raw amplitude scales like 2**(norm_h/2), which overflows a
-    # Python float (max ~1.8e308) once norm_h exceeds ~2048 -- a real occurrence on
-    # deep circuits that need many rounded phase ops during --approx import. Doing
-    # the scaling in arbitrary-precision decimal arithmetic, and converting to a
-    # plain float only after raw*scale has cancelled back down to a normal
-    # amplitude's magnitude, avoids the silent overflow-to-inf-times-zero-is-nan
-    # that a naive `float(raw_str) * 2.0**(-norm_h/2)` produces.
-    getcontext().prec = max(50, norm_h // 2 + 50)
-    scale = Decimal(2) ** (Decimal(-norm_h) / 2)
-    return complex(float(raw_re * scale), float(raw_im * scale)), metrics
+    # sop-solve --format amplitude already reports the normalized amplitude,
+    # amp * 2**(-norm_h/2), whose modulus is at most 1. It used to report the raw
+    # sum-over-paths value, which scales like 2**(norm_h/2) and overflows a Python
+    # float once norm_h passes ~2048 -- hence the arbitrary-precision rescale that
+    # used to live here. The solver now carries the magnitude in a binary exponent
+    # and normalizes internally, so there is nothing left to undo.
+    return complex(float(amp_re), float(amp_im)), metrics
 
 
 def main() -> int:

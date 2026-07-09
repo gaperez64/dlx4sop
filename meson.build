@@ -32,6 +32,7 @@ if get_option('developer_warnings')
 endif
 
 dlx4sop_core_sources = files(
+    'src/core/amplitude.c',
     'src/core/residue.c',
     'src/core/bitset.c',
     'src/core/simd_scalar.c',

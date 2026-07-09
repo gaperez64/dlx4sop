@@ -225,10 +225,39 @@ typedef struct rw_complex_context {
   uint64_t r;
   uint32_t target_mode;
   long double sign_re;
+  int scale_exp2;
   uint64_t complex_ops;
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
 } rw_complex_context_t;
+
+/* Long double twin of complex64_table_renormalize; see rw_complex64_context's scale_exp2. */
+static void complex_table_renormalize(rw_complex_table_t *table, rw_complex_context_t *ctx) {
+  long double peak = 0.0L;
+  for (size_t i = 0; i < table->len; i++) {
+    const long double re = fabsl(table->re[i]);
+    const long double im = fabsl(table->im[i]);
+    if (re > peak) {
+      peak = re;
+    }
+    if (im > peak) {
+      peak = im;
+    }
+  }
+  if (peak == 0.0L || !isfinite(peak)) {
+    return;
+  }
+  const int exponent = ilogbl(peak);
+  if (exponent == 0) {
+    return;
+  }
+  const long double scale = ldexpl(1.0L, -exponent);
+  for (size_t i = 0; i < table->len; i++) {
+    table->re[i] *= scale;
+    table->im[i] *= scale;
+  }
+  ctx->scale_exp2 += exponent;
+}
 
 /* scale_exp2 mirrors the treewidth f64 DP: the unnormalized amplitude grows like 2^nvars and
  * overflows a double table to inf (then nan) somewhere past ~1024 variables, so each node's table
@@ -7316,10 +7345,10 @@ static void solve_rankwidth_single_mode_no_edges_f64(const qsop_instance_t *qsop
 
 static bool solve_rankwidth_single_mode_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    const uint64_t *adj, uint32_t target_mode, long double *out_re, long double *out_im,
-    long double *out_numeric_error_bound, qsop_rankwidth_single_kernel_t kernel,
-    uint64_t materialize_join_max_pairs, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-    qsop_error_t *error) {
+    const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2, long double *out_re,
+    long double *out_im, long double *out_numeric_error_bound,
+    qsop_rankwidth_single_kernel_t kernel, uint64_t materialize_join_max_pairs,
+    qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
   rw_complex_context_t ctx = {
       .r = qsop->r,
       .target_mode = target_mode,
@@ -7340,6 +7369,7 @@ static bool solve_rankwidth_single_mode_once(
     rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
     *out_re = re * c_re - im * c_im;
     *out_im = re * c_im + im * c_re;
+    *out_scale_exp2 = 0;
     if (out_numeric_error_bound != NULL) {
       *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
     }
@@ -7474,6 +7504,7 @@ static bool solve_rankwidth_single_mode_once(
       signature_pool_free(&pool);
       return false;
     }
+    complex_table_renormalize(&tables[node_id], &ctx);
     signature_entries += tables[node_id].len;
     if (tables[node_id].len > max_signature_entries) {
       max_signature_entries = tables[node_id].len;
@@ -7494,6 +7525,7 @@ static bool solve_rankwidth_single_mode_once(
   rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
   *out_re = root_re * c_re - root_im * c_im;
   *out_im = root_re * c_im + root_im * c_re;
+  *out_scale_exp2 = ctx.scale_exp2;
 
   if (stats != NULL) {
     stats->signature_entries = signature_entries;
@@ -7527,15 +7559,16 @@ static bool solve_rankwidth_single_mode_once(
   return true;
 }
 
-/* Returns a long double for the same reason the treewidth f64 driver does: the DP tables stay f64
- * (so the SIMD kernels apply) but the magnitude rides in a separate binary exponent, and only the
- * final mantissa is widened. */
+/* Emits a mantissa and a separate binary exponent, for the same reason the treewidth f64 driver
+ * does: the DP tables stay f64 (so the SIMD kernels apply) while the magnitude rides in the
+ * exponent, and the caller folds it into the normalized amplitude. */
 static bool solve_rankwidth_single_mode_once_f64(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
-    const uint64_t *adj, uint32_t target_mode, long double *out_re, long double *out_im,
-    long double *out_numeric_error_bound, qsop_rankwidth_single_kernel_t kernel,
-    uint64_t materialize_join_max_pairs, const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
-    qsop_solve_trace_t *trace, qsop_error_t *error) {
+    const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2, long double *out_re,
+    long double *out_im, long double *out_numeric_error_bound,
+    qsop_rankwidth_single_kernel_t kernel, uint64_t materialize_join_max_pairs,
+    const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+    qsop_error_t *error) {
   rw_complex64_context_t ctx = {
       .r = qsop->r,
       .target_mode = target_mode,
@@ -7552,10 +7585,11 @@ static bool solve_rankwidth_single_mode_once_f64(
     double c_re = 0.0;
     double c_im = 0.0;
     rw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
-    /* The edge-free product is 2^nvars in the worst case, so it needs the same treatment; here it
-     * is cheap enough to just compute in long double. */
+    /* The edge-free product is 2^nvars in the worst case; long double is enough headroom for the
+     * few thousand independent variables this branch can see, and the exponent stays 0. */
     *out_re = (long double)re * (long double)c_re - (long double)im * (long double)c_im;
     *out_im = (long double)re * (long double)c_im + (long double)im * (long double)c_re;
+    *out_scale_exp2 = 0;
     if (stats != NULL) {
       stats->rankwidth_single_complex_kernel = 2U;
       stats->join_pairs = ctx.complex_ops;
@@ -7718,23 +7752,9 @@ static bool solve_rankwidth_single_mode_once_f64(
   double c_re = 0.0;
   double c_im = 0.0;
   rw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
-  const double mantissa_re = root_re * c_re - root_im * c_im;
-  const double mantissa_im = root_re * c_im + root_im * c_re;
-  *out_re = ldexpl((long double)mantissa_re, ctx.scale_exp2);
-  *out_im = ldexpl((long double)mantissa_im, ctx.scale_exp2);
-  if (!isfinite(*out_re) || !isfinite(*out_im)) {
-    for (uint32_t t = 0; t < decomposition->nnodes; t++) {
-      complex64_table_free(&tables[t]);
-    }
-    free(scratch);
-    free(tables);
-    signature_pool_free(&pool);
-    set_error(error,
-              "rankwidth single-Fourier amplitude magnitude (about 2^%d) exceeds the range of "
-              "long double",
-              ctx.scale_exp2);
-    return false;
-  }
+  *out_re = (long double)(root_re * c_re - root_im * c_im);
+  *out_im = (long double)(root_re * c_im + root_im * c_re);
+  *out_scale_exp2 = ctx.scale_exp2;
 
   if (stats != NULL) {
     stats->signature_entries = signature_entries;
@@ -8043,10 +8063,11 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
   long double re = 0.0L;
   long double im = 0.0L;
   long double numeric_error_bound = 0.0L;
+  int scale_exp2 = 0;
   const qsop_rankwidth_single_mode_options_t o =
       options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = solve_rankwidth_single_mode_once(
-      qsop, decomposition, adj, target_mode, &re, &im, &numeric_error_bound, o.kernel,
+      qsop, decomposition, adj, target_mode, &scale_exp2, &re, &im, &numeric_error_bound, o.kernel,
       o.materialize_join_max_pairs, stats, trace, error);
   free(adj);
   if (!ok) {
@@ -8054,6 +8075,7 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
   }
   out->re = re;
   out->im = im;
+  out->scale_exp2 = scale_exp2;
   out->numeric_error_bound = numeric_error_bound;
   return true;
 }
@@ -8123,10 +8145,11 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
   long double re = 0.0L;
   long double im = 0.0L;
   long double numeric_error_bound = 0.0L;
+  int scale_exp2 = 0;
   const qsop_rankwidth_single_mode_options_t o =
       options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = solve_rankwidth_single_mode_once_f64(
-      qsop, decomposition, adj, target_mode, &re, &im, &numeric_error_bound, o.kernel,
+      qsop, decomposition, adj, target_mode, &scale_exp2, &re, &im, &numeric_error_bound, o.kernel,
       o.materialize_join_max_pairs, o.simd, stats, trace, error);
   free(adj);
   if (!ok) {
@@ -8134,6 +8157,7 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
   }
   out->re = re;
   out->im = im;
+  out->scale_exp2 = scale_exp2;
   out->numeric_error_bound = numeric_error_bound;
   return true;
 }

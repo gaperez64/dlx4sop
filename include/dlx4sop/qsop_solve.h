@@ -21,11 +21,36 @@ typedef struct qsop_simd_vtable qsop_simd_vtable_t;
  * DP. This is independent of the phase-rounding error a caller may have introduced
  * upstream (e.g. qasm2sop --approx's reported additive_amplitude_error_bound); the two
  * bounds are additive and a caller wanting a total certified error sums them. */
+/* The amplitude is (re + i*im) * 2^scale_exp2, with re/im held near unit magnitude.
+ *
+ * The raw sum-over-paths amplitude of an n-variable QSOP grows like 2^n and blows past long
+ * double's ~2^16384 on deep circuits -- qccq-gauntlet's qwalk-noancilla_11 has |amplitude| about
+ * 2^29670, and no fixed-exponent type can hold it. Carrying the magnitude in a separate binary
+ * exponent removes the ceiling entirely, and it composes: the branch backend multiplies component
+ * amplitudes, so each factor has to stay representable on its own.
+ *
+ * What a caller almost always wants is the *normalized* amplitude, amp * 2^(-norm_h/2) -- the
+ * physical <y|C|x> -- whose modulus is at most 1 and which is therefore always representable.
+ * qsop_amplitude_normalized computes it. */
 typedef struct qsop_amplitude {
   long double re;
   long double im;
   long double numeric_error_bound;
+  int32_t scale_exp2;
 } qsop_amplitude_t;
+
+/* Pull the binary exponent out of re/im so that max(|re|,|im|) lands in [1,2). A zero amplitude is
+ * left alone. Scaling by a power of two is exact, so no mantissa bit is lost. */
+void qsop_amplitude_renormalize(qsop_amplitude_t *amp);
+
+/* Multiply by 2^exp without touching the mantissas. */
+void qsop_amplitude_scale_pow2(qsop_amplitude_t *amp, int32_t exp);
+
+/* The normalized amplitude amp * 2^(-norm_h/2), which a QSOP's own semantics bound by 1 in
+ * modulus. Returns false only when the exponent arithmetic cannot be represented, which for a
+ * well-formed instance means norm_h is wildly out of step with the amplitude it normalizes. */
+bool qsop_amplitude_normalized(const qsop_amplitude_t *amp, uint64_t norm_h, long double *out_re,
+                               long double *out_im);
 
 typedef struct qsop_solve_stats {
   /* Branch residual search */

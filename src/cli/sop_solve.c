@@ -827,9 +827,16 @@ static bool result_to_amplitude(const qsop_result_t *result, uint32_t target_mod
   return true;
 }
 
+/* amplitude_re/amplitude_im are the *normalized* amplitude, amp * 2^(-norm_h/2): the physical
+ * <y|C|x>, whose modulus a QSOP's semantics bound by 1. The raw sum-over-paths value grows like
+ * 2^nvars and is simply not representable on the larger instances (qccq-gauntlet's
+ * qwalk-noancilla_11 has |amplitude| about 2^29670), which is why the solvers hand back a mantissa
+ * and an exponent and the normalization happens here. norm_h is printed so the raw value stays
+ * recoverable. */
 static bool write_amplitude_output(FILE *file, const char *solve_mode,
                                    const char *solve_mode_kernel, uint32_t target_mode,
-                                   const qsop_amplitude_t *amplitude, qsop_error_t *error) {
+                                   const qsop_amplitude_t *amplitude, uint64_t norm_h,
+                                   qsop_error_t *error) {
   if (file == NULL || solve_mode == NULL || solve_mode_kernel == NULL || amplitude == NULL) {
     error->path = NULL;
     error->line = 0;
@@ -838,12 +845,24 @@ static bool write_amplitude_output(FILE *file, const char *solve_mode,
              "internal error: null amplitude-output argument");
     return false;
   }
+  long double re = 0.0L;
+  long double im = 0.0L;
+  if (!qsop_amplitude_normalized(amplitude, norm_h, &re, &im)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message),
+             "normalized amplitude is not representable (scale 2^%" PRId32 ", norm_h %" PRIu64 ")",
+             amplitude->scale_exp2, norm_h);
+    return false;
+  }
   fprintf(file, "mode: amplitude\n");
   fprintf(file, "solve_mode: %s\n", solve_mode);
   fprintf(file, "solve_mode_kernel: %s\n", solve_mode_kernel);
   fprintf(file, "fourier_target_mode: %" PRIu32 "\n", target_mode);
-  fprintf(file, "amplitude_re: %.17Lg\n", amplitude->re);
-  fprintf(file, "amplitude_im: %.17Lg\n", amplitude->im);
+  fprintf(file, "norm_h: %" PRIu64 "\n", norm_h);
+  fprintf(file, "amplitude_re: %.17Lg\n", re);
+  fprintf(file, "amplitude_im: %.17Lg\n", im);
   fprintf(file, "numeric_error_bound: %.17Lg\n", amplitude->numeric_error_bound);
   if (ferror(file)) {
     error->path = NULL;
@@ -870,8 +889,16 @@ static bool write_probability_stats(FILE *file, const qsop_result_t *result, qso
     return false;
   }
 
-  const long double unnormalized = amplitude.re * amplitude.re + amplitude.im * amplitude.im;
-  const long double probability = unnormalized * powl(2.0L, -(long double)result->norm_h);
+  long double norm_re = 0.0L;
+  long double norm_im = 0.0L;
+  if (!qsop_amplitude_normalized(&amplitude, result->norm_h, &norm_re, &norm_im)) {
+    error->path = NULL;
+    error->line = 0;
+    error->column = 0;
+    snprintf(error->message, sizeof(error->message), "normalized amplitude is not representable");
+    return false;
+  }
+  const long double probability = norm_re * norm_re + norm_im * norm_im;
   fprintf(file, "result_probability: %.17Lg\n", probability);
 
   if (ferror(file)) {
@@ -1969,6 +1996,8 @@ int main(int argc, char **argv) {
     }
     free(auto_treewidth_order);
     auto_treewidth_order = NULL;
+    /* The amplitude is normalized against norm_h below, after the instance is gone. */
+    const uint64_t amplitude_norm_h = qsop->norm_h;
     qsop_free(qsop);
     if (jsonl_file != NULL) {
       fclose(jsonl_file);
@@ -1984,7 +2013,8 @@ int main(int argc, char **argv) {
     }
     if (format == SOLVE_FORMAT_STATS) {
       ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : "single-fourier",
-                                  "single-fourier", fourier_target_mode, &amplitude, &error);
+                                  "single-fourier", fourier_target_mode, &amplitude,
+                                  amplitude_norm_h, &error);
       if (ok) {
         ok = write_solver_stats(stdout, backend, &amp_stats, solve_mode, false, false,
                                 rankwidth_mode, rankwidth_decomposition_label, treewidth_order,
@@ -1996,7 +2026,8 @@ int main(int argc, char **argv) {
       }
     } else {
       ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : "single-fourier",
-                                  "single-fourier", fourier_target_mode, &amplitude, &error);
+                                  "single-fourier", fourier_target_mode, &amplitude,
+                                  amplitude_norm_h, &error);
       if (!ok) {
         print_error(&error, "<stdout>");
         return 1;
@@ -2135,7 +2166,7 @@ int main(int argc, char **argv) {
     if (ok) {
       ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : solve_mode_name(solve_mode),
                                   solve_mode_kernel_name(backend, solve_mode), fourier_target_mode,
-                                  &amplitude, &error);
+                                  &amplitude, result->norm_h, &error);
     }
   } else if (format == SOLVE_FORMAT_RESIDUE_VECTOR) {
     ok = qsop_result_write_residue_vector(stdout, result, &error);

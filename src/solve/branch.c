@@ -2840,25 +2840,70 @@ static void branch_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, l
  * would silently overflow to inf/nan before any combination even happens; see
  * branch_try_single_mode_delegate below, the one place a delegated amplitude
  * enters this type. */
+/* The value is (re + i*im) * 2^exp. The recursion multiplies one amplitude per connected component
+ * and one factor of 2 per propagated variable, so the product reaches 2^nvars and blows past even
+ * long double's ~2^16384 on the larger gauntlet instances. Carrying the exponent separately, and
+ * pulling the mantissa back to [1,2) after every operation, removes the ceiling. Scaling by a power
+ * of two is exact, so no mantissa bit is lost doing it. */
 typedef struct branch_c64 {
   long double re;
   long double im;
+  int exp;
 } branch_c64_t;
 
+/* Long double keeps 64 mantissa bits, so a summand more than that many binary orders below the
+ * other cannot change it. Aligning further would just flush it to zero anyway. */
+#define BRANCH_C64_ALIGN_LIMIT 72
+
 static inline branch_c64_t c64_zero(void) {
-  return (branch_c64_t){0.0L, 0.0L};
+  return (branch_c64_t){0.0L, 0.0L, 0};
 }
 
 static inline branch_c64_t c64_one(void) {
-  return (branch_c64_t){1.0L, 0.0L};
+  return (branch_c64_t){1.0L, 0.0L, 0};
+}
+
+static inline bool c64_is_zero(branch_c64_t v) {
+  return v.re == 0.0L && v.im == 0.0L;
+}
+
+static inline branch_c64_t c64_normalize(branch_c64_t v) {
+  const long double re = fabsl(v.re);
+  const long double im = fabsl(v.im);
+  const long double peak = re > im ? re : im;
+  if (peak == 0.0L || !isfinite(peak)) {
+    return v;
+  }
+  const int e = ilogbl(peak);
+  if (e == 0) {
+    return v;
+  }
+  const long double scale = ldexpl(1.0L, -e);
+  return (branch_c64_t){v.re * scale, v.im * scale, v.exp + e};
 }
 
 static inline branch_c64_t c64_add(branch_c64_t a, branch_c64_t b) {
-  return (branch_c64_t){a.re + b.re, a.im + b.im};
+  if (c64_is_zero(a)) {
+    return b;
+  }
+  if (c64_is_zero(b)) {
+    return a;
+  }
+  if (a.exp - b.exp > BRANCH_C64_ALIGN_LIMIT) {
+    return a;
+  }
+  if (b.exp - a.exp > BRANCH_C64_ALIGN_LIMIT) {
+    return b;
+  }
+  const int e = a.exp > b.exp ? a.exp : b.exp;
+  const long double sa = ldexpl(1.0L, a.exp - e);
+  const long double sb = ldexpl(1.0L, b.exp - e);
+  return c64_normalize((branch_c64_t){a.re * sa + b.re * sb, a.im * sa + b.im * sb, e});
 }
 
 static inline branch_c64_t c64_mul(branch_c64_t a, branch_c64_t b) {
-  return (branch_c64_t){a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re};
+  return c64_normalize(
+      (branch_c64_t){a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re, a.exp + b.exp});
 }
 
 static inline void c64_accum_error(uint64_t ops, long double *err) {
@@ -2994,13 +3039,13 @@ static uint64_t mul_mod_u64_u32(uint64_t a, uint32_t b, uint64_t mod) {
 static branch_c64_t branch_quarter_phase(uint32_t target_mode, uint32_t multiplier) {
   switch ((target_mode * multiplier) & 3U) {
   case 0:
-    return (branch_c64_t){1.0, 0.0};
+    return (branch_c64_t){1.0, 0.0, 0};
   case 1:
-    return (branch_c64_t){0.0, 1.0};
+    return (branch_c64_t){0.0, 1.0, 0};
   case 2:
-    return (branch_c64_t){-1.0, 0.0};
+    return (branch_c64_t){-1.0, 0.0, 0};
   default:
-    return (branch_c64_t){0.0, -1.0};
+    return (branch_c64_t){0.0, -1.0, 0};
   }
 }
 
@@ -3010,7 +3055,7 @@ static branch_c64_t branch_phase_compute(uint64_t r, uint32_t target_mode, uint6
     return c64_one();
   }
   if ((r & 1U) == 0 && residue == r / 2U) {
-    return (target_mode & 1U) != 0 ? (branch_c64_t){-1.0, 0.0} : c64_one();
+    return (target_mode & 1U) != 0 ? (branch_c64_t){-1.0, 0.0, 0} : c64_one();
   }
   if ((r & 3U) == 0) {
     if (residue == r / 4U) {
@@ -3024,7 +3069,7 @@ static branch_c64_t branch_phase_compute(uint64_t r, uint32_t target_mode, uint6
   static const double two_pi = 6.2831853071795864769252867665590057683943387987502;
   const uint64_t k = mul_mod_u64_u32(residue, target_mode, r);
   const double angle = two_pi * (double)k / (double)r;
-  return (branch_c64_t){cos(angle), sin(angle)};
+  return (branch_c64_t){cos(angle), sin(angle), 0};
 }
 
 static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t residue) {
@@ -3042,7 +3087,7 @@ static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t re
   size_t idx = (size_t)(branch_hash_u64(residue) & (uint64_t)(cache->cap - 1U));
   while (cache->used[idx] != 0) {
     if (cache->keys[idx] == residue) {
-      return (branch_c64_t){cache->re[idx], cache->im[idx]};
+      return (branch_c64_t){cache->re[idx], cache->im[idx], 0};
     }
     idx = (idx + 1U) & (cache->cap - 1U);
   }
@@ -3544,9 +3589,9 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
       continue;
     }
     const uint64_t unary = qsop_residual_unary(residual, v) % r;
-    branch_c64_t factor = {0.0, 0.0};
+    branch_c64_t factor = c64_zero();
     if (unary == 0) {
-      factor = (branch_c64_t){2.0, 0.0};
+      factor = (branch_c64_t){1.0L, 0.0L, 1}; /* 2 = 1 * 2^1 */
     } else if ((r & 1U) == 0 && unary == r / 2U && (state->target_mode & 1U) != 0) {
       *out = c64_zero();
       add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
@@ -3555,7 +3600,7 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
       return true;
     } else {
       const branch_c64_t phase = branch_phase_lookup(&state->phase_cache, unary);
-      factor = (branch_c64_t){1.0 + phase.re, phase.im};
+      factor = c64_normalize((branch_c64_t){1.0L + phase.re, phase.im, phase.exp});
     }
     z = c64_mul(z, factor);
     c64_accum_error(1, &state->numeric_error_bound);
@@ -3656,7 +3701,8 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
     return ok;
   }
 
-  branch_c64_t amp = {delegated_amp.re, delegated_amp.im};
+  branch_c64_t amp =
+      c64_normalize((branch_c64_t){delegated_amp.re, delegated_amp.im, delegated_amp.scale_exp2});
   const branch_c64_t constant =
       branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
   *out = c64_mul(constant, amp);
@@ -3843,11 +3889,7 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_
   if (!qsop_residual_undo(residual, checkpoint, error)) {
     return false;
   }
-  if (doublings != 0) {
-    const long double factor = ldexpl(1.0L, (int)doublings);
-    amp.re *= factor;
-    amp.im *= factor;
-  }
+  amp.exp += (int)doublings;
   *out = amp;
   return true;
 }
@@ -3869,8 +3911,9 @@ static bool branch_solve_single_mode_residual(const qsop_instance_t *qsop, uint3
   branch_c64_t amp = c64_zero();
   const bool ok = branch_sum_rec_single_mode(residual, &state, &amp, error);
   if (ok) {
-    out->re = (long double)amp.re;
-    out->im = (long double)amp.im;
+    out->re = amp.re;
+    out->im = amp.im;
+    out->scale_exp2 = amp.exp;
     out->numeric_error_bound = state.numeric_error_bound;
     branch_single_mode_merge_final_stats(&state);
   }
