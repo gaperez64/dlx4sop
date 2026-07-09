@@ -195,13 +195,16 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
   va_end(args);
 }
 
+/* The residual's additive constant is deliberately absent: see qsop_residual_fingerprint. Both
+ * caches below therefore store the *constant-free* value of a residual, and both re-apply the
+ * rotation on a hit -- branch_counts_shift_add for the count table, a unit-modulus phase for the
+ * single-Fourier amplitude. That is worth up to an r-fold reduction in distinct entries. */
 typedef struct residual_cache_key {
   uint64_t fingerprint;
   bool canonical;
   uint64_t r;
   uint32_t nvars;
   uint32_t nedges;
-  uint64_t constant;
   uint32_t active_vars;
   uint32_t active_edges;
   uint8_t *active_var;
@@ -533,6 +536,21 @@ static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *s
   return true;
 }
 
+/* The inverse of branch_counts_shift_add's rotation, as a plain copy: dst[j] = src[(j+shift) % r].
+ * Strips a residual's additive constant back out of a computed count vector, which is what the
+ * cache stores. No addition, hence no overflow and no count_modulus to respect. */
+static void branch_counts_rotate_out(uint32_t r, uint64_t *dst, const uint64_t *src,
+                                     uint32_t shift) {
+  const uint32_t delta = shift % r;
+  for (uint32_t residue = 0; residue < r; residue++) {
+    uint32_t source = residue + delta;
+    if (source >= r) {
+      source -= r;
+    }
+    dst[residue] = src[source];
+  }
+}
+
 static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
                                    const uint64_t *right, const branch_search_stats_t *stats,
                                    qsop_error_t *error) {
@@ -624,7 +642,6 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   key->r = qsop_residual_modulus(residual);
   key->nvars = nvars;
   key->nedges = nedges;
-  key->constant = qsop_residual_constant(residual);
   key->active_vars = qsop_residual_active_vars(residual);
   key->active_edges = qsop_residual_active_edges(residual);
 
@@ -664,8 +681,6 @@ static uint64_t residual_cache_key_fingerprint(const residual_cache_key_t *key) 
   fingerprint *= UINT64_C(1099511628211);
   fingerprint ^= key->nedges;
   fingerprint *= UINT64_C(1099511628211);
-  fingerprint ^= key->constant;
-  fingerprint *= UINT64_C(1099511628211);
   fingerprint ^= key->active_vars;
   fingerprint *= UINT64_C(1099511628211);
   fingerprint ^= key->active_edges;
@@ -687,7 +702,7 @@ static uint64_t residual_cache_key_fingerprint(const residual_cache_key_t *key) 
   return fingerprint;
 }
 
-static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, uint64_t constant,
+static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub,
                                                     residual_cache_key_t *key,
                                                     qsop_error_t *error) {
   if (key == NULL) {
@@ -700,7 +715,6 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub, 
   key->r = sub->r;
   key->nvars = sub->nvars;
   key->nedges = sub->nedges;
-  key->constant = constant;
   key->active_vars = sub->nvars;
   key->active_edges = sub->nedges;
 
@@ -732,8 +746,7 @@ static bool residual_cache_key_create_canonical_small(const qsop_residual_t *res
   if (!build_active_residual_subinstance(residual, &sub, error)) {
     return false;
   }
-  const bool ok =
-      residual_cache_key_create_from_instance(&sub, qsop_residual_constant(residual), key, error);
+  const bool ok = residual_cache_key_create_from_instance(&sub, key, error);
   free_subinstance(&sub);
   return ok;
 }
@@ -750,8 +763,7 @@ static bool residual_cache_key_matches_key(const residual_cache_key_t *lhs,
                                            const residual_cache_key_t *rhs) {
   if (lhs->fingerprint != rhs->fingerprint || lhs->canonical != rhs->canonical ||
       lhs->r != rhs->r || lhs->nvars != rhs->nvars || lhs->nedges != rhs->nedges ||
-      lhs->constant != rhs->constant || lhs->active_vars != rhs->active_vars ||
-      lhs->active_edges != rhs->active_edges) {
+      lhs->active_vars != rhs->active_vars || lhs->active_edges != rhs->active_edges) {
     return false;
   }
 
@@ -777,7 +789,6 @@ static bool residual_cache_key_matches_residual(const residual_cache_key_t *key,
   if (key->fingerprint != qsop_residual_fingerprint(residual) ||
       key->r != qsop_residual_modulus(residual) || key->nvars != qsop_residual_nvars(residual) ||
       key->nedges != qsop_residual_nedges(residual) ||
-      key->constant != qsop_residual_constant(residual) ||
       key->active_vars != qsop_residual_active_vars(residual) ||
       key->active_edges != qsop_residual_active_edges(residual)) {
     return false;
@@ -936,7 +947,10 @@ static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t 
     residual_cache_key_free(&entry.key);
     return false;
   }
-  memcpy(entry.counts, counts, (size_t)(uint32_t)entry.key.r * sizeof(*entry.counts));
+  /* `counts` is the residual's histogram *including* its additive constant; the key does not carry
+   * that constant, so rotate it back out before storing. branch_sum_rec re-applies it on a hit. */
+  branch_counts_rotate_out((uint32_t)entry.key.r, entry.counts, counts,
+                           (uint32_t)(qsop_residual_constant(residual) % entry.key.r));
 
   if (!residual_cache_reserve(cache, cache->len + 1U, error)) {
     residual_cache_key_free(&entry.key);
@@ -2308,8 +2322,10 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
     if (entry->search_nodes > 1U) {
       add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
     }
-    return add_counts((uint32_t)qsop_residual_modulus(residual), counts, entry->counts, stats,
-                      error);
+    const uint32_t hit_r = (uint32_t)qsop_residual_modulus(residual);
+    return branch_counts_shift_add(hit_r, counts, entry->counts,
+                                   (uint32_t)(qsop_residual_constant(residual) % hit_r), stats,
+                                   error);
   }
 
   stats->cache_misses++;
@@ -2800,6 +2816,13 @@ static inline branch_c64_t c64_mul(branch_c64_t a, branch_c64_t b) {
       (branch_c64_t){a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re, a.exp + b.exp});
 }
 
+/* For a unit-modulus v -- which every omega^k phase is -- the conjugate is the exact inverse, so
+ * this divides a residual's constant phase back out without a single rounding step beyond the
+ * multiply itself. */
+static inline branch_c64_t c64_conj(branch_c64_t v) {
+  return (branch_c64_t){v.re, -v.im, v.exp};
+}
+
 static inline void c64_accum_error(uint64_t ops, long double *err) {
   if (err != NULL) {
     *err += (long double)ops * 8.0L * LDBL_EPSILON;
@@ -2850,6 +2873,8 @@ typedef struct branch_single_mode_state {
   uint64_t max_search_nodes;
   uint32_t max_fallback_vars;
   uint32_t max_recursion_depth;
+  uint32_t treewidth_delegate_max_width;
+  uint32_t rankwidth_delegate_max_width;
   /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
    * target mode (an even mode kills the sign edges outright and the rule changes shape). */
   bool propagate;
@@ -3221,6 +3246,12 @@ static bool branch_single_mode_delegate_component(
 
   const qsop_branch_policy_t policy = branch_policy_normalize(&options->policy);
   const qsop_branch_rw_source_t rw_source = options->rw_source;
+  const uint32_t tw_cap = options->treewidth_delegate_max_width != 0
+                              ? options->treewidth_delegate_max_width
+                              : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint32_t rw_cap = options->rankwidth_delegate_max_width != 0
+                              ? options->rankwidth_delegate_max_width
+                              : BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
 
   /* qsop_compute_stats_with_order only populates `order` for nvars <= 63 -- its width-
    * diagnostics path for larger instances (compute_large_width_diagnostics) computes
@@ -3257,7 +3288,7 @@ static bool branch_single_mode_delegate_component(
 
   /* Single-Fourier tables carry no residue axis, so the r factor is 1. */
   const bool treewidth_usable =
-      treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH;
+      treewidth_available && treewidth_width <= tw_cap;
   const uint64_t tw_est =
       branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
 
@@ -3292,7 +3323,7 @@ static bool branch_single_mode_delegate_component(
               !qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table,
                                                      &rankwidth_join, error)) {
             setup_ok = false;
-          } else if (cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+          } else if (cutrank_width <= rw_cap) {
             /* Probe is sunk; same inequality as the pre-probe check, with the measured forecasts.
              * sig_est = 2^cutrank = rankwidth_table (single-Fourier tables omit the r factor). */
             rankwidth_table = binary_assignment_forecast(cutrank_width);
@@ -3305,8 +3336,7 @@ static bool branch_single_mode_delegate_component(
     }
   }
 
-  if (setup_ok && !use_rankwidth && treewidth_available &&
-      treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+  if (setup_ok && !use_rankwidth && treewidth_available && treewidth_width <= tw_cap) {
     setup_ok = branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error);
   }
 
@@ -3324,19 +3354,18 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH &&
-             order_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH) {
+  } else if (treewidth_available && treewidth_width <= tw_cap && order_width <= tw_cap) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
-          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode, out,
-          &delegated, options->trace, error);
+          sub, tw_cap + 1U, order, order_width, target_mode, out, &delegated, options->trace,
+          error);
     } else {
       ok = qsop_solve_treewidth_precomputed_order_single_mode_f64(
-          sub, BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS, order, order_width, target_mode,
-          options->simd, out, &delegated, options->trace, error);
+          sub, tw_cap + 1U, order, order_width, target_mode, options->simd, out, &delegated,
+          options->trace, error);
     }
     delegated.treewidth_delegations++;
-  } else if (decomposition != NULL && cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+  } else if (decomposition != NULL && cutrank_width <= rw_cap) {
     /* Treewidth unavailable/too wide, but rankwidth is viable even though the cost model
      * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
@@ -3353,9 +3382,9 @@ static bool branch_single_mode_delegate_component(
       set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
-                "; neither is within its delegate cap (%u / %u) -- no delegate available",
-                sub->nvars, treewidth_width, cutrank_width,
-                BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH, BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH);
+                "; neither is within its delegate cap (%" PRIu32 " / %" PRIu32
+                ") -- no delegate available",
+                sub->nvars, treewidth_width, cutrank_width, tw_cap, rw_cap);
       ok = false;
     } else {
       ok = true;
@@ -3409,6 +3438,8 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .max_fallback_vars =
           o.max_fallback_vars != 0 ? o.max_fallback_vars : BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS,
       .max_recursion_depth = o.max_recursion_depth != 0 ? o.max_recursion_depth : qsop->nvars,
+      .treewidth_delegate_max_width = o.treewidth_delegate_max_width,
+      .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
       /* The rule rests on omega^(r/2) = -1 raised to an odd power; an even target mode turns
        * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
       .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
@@ -3553,6 +3584,13 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
     acc = c64_mul(acc, part);
     c64_accum_error(1, &state->numeric_error_bound);
     free_subinstance(&sub);
+    /* The amplitude is the product over components, so one exactly-zero factor -- which the
+     * propagation conflict rule produces often -- decides the whole node. Amplitudes are never
+     * rounded to zero (c64_normalize leaves a zero alone and never underflows a nonzero), so this
+     * only fires on an exact algebraic zero. */
+    if (c64_is_zero(acc)) {
+      break;
+    }
   }
   free(component);
   *out = acc;
@@ -3577,6 +3615,8 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .precision = state->precision,
       .kernel = state->kernel,
       .simd = state->simd,
+      .treewidth_delegate_max_width = state->treewidth_delegate_max_width,
+      .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
       .trace = state->trace,
   };
   const bool ok = branch_single_mode_delegate_component(
@@ -3614,7 +3654,11 @@ static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
     add_saturating_u64(&state->cache_avoided_nodes, entry->search_nodes - 1U);
   }
   state->numeric_error_bound += entry->numeric_error_bound;
-  *out = entry->amp;
+  /* Entries are stored constant-free (see residual_cache_key_t); re-apply this residual's own
+   * constant as the unit-modulus phase omega^constant that it is. */
+  *out = c64_mul(entry->amp,
+                 branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual)));
+  c64_accum_error(1, &state->numeric_error_bound);
   return true;
 }
 
@@ -3708,7 +3752,14 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
 
   const uint64_t subtree_nodes = state->nodes - subtree_start_nodes + 1U;
   const long double subtree_error = state->numeric_error_bound - subtree_start_error;
-  if (!branch_amp_cache_store(&state->amp_cache, residual, *out, subtree_error, subtree_nodes,
+  /* Store the constant-free amplitude: *out carries this residual's omega^constant, and the key
+   * does not. Dividing it out is one multiply by the conjugate phase, charged to the entry's own
+   * error bound rather than the caller's, since *out itself is returned untouched. */
+  const branch_c64_t cached = c64_mul(
+      *out, c64_conj(branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual))));
+  long double cached_error = subtree_error;
+  c64_accum_error(1, &cached_error);
+  if (!branch_amp_cache_store(&state->amp_cache, residual, cached, cached_error, subtree_nodes,
                               error)) {
     return false;
   }

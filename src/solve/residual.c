@@ -779,6 +779,12 @@ uint32_t qsop_residual_edge_v(const qsop_residual_t *residual, uint32_t e) {
   return residual->edge_v[e];
 }
 
+/* Deliberately excludes residual->constant. The constant enters every quantity the branch backend
+ * derives from a residual as a pure rotation -- of the residue histogram, equivalently as a
+ * unit-modulus phase on the amplitude -- so two residuals differing only in it have results that
+ * are trivially interconvertible. Folding it in would split each equivalence class into up to r
+ * copies. Callers that memoise on this fingerprint must therefore store the constant-free value
+ * and re-apply the rotation on a hit. */
 uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
   if (residual == NULL) {
     return 0;
@@ -788,7 +794,6 @@ uint64_t qsop_residual_fingerprint(const qsop_residual_t *residual) {
   fingerprint = fingerprint_u64(fingerprint, residual->r);
   fingerprint = fingerprint_u64(fingerprint, residual->nvars);
   fingerprint = fingerprint_u64(fingerprint, residual->nedges);
-  fingerprint = fingerprint_u64(fingerprint, residual->constant);
   fingerprint = fingerprint_u64(fingerprint, residual->active_vars);
   fingerprint = fingerprint_u64(fingerprint, residual->active_edges);
 

@@ -486,6 +486,13 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
         fprintf(file, "branch_propagations: %" PRIu64 "\n", stats->branch_propagations);
         fprintf(file, "branch_zero_prunes: %" PRIu64 "\n", stats->branch_zero_prunes);
       }
+      if (stats->branch_width_probes != 0 || stats->branch_probe_skips != 0) {
+        fprintf(file, "branch_width_probes: %" PRIu64 "\n", stats->branch_width_probes);
+        fprintf(file, "branch_probe_skips: %" PRIu64 "\n", stats->branch_probe_skips);
+      }
+      if (stats->branch_cutset_size != 0) {
+        fprintf(file, "branch_cutset_size: %" PRIu64 "\n", stats->branch_cutset_size);
+      }
       fprintf(file, "max_residual_vars: %" PRIu32 "\n", stats->max_residual_vars);
       fprintf(file, "max_residual_edges: %" PRIu32 "\n", stats->max_residual_edges);
       fprintf(file, "max_residual_components: %" PRIu32 "\n", stats->max_residual_components);

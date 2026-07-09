@@ -294,6 +294,14 @@ test_branch_propagate = executable(
 
 test('branch propagate unit', test_branch_propagate, timeout: 120)
 
+test_branch_single_cache = executable(
+  'test-branch-single-cache',
+  'tests/unit/test_branch_single_cache.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch single cache unit', test_branch_single_cache, timeout: 120)
+
 test(
   'kernel benchmark smoke',
   bench_kernels,

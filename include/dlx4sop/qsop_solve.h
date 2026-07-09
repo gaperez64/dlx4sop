@@ -107,6 +107,14 @@ typedef struct qsop_solve_stats {
   uint64_t branch_propagations;
   uint64_t branch_zero_prunes;
 
+  /* Branch delegate-probe accounting. A probe is one qsop_compute_stats_with_order call on a
+   * residual subinstance; a skip is a node that a cheap veto kept from probing at all. */
+  uint64_t branch_width_probes;
+  uint64_t branch_probe_skips;
+  /* Size of the w-cutset the CUTSET heuristic conditioned on, summed over the components that
+   * needed one; 0 when no component fell through to conditioning. */
+  uint64_t branch_cutset_size;
+
   /* Branch residual sizing */
   uint32_t max_residual_vars;
   uint32_t max_residual_edges;
@@ -495,6 +503,14 @@ typedef struct qsop_branch_single_mode_options {
   uint64_t cache_budget_mib;
   uint32_t cache_min_vars;
   uint32_t phase_cache_lg_cap;
+
+  /* Widths at or below which a connected component is handed to the treewidth / rankwidth DP
+   * instead of being branched on. Zero selects the built-in caps; any other value is used
+   * verbatim, so a cap of 1 forces the residual recursion for everything wider than a path --
+   * which is how the differential guards reach the recursion and its cache at all, since a small
+   * random component otherwise always delegates on the first probe. */
+  uint32_t treewidth_delegate_max_width;
+  uint32_t rankwidth_delegate_max_width;
 
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;
