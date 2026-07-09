@@ -195,13 +195,29 @@ before which several cheap vetoes short-circuit it (treewidth already cheap;
 treewidth width within the delegate band; a low-rank bypass when the cut-rank
 proxy is small).
 
+**Probe cost.** Computing `rw_est` is not free: it generates a rank decomposition
+and measures the cut rank at every node of it, `O(nvars² · words)` of bitset work.
+On a large component that dwarfs the treewidth solve it is trying to improve on.
+So before probing, `C_rw_probe * nvars² * ceil(nvars/64)` is compared against
+`C_tw_table * tw_table` — the treewidth table is a lower bound on the treewidth
+solve and an upper bound on what a rankwidth win could recover, so a probe costing
+more than the whole prize is skipped (`veto_reason: rw_probe_cost_exceeds_treewidth
+_table`). This does not apply when treewidth is over its cap: rankwidth is then the
+only backend left. Small components still probe — a `K16,16` block costs 2 µs to
+probe against a 2.6 ms treewidth table, and rankwidth still wins it.
+
 ### Runtime tuning (`--help-advanced` lists all flags)
 
 Backend / mode:
 `--backend branch|treewidth|rankwidth` (default `branch`),
 `--solve-mode auto|count-table|fourier|single-fourier`,
-`--max-vars N` (default 24; auto single-Fourier raises it to 4096),
+`--max-vars N` (default 24; auto single-Fourier raises it to 2^24),
 `--treewidth-order min-fill|min-degree|min-fill-max-degree`.
+
+`--max-vars` is a sanity bound, not a solvability gate: what makes a single-Fourier
+solve affordable is the **width** (the DP table is `2^(width+1)`), not the variable
+count. The auto default used to be 4096, which refused instances of width 14 for
+being large.
 
 Rankwidth policy (`--branch-rw-source` defaults to `auto`; set `none` to disable):
 `--branch-rw-source`,
@@ -217,17 +233,24 @@ Rankwidth policy (`--branch-rw-source` defaults to `auto`; set `none` to disable
 Single-Fourier fallback: `--branch-single-fourier-fallback`,
 `--branch-single-max-fallback-vars`, `--branch-single-max-search-nodes`,
 `--branch-single-cache-budget-mib`, `--branch-single-precision`,
-`--single-mode-precision`.
+`--single-mode-precision`, `--branch-single-propagate auto|off`.
+
+`--branch-single-propagate` controls the search-time Hadamard collapse: at each
+node the solver sums out every variable with `unary ∈ {0, r/2}` and active degree
+≤ 1, cascading through the pins that creates. An isolated variable left with unary
+`r/2` has factor `1 + ω^(r/2) = 0`, so the whole subtree's amplitude is zero and is
+pruned. It is amplitude-exact (odd Fourier modes only), so it is confined to the
+single-Fourier path and disabled automatically for an even `--fourier-target-mode`.
 
 Rankwidth backend: `--rankwidth-generate`, `--rankwidth-mode`,
 `--rankwidth-memory-budget-mib`, `--rankwidth-memory-policy`,
 `--rankwidth-join-strategy`, `--rankwidth-single-kernel`,
 `--rankwidth-fourier-kernel`.
 
-The five cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
-`C_tw_table` / `C_tw_join` have **no CLI flag**; they are ns-per-unit constants
-(`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by editing
-that file. `sop-solve` reads no environment variables.
+The six cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
+`C_tw_table` / `C_tw_join` / `C_rw_probe` have **no CLI flag**; they are ns-per-unit
+constants (`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by
+editing that file. `sop-solve` reads no environment variables.
 
 ### Retuning the cost model
 

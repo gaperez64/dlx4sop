@@ -392,6 +392,12 @@ typedef struct qsop_branch_policy {
   uint64_t C_rw_sig;             /* ns per rw signature (default 2000) */
   uint64_t C_tw_table;           /* ns per tw table entry (default 20) */
   uint64_t C_tw_join;            /* ns per tw join pair (default 10) */
+  /* The cost of *deciding*, not of solving. Answering "would rankwidth beat treewidth?" means
+   * generating a rank decomposition and measuring the cut rank at every node of it -- O(nvars^2 *
+   * words) of bitset work. On a large component that dwarfs the treewidth solve it is trying to
+   * improve on: a 14k-variable, width-16 instance spent over 100s probing a 3s treewidth solve.
+   * This is the ns per (nvars * nvars * ceil(nvars/64)) unit (default 2). */
+  uint64_t C_rw_probe;
   double rw_min_speedup;         /* select rw only when rw_est * speedup < tw_est (default 1.1) */
   uint64_t rw_memory_penalty_ns; /* extra cost added to rw estimate for memory risk (default 0) */
 } qsop_branch_policy_t;

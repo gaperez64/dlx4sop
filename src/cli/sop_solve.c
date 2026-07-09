@@ -308,7 +308,12 @@ static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
 
 #define BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS 16U
 #define BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH 25U
-#define BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS 4096U
+/* What makes a single-Fourier solve affordable is the *width*, not the variable count: the DP table
+ * is 2^(width+1) and the elimination is linear in nvars. This used to be 4096, which refused
+ * qccq-gauntlet's qwalk-noancilla_8 -- 6715 variables, min-fill width 14, half a second of work --
+ * purely for being big. It is now only a sanity bound against a pathological input; the width caps
+ * and the delegate cost model are what decide solvability. */
+#define BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS (1U << 24)
 
 static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop, uint32_t max_vars,
                                                     bool max_vars_set) {

@@ -27,6 +27,7 @@
 #define BRANCH_POLICY_DEFAULT_C_RW_SIG 2000UL
 #define BRANCH_POLICY_DEFAULT_C_TW_TABLE 20UL
 #define BRANCH_POLICY_DEFAULT_C_TW_JOIN 10UL
+#define BRANCH_POLICY_DEFAULT_C_RW_PROBE 2UL
 #define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP 1.1
 #define BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS 64U
 #define BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES UINT64_C(10000000)
@@ -67,6 +68,8 @@ static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *
     p.C_tw_table = BRANCH_POLICY_DEFAULT_C_TW_TABLE;
   if (!p.C_tw_join)
     p.C_tw_join = BRANCH_POLICY_DEFAULT_C_TW_JOIN;
+  if (!p.C_rw_probe)
+    p.C_rw_probe = BRANCH_POLICY_DEFAULT_C_RW_PROBE;
   if (p.rw_min_speedup <= 0.0)
     p.rw_min_speedup = BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP;
   return p;
@@ -1208,6 +1211,36 @@ static bool branch_treewidth_preferred(bool treewidth_available, uint32_t prefix
          treewidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
+/* Predicted cost of *deciding* whether rankwidth wins: generate a rank decomposition, then measure
+ * the cut rank at each of its ~2*nvars nodes, each a GF(2) rank over nvars-bit rows. That is
+ * O(nvars^2 * words) bitset work, superlinear in the component size and with a large constant. */
+static uint64_t rankwidth_probe_estimate_ns(const qsop_branch_policy_t *pol, uint32_t nvars) {
+  const uint64_t words = ((uint64_t)nvars + 63U) / 64U;
+  uint64_t units = saturating_mul_u64((uint64_t)nvars, (uint64_t)nvars);
+  units = saturating_mul_u64(units, words == 0 ? 1U : words);
+  return saturating_mul_u64(units, pol->C_rw_probe);
+}
+
+/* Never spend more deciding than the treewidth table alone will cost.
+ *
+ * The table forecast is a hard lower bound on the treewidth solve, and rankwidth's whole benefit is
+ * making that table smaller -- so it also bounds what a rankwidth win could possibly recover. A
+ * probe that costs more than the entire prize is never worth running, however the forecasts compare
+ * afterwards. This is what the model was missing: it estimated the two *solves* and then paid an
+ * unbudgeted amount computing the rankwidth estimate.
+ *
+ * Only applies when treewidth is actually usable. When it is not, rankwidth is the only backend
+ * left and the probe has to be attempted whatever it costs. */
+static bool branch_rankwidth_probe_too_costly(const qsop_branch_policy_t *pol,
+                                              bool treewidth_usable, uint32_t nvars,
+                                              uint64_t treewidth_table_entries) {
+  if (!treewidth_usable) {
+    return false;
+  }
+  return rankwidth_probe_estimate_ns(pol, nvars) >
+         saturating_mul_u64(treewidth_table_entries, pol->C_tw_table);
+}
+
 /* Shared "treewidth is obviously cheap, don't bother probing rankwidth" pre-probe check
  * (single-Fourier table forecast, no r factor). */
 static bool branch_treewidth_is_cheap(const qsop_branch_policy_t *pol, bool treewidth_available,
@@ -1237,7 +1270,12 @@ bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
       treewidth_width <= pol.rw_min_treewidth_width ||
       treewidth_single_mode_table_forecast(treewidth_width) <= pol.rw_min_treewidth_forecast ||
       (nvars < pol.rw_min_residual_vars && treewidth_width <= 5U);
-  return trivially_cheap || branch_treewidth_preferred(true, prefix_cut_rank, treewidth_width);
+  /* Callers only reach here with treewidth inside its single-Fourier cap, so treewidth is usable
+   * and the probe-cost veto applies: on a large component, deciding costs more than solving. */
+  const bool probe_too_costly = branch_rankwidth_probe_too_costly(
+      &pol, true, nvars, treewidth_single_mode_table_forecast(treewidth_width));
+  return trivially_cheap || probe_too_costly ||
+         branch_treewidth_preferred(true, prefix_cut_rank, treewidth_width);
 }
 
 /* Maximum cutrank width tried during calibration runs. Wider sub-problems are
@@ -1325,6 +1363,19 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     }
     /* Calibration: fall through to time rankwidth for comparison. */
     calibration_timing_only = true;
+  }
+
+  /* Probing costs more than the treewidth table it could shrink. */
+  if (!calibrating &&
+      branch_rankwidth_probe_too_costly(
+          pol, treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
+          sub->nvars, treewidth_table)) {
+    note_rankwidth_skip(stats, "branch.rankwidth_skip_probe_cost", sub->nvars);
+    if (rw_data != NULL) {
+      rw_data->veto_reason = "rw_probe_cost_exceeds_treewidth_table";
+      rw_data->attempted = false;
+    }
+    return true;
   }
   if (treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
       prefix_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
@@ -3266,8 +3317,15 @@ static bool branch_single_mode_delegate_component(
         &policy, treewidth_available, treewidth_width, sub->nvars, prefix_cut_rank);
     const bool prefer_treewidth =
         branch_treewidth_preferred(treewidth_available, prefix_cut_rank, treewidth_width);
+    const bool probe_too_costly = branch_rankwidth_probe_too_costly(
+        &policy,
+        treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH,
+        sub->nvars, treewidth_single_mode_table_forecast(treewidth_width));
+    if (probe_too_costly && io_stats != NULL) {
+      io_stats->branch_rankwidth_skips++;
+    }
 
-    if (!cheap_treewidth && !prefer_treewidth) {
+    if (!cheap_treewidth && !prefer_treewidth && !probe_too_costly) {
       const qsop_rankwidth_generator_t generator = (rw_source == QSOP_BRANCH_RW_SOURCE_NATIVE)
                                                        ? QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT
                                                        : QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
