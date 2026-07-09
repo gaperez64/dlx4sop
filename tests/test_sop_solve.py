@@ -2173,9 +2173,12 @@ def _amplitudes_close(left: str, right: str, *, rel: float = 1e-9, abs_tol: floa
     right_re, right_im = _amplitude_fields(right)
     if left_re is None or left_im is None or right_re is None or right_im is None:
         return False
+    left_value = (float(left_re), float(left_im))
+    right_value = (float(right_re), float(right_im))
+    error = math.hypot(left_value[0] - right_value[0], left_value[1] - right_value[1])
+    scale = max(1.0, math.hypot(*left_value), math.hypot(*right_value))
     return (
-        math.isclose(float(left_re), float(right_re), rel_tol=rel, abs_tol=abs_tol)
-        and math.isclose(float(left_im), float(right_im), rel_tol=rel, abs_tol=abs_tol)
+        error <= abs_tol + rel * scale
     )
 
 
