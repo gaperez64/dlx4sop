@@ -56,6 +56,30 @@ static int check_complex_mul(const qsop_simd_vtable_t *vt, const char *name, uin
   return 0;
 }
 
+static int check_complex_scale(const qsop_simd_vtable_t *vt, const char *name, uint64_t *seed) {
+  const qsop_simd_vtable_t *ref = qsop_simd_scalar_vtable();
+  for (size_t n = 0; n <= MAX_N; n++) {
+    double in_re[MAX_N], in_im[MAX_N];
+    double ore[MAX_N], oim[MAX_N], xre[MAX_N], xim[MAX_N];
+    for (size_t i = 0; i < n; i++) {
+      in_re[i] = (double)(int64_t)(xorshift(seed) % 2001U) - 1000.0;
+      in_im[i] = (double)(int64_t)(xorshift(seed) % 2001U) - 1000.0;
+    }
+    const double sre = (double)(int64_t)(xorshift(seed) % 2001U) - 1000.0;
+    const double sim = (double)(int64_t)(xorshift(seed) % 2001U) - 1000.0;
+    ref->complex_scale_f64(xre, xim, in_re, in_im, sre, sim, n);
+    vt->complex_scale_f64(ore, oim, in_re, in_im, sre, sim, n);
+    for (size_t i = 0; i < n; i++) {
+      if (!close_enough(ore[i], xre[i]) || !close_enough(oim[i], xim[i])) {
+        fprintf(stderr, "%s: complex_scale_f64 mismatch at n=%zu i=%zu: (%g,%g) != (%g,%g)\n", name,
+                n, i, ore[i], oim[i], xre[i], xim[i]);
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 static int check_sum_out_pairs(const qsop_simd_vtable_t *vt, const char *name, uint64_t *seed) {
   const qsop_simd_vtable_t *ref = qsop_simd_scalar_vtable();
   for (size_t pairs = 0; pairs <= MAX_N; pairs++) {
@@ -152,6 +176,7 @@ int main(void) {
     exercised++;
     failures += check_complex_mul(vt, name, &seed);
     failures += check_sum_out_pairs(vt, name, &seed);
+    failures += check_complex_scale(vt, name, &seed);
     failures += check_bitset_ops(vt, name, &seed);
   }
 

@@ -222,13 +222,32 @@ bench_kernels = executable(
   install: false,
 )
 
+# Memcheck over the C unit tests only. They drive every allocator in the library -- the treewidth
+# factor pool, the residual trail, the branch caches -- and are the only tests meson can wrap
+# directly; the python ones exec the CLI, so an exe_wrapper would valgrind their interpreter.
+# Run with: meson test -C build --setup=valgrind --suite=unit
+valgrind = find_program('valgrind', required: false)
+if valgrind.found()
+  add_test_setup(
+    'valgrind',
+    exe_wrapper: [
+      valgrind,
+      '--leak-check=full',
+      '--errors-for-leak-kinds=definite,indirect',
+      '--error-exitcode=99',
+      '--quiet',
+    ],
+    timeout_multiplier: 40,
+  )
+endif
+
 test_residue = executable(
   'test-residue',
   'tests/unit/test_residue.c',
   dependencies: dlx4sop_core_dep,
 )
 
-test('residue unit', test_residue)
+test('residue unit', test_residue, suite: 'unit')
 
 test_residual = executable(
   'test-residual',
@@ -236,7 +255,7 @@ test_residual = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('residual unit', test_residual)
+test('residual unit', test_residual, suite: 'unit')
 
 test_bitset = executable(
   'test-bitset',
@@ -244,7 +263,7 @@ test_bitset = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('bitset unit', test_bitset)
+test('bitset unit', test_bitset, suite: 'unit')
 
 test_simd_kernels = executable(
   'test-simd-kernels',
@@ -252,7 +271,7 @@ test_simd_kernels = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('simd kernels unit', test_simd_kernels)
+test('simd kernels unit', test_simd_kernels, suite: 'unit')
 
 test_wmc = executable(
   'test-wmc',
@@ -260,7 +279,7 @@ test_wmc = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('wmc unit', test_wmc)
+test('wmc unit', test_wmc, suite: 'unit')
 
 test_qsop_simplify = executable(
   'test-qsop-simplify',
@@ -268,7 +287,7 @@ test_qsop_simplify = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('qsop simplify unit', test_qsop_simplify)
+test('qsop simplify unit', test_qsop_simplify, suite: 'unit')
 
 test_min_fill = executable(
   'test-min-fill',
@@ -276,7 +295,7 @@ test_min_fill = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('min-fill unit', test_min_fill)
+test('min-fill unit', test_min_fill, suite: 'unit')
 
 test_branch_api = executable(
   'test-branch-api',
@@ -284,7 +303,7 @@ test_branch_api = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('branch api unit', test_branch_api)
+test('branch api unit', test_branch_api, suite: 'unit')
 
 test_branch_propagate = executable(
   'test-branch-propagate',
@@ -292,7 +311,7 @@ test_branch_propagate = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('branch propagate unit', test_branch_propagate, timeout: 120)
+test('branch propagate unit', test_branch_propagate, suite: 'unit', timeout: 120)
 
 test_branch_single_cache = executable(
   'test-branch-single-cache',
@@ -300,7 +319,15 @@ test_branch_single_cache = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('branch single cache unit', test_branch_single_cache, timeout: 120)
+test('branch single cache unit', test_branch_single_cache, suite: 'unit', timeout: 120)
+
+test_treewidth_join = executable(
+  'test-treewidth-join',
+  'tests/unit/test_treewidth_join.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('treewidth join unit', test_treewidth_join, suite: 'unit', timeout: 120)
 
 test(
   'kernel benchmark smoke',

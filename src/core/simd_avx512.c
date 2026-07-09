@@ -115,6 +115,26 @@ static void simd_avx512_complex_mul_assign_f64(double *restrict out_re, double *
   }
 }
 
+static void simd_avx512_complex_scale_f64(double *restrict out_re, double *restrict out_im,
+                                          const double *restrict in_re, const double *restrict in_im,
+                                          double scale_re, double scale_im, size_t n) {
+  const __m512d sre = _mm512_set1_pd(scale_re);
+  const __m512d sim = _mm512_set1_pd(scale_im);
+  size_t i = 0;
+  for (; i + 8U <= n; i += 8U) {
+    const __m512d re = _mm512_loadu_pd(in_re + i);
+    const __m512d im = _mm512_loadu_pd(in_im + i);
+    _mm512_storeu_pd(out_re + i, _mm512_sub_pd(_mm512_mul_pd(re, sre), _mm512_mul_pd(im, sim)));
+    _mm512_storeu_pd(out_im + i, _mm512_add_pd(_mm512_mul_pd(re, sim), _mm512_mul_pd(im, sre)));
+  }
+  for (; i < n; i++) {
+    const double re = in_re[i];
+    const double im = in_im[i];
+    out_re[i] = re * scale_re - im * scale_im;
+    out_im[i] = re * scale_im + im * scale_re;
+  }
+}
+
 static void simd_avx512_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                   const double *restrict in_re,
                                                   const double *restrict in_im, size_t pairs) {
@@ -142,6 +162,7 @@ const qsop_simd_vtable_t *qsop_simd_avx512_vtable(void) {
       .and_u64 = simd_avx512_and_u64,
       .andnot_u64 = simd_avx512_andnot_u64,
       .complex_mul_assign_f64 = simd_avx512_complex_mul_assign_f64,
+      .complex_scale_f64 = simd_avx512_complex_scale_f64,
       .complex_sum_out_pairs_f64 = simd_avx512_complex_sum_out_pairs_f64,
   };
   return &vt;

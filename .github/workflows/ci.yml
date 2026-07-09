@@ -25,3 +25,27 @@ jobs:
 
       - name: Coverage
         run: scripts/check-coverage.sh
+
+  valgrind:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install tools
+        run: |
+          python -m pip install meson ninja
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      # Pinned to AVX2 rather than -Dsimd=auto: memcheck's AVX-512 support is incomplete and an
+      # unhandled instruction aborts the run, while the runner's CPU may well offer it. The AVX-512
+      # kernels are still cross-checked against scalar in the ordinary test job.
+      - name: Configure
+        run: meson setup build -Dsimd=avx2
+
+      - name: Memcheck the C unit tests
+        run: meson test -C build --setup=valgrind --suite unit --print-errorlogs

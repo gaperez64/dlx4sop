@@ -109,6 +109,26 @@ static void simd_neon_complex_mul_assign_f64(double *restrict out_re, double *re
   }
 }
 
+static void simd_neon_complex_scale_f64(double *restrict out_re, double *restrict out_im,
+                                        const double *restrict in_re, const double *restrict in_im,
+                                        double scale_re, double scale_im, size_t n) {
+  const float64x2_t sre = vdupq_n_f64(scale_re);
+  const float64x2_t sim = vdupq_n_f64(scale_im);
+  size_t i = 0;
+  for (; i + 2U <= n; i += 2U) {
+    const float64x2_t re = vld1q_f64(in_re + i);
+    const float64x2_t im = vld1q_f64(in_im + i);
+    vst1q_f64(out_re + i, vsubq_f64(vmulq_f64(re, sre), vmulq_f64(im, sim)));
+    vst1q_f64(out_im + i, vaddq_f64(vmulq_f64(re, sim), vmulq_f64(im, sre)));
+  }
+  for (; i < n; i++) {
+    const double re = in_re[i];
+    const double im = in_im[i];
+    out_re[i] = re * scale_re - im * scale_im;
+    out_im[i] = re * scale_im + im * scale_re;
+  }
+}
+
 static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                 const double *restrict in_re,
                                                 const double *restrict in_im, size_t pairs) {
@@ -134,6 +154,7 @@ const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
       .and_u64 = simd_neon_and_u64,
       .andnot_u64 = simd_neon_andnot_u64,
       .complex_mul_assign_f64 = simd_neon_complex_mul_assign_f64,
+      .complex_scale_f64 = simd_neon_complex_scale_f64,
       .complex_sum_out_pairs_f64 = simd_neon_complex_sum_out_pairs_f64,
   };
   return &vt;

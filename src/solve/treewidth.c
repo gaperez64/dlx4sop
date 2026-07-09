@@ -52,12 +52,33 @@ typedef struct tw_factor_complex {
   long double *im;
 } tw_factor_complex_t;
 
+/* Every message the DP builds is a fresh pair of 2^arity double arrays, and an elimination
+ * allocates and frees them at the same handful of sizes over and over. glibc hands anything this
+ * big straight back to the kernel on free, so the next message faults every one of its pages back
+ * in: on mqt2040/realamprandom_21 that was 4.3M minor faults, and 45% of the solve. Recycling by
+ * arity fixes it exactly -- factor tables are always powers of two, so the bucket is the arity.
+ *
+ * Depth 2 -- one table's worth of re/im -- is the knee. It removes 93% of the faults, and holding
+ * more only buys another 10% while raising peak RSS by a third, which is the wrong trade: memory,
+ * not time, is what caps the widest bag this DP can take. At depth 2 the peak matches what the old
+ * projection-map code used, so the maps' 16 bytes per output entry come back as headroom. */
+#define TW_POOL_BUCKETS 64U
+#define TW_POOL_DEPTH 2U
+
+typedef struct tw_pool {
+  double *slots[TW_POOL_BUCKETS][TW_POOL_DEPTH];
+  uint32_t counts[TW_POOL_BUCKETS];
+} tw_pool_t;
+
 typedef struct tw_factor_complex64 {
   uint32_t arity;
   uint32_t *vars;
   size_t assignments;
   double *re;
   double *im;
+  /* Where re/im go when this factor is freed; NULL means plain free(). Carried per factor rather
+   * than passed to factor_complex64_free, which is called from a dozen cleanup paths. */
+  tw_pool_t *pool;
 } tw_factor_complex64_t;
 
 typedef struct tw_factor_complex_list {
@@ -103,6 +124,7 @@ typedef struct tw_complex64_context {
   const qsop_simd_vtable_t *simd;
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
+  tw_pool_t pool;
 } tw_complex64_context_t;
 
 static void set_error(qsop_error_t *error, const char *fmt, ...) {
@@ -182,6 +204,10 @@ static void factor_free(tw_factor_t *factor) {
   free(factor->counts);
   *factor = (tw_factor_t){0};
 }
+
+/* checked_assignment_count refuses anything wider, so a per-bit array of this size covers every
+ * scope a dense factor can have. */
+#define TW_MAX_SCOPE_BITS (sizeof(size_t) * CHAR_BIT)
 
 static bool checked_assignment_count(uint32_t arity, size_t *out, qsop_error_t *error) {
   if (arity >= sizeof(size_t) * CHAR_BIT) {
@@ -1497,13 +1523,39 @@ static bool multiply_remaining_factors_complex(tw_factor_complex_list_t *list,
   return true;
 }
 
+static double *tw_pool_take(tw_pool_t *pool, uint32_t arity, size_t assignments) {
+  if (pool != NULL && arity < TW_POOL_BUCKETS && pool->counts[arity] != 0) {
+    return pool->slots[arity][--pool->counts[arity]];
+  }
+  return malloc(assignments * sizeof(double));
+}
+
+static void tw_pool_give(tw_pool_t *pool, uint32_t arity, double *buffer) {
+  if (buffer == NULL) {
+    return;
+  }
+  if (pool != NULL && arity < TW_POOL_BUCKETS && pool->counts[arity] < TW_POOL_DEPTH) {
+    pool->slots[arity][pool->counts[arity]++] = buffer;
+    return;
+  }
+  free(buffer);
+}
+
+static void tw_pool_drain(tw_pool_t *pool) {
+  for (uint32_t bucket = 0; bucket < TW_POOL_BUCKETS; bucket++) {
+    while (pool->counts[bucket] != 0) {
+      free(pool->slots[bucket][--pool->counts[bucket]]);
+    }
+  }
+}
+
 static void factor_complex64_free(tw_factor_complex64_t *factor) {
   if (factor == NULL) {
     return;
   }
   free(factor->vars);
-  free(factor->re);
-  free(factor->im);
+  tw_pool_give(factor->pool, factor->arity, factor->re);
+  tw_pool_give(factor->pool, factor->arity, factor->im);
   *factor = (tw_factor_complex64_t){0};
 }
 
@@ -1539,7 +1591,7 @@ static void factor_complex64_renormalize(tw_factor_complex64_t *factor,
   ctx->scale_exp2 += exponent;
 }
 
-static bool factor_complex64_alloc_scope(const uint32_t *vars, uint32_t arity,
+static bool factor_complex64_alloc_scope(tw_pool_t *pool, const uint32_t *vars, uint32_t arity,
                                          tw_factor_complex64_t *out, qsop_error_t *error) {
   *out = (tw_factor_complex64_t){0};
 
@@ -1553,12 +1605,12 @@ static bool factor_complex64_alloc_scope(const uint32_t *vars, uint32_t arity,
   }
 
   uint32_t *scope = malloc((arity == 0 ? 1U : (size_t)arity) * sizeof(*scope));
-  double *re = malloc(assignments * sizeof(*re));
-  double *im = malloc(assignments * sizeof(*im));
+  double *re = tw_pool_take(pool, arity, assignments);
+  double *im = tw_pool_take(pool, arity, assignments);
   if (scope == NULL || re == NULL || im == NULL) {
     free(scope);
-    free(re);
-    free(im);
+    tw_pool_give(pool, arity, re);
+    tw_pool_give(pool, arity, im);
     set_error(error, "out of memory while allocating treewidth double single-mode factor");
     return false;
   }
@@ -1572,12 +1624,14 @@ static bool factor_complex64_alloc_scope(const uint32_t *vars, uint32_t arity,
       .assignments = assignments,
       .re = re,
       .im = im,
+      .pool = pool,
   };
   return true;
 }
 
-static bool factor_complex64_identity(tw_factor_complex64_t *out, qsop_error_t *error) {
-  if (!factor_complex64_alloc_scope(NULL, 0, out, error)) {
+static bool factor_complex64_identity(tw_pool_t *pool, tw_factor_complex64_t *out,
+                                      qsop_error_t *error) {
+  if (!factor_complex64_alloc_scope(pool, NULL, 0, out, error)) {
     return false;
   }
   out->re[0] = 1.0;
@@ -1604,13 +1658,140 @@ static void note_complex64_factor_table(const tw_complex64_context_t *ctx,
   }
 }
 
-static bool projection_map_is_identity(const size_t *map, size_t len) {
-  for (size_t i = 0; i < len; i++) {
-    if (map[i] != i) {
-      return false;
+/* --------------------------------------------------------------------------
+ * Blocked factor join (double single-Fourier)
+ *
+ * A join reads each operand through a bit-projection of the output assignment: operand bit i is
+ * output bit `positions[i]`, and positions increase with i, so operand_assignment is exactly
+ * pext(assignment, mask). This used to be materialized as two size_t[2^arity] maps, then walked as
+ * a scalar gather -- 16 bytes of index traffic per output entry on top of the 48 bytes of complex
+ * data, and no vectorization unless *both* maps happened to be the identity. Measured on
+ * mqt2040/realamprandom_20, that left 93% of the DP's complex operations on the scalar path.
+ *
+ * The maps are unnecessary. Classify the output's low bit positions by which operands own them and
+ * take the longest run L of positions sharing a class. Across each aligned block of 2^L
+ * assignments, an operand owning those positions is read contiguously from a base that is a
+ * multiple of 2^L, and an operand owning none of them does not move at all. So each block is one
+ * of three contiguous kernels -- broadcast-scale by the stationary operand, or, when both own the
+ * run, an elementwise multiply. Only the 2^(arity-L) block bases remain, and each follows from its
+ * predecessor in O(1).
+ *
+ * On that same instance L >= 4 for 88% of the work and L >= 9 for 62% of it, because the operand
+ * being folded in is usually an edge factor over two high-numbered variables.
+ * -------------------------------------------------------------------------- */
+
+/* proj[p] is what output bit position p adds to an operand's assignment index (0 when the operand
+ * does not contain that variable); pref[p] is the running sum below p. Both are indexed by output
+ * bit position, so at most `arity` entries. */
+typedef struct tw_projection {
+  size_t proj[TW_MAX_SCOPE_BITS];
+  size_t pref[TW_MAX_SCOPE_BITS];
+  uint64_t mask;
+} tw_projection_t;
+
+static void tw_projection_build(tw_projection_t *p, const uint32_t *positions, uint32_t arity,
+                                uint32_t out_arity) {
+  p->mask = 0;
+  for (uint32_t i = 0; i < arity; i++) {
+    p->mask |= UINT64_C(1) << positions[i];
+  }
+  size_t running = 0;
+  size_t bit = 1;
+  for (uint32_t pos = 0; pos < out_arity; pos++) {
+    p->pref[pos] = running;
+    if ((p->mask >> pos) & 1U) {
+      p->proj[pos] = bit;
+      bit <<= 1U;
+    } else {
+      p->proj[pos] = 0;
+    }
+    running += p->proj[pos];
+  }
+}
+
+/* Advance a block base across the b-th block boundary: bit `log_block + ctz(b)` of the assignment
+ * turns on and every lower bit above `log_block` turns off, exactly as in a binary counter. */
+static inline size_t tw_projection_step(const tw_projection_t *p, uint32_t pos, uint32_t log_block) {
+  return p->proj[pos] - (p->pref[pos] - p->pref[log_block]);
+}
+
+static uint32_t tw_ctz_size(size_t value) {
+  return trailing_zero_size(value & (~value + 1U));
+}
+
+static void factor_join_complex64(const tw_factor_complex64_t *left, const uint32_t *left_positions,
+                                  const tw_factor_complex64_t *right,
+                                  const uint32_t *right_positions, uint32_t arity,
+                                  tw_factor_complex64_t *out, const qsop_simd_vtable_t *simd,
+                                  uint64_t *vectorized, uint64_t *scalar) {
+  const size_t assignments = out->assignments;
+  tw_projection_t lp;
+  tw_projection_t rp;
+  tw_projection_build(&lp, left_positions, left->arity, arity);
+  tw_projection_build(&rp, right_positions, right->arity, arity);
+
+  /* out's scope is the union of the operands' scopes, so every output bit belongs to at least one
+   * of them and the (0,0) class below cannot arise. */
+  const bool low_left = arity != 0 && (lp.mask & 1U) != 0;
+  const bool low_right = arity != 0 && (rp.mask & 1U) != 0;
+  uint32_t log_block = 0;
+  while (log_block < arity && (((lp.mask >> log_block) & 1U) != 0) == low_left &&
+         (((rp.mask >> log_block) & 1U) != 0) == low_right) {
+    log_block++;
+  }
+  const size_t block = (size_t)1U << log_block;
+
+  const bool use_simd = simd != NULL && simd->complex_scale_f64 != NULL &&
+                        simd->complex_mul_assign_f64 != NULL && block >= simd->min_lanes;
+  if (!use_simd) {
+    /* Too short a run to vectorize: still walk the projections by recurrence rather than
+     * materializing them. This is the log_block == 0 case of the block loop below. */
+    size_t li = 0;
+    size_t ri = 0;
+    for (size_t a = 0; a < assignments; a++) {
+      if (a != 0) {
+        const uint32_t pos = tw_ctz_size(a);
+        li += tw_projection_step(&lp, pos, 0);
+        ri += tw_projection_step(&rp, pos, 0);
+      }
+      const double lre = left->re[li];
+      const double lim = left->im[li];
+      const double rre = right->re[ri];
+      const double rim = right->im[ri];
+      out->re[a] = lre * rre - lim * rim;
+      out->im[a] = lre * rim + lim * rre;
+    }
+    add_saturating_u64(scalar, (uint64_t)assignments);
+    return;
+  }
+
+  const size_t blocks = assignments >> log_block;
+  size_t lbase = 0;
+  size_t rbase = 0;
+  for (size_t b = 0; b < blocks; b++) {
+    if (b != 0) {
+      const uint32_t pos = log_block + tw_ctz_size(b);
+      lbase += tw_projection_step(&lp, pos, log_block);
+      rbase += tw_projection_step(&rp, pos, log_block);
+    }
+    double *out_re = out->re + (b << log_block);
+    double *out_im = out->im + (b << log_block);
+    if (low_left && !low_right) {
+      simd->complex_scale_f64(out_re, out_im, left->re + lbase, left->im + lbase, right->re[rbase],
+                              right->im[rbase], block);
+    } else if (!low_left && low_right) {
+      simd->complex_scale_f64(out_re, out_im, right->re + rbase, right->im + rbase, left->re[lbase],
+                              left->im[lbase], block);
+    } else {
+      simd->complex_mul_assign_f64(out_re, out_im, left->re + lbase, left->im + lbase,
+                                   right->re + rbase, right->im + rbase, block);
     }
   }
-  return true;
+  if (strcmp(qsop_simd_kernel_name(simd), "scalar") != 0) {
+    add_saturating_u64(vectorized, (uint64_t)assignments);
+  } else {
+    add_saturating_u64(scalar, (uint64_t)assignments);
+  }
 }
 
 static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
@@ -1651,7 +1832,7 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
   }
 
   const uint64_t start = qsop_trace_begin(ctx->trace);
-  bool ok = factor_complex64_alloc_scope(vars, arity, out, error);
+  bool ok = factor_complex64_alloc_scope(&ctx->pool, vars, arity, out, error);
   free(vars);
   if (!ok) {
     free(left_positions);
@@ -1659,52 +1840,17 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
     return false;
   }
 
-  size_t *left_map = NULL;
-  size_t *right_map = NULL;
-  if (!projection_map_alloc(out->assignments, arity, left_positions, left->arity, &left_map,
-                            error) ||
-      !projection_map_alloc(out->assignments, arity, right_positions, right->arity, &right_map,
-                            error)) {
-    factor_complex64_free(out);
-    free(left_positions);
-    free(right_positions);
-    free(left_map);
-    free(right_map);
-    return false;
-  }
-
-  const bool identity_maps = projection_map_is_identity(left_map, out->assignments) &&
-                             projection_map_is_identity(right_map, out->assignments);
-  if (identity_maps && ctx->simd != NULL && ctx->simd->complex_mul_assign_f64 != NULL &&
-      out->assignments >= ctx->simd->min_lanes) {
-    ctx->simd->complex_mul_assign_f64(out->re, out->im, left->re, left->im, right->re, right->im,
-                                      out->assignments);
-    add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
-    if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
-      add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)out->assignments);
-    }
-  } else {
-    for (size_t assignment = 0; assignment < out->assignments; assignment++) {
-      const size_t left_assignment = left_map[assignment];
-      const size_t right_assignment = right_map[assignment];
-      const double lre = left->re[left_assignment];
-      const double lim = left->im[left_assignment];
-      const double rre = right->re[right_assignment];
-      const double rim = right->im[right_assignment];
-      out->re[assignment] = lre * rre - lim * rim;
-      out->im[assignment] = lre * rim + lim * rre;
-      ctx->complex_ops++;
-    }
-    if (ctx->stats != NULL) {
-      add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)out->assignments);
-    }
-  }
+  uint64_t vectorized = 0;
+  uint64_t scalar = 0;
+  factor_join_complex64(left, left_positions, right, right_positions, arity, out, ctx->simd,
+                        &vectorized, &scalar);
+  add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
 
   free(left_positions);
   free(right_positions);
-  free(left_map);
-  free(right_map);
   if (ctx->stats != NULL) {
+    add_saturating_u64(&ctx->stats->simd_vectorized_ops, vectorized);
+    add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, scalar);
     add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_complex64_factor_table(ctx, out);
@@ -1735,7 +1881,7 @@ static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_
   }
 
   const uint64_t start = qsop_trace_begin(ctx->trace);
-  bool ok = factor_complex64_alloc_scope(vars, arity, out, error);
+  bool ok = factor_complex64_alloc_scope(&ctx->pool, vars, arity, out, error);
   free(vars);
   if (!ok) {
     return false;
@@ -1846,7 +1992,7 @@ static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t 
                                           tw_factor_complex64_list_t *list, qsop_error_t *error) {
   tw_factor_complex64_t factor = {0};
   const uint32_t scope_var = relabel[var];
-  if (!factor_complex64_alloc_scope(&scope_var, 1, &factor, error)) {
+  if (!factor_complex64_alloc_scope(NULL, &scope_var, 1, &factor, error)) {
     return false;
   }
   factor.re[0] = 1.0;
@@ -1871,7 +2017,7 @@ static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t e
   }
 
   tw_factor_complex64_t factor = {0};
-  if (!factor_complex64_alloc_scope(vars, 2, &factor, error)) {
+  if (!factor_complex64_alloc_scope(NULL, vars, 2, &factor, error)) {
     return false;
   }
   const double sign_re = (target_mode % 2U == 0U) ? 1.0 : -1.0;
@@ -1968,7 +2114,7 @@ static bool multiply_remaining_factors_complex64(tw_factor_complex64_list_t *lis
                                                  tw_complex64_context_t *ctx,
                                                  tw_factor_complex64_t *out, qsop_error_t *error) {
   if (list->len == 0) {
-    return factor_complex64_identity(out, error);
+    return factor_complex64_identity(&ctx->pool, out, error);
   }
 
   *out = factor_complex64_list_take_at(list, 0);
@@ -2445,6 +2591,8 @@ static bool solve_treewidth_single_mode_once_f64(
     set_error(error, "out of memory while relabelling treewidth single-mode variables");
     return false;
   }
+  /* Everything below frees its factors before returning, so every exit path drains the recycler
+   * that those frees fill. */
   for (uint32_t t = 0; t < qsop->nvars; t++) {
     relabel[order[t]] = qsop->nvars - 1U - t;
   }
@@ -2454,6 +2602,7 @@ static bool solve_treewidth_single_mode_once_f64(
   if (!build_initial_factors_complex64(qsop, relabel, target_mode, &factors, error)) {
     free(relabel);
     factor_complex64_list_free(&factors);
+    tw_pool_drain(&ctx.pool);
     return false;
   }
   free(relabel);
@@ -2463,6 +2612,7 @@ static bool solve_treewidth_single_mode_once_f64(
   for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
     if (!eliminate_variable_complex64(&factors, qsop->nvars - 1U - pos, &ctx, error)) {
       factor_complex64_list_free(&factors);
+      tw_pool_drain(&ctx.pool);
       return false;
     }
   }
@@ -2470,11 +2620,13 @@ static bool solve_treewidth_single_mode_once_f64(
   tw_factor_complex64_t final = {0};
   if (!multiply_remaining_factors_complex64(&factors, &ctx, &final, error)) {
     factor_complex64_list_free(&factors);
+    tw_pool_drain(&ctx.pool);
     return false;
   }
   if (final.arity != 0) {
     factor_complex64_list_free(&factors);
     factor_complex64_free(&final);
+    tw_pool_drain(&ctx.pool);
     set_error(error,
               "internal error: treewidth double single-mode solve left an uneliminated factor");
     return false;
@@ -2489,6 +2641,7 @@ static bool solve_treewidth_single_mode_once_f64(
 
   factor_complex64_list_free(&factors);
   factor_complex64_free(&final);
+  tw_pool_drain(&ctx.pool);
 
   *out_re = (long double)mantissa_re;
   *out_im = (long double)mantissa_im;

@@ -35,6 +35,14 @@ typedef struct qsop_simd_vtable {
                                  const double *restrict right_re, const double *restrict right_im,
                                  size_t n);
 
+  /* out[i] = in[i] * (scale_re + i*scale_im). The DP's factor joins read one operand through a
+   * bit-projection of the output assignment, and over the block of assignments that agree outside
+   * that operand's variables it does not move at all -- so most of the join work is this, a
+   * contiguous run scaled by one complex constant, rather than an elementwise multiply. */
+  void (*complex_scale_f64)(double *restrict out_re, double *restrict out_im,
+                            const double *restrict in_re, const double *restrict in_im,
+                            double scale_re, double scale_im, size_t n);
+
   void (*complex_sum_out_pairs_f64)(double *restrict out_re, double *restrict out_im,
                                     const double *restrict in_re, const double *restrict in_im,
                                     size_t pairs);

@@ -63,6 +63,17 @@ static void simd_scalar_complex_mul_assign_f64(double *restrict out_re, double *
   }
 }
 
+static void simd_scalar_complex_scale_f64(double *restrict out_re, double *restrict out_im,
+                                          const double *restrict in_re, const double *restrict in_im,
+                                          double scale_re, double scale_im, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    const double re = in_re[i];
+    const double im = in_im[i];
+    out_re[i] = re * scale_re - im * scale_im;
+    out_im[i] = re * scale_im + im * scale_re;
+  }
+}
+
 static void simd_scalar_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                   const double *restrict in_re,
                                                   const double *restrict in_im, size_t pairs) {
@@ -83,6 +94,7 @@ const qsop_simd_vtable_t *qsop_simd_scalar_vtable(void) {
       .and_u64 = simd_scalar_and_u64,
       .andnot_u64 = simd_scalar_andnot_u64,
       .complex_mul_assign_f64 = simd_scalar_complex_mul_assign_f64,
+      .complex_scale_f64 = simd_scalar_complex_scale_f64,
       .complex_sum_out_pairs_f64 = simd_scalar_complex_sum_out_pairs_f64,
   };
   return &vt;
