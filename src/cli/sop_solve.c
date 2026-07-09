@@ -80,10 +80,6 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--print-kernels",
   };
   static const char *const tuning[] = {
-      "--branch-rw-min-treewidth-width N",
-      "--branch-rw-min-treewidth-forecast N",
-      "--branch-rw-min-residual-vars N",
-      "--branch-rw-low-rank-bypass N",
       "--branch-rw-min-speedup FLOAT",
       "--branch-rw-fixed-overhead-ns N",
       "--branch-tw-fixed-overhead-ns N",
@@ -331,7 +327,7 @@ static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop,
   uint32_t width = 0;
   qsop_error_t probe_error = {0};
   const bool ok = qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
-                                             &width, &probe_error);
+                                             &width, NULL, &probe_error);
   free(order);
   return ok && width <= BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH;
 }
@@ -358,8 +354,9 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop, ui
 
   uint32_t *order = NULL;
   uint32_t width = 0;
+  uint64_t dp_work = 0;
   qsop_error_t probe_error = {0};
-  if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL, &order, &width,
+  if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL, &order, &width, &dp_work,
                                   &probe_error)) {
     free(order);
     return false;
@@ -378,7 +375,8 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop, ui
     qsop_error_t cut_rank_error = {0};
     if (qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges, &cut_rank,
                              &cut_rank_error) &&
-        !qsop_branch_single_treewidth_clearly_preferred(width, cut_rank, qsop->nvars, policy)) {
+        !qsop_branch_single_treewidth_clearly_preferred(width, cut_rank, qsop->nvars, dp_work,
+                                                        policy)) {
       free(order);
       return false;
     }
@@ -1221,46 +1219,6 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_rw_source_set = true;
-      continue;
-    }
-    if (strcmp(argv[i], "--branch-rw-min-treewidth-width") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --branch-rw-min-treewidth-width requires a value\n", stderr);
-        return 2;
-      }
-      if (!parse_u32_arg("--branch-rw-min-treewidth-width", argv[++i],
-                         &branch_policy.rw_min_treewidth_width))
-        return 2;
-      continue;
-    }
-    if (strcmp(argv[i], "--branch-rw-min-treewidth-forecast") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --branch-rw-min-treewidth-forecast requires a value\n", stderr);
-        return 2;
-      }
-      if (!parse_u64_arg("--branch-rw-min-treewidth-forecast", argv[++i],
-                         &branch_policy.rw_min_treewidth_forecast))
-        return 2;
-      continue;
-    }
-    if (strcmp(argv[i], "--branch-rw-min-residual-vars") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --branch-rw-min-residual-vars requires a value\n", stderr);
-        return 2;
-      }
-      if (!parse_u32_arg("--branch-rw-min-residual-vars", argv[++i],
-                         &branch_policy.rw_min_residual_vars))
-        return 2;
-      continue;
-    }
-    if (strcmp(argv[i], "--branch-rw-low-rank-bypass") == 0) {
-      if (i + 1 >= argc) {
-        fputs("error: --branch-rw-low-rank-bypass requires a value\n", stderr);
-        return 2;
-      }
-      if (!parse_u32_arg("--branch-rw-low-rank-bypass", argv[++i],
-                         &branch_policy.rw_low_rank_bypass))
-        return 2;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {

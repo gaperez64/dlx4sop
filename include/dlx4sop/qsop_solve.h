@@ -270,8 +270,11 @@ bool qsop_solve_treewidth_single_mode_f64(const qsop_instance_t *qsop, uint32_t 
                                           qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                           qsop_error_t *error);
 
+/* dp_work_out (nullable) receives the number of DP table entries a treewidth solve over the
+ * returned order touches: sum over elimination steps of 2^(bag size). See min_fill.h. */
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order,
-                                uint32_t **order_out, uint32_t *width_out, qsop_error_t *error);
+                                uint32_t **order_out, uint32_t *width_out, uint64_t *dp_work_out,
+                                qsop_error_t *error);
 
 bool qsop_solve_treewidth_precomputed_order_trace_stats(
     const qsop_instance_t *qsop, uint32_t max_bag_vars, const uint32_t *order, uint32_t order_width,
@@ -405,11 +408,6 @@ typedef struct qsop_backend_stats_sink {
 /* Tuning policy for the branch solver's rankwidth delegation decision.
  * Pass NULL to use built-in defaults.  All zero fields take their defaults. */
 typedef struct qsop_branch_policy {
-  /* Early cheap-treewidth veto: skip rankwidth probe when treewidth is obviously cheap. */
-  uint32_t rw_min_treewidth_width;    /* veto when tw_width <= this (default 2) */
-  uint64_t rw_min_treewidth_forecast; /* veto when tw_table_forecast <= this (default 512) */
-  uint32_t rw_min_residual_vars;      /* veto small-residual when tw_width <= 5 (default 16) */
-  uint32_t rw_low_rank_bypass; /* bypass cheap-tw veto when prefix_cut_rank <= this (default 4) */
 
   /* Cost-model coefficients for choosing rw vs tw. */
   uint64_t rw_fixed_overhead_ns; /* fixed rw overhead (default 20000) */
@@ -417,8 +415,8 @@ typedef struct qsop_branch_policy {
   uint64_t C_rw_table;           /* ns per rw table entry (default 80) */
   uint64_t C_rw_join;            /* ns per rw join pair (default 40) */
   uint64_t C_rw_sig;             /* ns per rw signature (default 2000) */
-  uint64_t C_tw_table;           /* ns per tw table entry (default 20) */
-  uint64_t C_tw_join;            /* ns per tw join pair (default 10) */
+  /* ns per treewidth DP table entry touched, summed over all elimination steps (default 4). */
+  uint64_t C_tw_table;
   /* The cost of *deciding*, not of solving. Answering "would rankwidth beat treewidth?" means
    * generating a rank decomposition and measuring the cut rank at every node of it -- O(nvars^2 *
    * words) of bitset work. On a large component that dwarfs the treewidth solve it is trying to
@@ -451,6 +449,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
  * branch recursion probes rankwidth and the cost model decides). */
 bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
                                                     uint32_t prefix_cut_rank, uint32_t nvars,
+                                                    uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy);
 
 typedef enum qsop_branch_single_fallback {

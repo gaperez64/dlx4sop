@@ -193,30 +193,43 @@ dense-but-low-rank cases (e.g. complete-bipartite blocks) where cut-rank ≪
 treewidth and rankwidth's `2^cut-rank` table crushes treewidth's `2^treewidth`.
 Pass `--branch-rw-source none` to disable rankwidth entirely.
 
-**Cost model** (skipped for `--branch-rw-source none`). Rankwidth is chosen over
-treewidth only if it is predicted meaningfully faster:
+**Cost model** (skipped for `--branch-rw-source none`). One inequality, evaluated
+twice:
 
 ```
-rw_est = C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
-         + rw_fixed_overhead_ns + rw_memory_penalty_ns
-tw_est = C_tw_table*tw_table + C_tw_join*tw_join + tw_fixed_overhead_ns
-choose rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
+tw_est = tw_fixed_overhead_ns + C_tw_table * tw_dp_work        (infinite if treewidth is over its cap)
+rw_est = rw_fixed_overhead_ns + rw_memory_penalty_ns
+       + C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
+       + rw_probe                                              (before the probe; 0 after)
+
+rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
 ```
 
-before which several cheap vetoes short-circuit it (treewidth already cheap;
-treewidth width within the delegate band; a low-rank bypass when the cut-rank
-proxy is small).
+The first evaluation, with a *predicted* rankwidth cost (cut-rank proxy for the table
+and signature counts, no join term, plus the probe) decides whether probing is worth
+it at all. The second, with the measured decomposition and the probe now sunk,
+decides which backend runs. There are no other vetoes.
 
-**Probe cost.** Computing `rw_est` is not free: it generates a rank decomposition
-and measures the cut rank at every node of it, `O(nvars² · words)` of bitset work.
-On a large component that dwarfs the treewidth solve it is trying to improve on.
-So before probing, `C_rw_probe * nvars² * ceil(nvars/64)` is compared against
-`C_tw_table * tw_table` — the treewidth table is a lower bound on the treewidth
-solve and an upper bound on what a rankwidth win could recover, so a probe costing
-more than the whole prize is skipped (`veto_reason: rw_probe_cost_exceeds_treewidth
-_table`). This does not apply when treewidth is over its cap: rankwidth is then the
-only backend left. Small components still probe — a `K16,16` block costs 2 µs to
-probe against a 2.6 ms treewidth table, and rankwidth still wins it.
+Two things make that work.
+
+`tw_dp_work` is the **real** DP work — the sum over elimination steps of `2^(bag size)`,
+which `qsop_min_fill_eliminate` accumulates as it goes. The old `nvars * 2^(width+1)`
+bound assumes every bag is as wide as the widest; on circuit graphs it overstates by
+275–605×, while being within 2× on the small dense graphs where rankwidth wins. That
+asymmetry is exactly backwards for this decision — it inflated treewidth's cost where
+rankwidth could not help, making an expensive probe look worthwhile.
+
+`rw_probe` prices the **decision**, not the solve. Answering "would rankwidth win?"
+generates a rank decomposition and measures the cut rank at each of its ~`2*nvars`
+nodes: `O(nvars² · words)` of bitset work. On a 14k-variable, width-16 instance that
+was over 100 s spent to improve on a 3 s treewidth solve, and nothing in the model
+accounted for it.
+
+This subsumed four hand-tuned pre-probe vetoes (`--branch-rw-min-treewidth-width`,
+`--branch-rw-min-treewidth-forecast`, `--branch-rw-min-residual-vars`,
+`--branch-rw-low-rank-bypass`), which have been **removed**: a treewidth estimate too
+small to be worth probing against, and a cut rank small enough that rankwidth obviously
+wins, both fall out of the inequality.
 
 ### Runtime tuning (`--help-advanced` lists all flags)
 
@@ -233,10 +246,6 @@ being large.
 
 Rankwidth policy (`--branch-rw-source` defaults to `auto`; set `none` to disable):
 `--branch-rw-source`,
-`--branch-rw-min-treewidth-width` (2),
-`--branch-rw-min-treewidth-forecast` (512),
-`--branch-rw-min-residual-vars` (16),
-`--branch-rw-low-rank-bypass` (4),
 `--branch-rw-min-speedup` (1.1),
 `--branch-rw-fixed-overhead-ns` (20000),
 `--branch-tw-fixed-overhead-ns` (10000),
@@ -259,10 +268,10 @@ Rankwidth backend: `--rankwidth-generate`, `--rankwidth-mode`,
 `--rankwidth-join-strategy`, `--rankwidth-single-kernel`,
 `--rankwidth-fourier-kernel`.
 
-The six cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
-`C_tw_table` / `C_tw_join` / `C_rw_probe` have **no CLI flag**; they are ns-per-unit
-constants (`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by
-editing that file. `sop-solve` reads no environment variables.
+The five cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
+`C_tw_table` / `C_rw_probe` have **no CLI flag**; they are ns-per-unit constants
+(`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by editing that
+file. `sop-solve` reads no environment variables.
 
 ### Retuning the cost model
 

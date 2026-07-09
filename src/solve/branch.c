@@ -16,17 +16,18 @@
 /* ---------------------------------------------------------------------------
  * Private policy defaults (kept out of the public header).
  * --------------------------------------------------------------------------- */
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH 2U
-#define BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST 512UL
-#define BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS 16U
-#define BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS 4U
 #define BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS 20000UL
 #define BRANCH_POLICY_DEFAULT_TW_FIXED_OVERHEAD_NS 10000UL
 #define BRANCH_POLICY_DEFAULT_C_RW_TABLE 80UL
 #define BRANCH_POLICY_DEFAULT_C_RW_JOIN 40UL
 #define BRANCH_POLICY_DEFAULT_C_RW_SIG 2000UL
-#define BRANCH_POLICY_DEFAULT_C_TW_TABLE 20UL
-#define BRANCH_POLICY_DEFAULT_C_TW_JOIN 10UL
+/* ns per treewidth DP table entry *touched*, summed over every elimination step (see
+ * qsop_stats_t.min_fill_dp_work). The unit changed with the unified model: it used to price the
+ * peak table, 2^(width+1), with a separate per-nvars join term on top. Calibrated against the
+ * fixtures whose right answer is known -- a 32-var path and a 6x6 grid must stay on treewidth,
+ * K12,12 / K16,16 / K20,20 must go to rankwidth, and qwalk-noancilla_9 / grover-v-chain_13 must
+ * not be probed; any value in [2,8] satisfies all of them, 20 does not. */
+#define BRANCH_POLICY_DEFAULT_C_TW_TABLE 4UL
 #define BRANCH_POLICY_DEFAULT_C_RW_PROBE 2UL
 #define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP 1.1
 #define BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS 64U
@@ -46,14 +47,6 @@
 /* Fill every zero field with its built-in default so callers read fields directly. */
 static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *in) {
   qsop_branch_policy_t p = in != NULL ? *in : (qsop_branch_policy_t){0};
-  if (!p.rw_min_treewidth_width)
-    p.rw_min_treewidth_width = BRANCH_POLICY_DEFAULT_RW_MIN_TW_WIDTH;
-  if (!p.rw_min_treewidth_forecast)
-    p.rw_min_treewidth_forecast = BRANCH_POLICY_DEFAULT_RW_MIN_TW_FORECAST;
-  if (!p.rw_min_residual_vars)
-    p.rw_min_residual_vars = BRANCH_POLICY_DEFAULT_RW_MIN_RESIDUAL_VARS;
-  if (!p.rw_low_rank_bypass)
-    p.rw_low_rank_bypass = BRANCH_POLICY_DEFAULT_RW_LOW_RANK_BYPASS;
   if (!p.rw_fixed_overhead_ns)
     p.rw_fixed_overhead_ns = BRANCH_POLICY_DEFAULT_RW_FIXED_OVERHEAD_NS;
   if (!p.tw_fixed_overhead_ns)
@@ -66,8 +59,6 @@ static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *
     p.C_rw_sig = BRANCH_POLICY_DEFAULT_C_RW_SIG;
   if (!p.C_tw_table)
     p.C_tw_table = BRANCH_POLICY_DEFAULT_C_TW_TABLE;
-  if (!p.C_tw_join)
-    p.C_tw_join = BRANCH_POLICY_DEFAULT_C_TW_JOIN;
   if (!p.C_rw_probe)
     p.C_rw_probe = BRANCH_POLICY_DEFAULT_C_RW_PROBE;
   if (p.rw_min_speedup <= 0.0)
@@ -373,16 +364,6 @@ typedef struct branch_search_stats {
 #define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS                                              \
   (BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
-#define BRANCH_RANKWIDTH_TREEWIDTH_MARGIN 2U
-/* When prefix_cut_rank is at most this threshold, bypass the blanket
- * "treewidth preferred" early veto and let the full forecast comparison decide.
- * A very small cut rank (e.g. 1 for uniform complete-bipartite) is a strong
- * signal that rankwidth will beat treewidth regardless of treewidth width. */
-#define BRANCH_RANKWIDTH_LOW_RANK_BYPASS 3U
-/* Minimum treewidth width at which the root fast path still considers bypassing
- * to rankwidth when prefix_cut_rank is small.  Below this the treewidth DP is
- * cheap enough that no bypass is warranted (e.g. path/star graphs with tw=1). */
-#define BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH 5U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 #define BRANCH_DELEGATION_DEPTH_TOP_K 6U
 
@@ -424,11 +405,6 @@ static uint64_t binary_assignment_forecast(uint32_t nvars) {
 static uint64_t treewidth_table_forecast(uint32_t width, uint32_t r) {
   const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
   return saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
-}
-
-static uint64_t treewidth_single_mode_table_forecast(uint32_t width) {
-  const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
-  return binary_assignment_forecast(bag_vars);
 }
 
 static uint64_t treewidth_join_pair_forecast(uint32_t width, uint32_t nvars) {
@@ -1171,44 +1147,60 @@ static void merge_delegated_stats(branch_search_stats_t *stats, const qsop_solve
   max_u32(&stats->max_residual_prefix_cut_rank, delegated->max_residual_prefix_cut_rank);
 }
 
-/* Shared by both the count-table and single-Fourier decision paths: the two differ only in
- * whether the treewidth table forecast carries the modulus factor r, which the caller already
- * folded into `treewidth_table_forecast_value`. */
-static bool rankwidth_should_override_treewidth(uint32_t treewidth_width, uint32_t decision_width,
-                                                uint64_t treewidth_table_forecast_value) {
-  return decision_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
-         binary_assignment_forecast(decision_width) < treewidth_table_forecast_value &&
-         treewidth_width > decision_width + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
+/* ---------------------------------------------------------------------------
+ * Unified delegation cost model.
+ *
+ * One inequality, `rw_est * rw_min_speedup < tw_est`, evaluated twice: first with a *predicted*
+ * rankwidth cost that includes the price of the probe, to decide whether probing is worth it at
+ * all; then with the measured cost after the probe, where the probe is sunk. Everything the model
+ * used to express as a separate veto -- treewidth obviously cheap, treewidth narrow enough to
+ * prefer, low cut-rank bypass, prefix-proxy rejection, the two forecast comparisons, and the
+ * probe-cost check -- falls out of those two evaluations.
+ *
+ * Two things had to be true for that to work.
+ *
+ * tw_est uses the *real* DP work, sum over elimination steps of 2^(bag size), not the
+ * nvars * 2^(width+1) bound. That bound assumes every bag is as wide as the widest one and
+ * overstates circuit graphs by 275x to 605x while being within 2x on the small dense graphs where
+ * rankwidth wins -- exactly backwards for this decision.
+ *
+ * rw_est includes rankwidth_probe_estimate_ns before the probe. Deciding is not free: generating a
+ * rank decomposition and measuring the cut rank at each of its ~2*nvars nodes is O(nvars^2 * words)
+ * of bitset work. On a 14k-variable, width-16 instance that was over 100s spent to improve on a 3s
+ * treewidth solve, and nothing in the model accounted for it.
+ * --------------------------------------------------------------------------- */
+
+/* Nanoseconds for the treewidth solve. UINT64_MAX when treewidth cannot run at all, which makes
+ * rankwidth win every comparison below -- it is the only backend left. */
+static uint64_t branch_treewidth_estimate_ns(const qsop_branch_policy_t *pol, bool usable,
+                                             uint64_t tw_dp_work) {
+  if (!usable) {
+    return UINT64_MAX;
+  }
+  uint64_t est = saturating_mul_u64(pol->C_tw_table, tw_dp_work);
+  add_saturating_u64(&est, pol->tw_fixed_overhead_ns);
+  return est;
 }
 
-/* Shared cost model for both the count-table and single-Fourier decision paths: returns true when
- * the estimated ns for rankwidth beats treewidth by the policy speedup margin. The two modes
- * differ only in the forecast VALUES the caller passes (the count-table path folds the modulus r
- * into the table forecasts; single-Fourier does not); the signature estimate (2^cutrank) and the
- * formula are identical. With no treewidth competitor, rankwidth is favored. */
-static bool branch_cost_model_favors_rankwidth(const qsop_branch_policy_t *pol,
-                                               bool treewidth_available, uint64_t rw_table,
-                                               uint64_t rw_join, uint64_t rw_sig, uint64_t tw_table,
-                                               uint64_t tw_join) {
-  if (!treewidth_available) {
+/* Nanoseconds for the rankwidth solve. probe_ns is the cost of the decomposition probe: charged
+ * before the probe has run, zero afterwards. */
+static uint64_t branch_rankwidth_estimate_ns(const qsop_branch_policy_t *pol, uint64_t rw_table,
+                                             uint64_t rw_join, uint64_t rw_sig, uint64_t probe_ns) {
+  uint64_t est = saturating_mul_u64(pol->C_rw_table, rw_table);
+  add_saturating_u64(&est, saturating_mul_u64(pol->C_rw_join, rw_join));
+  add_saturating_u64(&est, saturating_mul_u64(pol->C_rw_sig, rw_sig));
+  add_saturating_u64(&est, pol->rw_fixed_overhead_ns);
+  add_saturating_u64(&est, pol->rw_memory_penalty_ns);
+  add_saturating_u64(&est, probe_ns);
+  return est;
+}
+
+static bool branch_rankwidth_wins(const qsop_branch_policy_t *pol, uint64_t rw_est,
+                                  uint64_t tw_est) {
+  if (tw_est == UINT64_MAX) {
     return true;
   }
-  const uint64_t rw_est = saturating_mul_u64(pol->C_rw_table, rw_table) +
-                          saturating_mul_u64(pol->C_rw_join, rw_join) +
-                          saturating_mul_u64(pol->C_rw_sig, rw_sig) + pol->rw_fixed_overhead_ns +
-                          pol->rw_memory_penalty_ns;
-  const uint64_t tw_est = saturating_mul_u64(pol->C_tw_table, tw_table) +
-                          saturating_mul_u64(pol->C_tw_join, tw_join) + pol->tw_fixed_overhead_ns;
   return tw_est != 0 && (double)rw_est * pol->rw_min_speedup < (double)tw_est;
-}
-
-/* Early "treewidth is narrow enough, prefer it" veto shared by both decision paths: treewidth is
- * within the delegate band and the cut-rank proxy is not small enough (<= BRANCH_RANKWIDTH_LOW_RANK
- * _BYPASS) to signal a big rankwidth win. */
-static bool branch_treewidth_preferred(bool treewidth_available, uint32_t prefix_cut_rank,
-                                       uint32_t treewidth_width) {
-  return treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
-         treewidth_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN;
 }
 
 /* Predicted cost of *deciding* whether rankwidth wins: generate a rank decomposition, then measure
@@ -1221,61 +1213,35 @@ static uint64_t rankwidth_probe_estimate_ns(const qsop_branch_policy_t *pol, uin
   return saturating_mul_u64(units, pol->C_rw_probe);
 }
 
-/* Never spend more deciding than the treewidth table alone will cost.
- *
- * The table forecast is a hard lower bound on the treewidth solve, and rankwidth's whole benefit is
- * making that table smaller -- so it also bounds what a rankwidth win could possibly recover. A
- * probe that costs more than the entire prize is never worth running, however the forecasts compare
- * afterwards. This is what the model was missing: it estimated the two *solves* and then paid an
- * unbudgeted amount computing the rankwidth estimate.
- *
- * Only applies when treewidth is actually usable. When it is not, rankwidth is the only backend
- * left and the probe has to be attempted whatever it costs. */
-static bool branch_rankwidth_probe_too_costly(const qsop_branch_policy_t *pol,
-                                              bool treewidth_usable, uint32_t nvars,
-                                              uint64_t treewidth_table_entries) {
-  if (!treewidth_usable) {
-    return false;
-  }
-  return rankwidth_probe_estimate_ns(pol, nvars) >
-         saturating_mul_u64(treewidth_table_entries, pol->C_tw_table);
+/* Is the probe worth running? Uses prefix_cut_rank as an optimistic stand-in for the cut-rank width
+ * the probe would measure, and omits the join term we cannot know yet: optimism is the right bias
+ * here, since a probe that looks promising is settled honestly by the second evaluation, while one
+ * that cannot win even optimistically is pure loss. `table_r_factor` is r for the count-table path
+ * (whose tables carry a residue axis) and 1 for single-Fourier. */
+static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint64_t tw_est,
+                                          uint32_t nvars, uint32_t prefix_cut_rank,
+                                          uint64_t table_r_factor) {
+  const uint64_t rw_sig = binary_assignment_forecast(prefix_cut_rank);
+  const uint64_t rw_table = saturating_mul_u64(rw_sig, table_r_factor);
+  const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rw_table, 0, rw_sig,
+                                                       rankwidth_probe_estimate_ns(pol, nvars));
+  return branch_rankwidth_wins(pol, rw_est, tw_est);
 }
 
-/* Shared "treewidth is obviously cheap, don't bother probing rankwidth" pre-probe check
- * (single-Fourier table forecast, no r factor). */
-static bool branch_treewidth_is_cheap(const qsop_branch_policy_t *pol, bool treewidth_available,
-                                      uint32_t treewidth_width, uint32_t nvars,
-                                      uint32_t prefix_cut_rank) {
-  const bool low_rank_bypass = treewidth_available && prefix_cut_rank <= pol->rw_low_rank_bypass;
-  return treewidth_available && !low_rank_bypass &&
-         (treewidth_width <= pol->rw_min_treewidth_width ||
-          treewidth_single_mode_table_forecast(treewidth_width) <= pol->rw_min_treewidth_forecast ||
-          (nvars < pol->rw_min_residual_vars && treewidth_width <= 5U));
-}
-
-/* Public CLI helper for the single-Fourier auto path: true when the shared pre-probe vetoes make
- * treewidth the clear choice (obviously-cheap treewidth, or the narrow-treewidth veto), so the
- * direct whole-instance treewidth path can be taken without missing a rankwidth win. When false,
- * the caller should fall into the branch recursion, where rankwidth is actually probed and the
- * shared cost model decides. Mirrors the recursion's pre-probe skip conditions exactly. */
+/* Public CLI helper for the single-Fourier auto path: true when the unified pre-probe check says a
+ * rankwidth probe cannot pay for itself, so the direct whole-instance treewidth path is safe to
+ * take. When false, the caller falls into the branch recursion, where rankwidth is probed and the
+ * same model decides. Mirrors branch_should_probe_rankwidth exactly -- callers only reach here with
+ * treewidth inside its single-Fourier cap, so treewidth is usable and its tables carry no residue
+ * axis (r factor 1). */
 bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
                                                     uint32_t prefix_cut_rank, uint32_t nvars,
+                                                    uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy) {
+  (void)treewidth_width;
   const qsop_branch_policy_t pol = branch_policy_normalize(policy);
-  /* Treewidth trivially cheap: for these sizes rankwidth's fixed overhead alone exceeds the
-   * treewidth DP's estimated cost, so the recursion's cost model would always pick treewidth --
-   * take the direct path. Unlike branch_treewidth_is_cheap this ignores the low-rank bypass, which
-   * only matters when rankwidth could plausibly win (it cannot here). */
-  const bool trivially_cheap =
-      treewidth_width <= pol.rw_min_treewidth_width ||
-      treewidth_single_mode_table_forecast(treewidth_width) <= pol.rw_min_treewidth_forecast ||
-      (nvars < pol.rw_min_residual_vars && treewidth_width <= 5U);
-  /* Callers only reach here with treewidth inside its single-Fourier cap, so treewidth is usable
-   * and the probe-cost veto applies: on a large component, deciding costs more than solving. */
-  const bool probe_too_costly = branch_rankwidth_probe_too_costly(
-      &pol, true, nvars, treewidth_single_mode_table_forecast(treewidth_width));
-  return trivially_cheap || probe_too_costly ||
-         branch_treewidth_preferred(true, prefix_cut_rank, treewidth_width);
+  const uint64_t tw_est = branch_treewidth_estimate_ns(&pol, true, treewidth_dp_work);
+  return !branch_should_probe_rankwidth(&pol, tw_est, nvars, prefix_cut_rank, 1U);
 }
 
 /* Maximum cutrank width tried during calibration runs. Wider sub-problems are
@@ -1284,13 +1250,11 @@ bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
 
 /* precomputed_order: if non-NULL, used instead of running min-fill inside the from-treewidth
  * generator (D2 optimization: share one min-fill run with the treewidth solver path). */
-static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts,
-                                          uint32_t treewidth_width, uint32_t prefix_cut_rank,
-                                          bool treewidth_available, uint32_t constant_shift,
-                                          const uint32_t *precomputed_order,
-                                          branch_search_stats_t *stats,
-                                          branch_rw_decision_data_t *rw_data, bool *out_delegated,
-                                          qsop_error_t *error) {
+static bool branch_try_rankwidth_delegate(
+    qsop_instance_t *sub, uint64_t *counts, uint32_t treewidth_width, uint32_t prefix_cut_rank,
+    uint64_t treewidth_dp_work, bool treewidth_available, uint32_t constant_shift,
+    const uint32_t *precomputed_order, branch_search_stats_t *stats,
+    branch_rw_decision_data_t *rw_data, bool *out_delegated, qsop_error_t *error) {
   *out_delegated = false;
   /* NONE policy: skip rankwidth entirely without any attempt. */
   if (stats->rw_source == QSOP_BRANCH_RW_SOURCE_NONE) {
@@ -1317,76 +1281,24 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
 
   /* Policy fields are pre-normalized in branch_policy_normalize(); read directly. */
   const qsop_branch_policy_t *pol = &stats->policy;
-  const bool policy_low_rank_bypass =
-      treewidth_available && prefix_cut_rank <= pol->rw_low_rank_bypass;
 
-  /* A3: Early cheap-treewidth veto — skip the expensive rankwidth probe when treewidth
-   * is obviously cheap.  Bypassed when prefix_cut_rank is very small (low-rank bypass). */
-  if (!policy_low_rank_bypass && !calibrating && treewidth_available) {
-    if (treewidth_width <= pol->rw_min_treewidth_width) {
-      note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_cheap", treewidth_width);
-      if (rw_data != NULL) {
-        rw_data->veto_reason = "treewidth-cheap";
-        rw_data->attempted = false;
-      }
-      return true;
-    }
-    if (treewidth_table <= pol->rw_min_treewidth_forecast) {
-      note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_forecast_cheap", treewidth_table);
-      if (rw_data != NULL) {
-        rw_data->veto_reason = "treewidth-forecast-cheap";
-        rw_data->attempted = false;
-      }
-      return true;
-    }
-    const uint32_t n_active = sub->nvars;
-    if (n_active < pol->rw_min_residual_vars && treewidth_width <= 5U) {
-      note_rankwidth_skip(stats, "branch.rankwidth_skip_small_residual_treewidth_cheap", n_active);
-      if (rw_data != NULL) {
-        rw_data->veto_reason = "small-residual-treewidth-cheap";
-        rw_data->attempted = false;
-      }
-      return true;
-    }
-  }
+  /* The treewidth solve this decision is trying to beat. Its tables carry a residue axis, hence
+   * the r factor on the DP work. */
+  const bool treewidth_usable =
+      treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint64_t tw_est = branch_treewidth_estimate_ns(
+      pol, treewidth_usable, saturating_mul_u64(treewidth_dp_work, (uint64_t)sub->r));
 
-  /* Early veto: if treewidth is narrow (≤ max+margin), prefer treewidth.
-   * Exception: bypass when prefix_cut_rank is very small — a strong signal
-   * that rankwidth will compress the problem far more than treewidth can. */
-  if (branch_treewidth_preferred(treewidth_available, prefix_cut_rank, treewidth_width)) {
-    note_rankwidth_skip(stats, "branch.rankwidth_skip_treewidth_preferred", treewidth_width);
+  if (!branch_should_probe_rankwidth(pol, tw_est, sub->nvars, prefix_cut_rank, sub->r)) {
+    note_rankwidth_skip(stats, "branch.rankwidth_skip_predicted_cost", sub->nvars);
     if (rw_data != NULL) {
-      rw_data->veto_reason = "rw_treewidth_preferred";
+      rw_data->veto_reason = "rw_predicted_cost";
+      rw_data->attempted = calibrating;
     }
     if (!calibrating) {
       return true;
     }
-    /* Calibration: fall through to time rankwidth for comparison. */
-    calibration_timing_only = true;
-  }
-
-  /* Probing costs more than the treewidth table it could shrink. */
-  if (!calibrating &&
-      branch_rankwidth_probe_too_costly(
-          pol, treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH,
-          sub->nvars, treewidth_table)) {
-    note_rankwidth_skip(stats, "branch.rankwidth_skip_probe_cost", sub->nvars);
-    if (rw_data != NULL) {
-      rw_data->veto_reason = "rw_probe_cost_exceeds_treewidth_table";
-      rw_data->attempted = false;
-    }
-    return true;
-  }
-  if (treewidth_available && prefix_cut_rank > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH &&
-      prefix_cut_rank + BRANCH_RANKWIDTH_TREEWIDTH_MARGIN >= treewidth_width) {
-    note_rankwidth_skip(stats, "branch.rankwidth_skip_prefix_proxy", prefix_cut_rank);
-    if (rw_data != NULL) {
-      rw_data->veto_reason = "rw_prefix_proxy_rejected";
-    }
-    if (!calibrating) {
-      return true;
-    }
-    /* Calibration: fall through to time rankwidth for comparison. */
+    /* Calibration: probe and time rankwidth anyway, but do not adopt its result. */
     calibration_timing_only = true;
   }
 
@@ -1476,45 +1388,20 @@ static bool branch_try_rankwidth_delegate(qsop_instance_t *sub, uint64_t *counts
     rw_data->forecast_join_pairs = rankwidth_join_pair_forecast;
   }
 
-  const bool rankwidth_table_forecast_wins =
-      !treewidth_available || rankwidth_table_forecast < treewidth_table;
-  const bool rankwidth_join_forecast_wins =
-      !treewidth_available || rankwidth_join_pair_forecast <= treewidth_join_pairs;
+  /* The probe is now sunk, so it drops out of the rankwidth estimate. Same inequality as above. */
+  const uint64_t sig_est = binary_assignment_forecast(cutrank_width);
+  const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rankwidth_table_forecast,
+                                                       rankwidth_join_pair_forecast, sig_est, 0);
+  const bool cost_model_rejects = !calibrating && !branch_rankwidth_wins(pol, rw_est, tw_est);
 
-  /* A4: Cost-model veto — reject rankwidth unless estimated ns win is decisive. */
-  bool cost_model_rejects = false;
-  if (treewidth_available && !calibrating) {
-    /* Signature count estimate: 2^cutrank_width (table forecast carries an extra r factor). */
-    const uint64_t sig_est = sub->r > 0 ? (rankwidth_table_forecast / sub->r)
-                                        : binary_assignment_forecast(cutrank_width);
-    cost_model_rejects = !branch_cost_model_favors_rankwidth(pol, true, rankwidth_table_forecast,
-                                                             rankwidth_join_pair_forecast, sig_est,
-                                                             treewidth_table, treewidth_join_pairs);
-  }
-
-  const bool use_rankwidth =
-      !cost_model_rejects && rankwidth_table_forecast_wins && rankwidth_join_forecast_wins &&
-      (!treewidth_available || treewidth_width > BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-       rankwidth_should_override_treewidth(treewidth_width, cutrank_width, treewidth_table));
-  if (!use_rankwidth || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-    const char *skip_phase = "branch.rankwidth_skip_policy";
-    const char *veto = "rw_policy_rejected";
+  if (cost_model_rejects || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
+    const char *skip_phase = "branch.rankwidth_skip_cost_model";
+    const char *veto = "rw_cost_model_rejected";
     if (cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
       skip_phase = "branch.rankwidth_skip_width";
       veto = "rw_width_above_cap";
-    } else if (cost_model_rejects) {
-      skip_phase = "branch.rankwidth_skip_cost_model";
-      veto = "rw_cost_model_rejected";
-    } else if (!rankwidth_table_forecast_wins) {
-      skip_phase = "branch.rankwidth_skip_table_forecast";
-      veto = "rw_predicted_slower_table";
-    } else if (!rankwidth_join_forecast_wins) {
-      skip_phase = "branch.rankwidth_skip_join_pair_forecast";
-      veto = "rw_predicted_slower_join";
     }
-    note_rankwidth_skip(stats, skip_phase,
-                        rankwidth_join_forecast_wins ? cutrank_width
-                                                     : rankwidth_join_pair_forecast);
+    note_rankwidth_skip(stats, skip_phase, cutrank_width);
     if (rw_data != NULL) {
       rw_data->veto_reason = veto;
     }
@@ -1669,7 +1556,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       free(order_from_stats);
       order_from_stats = NULL;
       if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &shared_order,
-                                      &shared_order_width, error)) {
+                                      &shared_order_width, NULL, error)) {
         free_subinstance(&sub);
         return false;
       }
@@ -1688,10 +1575,11 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   bool delegated = false;
   branch_rw_decision_data_t rw_data = {0};
   branch_rw_decision_data_t *rw_ptr = recording ? &rw_data : NULL;
-  if (!branch_try_rankwidth_delegate(
-          &sub, counts, sub_stats.min_fill_width, sub_stats.prefix_cut_rank,
-          sub_stats.width_diagnostics_available, (uint32_t)qsop_residual_constant(residual),
-          shared_order, stats, rw_ptr, &delegated, error)) {
+  if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
+                                     sub_stats.prefix_cut_rank, sub_stats.min_fill_dp_work,
+                                     sub_stats.width_diagnostics_available,
+                                     (uint32_t)qsop_residual_constant(residual), shared_order,
+                                     stats, rw_ptr, &delegated, error)) {
     free(shared_order);
     free_subinstance(&sub);
     return false;
@@ -1710,7 +1598,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
       if (cal_order == NULL) {
         qsop_error_t cal_err = {0};
         if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &cal_order,
-                                        &tw_cal_width, &cal_err)) {
+                                        &tw_cal_width, NULL, &cal_err)) {
           cal_order = NULL;
         } else {
           cal_order_owned = true;
@@ -1779,7 +1667,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     order = branch_order_cache_lookup(&stats->order_cache, &sub, tw_adj_fp, &order_width);
     if (order == NULL) {
       if (!qsop_treewidth_order_alloc(&sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order,
-                                      &order_width, error)) {
+                                      &order_width, NULL, error)) {
         free_subinstance(&sub);
         return false;
       }
@@ -2582,6 +2470,7 @@ static bool support_component_count(const qsop_instance_t *qsop, uint32_t *out,
 static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qsop_result_t **out,
                                                 qsop_solve_stats_t *stats,
                                                 qsop_solve_trace_t *trace, qsop_solve_mode_t mode,
+                                                const qsop_branch_policy_t *policy,
                                                 qsop_backend_stats_sink_t *sink, bool *out_handled,
                                                 qsop_error_t *error) {
   *out_handled = false;
@@ -2603,7 +2492,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   const uint64_t probe_start_ns = recording ? qsop_trace_now_ns() : 0;
   const uint64_t stats_start = qsop_trace_begin(trace);
   if (!qsop_treewidth_order_alloc(qsop, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &order, &width,
-                                  error)) {
+                                  NULL, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(trace, "branch.root_width_probe", 0, width, stats_start);
@@ -2618,22 +2507,26 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
     free(order);
     return true;
   }
-  /* D5: treewidth is within delegation range but prefix_cut_rank signals rankwidth
-   * may win massively (e.g. K_{a,b} uniform with tw = a >> cut_rank = 1).  Check
-   * after the width gate so roots outside the admitted cap skip this stats call entirely. */
+  /* Treewidth is within delegation range, but rankwidth may still win massively (e.g. uniform
+   * K_{a,b}, treewidth a, cut rank 1). Ask the same question the recursion asks -- is a rankwidth
+   * probe worth its own cost? -- rather than a separate pair of thresholds. Checked after the width
+   * gate so roots outside the admitted cap skip this stats call entirely. */
   qsop_stats_t root_stats = {0};
   qsop_error_t stats_err = {0};
-  if (qsop_compute_stats(qsop, &root_stats, &stats_err) && root_stats.width_diagnostics_available &&
-      root_stats.prefix_cut_rank <= BRANCH_RANKWIDTH_LOW_RANK_BYPASS &&
-      root_stats.min_fill_width > BRANCH_FAST_PATH_RW_BYPASS_MIN_WIDTH) {
-    free(order);
-    return true; /* not handled: let main recursion try rankwidth */
+  if (qsop_compute_stats(qsop, &root_stats, &stats_err) && root_stats.width_diagnostics_available) {
+    const uint64_t tw_est = branch_treewidth_estimate_ns(
+        policy, true, saturating_mul_u64(root_stats.min_fill_dp_work, qsop->r));
+    if (branch_should_probe_rankwidth(policy, tw_est, qsop->nvars, root_stats.prefix_cut_rank,
+                                      qsop->r)) {
+      free(order);
+      return true; /* not handled: let the main recursion probe rankwidth */
+    }
   }
   qsop_trace_emit(trace, "branch.treewidth_table_forecast", 0,
                   treewidth_table_forecast(width, (uint32_t)qsop->r), 0);
   qsop_trace_emit(trace, "branch.treewidth_join_pair_forecast", 0,
                   treewidth_join_pair_forecast(width, qsop->nvars), 0);
-  qsop_trace_emit(trace, "branch.rankwidth_skip_treewidth_preferred", 0, width, 0);
+  qsop_trace_emit(trace, "branch.rankwidth_skip_predicted_cost", 0, width, 0);
 
   qsop_result_t *result = NULL;
   qsop_solve_stats_t delegated = {0};
@@ -2743,6 +2636,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                      "--solve-mode single-fourier");
     return false;
   }
+  const qsop_branch_policy_t policy = branch_policy_normalize(&o.policy);
   if (o.mode != QSOP_SOLVE_MODE_COUNT_TABLE && o.mode != QSOP_SOLVE_MODE_FOURIER) {
     set_error(error, "internal error: unsupported residual branch solve mode");
     return false;
@@ -2751,7 +2645,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
   const bool tried_root_treewidth_before_sanity =
       max_vars > 0U && qsop->nvars <= BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS;
   if (tried_root_treewidth_before_sanity) {
-    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, o.sink,
+    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, &policy, o.sink,
                                              &root_handled, error)) {
       return false;
     }
@@ -2776,7 +2670,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
   if (!tried_root_treewidth_before_sanity) {
-    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, o.sink,
+    if (!branch_try_root_treewidth_fast_path(qsop, out, stats, o.trace, o.mode, &policy, o.sink,
                                              &root_handled, error)) {
       return false;
     }
@@ -3292,7 +3186,7 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
   uint32_t *fresh = NULL;
   uint32_t width = 0;
   if (!qsop_treewidth_order_alloc(sub, QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE, &fresh, &width,
-                                  error)) {
+                                  NULL, error)) {
     return false;
   }
   *order = fresh;
@@ -3361,20 +3255,20 @@ static bool branch_single_mode_delegate_component(
   uint32_t cutrank_width = 0;
   bool setup_ok = true;
 
+  /* Single-Fourier tables carry no residue axis, so the r factor is 1. */
+  const bool treewidth_usable =
+      treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint64_t tw_est =
+      branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
+
   if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
-    const bool cheap_treewidth = branch_treewidth_is_cheap(
-        &policy, treewidth_available, treewidth_width, sub->nvars, prefix_cut_rank);
-    const bool prefer_treewidth =
-        branch_treewidth_preferred(treewidth_available, prefix_cut_rank, treewidth_width);
-    const bool probe_too_costly = branch_rankwidth_probe_too_costly(
-        &policy,
-        treewidth_available && treewidth_width <= BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH,
-        sub->nvars, treewidth_single_mode_table_forecast(treewidth_width));
-    if (probe_too_costly && io_stats != NULL) {
+    const bool probe_worth_it =
+        branch_should_probe_rankwidth(&policy, tw_est, sub->nvars, prefix_cut_rank, 1U);
+    if (!probe_worth_it && io_stats != NULL) {
       io_stats->branch_rankwidth_skips++;
     }
 
-    if (!cheap_treewidth && !prefer_treewidth && !probe_too_costly) {
+    if (probe_worth_it) {
       const qsop_rankwidth_generator_t generator = (rw_source == QSOP_BRANCH_RW_SOURCE_NATIVE)
                                                        ? QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT
                                                        : QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH;
@@ -3399,23 +3293,12 @@ static bool branch_single_mode_delegate_component(
                                                      &rankwidth_join, error)) {
             setup_ok = false;
           } else if (cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-            const uint64_t treewidth_table =
-                treewidth_available ? treewidth_single_mode_table_forecast(treewidth_width) : 0;
-            const uint64_t treewidth_join =
-                treewidth_available ? treewidth_join_pair_forecast(treewidth_width, sub->nvars) : 0;
+            /* Probe is sunk; same inequality as the pre-probe check, with the measured forecasts.
+             * sig_est = 2^cutrank = rankwidth_table (single-Fourier tables omit the r factor). */
             rankwidth_table = binary_assignment_forecast(cutrank_width);
-            /* sig_est = 2^cutrank = rankwidth_table (single-Fourier forecasts omit the r factor).
-             */
-            const bool cost_model_favors_rw = branch_cost_model_favors_rankwidth(
-                &policy, treewidth_available, rankwidth_table, rankwidth_join, rankwidth_table,
-                treewidth_table, treewidth_join);
-            use_rankwidth = cost_model_favors_rw &&
-                            (!treewidth_available || rankwidth_table < treewidth_table) &&
-                            (!treewidth_available || rankwidth_join <= treewidth_join) &&
-                            (!treewidth_available ||
-                             treewidth_width > BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH ||
-                             rankwidth_should_override_treewidth(treewidth_width, cutrank_width,
-                                                                 treewidth_table));
+            const uint64_t rw_est = branch_rankwidth_estimate_ns(
+                &policy, rankwidth_table, rankwidth_join, rankwidth_table, 0);
+            use_rankwidth = branch_rankwidth_wins(&policy, rw_est, tw_est);
           }
         }
       }

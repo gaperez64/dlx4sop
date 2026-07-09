@@ -1094,12 +1094,13 @@ static void factor_complex_list_free(tw_factor_complex_list_t *list) {
 }
 
 static bool make_treewidth_order(const qsop_instance_t *qsop, qsop_treewidth_order_t order_policy,
-                                 uint32_t *order, uint32_t *width_out, qsop_error_t *error) {
+                                 uint32_t *order, uint32_t *width_out, uint64_t *dp_work_out,
+                                 qsop_error_t *error) {
   /* Delegates to the shared sparse min-fill core (byte-identical selection to the old dense
    * bitset loop, per the qsop_treewidth_order_t tie-break). */
   return qsop_min_fill_eliminate(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
-                                 order_policy, UINT32_MAX, order, width_out, NULL, NULL, NULL,
-                                 error);
+                                 order_policy, UINT32_MAX, order, width_out, NULL, dp_work_out,
+                                 NULL, error);
 }
 
 /* Gated by every public entry point above to qsop->r <= UINT32_MAX before reaching this
@@ -2270,7 +2271,7 @@ static bool solve_treewidth_order_policy_once(const qsop_instance_t *qsop, uint3
   uint32_t *order = NULL;
   uint32_t width = 0;
   const uint64_t order_start = qsop_trace_begin(trace);
-  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, NULL, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
@@ -2289,7 +2290,7 @@ solve_treewidth_fourier_order_policy_once(const qsop_instance_t *qsop, uint32_t 
   uint32_t *order = NULL;
   uint32_t width = 0;
   const uint64_t order_start = qsop_trace_begin(trace);
-  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, NULL, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
@@ -2506,7 +2507,7 @@ static bool solve_treewidth_single_mode_order_policy_once(
   uint32_t *order = NULL;
   uint32_t width = 0;
   const uint64_t order_start = qsop_trace_begin(trace);
-  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, NULL, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
@@ -2526,7 +2527,7 @@ static bool solve_treewidth_single_mode_order_policy_once_f64(
   uint32_t *order = NULL;
   uint32_t width = 0;
   const uint64_t order_start = qsop_trace_begin(trace);
-  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, error)) {
+  if (!qsop_treewidth_order_alloc(qsop, order_policy, &order, &width, NULL, error)) {
     return false;
   }
   qsop_trace_emit_elapsed(trace, treewidth_order_trace_phase(order_policy), width, qsop->nvars,
@@ -2717,7 +2718,8 @@ bool qsop_solve_treewidth_mode_trace_stats(const qsop_instance_t *qsop, uint32_t
 }
 
 bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_order_t order_policy,
-                                uint32_t **order_out, uint32_t *width_out, qsop_error_t *error) {
+                                uint32_t **order_out, uint32_t *width_out, uint64_t *dp_work_out,
+                                qsop_error_t *error) {
   if (qsop == NULL || order_out == NULL || width_out == NULL) {
     set_error(error, "internal error: null treewidth order argument");
     return false;
@@ -2732,7 +2734,7 @@ bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_orde
   }
 
   uint32_t width = 0;
-  if (!make_treewidth_order(qsop, order_policy, order, &width, error)) {
+  if (!make_treewidth_order(qsop, order_policy, order, &width, dp_work_out, error)) {
     free(order);
     return false;
   }
