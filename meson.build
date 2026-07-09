@@ -569,6 +569,16 @@ if python3.found()
     timeout: 60,
   )
   test(
+    'solver coverage paths smoke',
+    python3,
+    args: [
+      files('tests/test_solver_coverage_paths.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
     'wmc ganak benchmark metadata smoke',
     python3,
     args: [
