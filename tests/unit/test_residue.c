@@ -306,11 +306,20 @@ static int test_amplitude_helpers(void) {
     return 1;
   }
 
-  amp = (qsop_amplitude_t){.re = INFINITY, .im = 1.0L, .scale_exp2 = 2};
-  qsop_amplitude_renormalize(&amp);
-  if (amp.scale_exp2 != 2 || !isinf(amp.re)) {
-    fprintf(stderr, "non-finite amplitude should not renormalize\n");
-    return 1;
+  /* valgrind's x87 emulation cannot hold a long double +/-inf: it saturates to
+   * LDBL_MAX, so isinf() reads back 0 and an infinite amplitude is simply not
+   * representable there. Only exercise the non-finite guard where the FP
+   * environment can actually carry an infinity (the renormalize early-return is
+   * exact on real hardware, which the plain, non-valgrind run covers). The
+   * volatile defeats constant folding so the probe reflects the runtime FPU. */
+  volatile long double inf_probe = INFINITY;
+  if (isinf(inf_probe)) {
+    amp = (qsop_amplitude_t){.re = INFINITY, .im = 1.0L, .scale_exp2 = 2};
+    qsop_amplitude_renormalize(&amp);
+    if (amp.scale_exp2 != 2 || !isinf(amp.re)) {
+      fprintf(stderr, "non-finite amplitude should not renormalize\n");
+      return 1;
+    }
   }
 
   qsop_amplitude_scale_pow2(NULL, 5);
