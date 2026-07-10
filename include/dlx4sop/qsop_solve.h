@@ -512,6 +512,11 @@ typedef struct qsop_branch_single_mode_options {
   uint32_t treewidth_delegate_max_width;
   uint32_t rankwidth_delegate_max_width;
 
+  /* Cost gate for the treewidth delegate: a connected component is refused when its min-fill DP
+   * work (sum over elimination steps of 2^bagsize) exceeds this, so admission tracks real DP cost
+   * rather than raw width. Zero selects the built-in budget. */
+  uint64_t treewidth_delegate_max_dp_work;
+
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;
 } qsop_branch_single_mode_options_t;

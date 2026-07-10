@@ -448,8 +448,9 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   if (stats->width_diagnostics_available) {
     fprintf(file,
             ",\"min_fill_width\":%" PRIu32 ",\"min_fill_edges\":%" PRIu64
-            ",\"prefix_cut_rank\":%" PRIu32,
-            stats->min_fill_width, stats->min_fill_edges, stats->prefix_cut_rank);
+            ",\"prefix_cut_rank\":%" PRIu32 ",\"min_fill_dp_work\":%" PRIu64,
+            stats->min_fill_width, stats->min_fill_edges, stats->prefix_cut_rank,
+            stats->min_fill_dp_work);
   }
   if (stats->exact_widths_requested) {
     fprintf(file, ",\"exact_widths_available\":%s,\"exact_width_max_vars\":%" PRIu32,

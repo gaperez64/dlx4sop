@@ -363,9 +363,26 @@ typedef struct branch_search_stats {
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH 18U
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_BAG_VARS (BRANCH_ROOT_TREEWIDTH_WIDE_MAX_WIDTH + 1U)
 #define BRANCH_ROOT_TREEWIDTH_WIDE_MAX_VARS 2500U
-#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH 25U
+/* The single-Fourier treewidth delegate is admitted by *cost* (min-fill DP work), not raw
+ * width -- see BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK below. This width value is only a
+ * memory-safety ceiling: the DP peaks at a 2^width table, ~2 GB of long double complex at 26,
+ * doubling per width. It was 25 (a pure width cap) before the cost gate; widening it by one to
+ * 26 lets a cheap-but-wide component (e.g. qnn_24 at width 26, ~1.1e9 work) reach the DP while
+ * the DP-work budget keeps a dense width-26 component (realamprandom_26, ~7e9 work) out. Width
+ * 27 is deliberately *not* admitted: its 2^27 table plus the branch backend's own residual/
+ * cache state OOMs a 12 GiB budget (qnn_25 dies there), so a one-width bump is the safe reach. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH 26U
 #define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_BAG_VARS                                              \
   (BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_WIDTH + 1U)
+/* Cost gate: refuse the treewidth delegate when the min-fill DP work (sum over elimination
+ * steps of 2^bagsize, qsop_stats_t.min_fill_dp_work) exceeds this. Admission then tracks the
+ * real DP cost rather than the width alone, which is a poor proxy: qnn_24 (width 26) solves in
+ * ~22 s while realamprandom_25 (width 25) times out. Calibrated on the gauntlet corpus so the
+ * slowest solved case (grover-v-chain_15, ~2.85e9 work, 62 s) stays admitted while the dense
+ * width-26 realamprandom_26 (~7.1e9) is refused; qnn_24 (~1.09e9) newly clears it and solves in
+ * ~22 s. The budget sits above grover-v-chain_15 and below realamprandom_26, and the width-26
+ * ceiling above keeps out the qnn_25 (width 27) family the budget would otherwise admit. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK UINT64_C(3200000000)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 #define BRANCH_DELEGATION_DEPTH_TOP_K 6U
@@ -2875,6 +2892,7 @@ typedef struct branch_single_mode_state {
   uint32_t max_recursion_depth;
   uint32_t treewidth_delegate_max_width;
   uint32_t rankwidth_delegate_max_width;
+  uint64_t treewidth_delegate_max_dp_work;
   /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
    * target mode (an even mode kills the sign edges outright and the rule changes shape). */
   bool propagate;
@@ -3256,6 +3274,9 @@ static bool branch_single_mode_delegate_component(
   const uint32_t rw_cap = options->rankwidth_delegate_max_width != 0
                               ? options->rankwidth_delegate_max_width
                               : BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
+  const uint64_t dp_work_budget = options->treewidth_delegate_max_dp_work != 0
+                                      ? options->treewidth_delegate_max_dp_work
+                                      : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK;
 
   /* qsop_compute_stats_with_order only populates `order` for nvars <= 63 -- its width-
    * diagnostics path for larger instances (compute_large_width_diagnostics) computes
@@ -3290,9 +3311,12 @@ static bool branch_single_mode_delegate_component(
   uint32_t cutrank_width = 0;
   bool setup_ok = true;
 
-  /* Single-Fourier tables carry no residue axis, so the r factor is 1. */
-  const bool treewidth_usable =
-      treewidth_available && treewidth_width <= tw_cap;
+  /* Admit the treewidth DP on cost, not raw width: the min-fill DP work must be within budget
+   * (a dense width-25 component like realamprandom_25 blows past it and would time out) and the
+   * width within the memory-safety ceiling. Single-Fourier tables carry no residue axis, so the
+   * r factor is 1. */
+  const bool treewidth_usable = treewidth_available && treewidth_width <= tw_cap &&
+                                sub_stats.min_fill_dp_work <= dp_work_budget;
   const uint64_t tw_est =
       branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
 
@@ -3340,7 +3364,7 @@ static bool branch_single_mode_delegate_component(
     }
   }
 
-  if (setup_ok && !use_rankwidth && treewidth_available && treewidth_width <= tw_cap) {
+  if (setup_ok && !use_rankwidth && treewidth_usable) {
     setup_ok = branch_single_mode_ensure_order(sub, &order, &order_width, &order_owned, error);
   }
 
@@ -3358,7 +3382,7 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_available && treewidth_width <= tw_cap && order_width <= tw_cap) {
+  } else if (treewidth_usable && order_width <= tw_cap) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
           sub, tw_cap + 1U, order, order_width, target_mode, out, &delegated, options->trace,
@@ -3385,10 +3409,12 @@ static bool branch_single_mode_delegate_component(
     if (fail_on_refusal) {
       set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
-                " vars) has treewidth %" PRIu32 " and rankwidth cutrank %" PRIu32
-                "; neither is within its delegate cap (%" PRIu32 " / %" PRIu32
+                " vars) has treewidth %" PRIu32 " (DP work %" PRIu64 ", budget %" PRIu64
+                ") and rankwidth cutrank %" PRIu32
+                "; neither is within its delegate cap (width <= %" PRIu32 " / %" PRIu32
                 ") -- no delegate available",
-                sub->nvars, treewidth_width, cutrank_width, tw_cap, rw_cap);
+                sub->nvars, treewidth_width, sub_stats.min_fill_dp_work, dp_work_budget,
+                cutrank_width, tw_cap, rw_cap);
       ok = false;
     } else {
       ok = true;
@@ -3444,6 +3470,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .max_recursion_depth = o.max_recursion_depth != 0 ? o.max_recursion_depth : qsop->nvars,
       .treewidth_delegate_max_width = o.treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
+      .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
       /* The rule rests on omega^(r/2) = -1 raised to an odd power; an even target mode turns
        * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
       .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
@@ -3621,6 +3648,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .simd = state->simd,
       .treewidth_delegate_max_width = state->treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
+      .treewidth_delegate_max_dp_work = state->treewidth_delegate_max_dp_work,
       .trace = state->trace,
   };
   const bool ok = branch_single_mode_delegate_component(
