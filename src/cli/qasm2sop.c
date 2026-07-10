@@ -2572,8 +2572,15 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
   if (starts_with_keyword(text, "barrier")) {
     return true;
   }
-  if (starts_with_keyword(text, "creg") || starts_with_keyword(text, "measure") ||
-      starts_with_keyword(text, "reset") || starts_with_keyword(text, "if")) {
+  if (starts_with_keyword(text, "creg")) {
+    /* An inert classical register -- declared but never written by a measure or read by
+     * an `if` -- has no effect on the amplitude, so ignore it like a barrier. A measure
+     * that targets it, or an `if` that reads it, is still rejected just below, so nothing
+     * dynamic or non-unitary slips through on the strength of this. */
+    return true;
+  }
+  if (starts_with_keyword(text, "measure") || starts_with_keyword(text, "reset") ||
+      starts_with_keyword(text, "if")) {
     set_error(importer, "dynamic or classical OpenQASM features are not supported");
     return false;
   }

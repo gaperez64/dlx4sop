@@ -50,33 +50,6 @@ def forbidden_ops_present(circuit) -> set[str]:
     return {instr.operation.name for instr in circuit.data if instr.operation.name in FORBIDDEN_OPS}
 
 
-def strip_unused_clbits(circuit):
-    """Drop classical registers no instruction actually touches.
-
-    Several MQT-derived QPY payloads carry a dangling `creg` declaration left
-    over from textual measurement-stripping upstream (the source QASM's
-    `measure`/`if` lines were removed but the `creg` line was not). qasm2sop's
-    parser hard-rejects any `creg`/`measure` line as a dynamic/classical
-    feature, even when the register is provably inert, so this preprocessing
-    is required to avoid a false "non-unitary" rejection.
-    """
-    if circuit.num_clbits == 0:
-        return circuit
-    live = any(
-        len(instr.clbits) > 0 or getattr(instr.operation, "condition", None) is not None
-        for instr in circuit.data
-    )
-    if live:
-        return circuit
-    from qiskit import QuantumCircuit
-
-    stripped = QuantumCircuit(*circuit.qregs)
-    stripped.global_phase = circuit.global_phase
-    for instr in circuit.data:
-        stripped.append(instr.operation, instr.qubits, [])
-    return stripped
-
-
 def load_circuit(payload_path: str):
     from qiskit import qpy
 
@@ -86,12 +59,15 @@ def load_circuit(payload_path: str):
             circuits = qpy.load(handle)
     circuit = circuits[0].copy()
     circuit.remove_final_measurements(inplace=True)
-    circuit = strip_unused_clbits(circuit)
+    # Reject only genuinely non-unitary ops (measure/reset/initialize/set_*). A dangling
+    # classical register -- e.g. an MQT payload whose measurements were stripped upstream
+    # but left the `creg` behind -- is left in place: qasm2sop ignores an inert `creg` and
+    # still rejects a real `if(creg) gate` / `measure` / `reset`, so it is the backstop
+    # that keeps dynamic circuits out while letting the inert register through. This
+    # replaces an earlier circuit-level clbit strip that crashed on some payloads.
     forbidden = forbidden_ops_present(circuit)
-    if forbidden or circuit.num_clbits:
-        raise ValueError(
-            f"non-unitary payload: forbidden ops {sorted(forbidden)}, clbits={circuit.num_clbits}"
-        )
+    if forbidden:
+        raise ValueError(f"non-unitary payload: forbidden ops {sorted(forbidden)}")
     return circuit
 
 

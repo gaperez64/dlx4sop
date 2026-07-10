@@ -94,16 +94,41 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             f"unexpected opaque declaration result:\n{opaque_result.stdout}\n{opaque_result.stderr}"
         )
 
-    unsupported = subprocess.run(
+    # An inert classical register (declared, never written by a measure or read by an if)
+    # has no effect on the amplitude, so qasm2sop ignores it: the import must match the
+    # creg-free golden byte-for-byte.
+    creg_result = subprocess.run(
         [str(exe), "-"],
-        input="OPENQASM 2.0;\nqreg q[1];\nmeasure q[0] -> c[0];\n",
+        input=qasm.read_text().replace('include "qelib1.inc";\n', 'include "qelib1.inc";\ncreg c[2];\n'),
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if unsupported.returncode == 0 or "dynamic or classical" not in unsupported.stderr:
-        raise AssertionError(f"unexpected unsupported result:\n{unsupported.stderr}")
+    if creg_result.returncode != 0 or creg_result.stdout != expected.read_text():
+        raise AssertionError(
+            f"unexpected inert creg result:\n{creg_result.stdout}\n{creg_result.stderr}"
+        )
+
+    # A measure/reset/if is still genuinely non-unitary or dynamic and must be rejected,
+    # even though the creg it targets is now tolerated on its own.
+    for dynamic in (
+        "measure q[0] -> c[0];",
+        "reset q[0];",
+        "if (c==1) x q[0];",
+    ):
+        unsupported = subprocess.run(
+            [str(exe), "-"],
+            input=f"OPENQASM 2.0;\nqreg q[1];\ncreg c[1];\n{dynamic}\n",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if unsupported.returncode == 0 or "dynamic or classical" not in unsupported.stderr:
+            raise AssertionError(
+                f"expected rejection of {dynamic!r}:\n{unsupported.stdout}\n{unsupported.stderr}"
+            )
 
     bad_phase = subprocess.run(
         [str(exe), "-"],
