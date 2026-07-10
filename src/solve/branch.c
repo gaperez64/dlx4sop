@@ -1265,11 +1265,9 @@ static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint6
  * same model decides. Mirrors branch_should_probe_rankwidth exactly -- callers only reach here with
  * treewidth inside its single-Fourier cap, so treewidth is usable and its tables carry no residue
  * axis (r factor 1). */
-bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
-                                                    uint32_t prefix_cut_rank, uint32_t nvars,
+bool qsop_branch_single_treewidth_clearly_preferred(uint32_t prefix_cut_rank, uint32_t nvars,
                                                     uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy) {
-  (void)treewidth_width;
   const qsop_branch_policy_t pol = branch_policy_normalize(policy);
   const uint64_t tw_est = branch_treewidth_estimate_ns(&pol, true, treewidth_dp_work);
   return !branch_should_probe_rankwidth(&pol, tw_est, nvars, prefix_cut_rank, 1U);
@@ -1278,6 +1276,40 @@ bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
 /* Maximum cutrank width tried during calibration runs. Wider sub-problems are
    skipped to bound calibration cost even when policy vetoqs are bypassed. */
 #define BRANCH_CALIBRATION_MAX_WIDTH 20U
+
+/* BOTH policy: also generate the native (min-fill-cut) decomposition and keep whichever forecasts
+ * the smaller table (ties broken by fewer join pairs). A no-op unless rw_source is BOTH and the
+ * primary decomposition came from the from-treewidth generator. On success it may replace
+ * *decomposition and update the forecasts in place; native-generation failure is silently ignored
+ * (the primary decomposition is kept, and the caller's error stays untouched). */
+static void branch_rankwidth_maybe_prefer_native(
+    qsop_instance_t *sub, qsop_rankwidth_generator_t primary_gen, uint32_t cutrank_width,
+    branch_search_stats_t *stats, qsop_rankwidth_decomposition_t **decomposition,
+    uint64_t *table_forecast, uint64_t *join_forecast) {
+  if (stats->rw_source != QSOP_BRANCH_RW_SOURCE_BOTH ||
+      primary_gen != QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
+    return;
+  }
+  qsop_rankwidth_decomposition_t *native_dec = NULL;
+  qsop_error_t native_error = {0};
+  if (!qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT, &native_dec,
+                                             &native_error)) {
+    return;
+  }
+  uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
+  uint64_t native_join = 0;
+  if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join, NULL) &&
+      (native_table < *table_forecast ||
+       (native_table == *table_forecast && native_join < *join_forecast))) {
+    qsop_rankwidth_decomposition_free(*decomposition);
+    *decomposition = native_dec;
+    native_dec = NULL;
+    *table_forecast = native_table;
+    *join_forecast = native_join;
+    branch_trace_event(stats, "branch.rankwidth_source_native_preferred", native_table);
+  }
+  qsop_rankwidth_decomposition_free(native_dec);
+}
 
 /* precomputed_order: if non-NULL, used instead of running min-fill inside the from-treewidth
  * generator (D2 optimization: share one min-fill run with the treewidth solver path). */
@@ -1297,17 +1329,19 @@ static bool branch_try_rankwidth_delegate(
   if (rw_data != NULL) {
     *rw_data = (branch_rw_decision_data_t){.attempted = true};
   }
-  /* In calibration mode, bypass policy vetoqs so both backends get timed. */
+  /* In calibration mode, bypass the cost inequality so both backends get timed. */
   const bool calibrating = (stats->sink != NULL && stats->sink->calibrate_backends);
-  /* True when a veto fired in calibration mode: rankwidth is timed but its counts discarded. */
-  bool calibration_timing_only = false;
-  uint64_t treewidth_table = 0;
-  uint64_t treewidth_join_pairs = 0;
+  /* Whether rankwidth's counts will be adopted. Cleared when a veto fires in calibration mode:
+   * rankwidth is still generated, solved and timed (both backends must be), but the result is
+   * discarded and the caller proceeds with treewidth. */
+  bool adopt = true;
+  /* Diagnostic only: the peak-2^(width+1) table/join forecasts are emitted for the trace but no
+   * longer feed the decision, which prices treewidth by its real min-fill DP work (tw_est below). */
   if (treewidth_available) {
-    treewidth_table = treewidth_table_forecast(treewidth_width, (uint32_t)sub->r);
-    treewidth_join_pairs = treewidth_join_pair_forecast(treewidth_width, sub->nvars);
-    branch_trace_event(stats, "branch.treewidth_table_forecast", treewidth_table);
-    branch_trace_event(stats, "branch.treewidth_join_pair_forecast", treewidth_join_pairs);
+    branch_trace_event(stats, "branch.treewidth_table_forecast",
+                       treewidth_table_forecast(treewidth_width, (uint32_t)sub->r));
+    branch_trace_event(stats, "branch.treewidth_join_pair_forecast",
+                       treewidth_join_pair_forecast(treewidth_width, sub->nvars));
   }
 
   /* Policy fields are pre-normalized in branch_policy_normalize(); read directly. */
@@ -1330,7 +1364,7 @@ static bool branch_try_rankwidth_delegate(
       return true;
     }
     /* Calibration: probe and time rankwidth anyway, but do not adopt its result. */
-    calibration_timing_only = true;
+    adopt = false;
   }
 
   /* Select decomposition generator based on rw_source policy. */
@@ -1375,35 +1409,8 @@ static bool branch_try_rankwidth_delegate(
   branch_trace_event(stats, "branch.rankwidth_table_forecast", rankwidth_table_forecast);
   branch_trace_event(stats, "branch.rankwidth_join_pair_forecast", rankwidth_join_pair_forecast);
 
-  /* BOTH policy: also try the native generator and keep whichever forecasts better. */
-  if (stats->rw_source == QSOP_BRANCH_RW_SOURCE_BOTH &&
-      primary_gen == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
-    qsop_rankwidth_decomposition_t *native_dec = NULL;
-    if (qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
-                                              &native_dec, error)) {
-      uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
-      uint64_t native_join = 0;
-      if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join,
-                                                NULL)) {
-        if (native_table < rankwidth_table_forecast ||
-            (native_table == rankwidth_table_forecast &&
-             native_join < rankwidth_join_pair_forecast)) {
-          qsop_rankwidth_decomposition_free(decomposition);
-          decomposition = native_dec;
-          native_dec = NULL;
-          rankwidth_table_forecast = native_table;
-          rankwidth_join_pair_forecast = native_join;
-          branch_trace_event(stats, "branch.rankwidth_source_native_preferred", native_table);
-        }
-      }
-      qsop_rankwidth_decomposition_free(native_dec);
-    } else {
-      /* Native generation failed; clear error and proceed with primary. */
-      if (error != NULL) {
-        error->message[0] = '\0';
-      }
-    }
-  }
+  branch_rankwidth_maybe_prefer_native(sub, primary_gen, cutrank_width, stats, &decomposition,
+                                       &rankwidth_table_forecast, &rankwidth_join_pair_forecast);
 
   if (rankwidth_table_forecast > stats->rankwidth_table_forecast) {
     stats->rankwidth_table_forecast = rankwidth_table_forecast;
@@ -1419,29 +1426,30 @@ static bool branch_try_rankwidth_delegate(
     rw_data->forecast_join_pairs = rankwidth_join_pair_forecast;
   }
 
-  /* The probe is now sunk, so it drops out of the rankwidth estimate. Same inequality as above. */
+  /* Second and final evaluation of the cost model, probe now sunk (rw_probe drops to 0). Rankwidth
+   * delegates iff it stays within its hard cut-rank memory cap AND wins the inequality; calibration
+   * mode bypasses the inequality (both backends must be timed) but never the memory cap. */
   const uint64_t sig_est = binary_assignment_forecast(cutrank_width);
   const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rankwidth_table_forecast,
                                                        rankwidth_join_pair_forecast, sig_est, 0);
-  const bool cost_model_rejects = !calibrating && !branch_rankwidth_wins(pol, rw_est, tw_est);
+  const bool within_cutrank_cap = cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
+  const bool rankwidth_wins =
+      within_cutrank_cap && (calibrating || branch_rankwidth_wins(pol, rw_est, tw_est));
 
-  if (cost_model_rejects || cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-    const char *skip_phase = "branch.rankwidth_skip_cost_model";
-    const char *veto = "rw_cost_model_rejected";
-    if (cutrank_width > BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-      skip_phase = "branch.rankwidth_skip_width";
-      veto = "rw_width_above_cap";
-    }
-    note_rankwidth_skip(stats, skip_phase, cutrank_width);
+  if (!rankwidth_wins) {
+    const bool over_cap = !within_cutrank_cap;
+    note_rankwidth_skip(
+        stats, over_cap ? "branch.rankwidth_skip_width" : "branch.rankwidth_skip_cost_model",
+        cutrank_width);
     if (rw_data != NULL) {
-      rw_data->veto_reason = veto;
+      rw_data->veto_reason = over_cap ? "rw_width_above_cap" : "rw_cost_model_rejected";
     }
     if (!calibrating || cutrank_width > BRANCH_CALIBRATION_MAX_WIDTH) {
       qsop_rankwidth_decomposition_free(decomposition);
       return true;
     }
     /* Calibration: fall through to time rankwidth without adopting its counts. */
-    calibration_timing_only = true;
+    adopt = false;
   }
 
   uint64_t *part_counts = NULL;
@@ -1450,7 +1458,7 @@ static bool branch_try_rankwidth_delegate(
   const uint64_t solve_start_ns = qsop_trace_now_ns();
   const uint64_t solve_start = qsop_trace_begin(stats->trace);
   const bool use_fourier = stats->mode == QSOP_SOLVE_MODE_FOURIER && stats->count_modulus == 0;
-  if (calibration_timing_only && use_fourier) {
+  if (!adopt && use_fourier) {
     /* Cannot time Fourier mode into a scratch buffer; skip calibration timing. */
     qsop_rankwidth_decomposition_free(decomposition);
     return true;
@@ -1475,7 +1483,7 @@ static bool branch_try_rankwidth_delegate(
   if (rw_data != NULL) {
     rw_data->actual_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(solve_start_ns));
   }
-  if (calibration_timing_only) {
+  if (!adopt) {
     /* Timed rankwidth for calibration; discard results, let caller proceed with treewidth. */
     free(part_counts);
     qsop_result_free(part_result);

@@ -22,10 +22,15 @@ from source:
 - `sop-solve`: solve exact residue-count histograms; stats mode can include
   the count vector used to reconstruct amplitudes and a convenience probability
   estimate via `--include-probability`.
-- `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP,
+- `qasm2sop`: import the supported OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
-  and `iswap`.
+  and `iswap`. Mid-circuit `measure` (with no classical feed-forward) and `reset`
+  are lowered coherently — a measurement as the identity, a reset as a fresh `|0>`
+  wire with the old value summed out. That equals a physical measure/reset exactly
+  when the qubit is in a definite computational-basis state there (uncomputed or
+  recycled ancillas, stabilizer syndromes — the alg85 regime, cross-checked against
+  qiskit-aer); data-dependent `if` is still rejected.
 - `sop2wmc`: export a QSOP to DIMACS CNF / WPCNF for external model counting.
   Five encodings are available via `--encoding <name>`:
   - `residue-accumulator` (alias `residue`, default): one DIMACS CNF per
@@ -179,10 +184,12 @@ component (from first check to last):
 5. **Branching fallback** — otherwise pick a branch variable and recurse on
    `0`/`1`.
 
-**Delegation caps** (hard limits; a component wider than these is not handed to
-that backend): treewidth ≤ 14 (count-table) or ≤ 25 (single-Fourier); a
-single-component root up to width 18 for ≤ 2500 variables; rankwidth cut-rank
-≤ 12.
+**Delegation caps** (hard memory-safety limits, since each backend's DP table is `2^width`-sized, so
+a component over its cap is not handed to that backend): treewidth ≤ 14 (count-table); the
+single-Fourier treewidth delegate is admitted by *DP work* — min-fill `Σ 2^bag ≤ 3.2e9` — under a
+width ≤ 26 table-memory ceiling; a single-component root up to width 18 for ≤ 2500 variables;
+rankwidth cut-rank ≤ 12. These caps are part of the cost model below, not separate vetoes layered
+on top of it.
 
 **Rankwidth is on by default** (`--branch-rw-source auto`): the branch backend
 competes rankwidth against treewidth per component via the cost model below, and
@@ -201,6 +208,7 @@ tw_est = tw_fixed_overhead_ns + C_tw_table * tw_dp_work        (infinite if tree
 rw_est = rw_fixed_overhead_ns + rw_memory_penalty_ns
        + C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
        + rw_probe                                              (before the probe; 0 after)
+                                                               (infinite if cut-rank is over its cap)
 
 rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
 ```
@@ -208,7 +216,10 @@ rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
 The first evaluation, with a *predicted* rankwidth cost (cut-rank proxy for the table
 and signature counts, no join term, plus the probe) decides whether probing is worth
 it at all. The second, with the measured decomposition and the probe now sunk,
-decides which backend runs. There are no other vetoes.
+decides which backend runs. The only side conditions are the delegation caps above:
+they enter the inequality as an infinite estimate — a backend over its cap simply
+cannot run — so the single comparison stays the whole decision. (In `--branch-calibrate-backends`
+mode the inequality is bypassed so both backends are timed, but the hard caps still apply.)
 
 Two things make that work.
 

@@ -376,7 +376,7 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop, ui
     qsop_error_t cut_rank_error = {0};
     if (qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges, &cut_rank,
                              &cut_rank_error) &&
-        !qsop_branch_single_treewidth_clearly_preferred(width, cut_rank, qsop->nvars, dp_work,
+        !qsop_branch_single_treewidth_clearly_preferred(cut_rank, qsop->nvars, dp_work,
                                                         policy)) {
       free(order);
       return false;

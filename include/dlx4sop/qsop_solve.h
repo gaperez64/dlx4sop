@@ -451,12 +451,11 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
                        const qsop_branch_solve_options_t *options, qsop_result_t **out,
                        qsop_solve_stats_t *stats, qsop_error_t *error);
 
-/* True when the branch backend's shared pre-probe vetoes make treewidth the clear choice over
- * rankwidth for a single-Fourier component of the given width/cut-rank; used by the CLI auto
- * dispatch to decide whether the whole-instance direct treewidth path is safe to take (else the
- * branch recursion probes rankwidth and the cost model decides). */
-bool qsop_branch_single_treewidth_clearly_preferred(uint32_t treewidth_width,
-                                                    uint32_t prefix_cut_rank, uint32_t nvars,
+/* True when the branch backend's shared cost model makes treewidth the clear choice over rankwidth
+ * for a single-Fourier component of the given cut-rank / DP work; used by the CLI auto dispatch to
+ * decide whether the whole-instance direct treewidth path is safe to take (else the branch
+ * recursion probes rankwidth and the cost model decides). */
+bool qsop_branch_single_treewidth_clearly_preferred(uint32_t prefix_cut_rank, uint32_t nvars,
                                                     uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy);
 
