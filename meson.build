@@ -609,6 +609,16 @@ if python3.found()
       ],
       depends: [qasm2sop, sop_solve],
     )
+    test(
+      'qasm2sop aer',
+      python3,
+      args: [
+        files('tests/test_qasm_aer.py'),
+        qasm2sop.full_path(),
+        sop_solve.full_path(),
+      ],
+      depends: [qasm2sop, sop_solve],
+    )
   endif
   if get_option('ganak_tests')
     test(

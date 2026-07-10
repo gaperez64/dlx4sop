@@ -65,7 +65,16 @@ def parse_qasm(qasm: str) -> tuple[list[tuple[str, list[str], list[float]]], dic
             regs[name] = (nqubits, size)
             nqubits += size
             continue
-        if statement.startswith("barrier"):
+        if statement.startswith("barrier") or statement.startswith("creg"):
+            continue
+        if statement.startswith("measure"):
+            # Deferred + dropped, coherently the identity -- a no-op. Keep the quantum operand
+            # so the entry is well-formed, but simulate_qasm applies nothing.
+            body = statement[len("measure") :].strip()
+            gates.append(("measure", [body.split("->", 1)[0].strip()], []))
+            continue
+        if statement.startswith("reset"):
+            gates.append(("reset", [statement[len("reset") :].strip()], []))
             continue
 
         gate, rest = statement.split(None, 1)
@@ -128,6 +137,19 @@ def apply_one(state: list[complex], nqubits: int, qubit: int, matrix: tuple[comp
         old_one = state[other]
         state[base] = a * old_zero + b * old_one
         state[other] = c * old_zero + d * old_one
+
+
+def apply_reset(state: list[complex], nqubits: int, qubit: int) -> None:
+    # Coherent single-amplitude reset: Sum_m |0><m| = |0>(<0| + <1|). The wire is forced to |0>
+    # and the pre-reset |0>/|1> amplitudes are summed coherently -- matching qasm2sop's fresh
+    # |0> variable plus free-summed old variable. This is deliberately non-unitary.
+    bit = 1 << qubit
+    for base in range(1 << nqubits):
+        if base & bit:
+            continue
+        other = base | bit
+        state[base] = state[base] + state[other]
+        state[other] = 0j
 
 
 def apply_controlled_x(state: list[complex], nqubits: int, control: int, target: int) -> None:
@@ -285,6 +307,12 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
 
     for gate, operands, params in gates:
         angle = params[0] if params else 0.0
+        if gate == "measure":
+            continue
+        if gate == "reset":
+            for qubit in operand_qubits(operands[0], regs):
+                apply_reset(state, nqubits, qubit)
+            continue
         if gate in ("u3", "u"):
             matrix = u3_matrix(params[0], params[1], params[2])
             for qubit in operand_qubits(operands[0], regs):
@@ -695,6 +723,80 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             cswap q[0], q[1], q[2];
             """,
             [("101", "110"), ("110", "101"), ("001", "001"), ("100", "100")],
+        ),
+        # A mid-circuit measurement with no classical feed-forward is a coherent no-op, so this
+        # must give exactly the bell amplitudes -- both the single (q[0] -> c[0]) and the whole
+        # register (q -> c) forms, and an inert creg alongside.
+        (
+            "measure_noop",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            creg c[2];
+            h q[0];
+            measure q[0] -> c[0];
+            cx q[0], q[1];
+            measure q -> c;
+            """,
+            [("00", "00"), ("00", "11"), ("00", "01"), ("00", "10")],
+        ),
+        # Reset-recycle: h; reset; h. The coherent reset collapses |+> to sqrt(2)|0>, so the
+        # second h yields |0>+|1> and both outputs read amplitude 1 -- a non-unitary norm the
+        # single-amplitude convention is expected to produce.
+        (
+            "reset_recycle",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            h q[0];
+            reset q[0];
+            h q[0];
+            """,
+            [("0", "0"), ("0", "1")],
+        ),
+        # Reset on an entangled wire: the pre-reset variable is free-summed while the wire
+        # restarts at |0>, leaving a uniform superposition (amplitude 1/2 on every output).
+        (
+            "reset_entangled",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q[0];
+            cx q[0], q[1];
+            reset q[0];
+            h q[0];
+            """,
+            [("00", "00"), ("00", "11"), ("00", "01"), ("00", "10")],
+        ),
+        # Whole-register reset restarts both wires at |0>; the trailing gates then act on a
+        # fresh |00>, so the output is the plain h/cx bell amplitudes again.
+        (
+            "reset_register",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q[0];
+            cx q[0], q[1];
+            reset q;
+            h q[0];
+            cx q[0], q[1];
+            """,
+            [("00", "00"), ("00", "11"), ("00", "01")],
+        ),
+        # theta=0 u-gates are pure phases P(phi+lambda); qasm2sop imports them exactly even when
+        # phi/lambda are individually odd pi/8 units (u(0,5pi/8,-3pi/8)=T) -- the case seca needs.
+        # Driven onto |1> so the phase is observable, and mixed with an even-angle theta=0 (=Z).
+        (
+            "u_theta0_phase",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            x q[0];
+            x q[1];
+            u(0,5*pi/8,-3*pi/8) q[0];
+            u(0,-pi/2,-pi/2) q[1];
+            """,
+            [("00", "11"), ("00", "00"), ("00", "10")],
         ),
     ]
 

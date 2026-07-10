@@ -32,9 +32,12 @@ import build_external_qasm_manifest as manifest_tool  # noqa: E402
 QASM2SOP = REPO_ROOT / "build" / "qasm2sop"
 SOP_SOLVE = REPO_ROOT / "build" / "sop-solve"
 
-# Non-unitary operations the protocol requires rejecting outright (final
-# measurements are stripped separately, before this check runs).
-FORBIDDEN_OPS = {"measure", "reset", "initialize", "set_density_matrix", "set_statevector"}
+# State-injection operations qasm2sop cannot represent and the protocol requires rejecting
+# outright. Mid-circuit `measure`/`reset` are NOT here: qasm2sop now lowers a no-feed-forward
+# measurement to a coherent no-op and a reset to a fresh |0> wire (final measurements are still
+# stripped separately, before this check runs). Data-dependent `if` control stays rejected by
+# qasm2sop itself.
+FORBIDDEN_OPS = {"initialize", "set_density_matrix", "set_statevector"}
 
 # Matches the gauntlet's own zero-amplitude tolerance (1e-8 absolute+relative
 # in every real suite bar "smoke"), so the modulus this buys is exactly what
@@ -59,12 +62,11 @@ def load_circuit(payload_path: str):
             circuits = qpy.load(handle)
     circuit = circuits[0].copy()
     circuit.remove_final_measurements(inplace=True)
-    # Reject only genuinely non-unitary ops (measure/reset/initialize/set_*). A dangling
-    # classical register -- e.g. an MQT payload whose measurements were stripped upstream
-    # but left the `creg` behind -- is left in place: qasm2sop ignores an inert `creg` and
-    # still rejects a real `if(creg) gate` / `measure` / `reset`, so it is the backstop
-    # that keeps dynamic circuits out while letting the inert register through. This
-    # replaces an earlier circuit-level clbit strip that crashed on some payloads.
+    # Reject only state-injection ops (initialize/set_*) qasm2sop cannot represent. Mid-circuit
+    # measure/reset are left in place -- qasm2sop lowers them (measurement as a coherent no-op,
+    # reset as a fresh |0> wire). A dangling classical register is also left in place: qasm2sop
+    # ignores an inert `creg` and still rejects a real `if(creg) gate`, so it remains the backstop
+    # that keeps data-dependent dynamic circuits out while letting the inert register through.
     forbidden = forbidden_ops_present(circuit)
     if forbidden:
         raise ValueError(f"non-unitary payload: forbidden ops {sorted(forbidden)}")
@@ -74,7 +76,7 @@ def load_circuit(payload_path: str):
 def _is_phase_representability_error(stderr: str) -> bool:
     """--approx only rescues circuits that fail the *exact* import because a phase/angle falls
     outside qasm2sop's finite grid (odd cp/cu1, non-pi/8 rz/rx/ry/u/p, non-sign quadratic). It
-    does NOT add gate support or fix parse / non-unitary (creg/measure) rejections, so retrying
+    does NOT add gate support or fix parse / dynamic (`if`) / state-injection rejections, so retrying
     those with --approx just burns a second qasm2sop run and yields a misleading combined error.
     Every exact-mode angle rejection names "angle" or "non-sign quadratic"; nothing else does."""
     return "angle" in stderr or "non-sign quadratic" in stderr

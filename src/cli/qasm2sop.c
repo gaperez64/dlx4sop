@@ -84,6 +84,12 @@ typedef struct qasm_importer {
   uint32_t edges_len;
   uint32_t edges_cap;
 
+  /* Variables introduced by `reset` that must pin to |0>: the wire's fresh post-reset
+   * variable. Applied as `f <var> 0` alongside the boundary pins in collect_boundary_pins. */
+  uint32_t *zero_pins;
+  uint32_t zero_pins_len;
+  uint32_t zero_pins_cap;
+
   uint64_t constant;
   uint32_t nvars;
   uint64_t norm_h;
@@ -332,6 +338,36 @@ static bool reserve_edges(qasm_importer_t *importer, uint32_t needed) {
   }
   importer->edges = edges;
   importer->edges_cap = new_cap;
+  return true;
+}
+
+static bool reserve_zero_pins(qasm_importer_t *importer, uint32_t needed) {
+  if (needed <= importer->zero_pins_cap) {
+    return true;
+  }
+  uint32_t new_cap = importer->zero_pins_cap == 0 ? 16U : importer->zero_pins_cap;
+  while (new_cap < needed) {
+    if (new_cap > UINT32_MAX / 2U) {
+      set_error(importer, "too many reset pins");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  uint32_t *zero_pins = realloc(importer->zero_pins, (size_t)new_cap * sizeof(*zero_pins));
+  if (zero_pins == NULL) {
+    set_error(importer, "out of memory while storing reset pins");
+    return false;
+  }
+  importer->zero_pins = zero_pins;
+  importer->zero_pins_cap = new_cap;
+  return true;
+}
+
+static bool record_zero_pin(qasm_importer_t *importer, uint32_t var) {
+  if (!reserve_zero_pins(importer, importer->zero_pins_len + 1U)) {
+    return false;
+  }
+  importer->zero_pins[importer->zero_pins_len++] = var;
   return true;
 }
 
@@ -642,7 +678,7 @@ static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate,
 
 static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, const char *prefix,
                                   const char *name, int64_t *out_units, size_t expected,
-                                  bool *out_matches) {
+                                  uint64_t unit_denominator, bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -683,7 +719,7 @@ static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, c
     }
 
     char *expr = trim(cursor);
-    if (!parse_pi_over_four_units(expr, &out_units[i])) {
+    if (!parse_pi_units(expr, unit_denominator, &out_units[i])) {
       set_error(importer, "unsupported %s angle '%s'", name, gate);
       return false;
     }
@@ -1565,6 +1601,70 @@ static bool parse_qubit_or_reg_operand(qasm_importer_t *importer, char *text, qa
   return true;
 }
 
+/* `reset q`: the wire is discarded and re-prepared in |0>. In the single-amplitude SOP this is the
+ * coherent object Sum_m |0><m| = |0>(<0| + <1|): the pre-reset variable is left unpinned (so the
+ * evaluation sums it), and a fresh variable pinned to |0> carries the wire onward. The fresh-var
+ * idiom mirrors apply_h / add_qreg.
+ *
+ * Precondition (shared with apply_measure): this coherent lowering equals a physical measure/reset
+ * exactly when the qubit is in a definite computational-basis state at that point -- the regime of
+ * uncomputed/recycled ancillas and stabilizer syndromes (the entire alg85 corpus; cross-checked
+ * against qiskit-aer in tests/test_qasm_aer.py). It does not reproduce incoherent statistics for a
+ * qubit left in superposition and used coherently afterward -- a regime the corpus excludes. */
+static bool apply_reset(qasm_importer_t *importer, uint32_t qubit) {
+  if (importer->nvars == UINT32_MAX) {
+    set_error(importer, "too many variables");
+    return false;
+  }
+  const uint32_t fresh = importer->nvars++;
+  if (!record_zero_pin(importer, fresh)) {
+    return false;
+  }
+  importer->current[qubit] = fresh;
+  return true;
+}
+
+static bool apply_reset_operand(qasm_importer_t *importer, char *rest) {
+  qasm_operand_t operand;
+  if (!parse_qubit_or_reg_operand(importer, rest, &operand)) {
+    return false;
+  }
+  if (!operand.is_reg) {
+    return apply_reset(importer, operand.qubit);
+  }
+  for (uint32_t i = 0; i < operand.reg->size; i++) {
+    if (!apply_reset(importer, operand.reg->offset + i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* `measure q -> c` with no classical feed-forward (an `if` reading c is still rejected): deferred to
+ * the end of the circuit and dropped like the stripped final measurements, which coherently is
+ * Sum_m |m><m| = I -- a no-op on the amplitude. The wire keeps its current variable. We still
+ * validate the quantum operand so a malformed measure is rejected; the classical target is inert
+ * (cregs are declared-and-ignored), so it is only checked to be present. */
+static bool apply_measure(qasm_importer_t *importer, char *rest) {
+  char *arrow = strstr(rest, "->");
+  if (arrow == NULL) {
+    set_error(importer, "measure must look like 'measure qreg -> creg'");
+    return false;
+  }
+  *arrow = '\0';
+  char *classical = trim(arrow + 2);
+  if (*classical == '\0') {
+    set_error(importer, "measure is missing its classical target");
+    return false;
+  }
+  qasm_operand_t operand;
+  if (!parse_qubit_or_reg_operand(importer, trim(rest), &operand)) {
+    return false;
+  }
+  (void)operand;
+  return true;
+}
+
 static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op, uint32_t qubit,
                                uint64_t phase_coeff) {
   switch (op) {
@@ -2289,6 +2389,31 @@ static bool apply_approx_gate(qasm_importer_t *importer, char *gate, char *rest,
   return true;
 }
 
+/* P(units * pi/8) on one wire; the qasm_param_one_qubit_fn used to broadcast a theta=0 u-gate. */
+static bool apply_phase_units(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, units));
+}
+
+/* Exact u3/u dispatch with angles already parsed as pi/8 counts. A theta of 0 makes the gate the
+ * pure phase U(0, phi, lambda) = P(phi + lambda), which a single phase represents exactly for any
+ * phi + lambda (no rz angle-halving) -- this is what lets e.g. Qiskit's u(0, 5pi/8, -3pi/8) = T
+ * import exactly instead of only via --approx. A nonzero theta takes the rz-ry-rz path, which
+ * halves each angle, so theta/phi/lambda must each be an even pi/8 count (a pi/4 multiple);
+ * halving to pi/4 units then reproduces the original apply_u3 lowering exactly, and an odd count is
+ * refused as before. */
+static bool apply_u3_eighths_operand(qasm_importer_t *importer, char *rest, const char *gate,
+                                     const int64_t units8[3]) {
+  if (units8[0] == 0) {
+    return apply_param_one_qubit_operand(importer, rest, units8[1] + units8[2], apply_phase_units);
+  }
+  if (((units8[0] | units8[1] | units8[2]) & 1) != 0) {
+    set_error(importer, "unsupported u angle '%s'", gate);
+    return false;
+  }
+  return apply_param_three_qubit_operand(importer, rest, units8[0] / 2, units8[1] / 2,
+                                         units8[2] / 2, apply_u3);
+}
+
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
   importer->saw_gate = true;
 
@@ -2318,25 +2443,23 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   int64_t u3_units[3] = {0};
   bool is_u3 = false;
-  if (!parse_param_unit_list(importer, gate, "u3(", "u3", u3_units, 3, &is_u3)) {
+  if (!parse_param_unit_list(importer, gate, "u3(", "u3", u3_units, 3, 8, &is_u3)) {
     return false;
   }
   if (is_u3) {
-    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1], u3_units[2],
-                                           apply_u3);
+    return apply_u3_eighths_operand(importer, rest, gate, u3_units);
   }
 
-  if (!parse_param_unit_list(importer, gate, "u(", "u", u3_units, 3, &is_u3)) {
+  if (!parse_param_unit_list(importer, gate, "u(", "u", u3_units, 3, 8, &is_u3)) {
     return false;
   }
   if (is_u3) {
-    return apply_param_three_qubit_operand(importer, rest, u3_units[0], u3_units[1], u3_units[2],
-                                           apply_u3);
+    return apply_u3_eighths_operand(importer, rest, gate, u3_units);
   }
 
   int64_t u2_units[2] = {0};
   bool is_u2 = false;
-  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, &is_u2)) {
+  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, 4, &is_u2)) {
     return false;
   }
   if (is_u2) {
@@ -2390,7 +2513,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   int64_t cu_units[4] = {0};
   bool is_cu = false;
-  if (!parse_param_unit_list(importer, gate, "cu(", "cu", cu_units, 4, &is_cu)) {
+  if (!parse_param_unit_list(importer, gate, "cu(", "cu", cu_units, 4, 4, &is_cu)) {
     return false;
   }
   if (is_cu) {
@@ -2579,8 +2702,15 @@ static bool parse_statement(qasm_importer_t *importer, char *line) {
      * dynamic or non-unitary slips through on the strength of this. */
     return true;
   }
-  if (starts_with_keyword(text, "measure") || starts_with_keyword(text, "reset") ||
-      starts_with_keyword(text, "if")) {
+  if (starts_with_keyword(text, "measure")) {
+    importer->saw_gate = true;
+    return apply_measure(importer, trim(text + strlen("measure")));
+  }
+  if (starts_with_keyword(text, "reset")) {
+    importer->saw_gate = true;
+    return apply_reset_operand(importer, trim(text + strlen("reset")));
+  }
+  if (starts_with_keyword(text, "if")) {
     set_error(importer, "dynamic or classical OpenQASM features are not supported");
     return false;
   }
@@ -2645,6 +2775,7 @@ static void free_importer(qasm_importer_t *importer) {
   free(importer->current);
   free(importer->unary);
   free(importer->edges);
+  free(importer->zero_pins);
 }
 
 static bool parse_qasm(FILE *input, const char *path, qasm_importer_t *importer) {
@@ -2709,6 +2840,12 @@ static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_
   for (uint32_t q = 0; q < importer->nqubits && !conflict; q++) {
     const uint32_t value = boundary_bit(importer->output_bits, q);
     pin_boundary_variable(pins, importer->current[q], value, &conflict);
+  }
+  /* Mid-circuit reset pins: each fresh post-reset variable is |0>. A conflict here (e.g. an
+   * --output that demands 1 on a wire whose final op was a reset to 0) correctly yields amplitude
+   * zero, same as any other boundary conflict. */
+  for (uint32_t i = 0; i < importer->zero_pins_len && !conflict; i++) {
+    pin_boundary_variable(pins, importer->zero_pins[i], 0U, &conflict);
   }
 
   *out_pins = pins;
