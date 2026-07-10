@@ -272,6 +272,39 @@ static int test_single_mode_dp_work_gate(void) {
   return 0;
 }
 
+static int expect_treewidth_preference(const char *name, uint32_t prefix_cut_rank, uint32_t nvars,
+                                       uint64_t dp_work, bool expected) {
+  const bool actual = qsop_branch_single_treewidth_clearly_preferred(
+      prefix_cut_rank, nvars, dp_work, NULL);
+  if (actual != expected) {
+    fprintf(stderr,
+            "FAIL policy_%s: prefix=%" PRIu32 " nvars=%" PRIu32 " dp_work=%" PRIu64
+            " expected treewidth_preferred=%d, got %d\n",
+            name, prefix_cut_rank, nvars, dp_work, expected, actual);
+    return 1;
+  }
+  fprintf(stderr, "PASS policy_%s\n", name);
+  return 0;
+}
+
+/* Guard the pre-probe model with shapes measured from the regression corpora. Prefix cut-rank is
+ * intentionally only a zero/nonzero signal here: the InferQ graph's natural order has rank 21,
+ * but the generated decomposition has width 10. Conversely, the two huge Shor graphs remain cheap
+ * enough for treewidth that the O(n^2 * words) probe cost excludes rankwidth even at best-case
+ * generated width one. The complete-bipartite win and cheap treewidth cases pin the old boundaries. */
+static int test_rankwidth_preprobe_policy(void) {
+  int failures = 0;
+  failures += expect_treewidth_preference("inferq_472592", 21U, 123U, UINT64_C(4206906), false);
+  failures +=
+      expect_treewidth_preference("shor_15_4", 11U, 23768U, UINT64_C(53768770), true);
+  failures +=
+      expect_treewidth_preference("shor_9_4", 11U, 25992U, UINT64_C(99438302), true);
+  failures += expect_treewidth_preference("k12_12", 1U, 24U, UINT64_C(106494), false);
+  failures += expect_treewidth_preference("path32", 1U, 32U, UINT64_C(126), true);
+  failures += expect_treewidth_preference("grid6", 6U, 36U, UINT64_C(1374), true);
+  return failures;
+}
+
 int main(void) {
   int failures = 0;
   failures += test_null_options();
@@ -284,10 +317,11 @@ int main(void) {
   failures += test_null_qsop_rejected();
   failures += test_unsupported_mode_rejected();
   failures += test_single_mode_dp_work_gate();
+  failures += test_rankwidth_preprobe_policy();
   if (failures > 0) {
     fprintf(stderr, "\n%d test(s) FAILED\n", failures);
     return 1;
   }
-  fprintf(stderr, "\n10 test(s) passed\n");
+  fprintf(stderr, "\n16 test(s) passed\n");
   return 0;
 }

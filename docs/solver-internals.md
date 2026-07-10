@@ -50,10 +50,15 @@ rw_est = rw_fixed_overhead_ns + rw_memory_penalty_ns
 rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
 ```
 
-The first evaluation, with a *predicted* rankwidth cost (cut-rank proxy for the table
-and signature counts, no join term, plus the probe) decides whether probing is worth
-it at all. The second, with the measured decomposition and the probe now sunk,
-decides which backend runs. The only side conditions are the delegation caps above:
+The first evaluation uses a deliberately best-case rankwidth cost: generated cut-rank
+zero when the natural-order prefix cut-rank is zero, otherwise generated cut-rank one,
+with no join term and with the probe cost included. Natural-order prefix cut-rank is
+**not a lower bound** on the width of a generated decomposition; changing the order can
+compress a large prefix rank to one. Its only safe use before generation is therefore to
+distinguish rank zero from a potentially compressible graph. This optimistic evaluation
+decides whether probing is worth it at all. The second evaluation uses the measured
+decomposition forecasts with the probe now sunk and authoritatively decides which backend
+runs. The only side conditions are the delegation caps above:
 they enter the inequality as an infinite estimate — a backend over its cap simply
 cannot run — so the single comparison stays the whole decision. (In `--branch-calibrate-backends`
 mode the inequality is bypassed so both backends are timed, but the hard caps still apply.)

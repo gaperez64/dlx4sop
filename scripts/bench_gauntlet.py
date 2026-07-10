@@ -91,6 +91,15 @@ STAT_KEYS = [
     "max_residual_vars",
     "max_residual_min_fill_width",
     "max_residual_prefix_cut_rank",
+    "decomposition_width",
+    "rankwidth_cutrank_width",
+    "rankwidth_table_forecast",
+    "rankwidth_join_pair_forecast",
+    "table_entries",
+    "max_table_entries",
+    "join_pairs",
+    "simd_vectorized_ops",
+    "simd_scalar_fallback_ops",
 ]
 
 SHAPE_KEYS = [
@@ -99,6 +108,7 @@ SHAPE_KEYS = [
     "quadratic_terms",
     "components",
     "min_fill_width",
+    "min_fill_dp_work",
     "prefix_cut_rank",
 ]
 

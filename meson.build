@@ -547,6 +547,17 @@ if python3.found()
     timeout: 90,
   )
   test(
+    'branch InferQ delegation regression',
+    python3,
+    args: [
+      files('tests/test_branch_inferq_regression.py'),
+      sop_solve.full_path(),
+      meson.project_source_root(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
     'rankwidth memory budget smoke',
     python3,
     args: [

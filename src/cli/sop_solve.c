@@ -367,10 +367,10 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop, ui
     return false;
   }
   /* With rankwidth enabled, only take the direct whole-instance treewidth path when the shared
-   * cost-model pre-probe vetoes make treewidth the clear winner; otherwise defer to the branch
-   * recursion so rankwidth gets probed (dense-but-low-rank components where cut-rank << treewidth,
-   * e.g. complete-bipartite blocks). Cut-rank is cheap (incremental GF(2)); if it can't be computed
-   * fall back to taking the direct treewidth path. */
+   * cost model makes treewidth the clear winner even against the best feasible generated width;
+   * otherwise defer to the branch recursion so rankwidth gets probed. Prefix cut-rank is cheap
+   * (incremental GF(2)) but only distinguishes an edgeless rank-zero graph from a potentially
+   * compressible one; if it cannot be computed, fall back to the direct treewidth path. */
   if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
     uint32_t cut_rank = 0;
     qsop_error_t cut_rank_error = {0};
