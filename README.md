@@ -127,11 +127,12 @@ each CNF block documents the variable map and the final accumulator bits.
 ## Amplitudes are normalized
 
 `sop-solve --format amplitude` reports the **normalized** amplitude
-`raw_amplitude * 2^(-norm_h/2)` -- the physical `<y|C|x>`, whose modulus is at most 1
--- alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
-amplitude grows like `2^nvars`: qccq-gauntlet's `qwalk-noancilla_11` has
-`|raw_amplitude|` around `2^29670`, so no fixed-exponent floating type can hold it, and
-a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`. Internally the solvers
+`raw_amplitude * 2^(-norm_h/2)`: the physical `<y|C|x>`, whose modulus is at most 1,
+alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
+amplitude grows like `2^nvars` so no fixed-exponent floating type can hold it, and
+a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`. 
+
+Internally the solvers
 carry a mantissa and a separate binary exponent (`qsop_amplitude_t.scale_exp2`), which
 also lets the branch backend multiply per-component amplitudes without any of them
 overflowing on its own. Scaling by a power of two is exact, so nothing is lost.
