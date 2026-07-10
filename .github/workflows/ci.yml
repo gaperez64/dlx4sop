@@ -28,7 +28,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install build tools
-        run: python -m pip install meson ninja
+        run: python -m pip install meson==1.11.1 ninja==1.13.0
 
       - name: Install coverage tools
         if: matrix.coverage
@@ -55,7 +55,7 @@ jobs:
 
       - name: Install tools
         run: |
-          python -m pip install meson ninja
+          python -m pip install meson==1.11.1 ninja==1.13.0
           sudo apt-get update
           sudo apt-get install -y valgrind
 
