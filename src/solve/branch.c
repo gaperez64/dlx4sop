@@ -1244,15 +1244,18 @@ static uint64_t rankwidth_probe_estimate_ns(const qsop_branch_policy_t *pol, uin
   return saturating_mul_u64(units, pol->C_rw_probe);
 }
 
-/* Is the probe worth running? Uses prefix_cut_rank as an optimistic stand-in for the cut-rank width
- * the probe would measure, and omits the join term we cannot know yet: optimism is the right bias
- * here, since a probe that looks promising is settled honestly by the second evaluation, while one
- * that cannot win even optimistically is pure loss. `table_r_factor` is r for the count-table path
- * (whose tables carry a residue axis) and 1 for single-Fourier. */
+/* Is the probe worth running? Natural-order prefix cut-rank is not a lower bound on the width of a
+ * generated decomposition: a different order can compress a large prefix rank all the way down to
+ * one. Use the minimum feasible generated width -- zero only when the graph's prefix rank is zero,
+ * otherwise one -- and omit the join term we cannot know yet. A probe that looks promising under
+ * this deliberately best-case estimate is settled honestly by the measured second evaluation,
+ * while one that cannot win even in the best case is pure loss. `table_r_factor` is r for the
+ * count-table path (whose tables carry a residue axis) and 1 for single-Fourier. */
 static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint64_t tw_est,
                                           uint32_t nvars, uint32_t prefix_cut_rank,
                                           uint64_t table_r_factor) {
-  const uint64_t rw_sig = binary_assignment_forecast(prefix_cut_rank);
+  const uint32_t optimistic_width = prefix_cut_rank == 0 ? 0U : 1U;
+  const uint64_t rw_sig = binary_assignment_forecast(optimistic_width);
   const uint64_t rw_table = saturating_mul_u64(rw_sig, table_r_factor);
   const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rw_table, 0, rw_sig,
                                                        rankwidth_probe_estimate_ns(pol, nvars));
@@ -1261,10 +1264,11 @@ static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint6
 
 /* Public CLI helper for the single-Fourier auto path: true when the unified pre-probe check says a
  * rankwidth probe cannot pay for itself, so the direct whole-instance treewidth path is safe to
- * take. When false, the caller falls into the branch recursion, where rankwidth is probed and the
- * same model decides. Mirrors branch_should_probe_rankwidth exactly -- callers only reach here with
- * treewidth inside its single-Fourier cap, so treewidth is usable and its tables carry no residue
- * axis (r factor 1). */
+ * take. Prefix cut-rank distinguishes only rank zero from a potentially compressible graph; it is
+ * not used as an estimate of the generated width. When false, the caller falls into the branch
+ * recursion, where rankwidth is probed and the same model decides. Mirrors
+ * branch_should_probe_rankwidth exactly -- callers only reach here with treewidth inside its
+ * single-Fourier cap, so treewidth is usable and its tables carry no residue axis (r factor 1). */
 bool qsop_branch_single_treewidth_clearly_preferred(uint32_t prefix_cut_rank, uint32_t nvars,
                                                     uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy) {
@@ -3359,13 +3363,28 @@ static bool branch_single_mode_delegate_component(
               !qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table,
                                                      &rankwidth_join, error)) {
             setup_ok = false;
-          } else if (cutrank_width <= rw_cap) {
+          } else {
             /* Probe is sunk; same inequality as the pre-probe check, with the measured forecasts.
              * sig_est = 2^cutrank = rankwidth_table (single-Fourier tables omit the r factor). */
             rankwidth_table = binary_assignment_forecast(cutrank_width);
             const uint64_t rw_est = branch_rankwidth_estimate_ns(
                 &policy, rankwidth_table, rankwidth_join, rankwidth_table, 0);
-            use_rankwidth = branch_rankwidth_wins(&policy, rw_est, tw_est);
+            use_rankwidth = cutrank_width <= rw_cap &&
+                            branch_rankwidth_wins(&policy, rw_est, tw_est);
+            if (io_stats != NULL) {
+              if (cutrank_width > io_stats->rankwidth_cutrank_width) {
+                io_stats->rankwidth_cutrank_width = cutrank_width;
+              }
+              if (rankwidth_table > io_stats->rankwidth_table_forecast) {
+                io_stats->rankwidth_table_forecast = rankwidth_table;
+              }
+              if (rankwidth_join > io_stats->rankwidth_join_pair_forecast) {
+                io_stats->rankwidth_join_pair_forecast = rankwidth_join;
+              }
+              if (!use_rankwidth) {
+                io_stats->branch_rankwidth_skips++;
+              }
+            }
           }
         }
       }
