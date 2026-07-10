@@ -7,8 +7,8 @@ qasm2sop's output into `sop2wmc --encoding auto` (a single selected
 weighted-CNF export with an embedded `amplitude_factor`), then into ganak's
 `--mode 6` mpfr-complex model counter -- the same pipeline validated by
 scripts/bench_wmc_ganak.py, whose parsing helpers this module reuses
-directly. Frontend circuit handling (QPY loading, clbit stripping, QASM
-conversion, exact-then-approx qasm2sop import) is shared with adapter.py.
+directly. Frontend circuit handling (QPY loading, QASM conversion,
+exact-then-approx qasm2sop import) is shared with adapter.py.
 
 ganak's binary comes from upstream meelgroup/ganak's own release artifacts
 (fetched and pinned by bootstrap-wmc.sh) rather than a source build: mode 6
@@ -26,7 +26,6 @@ import json
 import pathlib
 import subprocess
 import sys
-import warnings
 from decimal import Decimal, getcontext
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -35,10 +34,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bench_wmc_ganak as wmc  # noqa: E402
 import build_external_qasm_manifest as manifest_tool  # noqa: E402
 from adapter import (  # noqa: E402
-    forbidden_ops_present,
     import_qsop,
+    load_circuit,
     parse_norm_h,
-    strip_unused_clbits,
 )
 
 SOP2WMC = REPO_ROOT / "build" / "sop2wmc"
@@ -47,24 +45,6 @@ GANAK = REPO_ROOT / ".gauntlet" / "ganak" / "ganak"
 # Slightly above the harness's 120s per-case window so gauntlet, not an inner
 # subprocess timeout, owns timeout classification during benchmark runs.
 SUBPROCESS_TIMEOUT_S = 125.0
-
-
-def load_circuit(payload_path: str):
-    from qiskit import qpy
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with open(payload_path, "rb") as handle:
-            circuits = qpy.load(handle)
-    circuit = circuits[0].copy()
-    circuit.remove_final_measurements(inplace=True)
-    circuit = strip_unused_clbits(circuit)
-    forbidden = forbidden_ops_present(circuit)
-    if forbidden or circuit.num_clbits:
-        raise ValueError(
-            f"non-unitary payload: forbidden ops {sorted(forbidden)}, clbits={circuit.num_clbits}"
-        )
-    return circuit
 
 
 def parse_ganak_complex_decimal(text: str) -> tuple[Decimal, Decimal]:

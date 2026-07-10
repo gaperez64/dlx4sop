@@ -1,13 +1,3 @@
-option('with_gmp',
-       type: 'boolean',
-       value: false,
-       description: 'Use GMP for exact large integer counts (planned; not yet wired)')
-
-option('with_json',
-       type: 'boolean',
-       value: false,
-       description: 'Build JSON-based import/export utilities (planned; not yet wired)')
-
 option('build_fuzzers',
        type: 'boolean',
        value: false,
@@ -30,6 +20,6 @@ option('developer_warnings',
 
 option('simd',
        type: 'combo',
-       choices: ['auto', 'scalar', 'neon', 'avx512'],
+       choices: ['auto', 'scalar', 'neon', 'avx2', 'avx512'],
        value: 'auto',
-       description: 'SIMD architecture to compile into the binary')
+       description: 'SIMD kernels to compile in; the best one this CPU supports is selected at run time. "auto" compiles every kernel the compiler can emit for the target')

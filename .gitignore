@@ -65,3 +65,6 @@ __pycache__/
 
 # Local project planning
 tasks.md
+
+# clangd background index (machine-local, regenerated on demand)
+.cache/

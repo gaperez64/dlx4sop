@@ -14,10 +14,16 @@
  * ties by degree (ascending for MIN_FILL, descending for MIN_FILL_MAX_DEGREE; MIN_DEGREE orders
  * by degree first then fill), then by lowest vertex index.
  *
- * Outputs (any of order/fill may be NULL):
+ * Outputs (any of order/fill/dp_work may be NULL):
  *   *width_out       = max elimination degree (treewidth upper bound)
  *   order_out[0..n-1]= elimination order
  *   *fill_edges_out  = total fill edges added
+ *   *dp_work_out     = sum over elimination steps of 2^(bag size), saturating at UINT64_MAX.
+ *                      This is the number of DP table entries a treewidth solve over this order
+ *                      touches, and is the quantity a cost model wants: the usual
+ *                      nvars * 2^(width+1) bound assumes every bag is as wide as the widest one,
+ *                      and overstates the real work by an order of magnitude or more on circuit
+ *                      graphs, where a handful of bags carry the width.
  *
  * If width_abort_threshold != UINT32_MAX, elimination stops as soon as the recorded width would
  * exceed the threshold; *width_capped_out is set true and order/fill are left partial. With the
@@ -27,7 +33,7 @@
 bool qsop_min_fill_eliminate(uint32_t nvars, const uint32_t *edge_u, const uint32_t *edge_v,
                              uint32_t nedges, qsop_treewidth_order_t tie_break,
                              uint32_t width_abort_threshold, uint32_t *order_out,
-                             uint32_t *width_out, uint64_t *fill_edges_out,
+                             uint32_t *width_out, uint64_t *fill_edges_out, uint64_t *dp_work_out,
                              bool *width_capped_out, qsop_error_t *error);
 
 /* Exact prefix-cut-rank of the support graph along the natural variable order: the maximum over

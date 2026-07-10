@@ -6,6 +6,45 @@ on:
 
 jobs:
   test:
+    name: Test ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            simd: auto
+            coverage: true
+          - os: macos-14
+            target: macos-arm64
+            simd: neon
+            coverage: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install build tools
+        run: python -m pip install meson==1.11.1 ninja==1.13.0
+
+      - name: Install coverage tools
+        if: matrix.coverage
+        run: python -m pip install gcovr
+
+      - name: Configure
+        run: meson setup build -Dsimd=${{ matrix.simd }}
+
+      - name: Test
+        run: meson test -C build --print-errorlogs
+
+      - name: Coverage
+        if: matrix.coverage
+        run: scripts/check-coverage.sh
+
+  valgrind:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -15,13 +54,16 @@ jobs:
           python-version: '3.x'
 
       - name: Install tools
-        run: python -m pip install meson ninja gcovr
+        run: |
+          python -m pip install meson==1.11.1 ninja==1.13.0
+          sudo apt-get update
+          sudo apt-get install -y valgrind
 
+      # Pinned to AVX2 rather than -Dsimd=auto: memcheck's AVX-512 support is incomplete and an
+      # unhandled instruction aborts the run, while the runner's CPU may well offer it. The AVX-512
+      # kernels are still cross-checked against scalar in the ordinary test job.
       - name: Configure
-        run: meson setup build
+        run: meson setup build -Dsimd=avx2
 
-      - name: Test
-        run: meson test -C build --print-errorlogs
-
-      - name: Coverage
-        run: scripts/check-coverage.sh
+      - name: Memcheck the C unit tests
+        run: meson test -C build --setup=valgrind --suite unit --print-errorlogs

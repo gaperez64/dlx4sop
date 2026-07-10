@@ -49,14 +49,20 @@ def test_binary_exists(sop_solve, tmp):
         raise AssertionError(f"sop-solve not found at {sop_solve}")
 
 
-def test_branch_rw_min_treewidth_width_veto(sop_solve, tmp):
+def test_removed_threshold_flags_are_rejected(sop_solve, tmp):
+    # The unified delegation cost model subsumed these four hand-tuned pre-probe vetoes:
+    # a treewidth estimate too small to be worth probing against, or a cut rank small enough
+    # that rankwidth obviously wins, both fall out of rw_est * rw_min_speedup < tw_est.
     qsop = _small_qsop_fixture(tmp)
-    r1 = _run_sop_solve(sop_solve, qsop, [])
-    r2 = _run_sop_solve(sop_solve, qsop, ["--branch-rw-min-treewidth-width", "100"])
-    if r1["status"] != "ok":
-        raise AssertionError(f"default run failed: {r1}")
-    if r2["status"] != "ok":
-        raise AssertionError(f"high-veto run failed: {r2}")
+    for flag in (
+        "--branch-rw-min-treewidth-width",
+        "--branch-rw-min-treewidth-forecast",
+        "--branch-rw-min-residual-vars",
+        "--branch-rw-low-rank-bypass",
+    ):
+        result = _run_sop_solve(sop_solve, qsop, [flag, "1"])
+        if result["status"] == "ok":
+            raise AssertionError(f"{flag} should no longer be accepted: {result}")
 
 
 def test_branch_rw_min_speedup_high_veto(sop_solve, tmp):
@@ -85,10 +91,6 @@ def test_branch_no_rankwidth_completes(sop_solve, tmp):
 def test_new_policy_options_parse(sop_solve, tmp):
     qsop = _small_qsop_fixture(tmp)
     policy_args = [
-        "--branch-rw-min-treewidth-width", "2",
-        "--branch-rw-min-treewidth-forecast", "512",
-        "--branch-rw-min-residual-vars", "16",
-        "--branch-rw-low-rank-bypass", "4",
         "--branch-rw-min-speedup", "1.1",
         "--branch-rw-fixed-overhead-ns", "20000",
         "--branch-tw-fixed-overhead-ns", "10000",
@@ -121,7 +123,7 @@ def main() -> int:
     sop_solve = pathlib.Path(sys.argv[1])
     tests = [
         ("binary_exists", test_binary_exists),
-        ("branch_rw_min_treewidth_width_veto", test_branch_rw_min_treewidth_width_veto),
+        ("removed_threshold_flags_are_rejected", test_removed_threshold_flags_are_rejected),
         ("branch_rw_min_speedup_high_veto", test_branch_rw_min_speedup_high_veto),
         ("branch_no_rankwidth_completes", test_branch_no_rankwidth_completes),
         ("new_policy_options_parse", test_new_policy_options_parse),

@@ -68,9 +68,13 @@ void qsop_bitset_or(uint64_t *dst, const uint64_t *src, size_t words) {
   }
 }
 
+bool qsop_bitset_simd_worthwhile(const qsop_simd_vtable_t *simd, size_t words) {
+  return simd != NULL && words >= simd->min_lanes;
+}
+
 void qsop_bitset_or_simd(uint64_t *dst, const uint64_t *src, size_t words,
                          const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->or_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->or_u64 != NULL) {
     simd->or_u64(dst, src, words);
     return;
   }
@@ -85,7 +89,7 @@ void qsop_bitset_and(uint64_t *dst, const uint64_t *src, size_t words) {
 
 void qsop_bitset_and_simd(uint64_t *dst, const uint64_t *src, size_t words,
                           const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->and_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->and_u64 != NULL) {
     simd->and_u64(dst, src, words);
     return;
   }
@@ -100,7 +104,7 @@ void qsop_bitset_and_not(uint64_t *dst, const uint64_t *src, size_t words) {
 
 void qsop_bitset_and_not_simd(uint64_t *dst, const uint64_t *src, size_t words,
                               const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->andnot_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->andnot_u64 != NULL) {
     simd->andnot_u64(dst, src, words);
     return;
   }
@@ -115,7 +119,7 @@ void qsop_bitset_xor(uint64_t *dst, const uint64_t *src, size_t words) {
 
 void qsop_bitset_xor_simd(uint64_t *dst, const uint64_t *src, size_t words,
                           const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->xor_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->xor_u64 != NULL) {
     simd->xor_u64(dst, src, words);
     return;
   }
@@ -155,7 +159,7 @@ uint32_t qsop_bitset_popcount_intersection(const uint64_t *left, const uint64_t 
 uint32_t qsop_bitset_popcount_intersection_simd(const uint64_t *left, const uint64_t *right,
                                                 size_t words,
                                                 const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->popcount_and_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->popcount_and_u64 != NULL) {
     return simd->popcount_and_u64(left, right, words);
   }
   return qsop_bitset_popcount_intersection(left, right, words);
@@ -163,7 +167,7 @@ uint32_t qsop_bitset_popcount_intersection_simd(const uint64_t *left, const uint
 
 uint32_t qsop_bitset_popcount_andnot_simd(const uint64_t *left, const uint64_t *right,
                                           size_t words, const qsop_simd_vtable_t *simd) {
-  if (simd != NULL && simd->popcount_andnot_u64 != NULL && words >= 4U) {
+  if (qsop_bitset_simd_worthwhile(simd, words) && simd->popcount_andnot_u64 != NULL) {
     return simd->popcount_andnot_u64(left, right, words);
   }
   uint32_t count = 0;

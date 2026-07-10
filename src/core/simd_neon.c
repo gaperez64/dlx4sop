@@ -17,8 +17,7 @@ static uint32_t neon_popcount_u64x2(uint64x2_t value) {
   return (uint32_t)(vgetq_lane_u64(cnt64, 0) + vgetq_lane_u64(cnt64, 1));
 }
 
-static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b,
-                                           size_t words) {
+static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b, size_t words) {
   uint32_t count = 0;
   size_t w = 0;
   for (; w + 2U <= words; w += 2U) {
@@ -32,8 +31,7 @@ static uint32_t simd_neon_popcount_and_u64(const uint64_t *a, const uint64_t *b,
   return count;
 }
 
-static uint32_t simd_neon_popcount_andnot_u64(const uint64_t *a, const uint64_t *b,
-                                              size_t words) {
+static uint32_t simd_neon_popcount_andnot_u64(const uint64_t *a, const uint64_t *b, size_t words) {
   uint32_t count = 0;
   size_t w = 0;
   for (; w + 2U <= words; w += 2U) {
@@ -87,13 +85,11 @@ static void simd_neon_andnot_u64(uint64_t *dst, const uint64_t *src, size_t word
   }
 }
 
-static void simd_neon_complex_mul_assign_f64(double *restrict out_re,
-                                             double *restrict out_im,
+static void simd_neon_complex_mul_assign_f64(double *restrict out_re, double *restrict out_im,
                                              const double *restrict left_re,
                                              const double *restrict left_im,
                                              const double *restrict right_re,
-                                             const double *restrict right_im,
-                                             size_t n) {
+                                             const double *restrict right_im, size_t n) {
   size_t i = 0;
   for (; i + 2U <= n; i += 2U) {
     const float64x2_t lre = vld1q_f64(left_re + i);
@@ -113,11 +109,29 @@ static void simd_neon_complex_mul_assign_f64(double *restrict out_re,
   }
 }
 
-static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re,
-                                                double *restrict out_im,
+static void simd_neon_complex_scale_f64(double *restrict out_re, double *restrict out_im,
+                                        const double *restrict in_re, const double *restrict in_im,
+                                        double scale_re, double scale_im, size_t n) {
+  const float64x2_t sre = vdupq_n_f64(scale_re);
+  const float64x2_t sim = vdupq_n_f64(scale_im);
+  size_t i = 0;
+  for (; i + 2U <= n; i += 2U) {
+    const float64x2_t re = vld1q_f64(in_re + i);
+    const float64x2_t im = vld1q_f64(in_im + i);
+    vst1q_f64(out_re + i, vsubq_f64(vmulq_f64(re, sre), vmulq_f64(im, sim)));
+    vst1q_f64(out_im + i, vaddq_f64(vmulq_f64(re, sim), vmulq_f64(im, sre)));
+  }
+  for (; i < n; i++) {
+    const double re = in_re[i];
+    const double im = in_im[i];
+    out_re[i] = re * scale_re - im * scale_im;
+    out_im[i] = re * scale_im + im * scale_re;
+  }
+}
+
+static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re, double *restrict out_im,
                                                 const double *restrict in_re,
-                                                const double *restrict in_im,
-                                                size_t pairs) {
+                                                const double *restrict in_im, size_t pairs) {
   size_t i = 0;
   for (; i + 2U <= pairs; i += 2U) {
     vst1q_f64(out_re + i, vaddq_f64(vld1q_f64(in_re + i), vld1q_f64(in_re + pairs + i)));
@@ -132,6 +146,7 @@ static void simd_neon_complex_sum_out_pairs_f64(double *restrict out_re,
 const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
   static const qsop_simd_vtable_t vt = {
       .name = "neon",
+      .min_lanes = 2,
       .popcount_and_u64 = simd_neon_popcount_and_u64,
       .popcount_andnot_u64 = simd_neon_popcount_andnot_u64,
       .xor_u64 = simd_neon_xor_u64,
@@ -139,6 +154,7 @@ const qsop_simd_vtable_t *qsop_simd_neon_vtable(void) {
       .and_u64 = simd_neon_and_u64,
       .andnot_u64 = simd_neon_andnot_u64,
       .complex_mul_assign_f64 = simd_neon_complex_mul_assign_f64,
+      .complex_scale_f64 = simd_neon_complex_scale_f64,
       .complex_sum_out_pairs_f64 = simd_neon_complex_sum_out_pairs_f64,
   };
   return &vt;

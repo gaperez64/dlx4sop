@@ -9,8 +9,7 @@
 
 typedef struct qsop_residual qsop_residual_t;
 
-bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out,
-                          qsop_error_t *error);
+bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out, qsop_error_t *error);
 
 void qsop_residual_free(qsop_residual_t *residual);
 
@@ -20,6 +19,16 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
 
 bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
                           qsop_error_t *error);
+
+/* Sum out, to a fixpoint, every active variable whose unary coefficient is a multiple of r/2 and
+ * whose active degree is at most 1 -- the search-time twin of qsop_simplify_hadamard's pin rule.
+ * Each elimination scales the amplitude by 2 (*out_doublings counts them); an isolated variable
+ * with unary r/2 has factor 1 + omega^(r/2) = 0 and sets *out_zero, a conflict that lets the caller
+ * prune the whole subtree. Amplitude-exact, not count-exact: only odd Fourier modes survive, so
+ * callers must gate on an odd target mode. Every mutation goes through qsop_residual_branch, so a
+ * checkpoint taken beforehand undoes the entire cascade. */
+bool qsop_residual_propagate(qsop_residual_t *residual, uint32_t *out_doublings, bool *out_zero,
+                             qsop_error_t *error);
 
 uint64_t qsop_residual_modulus(const qsop_residual_t *residual);
 
@@ -56,9 +65,8 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
 bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint32_t removed,
                                           uint64_t *out, qsop_error_t *error);
 
-bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual,
-                                              uint32_t removed, uint32_t *out,
-                                              qsop_error_t *error);
+bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, uint32_t removed,
+                                              uint32_t *out, qsop_error_t *error);
 
 bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v, uint32_t *out,
                                      qsop_error_t *error);

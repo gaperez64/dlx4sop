@@ -1,1 +1,1 @@
-{"modulus":8,"variables":4,"quadratic_terms":1,"nonzero_unary":1,"normalization_h":12,"format":"qsop-sign","components":3,"max_degree":1,"width_diagnostics_available":true,"min_fill_width":1,"min_fill_edges":0,"prefix_cut_rank":1}
+{"modulus":8,"variables":4,"quadratic_terms":1,"nonzero_unary":1,"normalization_h":12,"format":"qsop-sign","components":3,"max_degree":1,"width_diagnostics_available":true,"min_fill_width":1,"min_fill_edges":0,"prefix_cut_rank":1,"min_fill_dp_work":10}

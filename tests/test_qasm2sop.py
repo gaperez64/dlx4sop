@@ -94,16 +94,74 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
             f"unexpected opaque declaration result:\n{opaque_result.stdout}\n{opaque_result.stderr}"
         )
 
-    unsupported = subprocess.run(
+    # An inert classical register (declared, never written by a measure or read by an if)
+    # has no effect on the amplitude, so qasm2sop ignores it: the import must match the
+    # creg-free golden byte-for-byte.
+    creg_result = subprocess.run(
         [str(exe), "-"],
-        input="OPENQASM 2.0;\nqreg q[1];\nmeasure q[0] -> c[0];\n",
+        input=qasm.read_text().replace('include "qelib1.inc";\n', 'include "qelib1.inc";\ncreg c[2];\n'),
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if unsupported.returncode == 0 or "dynamic or classical" not in unsupported.stderr:
-        raise AssertionError(f"unexpected unsupported result:\n{unsupported.stderr}")
+    if creg_result.returncode != 0 or creg_result.stdout != expected.read_text():
+        raise AssertionError(
+            f"unexpected inert creg result:\n{creg_result.stdout}\n{creg_result.stderr}"
+        )
+
+    # Classical feed-forward (`if`) is still genuinely dynamic and must be rejected.
+    rejected_if = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\ncreg c[1];\nif (c==1) x q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if rejected_if.returncode == 0 or "dynamic or classical" not in rejected_if.stderr:
+        raise AssertionError(
+            f"expected rejection of if feed-forward:\n{rejected_if.stdout}\n{rejected_if.stderr}"
+        )
+
+    # A no-feed-forward measurement is deferred and dropped (coherent identity), and a reset
+    # restarts the wire at |0>; both are now accepted, in single and whole-register forms.
+    for accepted in (
+        "measure q[0] -> c[0];",
+        "measure q -> c;",
+        "reset q[0];",
+        "reset q;",
+    ):
+        ok = subprocess.run(
+            [str(exe), "-"],
+            input=f"OPENQASM 2.0;\nqreg q[1];\ncreg c[1];\nh q[0];\n{accepted}\n",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if ok.returncode != 0 or "p qsop-sign" not in ok.stdout:
+            raise AssertionError(f"expected {accepted!r} to be accepted:\n{ok.stdout}\n{ok.stderr}")
+
+    # Malformed measure/reset are still rejected with a specific diagnostic.
+    for source, needle in (
+        ("measure q[0];", "measure must look like"),
+        ("measure q[0] -> ;", "missing its classical target"),
+        ("measure r[0] -> c[0];", "unknown qreg"),
+        ("reset r[0];", "unknown qreg"),
+    ):
+        bad = subprocess.run(
+            [str(exe), "-"],
+            input=f"OPENQASM 2.0;\nqreg q[1];\ncreg c[1];\n{source}\n",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if bad.returncode == 0 or needle not in bad.stderr:
+            raise AssertionError(
+                f"expected {source!r} to be rejected with {needle!r}:\n{bad.stdout}\n{bad.stderr}"
+            )
 
     bad_phase = subprocess.run(
         [str(exe), "-"],
@@ -115,6 +173,31 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if bad_phase.returncode == 0 or "unsupported u1 phase angle" not in bad_phase.stderr:
         raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
+
+    # A theta=0 u-gate lowers to the single phase P(phi+lambda), so odd pi/8-unit phi/lambda are
+    # fine (u(0,5pi/8,-3*pi/8)=T imports exactly). theta=+/-pi/2 also has a direct P-H-P
+    # lowering, while other nonzero theta values still need the rz-ry-rz path and reject odd units.
+    u_theta0_ok = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(0,5*pi/8,-3*pi/8) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if u_theta0_ok.returncode != 0 or "p qsop-sign" not in u_theta0_ok.stdout:
+        raise AssertionError(f"expected theta=0 u-gate to import exactly:\n{u_theta0_ok.stderr}")
+    u_half_pi_ok = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi/2,pi/8,0) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if u_half_pi_ok.returncode != 0 or "p qsop-sign 16" not in u_half_pi_ok.stdout:
+        raise AssertionError(f"expected theta=pi/2 u-gate to import exactly:\n{u_half_pi_ok.stderr}")
+    u_theta_odd = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi/4,pi/8,0) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if u_theta_odd.returncode == 0 or "unsupported u angle" not in u_theta_odd.stderr:
+        raise AssertionError(f"expected generic odd-angle u-gate rejection:\n{u_theta_odd.stderr}")
 
     approx_phase = subprocess.run(
         [str(exe), "--approx", "5e-2", "--input", "0", "--output", "0", "-"],
@@ -604,7 +687,13 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_u2")
+    run_boundary_case(exe, source_root, "qasm_u2_eighths",
+                      ["--input", "0", "--output", "1"])
     run_case(exe, source_root, "qasm_u3")
+    run_boundary_case(exe, source_root, "qasm_u_half_pi",
+                      ["--input", "00", "--output", "11"])
+    run_boundary_case(exe, source_root, "qasm_u_pi_eighths",
+                      ["--input", "0", "--output", "1"])
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_sx")
     run_case(exe, source_root, "qasm_sxdg")
@@ -619,6 +708,9 @@ def main() -> int:
     run_boundary_case(exe, source_root, "qasm_rx_quarter", ["--input", "0", "--output", "1"])
     run_boundary_case(exe, source_root, "qasm_ry_quarter", ["--input", "0", "--output", "1"])
     run_case(exe, source_root, "qasm_register_unary")
+    # `reset` free-sums the pre-reset variable and restarts the wire at |0>; with optimization off
+    # the abandoned Hadamard variable survives as a free variable (a plain no-op would not add it).
+    run_boundary_case(exe, source_root, "qasm_reset", ["--no-optimize"])
     run_boundary_case(
         exe, source_root, "qasm_register_cx", ["--input", "1100", "--output", "1111"]
     )

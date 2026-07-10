@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import pathlib
 import subprocess
 import sys
@@ -492,10 +493,12 @@ def run_branch_dp_handoff(exe: pathlib.Path) -> None:
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch DP handoff stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    # --single-mode-precision auto resolves to the f64 tables: they are the only precision with
+    # SIMD kernels, and long double is opt-in now that the DP carries a binary exponent for range.
     expected_trace = {
-        "treewidth.single_mode_initial_factors",
-        "treewidth.single_mode_multiply",
-        "treewidth.single_mode_sum_out",
+        "treewidth.single_mode_initial_factors_f64",
+        "treewidth.single_mode_multiply_f64",
+        "treewidth.single_mode_sum_out_f64",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -534,10 +537,12 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
     if stats.returncode != 0 or not all(part in stats.stdout for part in expected_stats):
         raise AssertionError(f"branch root treewidth stats failed\n{stats.stdout}\n{stats.stderr}")
     trace_phases = {line.split(",", 1)[0] for line in stats.stderr.splitlines()[1:] if line}
+    # --single-mode-precision auto resolves to the f64 tables: they are the only precision with
+    # SIMD kernels, and long double is opt-in now that the DP carries a binary exponent for range.
     expected_trace = {
-        "treewidth.single_mode_initial_factors",
-        "treewidth.single_mode_multiply",
-        "treewidth.single_mode_sum_out",
+        "treewidth.single_mode_initial_factors_f64",
+        "treewidth.single_mode_multiply_f64",
+        "treewidth.single_mode_sum_out_f64",
     }
     if not expected_trace.issubset(trace_phases):
         raise AssertionError(
@@ -2163,6 +2168,20 @@ def _amplitude_fields(output: str) -> tuple[str | None, str | None]:
     return values.get("amplitude_re"), values.get("amplitude_im")
 
 
+def _amplitudes_close(left: str, right: str, *, rel: float = 1e-9, abs_tol: float = 1e-6) -> bool:
+    left_re, left_im = _amplitude_fields(left)
+    right_re, right_im = _amplitude_fields(right)
+    if left_re is None or left_im is None or right_re is None or right_im is None:
+        return False
+    left_value = (float(left_re), float(left_im))
+    right_value = (float(right_re), float(right_im))
+    error = math.hypot(left_value[0] - right_value[0], left_value[1] - right_value[1])
+    scale = max(1.0, math.hypot(*left_value), math.hypot(*right_value))
+    return (
+        error <= abs_tol + rel * scale
+    )
+
+
 def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     # P_20: nvars=20 >= BRANCH_TREEWIDTH_DELEGATE_MIN_VARS=16 → enters branch_try_dp_delegate.
     # from-treewidth source sets rw_uses_from_treewidth=true → order cache MISS path
@@ -2180,7 +2199,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         native.returncode != 0
         or ft.returncode != 0
-        or _amplitude_fields(ft.stdout) != _amplitude_fields(native.stdout)
+        or not _amplitudes_close(ft.stdout, native.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth P_20 mismatch\nnative: {native.stdout}{native.stderr}\n"
@@ -2219,7 +2238,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         asym_ft.returncode != 0
         or asym_ref.returncode != 0
-        or _amplitude_fields(asym_ft.stdout) != _amplitude_fields(asym_ref.stdout)
+        or not _amplitudes_close(asym_ft.stdout, asym_ref.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth asymmetric 2×P_20 mismatch\n"
@@ -2246,7 +2265,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
     if (
         k16_ft.returncode != 0
         or k16_ref.returncode != 0
-        or _amplitude_fields(k16_ft.stdout) != _amplitude_fields(k16_ref.stdout)
+        or not _amplitudes_close(k16_ft.stdout, k16_ref.stdout)
     ):
         raise AssertionError(
             f"branch from-treewidth K_16 mismatch\n"
@@ -2275,7 +2294,7 @@ def run_branch_large_from_treewidth(exe: pathlib.Path) -> None:
         if (
             ft2.returncode != 0
             or ref2.returncode != 0
-            or _amplitude_fields(ft2.stdout) != _amplitude_fields(ref2.stdout)
+            or not _amplitudes_close(ft2.stdout, ref2.stdout)
         ):
             raise AssertionError(
                 f"branch {rw_source} 2×P_20 mismatch\n{ft2.stdout}{ft2.stderr}\n"
@@ -2494,8 +2513,9 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     }
     if auto.returncode != 0 or not expected_auto.issubset(set(auto.stdout.splitlines())):
         raise AssertionError(f"--print-kernels failed\n{auto.stdout}\n{auto.stderr}")
-    if not any(line.startswith("simd_kernel=") for line in auto.stdout.splitlines()):
-        raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    # simd_compiled is the set of kernels linked into the binary; simd_kernel is the one this CPU
+    # actually selected at run time. On a fat build they differ (e.g. compiled avx512,avx2,scalar
+    # but running avx2), so the stats assertions below must key off the active kernel.
     compiled_simd = next(
         (
             line.split("=", 1)[1]
@@ -2506,6 +2526,20 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     if compiled_simd is None:
         raise AssertionError(f"--print-kernels missing simd_compiled\n{auto.stdout}")
+    active_simd = next(
+        (
+            line.split("=", 1)[1]
+            for line in auto.stdout.splitlines()
+            if line.startswith("simd_kernel=")
+        ),
+        None,
+    )
+    if active_simd is None:
+        raise AssertionError(f"--print-kernels missing simd_kernel\n{auto.stdout}")
+    if active_simd not in compiled_simd.split(","):
+        raise AssertionError(
+            f"active simd kernel {active_simd!r} is not among compiled {compiled_simd!r}"
+        )
     if not any(line.startswith("bitset_popcount_kernel=") for line in auto.stdout.splitlines()):
         raise AssertionError(f"--print-kernels missing bitset_popcount_kernel\n{auto.stdout}")
 
@@ -2558,8 +2592,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_double_stats = {
         "single_mode_precision: double",
-        f"simd_kernel: {compiled_simd}",
-        f"bitset_kernel: {compiled_simd}",
+        f"simd_kernel: {active_simd}",
+        f"bitset_kernel: {active_simd}",
         "treewidth_single_complex_kernel: 2",
     }
     if (
@@ -2592,8 +2626,8 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
     )
     expected_rankwidth_double_stats = {
         "single_mode_precision: double",
-        f"simd_kernel: {compiled_simd}",
-        f"bitset_kernel: {compiled_simd}",
+        f"simd_kernel: {active_simd}",
+        f"bitset_kernel: {active_simd}",
         "rankwidth_single_complex_kernel: 2",
     }
     if (
@@ -2614,6 +2648,38 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
         raise AssertionError(
             f"rankwidth double precision unexpectedly reported vectorized ops\n"
             f"{rankwidth_double.stdout}"
+        )
+
+    rankwidth_wide = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "balanced",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--max-vars",
+            "512",
+            "-",
+        ],
+        input=_path_qsop(512, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    rankwidth_wide_stats = parse_solver_stats(rankwidth_wide.stdout)
+    if rankwidth_wide.returncode != 0 or (
+        active_simd != "scalar" and rankwidth_wide_stats.get("simd_vectorized_ops", 0) <= 0
+    ):
+        raise AssertionError(
+            f"wide rankwidth path did not report vectorized bitset work\n"
+            f"{rankwidth_wide.stdout}\n{rankwidth_wide.stderr}"
         )
 
     rankwidth_materialized = subprocess.run(

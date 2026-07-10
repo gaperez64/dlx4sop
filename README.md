@@ -22,10 +22,15 @@ from source:
 - `sop-solve`: solve exact residue-count histograms; stats mode can include
   the count vector used to reconstruct amplitudes and a convenience probability
   estimate via `--include-probability`.
-- `qasm2sop`: import the supported static OpenQASM 2.0 subset into QSOP,
+- `qasm2sop`: import the supported OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
-  and `iswap`.
+  and `iswap`. Mid-circuit `measure` (with no classical feed-forward) and `reset`
+  are lowered coherently — a measurement as the identity, a reset as a fresh `|0>`
+  wire with the old value summed out. That equals a physical measure/reset exactly
+  when the qubit is in a definite computational-basis state there (uncomputed or
+  recycled ancillas, stabilizer syndromes — the alg85 regime, cross-checked against
+  qiskit-aer); data-dependent `if` is still rejected.
 - `sop2wmc`: export a QSOP to DIMACS CNF / WPCNF for external model counting.
   Five encodings are available via `--encoding <name>`:
   - `residue-accumulator` (alias `residue`, default): one DIMACS CNF per
@@ -114,10 +119,23 @@ build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
 Approximate output includes comment lines recording the chosen modulus, rounded
 phase count, and certified additive amplitude error bound.
 
-The WMC export reconstructs `amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
-`probability = |amplitude|^2 * 2^(-norm_h)` (the same convention as
+The WMC export reconstructs `raw_amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
+`probability = |raw_amplitude|^2 * 2^(-norm_h)` (the same convention as
 `sop-solve --include-probability`) outside the counter; the metadata header in
 each CNF block documents the variable map and the final accumulator bits.
+
+## Amplitudes are normalized
+
+`sop-solve --format amplitude` reports the **normalized** amplitude
+`raw_amplitude * 2^(-norm_h/2)`: the physical `<y|C|x>`, whose modulus is at most 1,
+alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
+amplitude grows like `2^nvars` so no fixed-exponent floating type can hold it, and
+a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`. 
+
+Internally the solvers
+carry a mantissa and a separate binary exponent (`qsop_amplitude_t.scale_exp2`), which
+also lets the branch backend multiply per-component amplitudes without any of them
+overflowing on its own. Scaling by a power of two is exact, so nothing is lost.
 
 
 ## Build
@@ -149,114 +167,9 @@ they import a circuit, run it through `qasm2sop`/`sop-solve` (or
 adapters import `build_external_qasm_manifest.py` / `bench_wmc_ganak.py`
 from `scripts/` for OpenQASM munging and Ganak-output parsing.
 
-## Branch backend: what and why does it run?
+## Solver internals
 
-The `branch` backend recursively branches on variables and delegates connected
-components to the treewidth or rankwidth DP once a component is cheap enough. It
-never solves a component itself if it can hand it off. The ordered decision, per
-component (from first check to last):
-
-1. **Base cases** — no variables (constant), or no edges (closed-form product).
-2. **Component split** — a disconnected residual is split and each component is
-   solved independently, then combined.
-3. **Treewidth / rankwidth delegation** — a cost model (below) picks between the
-   two DP backends when the component's treewidth or cut-rank is within the
-   delegation caps.
-4. **Per-component refusal** — a non-delegatable component larger than
-   `--max-vars` is refused (rather than branched into an exponential recursion).
-5. **Branching fallback** — otherwise pick a branch variable and recurse on
-   `0`/`1`.
-
-**Delegation caps** (hard limits; a component wider than these is not handed to
-that backend): treewidth ≤ 14 (count-table) or ≤ 25 (single-Fourier); a
-single-component root up to width 18 for ≤ 2500 variables; rankwidth cut-rank
-≤ 12.
-
-**Rankwidth is on by default** (`--branch-rw-source auto`): the branch backend
-competes rankwidth against treewidth per component via the cost model below, and
-delegates to rankwidth only when it wins. This costs almost nothing on the common
-(treewidth-favorable) case — the whole-instance direct treewidth path is still
-taken when treewidth is trivially cheap — while automatically catching the
-dense-but-low-rank cases (e.g. complete-bipartite blocks) where cut-rank ≪
-treewidth and rankwidth's `2^cut-rank` table crushes treewidth's `2^treewidth`.
-Pass `--branch-rw-source none` to disable rankwidth entirely.
-
-**Cost model** (skipped for `--branch-rw-source none`). Rankwidth is chosen over
-treewidth only if it is predicted meaningfully faster:
-
-```
-rw_est = C_rw_table*rw_table + C_rw_join*rw_join + C_rw_sig*rw_sig
-         + rw_fixed_overhead_ns + rw_memory_penalty_ns
-tw_est = C_tw_table*tw_table + C_tw_join*tw_join + tw_fixed_overhead_ns
-choose rankwidth  ⇔  rw_est * rw_min_speedup < tw_est
-```
-
-before which several cheap vetoes short-circuit it (treewidth already cheap;
-treewidth width within the delegate band; a low-rank bypass when the cut-rank
-proxy is small).
-
-### Runtime tuning (`--help-advanced` lists all flags)
-
-Backend / mode:
-`--backend branch|treewidth|rankwidth` (default `branch`),
-`--solve-mode auto|count-table|fourier|single-fourier`,
-`--max-vars N` (default 24; auto single-Fourier raises it to 4096),
-`--treewidth-order min-fill|min-degree|min-fill-max-degree`.
-
-Rankwidth policy (`--branch-rw-source` defaults to `auto`; set `none` to disable):
-`--branch-rw-source`,
-`--branch-rw-min-treewidth-width` (2),
-`--branch-rw-min-treewidth-forecast` (512),
-`--branch-rw-min-residual-vars` (16),
-`--branch-rw-low-rank-bypass` (4),
-`--branch-rw-min-speedup` (1.1),
-`--branch-rw-fixed-overhead-ns` (20000),
-`--branch-tw-fixed-overhead-ns` (10000),
-`--branch-rw-memory-penalty-ns` (0).
-
-Single-Fourier fallback: `--branch-single-fourier-fallback`,
-`--branch-single-max-fallback-vars`, `--branch-single-max-search-nodes`,
-`--branch-single-cache-budget-mib`, `--branch-single-precision`,
-`--single-mode-precision`.
-
-Rankwidth backend: `--rankwidth-generate`, `--rankwidth-mode`,
-`--rankwidth-memory-budget-mib`, `--rankwidth-memory-policy`,
-`--rankwidth-join-strategy`, `--rankwidth-single-kernel`,
-`--rankwidth-fourier-kernel`.
-
-The five cost-model coefficients `C_rw_table` / `C_rw_join` / `C_rw_sig` /
-`C_tw_table` / `C_tw_join` have **no CLI flag**; they are ns-per-unit constants
-(`BRANCH_POLICY_DEFAULT_C_*` in `src/solve/branch.c`) and are changed by editing
-that file. `sop-solve` reads no environment variables.
-
-### Retuning the cost model
-
-The coefficients above are fit from measured backend timings. To collect data,
-run with the calibration harness (requires the JSONL sink, branch backend, not
-single-Fourier):
-
-```sh
-build/sop-solve --backend branch --branch-calibrate-backends \
-  --stats-jsonl calib.jsonl <instance.qsop>
-```
-
-With calibration on, the losing backend is executed too, so each per-residual
-JSONL record carries both the *predicted* forecasts (`treewidth_forecast_*`,
-`rankwidth_forecast_*`) and the *measured* wall time
-(`treewidth_actual_ms`, `rankwidth_actual_ms`, `treewidth_probe_ms`,
-`rankwidth_generation_ms`). Fit the ns-per-table-entry / ns-per-join ratios and
-overheads from those, then feed the overhead/threshold/speedup back via the
-`--branch-rw-*` / `--branch-tw-*` flags and the `C_*` constants back into
-`branch.c`.
-
-### Observing a run
-
-`--format stats` prints what the backend did:
-`treewidth_delegations` / `rankwidth_delegations` / `branch_fallthroughs`
-(where each residual went), `branch_treewidth_skips` / `branch_rankwidth_skips`
-(vetoes), `decomposition_width` vs `rankwidth_cutrank_width` (the competing
-widths), and `table_entries` / `join_pairs` vs their `*_forecast` (forecast
-accuracy). `--trace csv` writes a `phase,depth,items,elapsed_ns` row per phase
-to stderr (e.g. `branch.width_probe`, `branch.treewidth_delegate`,
-`rankwidth.width_probe`) to localize time. Per-decision `veto_reason` strings
-are only emitted via `--stats-jsonl`.
+The branch backend delegates connected components to treewidth or rankwidth DP
+according to a cost model. See [Solver internals](docs/solver-internals.md) for
+the decision process, runtime tuning, calibration, and observability details;
+`sop-solve --help-advanced` lists every advanced flag.

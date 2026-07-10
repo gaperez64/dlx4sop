@@ -32,6 +32,7 @@ if get_option('developer_warnings')
 endif
 
 dlx4sop_core_sources = files(
+    'src/core/amplitude.c',
     'src/core/residue.c',
     'src/core/bitset.c',
     'src/core/simd_scalar.c',
@@ -51,7 +52,10 @@ dlx4sop_core_sources = files(
 
 cpu_family = host_machine.cpu_family()
 simd_link_whole = []
-simd_arch = simd_option
+is_arm = cpu_family in ['aarch64', 'arm']
+is_x86 = cpu_family in ['x86', 'x86_64']
+
+avx2_args = cc.get_supported_arguments(['-mavx2'])
 avx512_args = cc.get_supported_arguments([
   '-mavx512f',
   '-mavx512dq',
@@ -59,73 +63,98 @@ avx512_args = cc.get_supported_arguments([
   '-mavx512vpopcntdq',
 ])
 
-if simd_option == 'auto'
-  if cpu_family in ['aarch64', 'arm']
-    simd_arch = 'neon'
-  elif cpu_family in ['x86', 'x86_64'] and meson.can_run_host_binaries()
-    avx512_probe = '''
-#if defined(__x86_64__) || defined(__i386__)
-int main(void) {
-#if defined(__GNUC__) || defined(__clang__)
-  __builtin_cpu_init();
-  return (__builtin_cpu_supports("avx512f") &&
-          __builtin_cpu_supports("avx512dq") &&
-          __builtin_cpu_supports("avx512vl") &&
-          __builtin_cpu_supports("avx512vpopcntdq")) ? 0 : 1;
-#else
-  return 1;
-#endif
-}
-#else
-int main(void) { return 1; }
-#endif
-'''
-    avx512_host = cc.run(avx512_probe, name: 'AVX-512 host probe')
-    if avx512_args.length() == 4 and avx512_host.compiled() and avx512_host.returncode() == 0
-      simd_arch = 'avx512'
-    else
-      simd_arch = 'scalar'
-    endif
-  else
-    simd_arch = 'scalar'
-  endif
-endif
+# Which kernels get *compiled in*. Which one actually runs is decided at run time by
+# qsop_simd_runtime_kernel() against __builtin_cpu_supports, so `auto` can safely carry every
+# kernel the compiler can emit: an AVX-512 binary now falls back instead of trapping on a host
+# without AVX-512. Naming a kernel explicitly still pins the build to just that one, which is what
+# distro packaging and reproducible builds want.
+build_neon = false
+build_avx2 = false
+build_avx512 = false
 
-if simd_arch == 'neon'
-  if cpu_family not in ['aarch64', 'arm']
+if simd_option == 'auto'
+  build_neon = is_arm
+  build_avx2 = is_x86 and avx2_args.length() == 1
+  build_avx512 = is_x86 and avx512_args.length() == 4
+elif simd_option == 'neon'
+  if not is_arm
     error('-Dsimd=neon requires an ARM/AArch64 target')
   endif
-  add_project_arguments('-DQSOP_SIMD_ARCH_NEON', language: 'c')
-  simd_neon_lib = static_library(
-    'dlx4sop_simd_neon',
-    files('src/core/simd_neon.c'),
-    include_directories: inc,
-  )
-  simd_link_whole += simd_neon_lib
-endif
-
-if simd_arch == 'avx512'
-  if cpu_family not in ['x86', 'x86_64']
+  build_neon = true
+elif simd_option == 'avx2'
+  if not is_x86
+    error('-Dsimd=avx2 requires an x86 target')
+  endif
+  if avx2_args.length() < 1
+    error('compiler does not support -mavx2')
+  endif
+  build_avx2 = true
+elif simd_option == 'avx512'
+  if not is_x86
     error('-Dsimd=avx512 requires an x86 target')
   endif
   if avx512_args.length() < 4
     error('compiler does not support the required AVX-512 flags')
   endif
-  add_project_arguments('-DQSOP_SIMD_ARCH_AVX512', language: 'c')
-  simd_avx512_lib = static_library(
+  build_avx512 = true
+endif
+
+# These tell simd_scalar.c's dispatcher which __builtin_cpu_supports probes it may compile: the
+# feature strings only exist on toolchains new enough to emit the corresponding kernel. Must be
+# added before any build target is declared.
+if build_neon
+  add_project_arguments('-DQSOP_SIMD_HAVE_NEON', language: 'c')
+endif
+if build_avx2
+  add_project_arguments('-DQSOP_SIMD_HAVE_AVX2', language: 'c')
+endif
+if build_avx512
+  add_project_arguments('-DQSOP_SIMD_HAVE_AVX512', language: 'c')
+endif
+
+# Each kernel is its own translation unit compiled with its own -m flags, and keeps LTO on. The
+# per-function target attributes GCC derives from those flags are what stop it from inlining zmm
+# code into a caller that may run on a CPU without AVX-512; verified on the fat build by
+# disassembling and checking that every zmm/ymm instruction lives inside a simd_avx512_*/simd_avx2_*
+# function. (A weak-symbol dispatch would break this -- see simd_scalar.c.)
+if build_neon
+  simd_link_whole += static_library(
+    'dlx4sop_simd_neon',
+    files('src/core/simd_neon.c'),
+    include_directories: inc,
+  )
+endif
+
+if build_avx2
+  simd_link_whole += static_library(
+    'dlx4sop_simd_avx2',
+    files('src/core/simd_avx2.c'),
+    include_directories: inc,
+    c_args: avx2_args,
+  )
+endif
+
+if build_avx512
+  simd_link_whole += static_library(
     'dlx4sop_simd_avx512',
     files('src/core/simd_avx512.c'),
     include_directories: inc,
     c_args: avx512_args,
   )
-  simd_link_whole += simd_avx512_lib
 endif
 
-if simd_arch == 'scalar'
-  add_project_arguments('-DQSOP_SIMD_ARCH_SCALAR', language: 'c')
+simd_compiled = []
+if build_avx512
+  simd_compiled += 'avx512'
 endif
-
-message('SIMD architecture: ' + simd_arch)
+if build_avx2
+  simd_compiled += 'avx2'
+endif
+if build_neon
+  simd_compiled += 'neon'
+endif
+simd_compiled += 'scalar'
+message('SIMD kernels compiled in (best supported is chosen at run time): ' + ', '.join(simd_compiled))
 
 dlx4sop_core = static_library(
   'dlx4sop_core',
@@ -193,13 +222,32 @@ bench_kernels = executable(
   install: false,
 )
 
+# Memcheck over the C unit tests only. They drive every allocator in the library -- the treewidth
+# factor pool, the residual trail, the branch caches -- and are the only tests meson can wrap
+# directly; the python ones exec the CLI, so an exe_wrapper would valgrind their interpreter.
+# Run with: meson test -C build --setup=valgrind --suite=unit
+valgrind = find_program('valgrind', required: false)
+if valgrind.found()
+  add_test_setup(
+    'valgrind',
+    exe_wrapper: [
+      valgrind,
+      '--leak-check=full',
+      '--errors-for-leak-kinds=definite,indirect',
+      '--error-exitcode=99',
+      '--quiet',
+    ],
+    timeout_multiplier: 40,
+  )
+endif
+
 test_residue = executable(
   'test-residue',
   'tests/unit/test_residue.c',
   dependencies: dlx4sop_core_dep,
 )
 
-test('residue unit', test_residue)
+test('residue unit', test_residue, suite: 'unit')
 
 test_residual = executable(
   'test-residual',
@@ -207,7 +255,7 @@ test_residual = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('residual unit', test_residual)
+test('residual unit', test_residual, suite: 'unit')
 
 test_bitset = executable(
   'test-bitset',
@@ -215,7 +263,15 @@ test_bitset = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('bitset unit', test_bitset)
+test('bitset unit', test_bitset, suite: 'unit')
+
+test_simd_kernels = executable(
+  'test-simd-kernels',
+  'tests/unit/test_simd_kernels.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('simd kernels unit', test_simd_kernels, suite: 'unit')
 
 test_wmc = executable(
   'test-wmc',
@@ -223,7 +279,7 @@ test_wmc = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('wmc unit', test_wmc)
+test('wmc unit', test_wmc, suite: 'unit')
 
 test_qsop_simplify = executable(
   'test-qsop-simplify',
@@ -231,7 +287,7 @@ test_qsop_simplify = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('qsop simplify unit', test_qsop_simplify)
+test('qsop simplify unit', test_qsop_simplify, suite: 'unit')
 
 test_min_fill = executable(
   'test-min-fill',
@@ -239,7 +295,7 @@ test_min_fill = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('min-fill unit', test_min_fill)
+test('min-fill unit', test_min_fill, suite: 'unit')
 
 test_branch_api = executable(
   'test-branch-api',
@@ -247,7 +303,31 @@ test_branch_api = executable(
   dependencies: dlx4sop_core_dep,
 )
 
-test('branch api unit', test_branch_api)
+test('branch api unit', test_branch_api, suite: 'unit')
+
+test_branch_propagate = executable(
+  'test-branch-propagate',
+  'tests/unit/test_branch_propagate.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch propagate unit', test_branch_propagate, suite: 'unit', timeout: 120)
+
+test_branch_single_cache = executable(
+  'test-branch-single-cache',
+  'tests/unit/test_branch_single_cache.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch single cache unit', test_branch_single_cache, suite: 'unit', timeout: 120)
+
+test_treewidth_join = executable(
+  'test-treewidth-join',
+  'tests/unit/test_treewidth_join.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('treewidth join unit', test_treewidth_join, suite: 'unit', timeout: 120)
 
 test(
   'kernel benchmark smoke',
@@ -440,6 +520,14 @@ if python3.found()
     ],
   )
   test(
+    'gauntlet import-only smoke',
+    python3,
+    args: [
+      files('tests/test_bench_gauntlet.py'),
+      files('scripts/bench_gauntlet.py'),
+    ],
+  )
+  test(
     'branch policy smoke',
     python3,
     args: [
@@ -457,6 +545,17 @@ if python3.found()
     ],
     depends: sop_solve,
     timeout: 90,
+  )
+  test(
+    'branch InferQ delegation regression',
+    python3,
+    args: [
+      files('tests/test_branch_inferq_regression.py'),
+      sop_solve.full_path(),
+      meson.project_source_root(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
   )
   test(
     'rankwidth memory budget smoke',
@@ -489,6 +588,16 @@ if python3.found()
     timeout: 60,
   )
   test(
+    'solver coverage paths smoke',
+    python3,
+    args: [
+      files('tests/test_solver_coverage_paths.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 60,
+  )
+  test(
     'wmc ganak benchmark metadata smoke',
     python3,
     args: [
@@ -514,6 +623,16 @@ if python3.found()
       python3,
       args: [
         files('tests/test_qasm_qiskit.py'),
+        qasm2sop.full_path(),
+        sop_solve.full_path(),
+      ],
+      depends: [qasm2sop, sop_solve],
+    )
+    test(
+      'qasm2sop aer',
+      python3,
+      args: [
+        files('tests/test_qasm_aer.py'),
         qasm2sop.full_path(),
         sop_solve.full_path(),
       ],

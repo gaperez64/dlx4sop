@@ -11,7 +11,7 @@ cache_canonical_entries: 3
 cache_stored_residue_slots: 24
 cache_key_bytes: 49
 cache_count_bytes: 192
-cache_estimated_bytes: 4337
+cache_estimated_bytes: 4081
 leaf_assignments: 4
 treewidth_delegations: 0
 rankwidth_delegations: 0

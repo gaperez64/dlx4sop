@@ -86,7 +86,7 @@ static uint32_t gf2_rank_masks(uint64_t *rows, uint32_t nrows, uint32_t nvars) {
 }
 
 static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
-                                                  uint32_t *order, qsop_error_t *error) {
+                                                 uint32_t *order, qsop_error_t *error) {
   /* Exact prefix cut rank via the incremental GF(2) core (was a dense O(nvars^4/64) rebuild per
    * cut). */
   if (!qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
@@ -98,7 +98,8 @@ static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qs
   uint32_t *order_out = qsop->nvars <= 63U ? order : NULL;
   if (!qsop_min_fill_eliminate(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges,
                                QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, order_out,
-                               &stats->min_fill_width, &stats->min_fill_edges, NULL, error)) {
+                               &stats->min_fill_width, &stats->min_fill_edges,
+                               &stats->min_fill_dp_work, NULL, error)) {
     return false;
   }
   stats->width_diagnostics_available = true;
@@ -139,8 +140,8 @@ static void exact_treewidth_search(uint32_t nvars, uint64_t active, const uint64
       min_degree = degree;
     }
   }
-  if (min_degree != UINT32_MAX && (current_width > min_degree ? current_width : min_degree) >=
-                                      *best_width) {
+  if (min_degree != UINT32_MAX &&
+      (current_width > min_degree ? current_width : min_degree) >= *best_width) {
     return;
   }
 
@@ -165,8 +166,7 @@ static void exact_treewidth_search(uint32_t nvars, uint64_t active, const uint64
     }
     candidates &= ~bit_for_var(best_v);
 
-    const uint32_t next_width =
-        current_width > best_degree ? current_width : best_degree;
+    const uint32_t next_width = current_width > best_degree ? current_width : best_degree;
     if (next_width >= *best_width) {
       continue;
     }
@@ -193,8 +193,7 @@ static void exact_treewidth_search(uint32_t nvars, uint64_t active, const uint64
   }
 }
 
-static uint32_t exact_treewidth_masks(uint32_t nvars, const uint64_t *adj,
-                                      uint32_t upper_bound) {
+static uint32_t exact_treewidth_masks(uint32_t nvars, const uint64_t *adj, uint32_t upper_bound) {
   if (nvars <= 1) {
     return 0;
   }
@@ -251,8 +250,7 @@ static bool exact_rankwidth_masks(uint32_t nvars, const uint64_t *adj, uint32_t 
           continue;
         }
         const uint32_t other = mask ^ sub;
-        const uint32_t width =
-            max4_u32(cutrank[sub], cutrank[other], dp[sub], dp[other]);
+        const uint32_t width = max4_u32(cutrank[sub], cutrank[other], dp[sub], dp[other]);
         if (width < best) {
           best = width;
         }
@@ -281,8 +279,7 @@ static bool compute_exact_widths(const qsop_instance_t *qsop, const qsop_stats_o
   if (stats->exact_width_max_vars > QSOP_EXACT_WIDTH_HARD_MAX) {
     stats->exact_width_max_vars = QSOP_EXACT_WIDTH_HARD_MAX;
   }
-  if (qsop->nvars > stats->exact_width_max_vars ||
-      qsop->nvars > QSOP_EXACT_WIDTH_HARD_MAX) {
+  if (qsop->nvars > stats->exact_width_max_vars || qsop->nvars > QSOP_EXACT_WIDTH_HARD_MAX) {
     stats->exact_widths_available = false;
     return true;
   }
@@ -297,10 +294,8 @@ static bool compute_exact_widths(const qsop_instance_t *qsop, const qsop_stats_o
   return true;
 }
 
-static bool compute_stats_internal(const qsop_instance_t *qsop,
-                                    const qsop_stats_options_t *options,
-                                    qsop_stats_t *stats, uint32_t *order,
-                                    qsop_error_t *error) {
+static bool compute_stats_internal(const qsop_instance_t *qsop, const qsop_stats_options_t *options,
+                                   qsop_stats_t *stats, uint32_t *order, qsop_error_t *error) {
   if (qsop == NULL || stats == NULL) {
     set_error(error, "internal error: null stats argument");
     return false;
@@ -390,8 +385,8 @@ static bool compute_stats_internal(const qsop_instance_t *qsop,
 }
 
 bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
-                                     const qsop_stats_options_t *options,
-                                     qsop_stats_t *stats, qsop_error_t *error) {
+                                     const qsop_stats_options_t *options, qsop_stats_t *stats,
+                                     qsop_error_t *error) {
   return compute_stats_internal(qsop, options, stats, NULL, error);
 }
 
@@ -426,8 +421,7 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
     fprintf(file, "prefix_cut_rank: %" PRIu32 "\n", stats->prefix_cut_rank);
   }
   if (stats->exact_widths_requested) {
-    fprintf(file, "exact_widths: %s\n",
-            stats->exact_widths_available ? "available" : "skipped");
+    fprintf(file, "exact_widths: %s\n", stats->exact_widths_available ? "available" : "skipped");
     fprintf(file, "exact_width_max_vars: %" PRIu32 "\n", stats->exact_width_max_vars);
     if (stats->exact_widths_available) {
       fprintf(file, "exact_treewidth: %" PRIu32 "\n", stats->exact_treewidth);
@@ -444,17 +438,19 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
   }
 
   fprintf(file,
-          "{\"modulus\":%" PRIu64 ",\"variables\":%" PRIu32
-          ",\"quadratic_terms\":%" PRIu32 ",\"nonzero_unary\":%" PRIu32
-          ",\"normalization_h\":%" PRIu64 ",\"format\":\"qsop-sign\",\"components\":%" PRIu32
-          ",\"max_degree\":%" PRIu32 ",\"width_diagnostics_available\":%s",
+          "{\"modulus\":%" PRIu64 ",\"variables\":%" PRIu32 ",\"quadratic_terms\":%" PRIu32
+          ",\"nonzero_unary\":%" PRIu32 ",\"normalization_h\":%" PRIu64
+          ",\"format\":\"qsop-sign\",\"components\":%" PRIu32 ",\"max_degree\":%" PRIu32
+          ",\"width_diagnostics_available\":%s",
           stats->r, stats->nvars, stats->nedges, stats->nonzero_unary, stats->norm_h,
-          stats->components, stats->max_degree, stats->width_diagnostics_available ? "true" : "false");
+          stats->components, stats->max_degree,
+          stats->width_diagnostics_available ? "true" : "false");
   if (stats->width_diagnostics_available) {
     fprintf(file,
             ",\"min_fill_width\":%" PRIu32 ",\"min_fill_edges\":%" PRIu64
-            ",\"prefix_cut_rank\":%" PRIu32,
-            stats->min_fill_width, stats->min_fill_edges, stats->prefix_cut_rank);
+            ",\"prefix_cut_rank\":%" PRIu32 ",\"min_fill_dp_work\":%" PRIu64,
+            stats->min_fill_width, stats->min_fill_edges, stats->prefix_cut_rank,
+            stats->min_fill_dp_work);
   }
   if (stats->exact_widths_requested) {
     fprintf(file, ",\"exact_widths_available\":%s,\"exact_width_max_vars\":%" PRIu32,

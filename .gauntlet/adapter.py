@@ -32,9 +32,12 @@ import build_external_qasm_manifest as manifest_tool  # noqa: E402
 QASM2SOP = REPO_ROOT / "build" / "qasm2sop"
 SOP_SOLVE = REPO_ROOT / "build" / "sop-solve"
 
-# Non-unitary operations the protocol requires rejecting outright (final
-# measurements are stripped separately, before this check runs).
-FORBIDDEN_OPS = {"measure", "reset", "initialize", "set_density_matrix", "set_statevector"}
+# State-injection operations qasm2sop cannot represent and the protocol requires rejecting
+# outright. Mid-circuit `measure`/`reset` are NOT here: qasm2sop now lowers a no-feed-forward
+# measurement to a coherent no-op and a reset to a fresh |0> wire (final measurements are still
+# stripped separately, before this check runs). Data-dependent `if` control stays rejected by
+# qasm2sop itself.
+FORBIDDEN_OPS = {"initialize", "set_density_matrix", "set_statevector"}
 
 # Matches the gauntlet's own zero-amplitude tolerance (1e-8 absolute+relative
 # in every real suite bar "smoke"), so the modulus this buys is exactly what
@@ -50,33 +53,6 @@ def forbidden_ops_present(circuit) -> set[str]:
     return {instr.operation.name for instr in circuit.data if instr.operation.name in FORBIDDEN_OPS}
 
 
-def strip_unused_clbits(circuit):
-    """Drop classical registers no instruction actually touches.
-
-    Several MQT-derived QPY payloads carry a dangling `creg` declaration left
-    over from textual measurement-stripping upstream (the source QASM's
-    `measure`/`if` lines were removed but the `creg` line was not). qasm2sop's
-    parser hard-rejects any `creg`/`measure` line as a dynamic/classical
-    feature, even when the register is provably inert, so this preprocessing
-    is required to avoid a false "non-unitary" rejection.
-    """
-    if circuit.num_clbits == 0:
-        return circuit
-    live = any(
-        len(instr.clbits) > 0 or getattr(instr.operation, "condition", None) is not None
-        for instr in circuit.data
-    )
-    if live:
-        return circuit
-    from qiskit import QuantumCircuit
-
-    stripped = QuantumCircuit(*circuit.qregs)
-    stripped.global_phase = circuit.global_phase
-    for instr in circuit.data:
-        stripped.append(instr.operation, instr.qubits, [])
-    return stripped
-
-
 def load_circuit(payload_path: str):
     from qiskit import qpy
 
@@ -86,19 +62,21 @@ def load_circuit(payload_path: str):
             circuits = qpy.load(handle)
     circuit = circuits[0].copy()
     circuit.remove_final_measurements(inplace=True)
-    circuit = strip_unused_clbits(circuit)
+    # Reject only state-injection ops (initialize/set_*) qasm2sop cannot represent. Mid-circuit
+    # measure/reset are left in place -- qasm2sop lowers them (measurement as a coherent no-op,
+    # reset as a fresh |0> wire). A dangling classical register is also left in place: qasm2sop
+    # ignores an inert `creg` and still rejects a real `if(creg) gate`, so it remains the backstop
+    # that keeps data-dependent dynamic circuits out while letting the inert register through.
     forbidden = forbidden_ops_present(circuit)
-    if forbidden or circuit.num_clbits:
-        raise ValueError(
-            f"non-unitary payload: forbidden ops {sorted(forbidden)}, clbits={circuit.num_clbits}"
-        )
+    if forbidden:
+        raise ValueError(f"non-unitary payload: forbidden ops {sorted(forbidden)}")
     return circuit
 
 
 def _is_phase_representability_error(stderr: str) -> bool:
     """--approx only rescues circuits that fail the *exact* import because a phase/angle falls
     outside qasm2sop's finite grid (odd cp/cu1, non-pi/8 rz/rx/ry/u/p, non-sign quadratic). It
-    does NOT add gate support or fix parse / non-unitary (creg/measure) rejections, so retrying
+    does NOT add gate support or fix parse / dynamic (`if`) / state-injection rejections, so retrying
     those with --approx just burns a second qasm2sop run and yields a misleading combined error.
     Every exact-mode angle rejection names "angle" or "non-sign quadratic"; nothing else does."""
     return "angle" in stderr or "non-sign quadratic" in stderr
@@ -183,18 +161,15 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     if "memory-skip" in completed.stderr:
         raise RuntimeError(f"sop-solve: {completed.stderr.strip()}")
 
-    raw_re, raw_im = parse_amplitude(completed.stdout)
+    amp_re, amp_im = parse_amplitude(completed.stdout)
     metrics["norm_h"] = norm_h
-    # single-fourier's raw amplitude scales like 2**(norm_h/2), which overflows a
-    # Python float (max ~1.8e308) once norm_h exceeds ~2048 -- a real occurrence on
-    # deep circuits that need many rounded phase ops during --approx import. Doing
-    # the scaling in arbitrary-precision decimal arithmetic, and converting to a
-    # plain float only after raw*scale has cancelled back down to a normal
-    # amplitude's magnitude, avoids the silent overflow-to-inf-times-zero-is-nan
-    # that a naive `float(raw_str) * 2.0**(-norm_h/2)` produces.
-    getcontext().prec = max(50, norm_h // 2 + 50)
-    scale = Decimal(2) ** (Decimal(-norm_h) / 2)
-    return complex(float(raw_re * scale), float(raw_im * scale)), metrics
+    # sop-solve --format amplitude already reports the normalized amplitude,
+    # amp * 2**(-norm_h/2), whose modulus is at most 1. It used to report the raw
+    # sum-over-paths value, which scales like 2**(norm_h/2) and overflows a Python
+    # float once norm_h passes ~2048 -- hence the arbitrary-precision rescale that
+    # used to live here. The solver now carries the magnitude in a binary exponent
+    # and normalizes internally, so there is nothing left to undo.
+    return complex(float(amp_re), float(amp_im)), metrics
 
 
 def main() -> int:

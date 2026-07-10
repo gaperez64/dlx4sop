@@ -304,8 +304,15 @@ def test_metamorphic_duplicate_edge_pair(exe: pathlib.Path) -> None:
 
 
 def parse_single_fourier_output(output: str) -> tuple[float, float, float] | None:
-    """Parse amplitude_re/amplitude_im/numeric_error_bound from single-fourier output."""
+    """Parse the raw amplitude and its error bound from single-fourier output.
+
+    sop-solve reports the *normalized* amplitude, amp * 2^(-norm_h/2), because the raw
+    sum-over-paths value is not representable on large instances.  The histogram
+    reconstruction this test compares against is raw, so scale back up using the norm_h
+    the solver prints alongside it.
+    """
     re_val = im_val = bound_val = None
+    norm_h = None
     for line in output.splitlines():
         if line.startswith("amplitude_re: "):
             re_val = float(line[len("amplitude_re: "):])
@@ -313,9 +320,12 @@ def parse_single_fourier_output(output: str) -> tuple[float, float, float] | Non
             im_val = float(line[len("amplitude_im: "):])
         elif line.startswith("numeric_error_bound: "):
             bound_val = float(line[len("numeric_error_bound: "):])
-    if re_val is None or im_val is None or bound_val is None:
+        elif line.startswith("norm_h: "):
+            norm_h = int(line[len("norm_h: "):])
+    if re_val is None or im_val is None or bound_val is None or norm_h is None:
         return None
-    return re_val, im_val, bound_val
+    scale = 2.0 ** (norm_h / 2.0)
+    return re_val * scale, im_val * scale, bound_val
 
 
 def histogram_amplitude(counts: list[str], r: int) -> complex:

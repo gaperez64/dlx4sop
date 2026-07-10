@@ -94,7 +94,8 @@ def solver_amplitude(sop_solve: pathlib.Path, qsop_text: str) -> complex:
 
     scale = 2.0 ** (-norm_h / 2.0)
     if amplitude_re is not None and amplitude_im is not None:
-        return complex(amplitude_re, amplitude_im) * scale
+        # already normalized by sop-solve
+        return complex(amplitude_re, amplitude_im)
     if modulus is None or counts is None:
         raise AssertionError(f"malformed solver output:\n{solved.stdout}")
     omega = cmath.exp(2j * math.pi / modulus)

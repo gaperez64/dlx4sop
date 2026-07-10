@@ -2,6 +2,7 @@
 #include "dlx4sop/qsop_solve.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -208,6 +209,102 @@ static int test_unsupported_mode_rejected(void) {
   return 0;
 }
 
+/* The single-Fourier treewidth delegate is admitted by min-fill DP work, not raw width. K10,10
+ * (treewidth 10, tiny DP work) delegates to treewidth under a generous budget, but must fall back
+ * to branching once the DP-work budget is set below its cost -- even though width 10 is far under
+ * the ceiling. The amplitude must be identical across the two paths: the gate changes the route,
+ * not the answer. */
+static int solve_single_k10(uint64_t dp_work_budget, qsop_amplitude_t *amp,
+                            qsop_solve_stats_t *stats) {
+  uint64_t unary[20];
+  uint32_t edge_u[100];
+  uint32_t edge_v[100];
+  qsop_instance_t inst = make_k10_10(unary, edge_u, edge_v);
+  qsop_error_t err = {0};
+  return qsop_solve_branch_single_mode(
+      &inst, 64U, 1U,
+      &(qsop_branch_single_mode_options_t){
+          .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+          .max_fallback_vars = 64,
+          .rankwidth_delegate_max_width = 1, /* rw_source defaults to none; keep rankwidth out */
+          .treewidth_delegate_max_dp_work = dp_work_budget,
+      },
+      amp, stats, &err);
+}
+
+static int test_single_mode_dp_work_gate(void) {
+  qsop_amplitude_t   amp_wide = {0};
+  qsop_solve_stats_t wide     = {0};
+  if (!solve_single_k10(UINT64_MAX, &amp_wide, &wide)) {
+    fprintf(stderr, "FAIL single_mode_dp_work_gate: generous-budget solve failed\n");
+    return 1;
+  }
+  if (wide.treewidth_delegations != 1 || wide.branch_fallthroughs != 0) {
+    fprintf(stderr,
+            "FAIL single_mode_dp_work_gate: expected treewidth delegate under a generous budget, "
+            "got tw=%" PRIu64 " fallthrough=%" PRIu64 "\n",
+            wide.treewidth_delegations, wide.branch_fallthroughs);
+    return 1;
+  }
+
+  qsop_amplitude_t   amp_tight = {0};
+  qsop_solve_stats_t tight     = {0};
+  if (!solve_single_k10(1U, &amp_tight, &tight)) {
+    fprintf(stderr, "FAIL single_mode_dp_work_gate: tight-budget solve failed\n");
+    return 1;
+  }
+  if (tight.treewidth_delegations != 0 || tight.branch_fallthroughs == 0) {
+    fprintf(stderr,
+            "FAIL single_mode_dp_work_gate: expected branch fallback once DP work exceeds the "
+            "budget, got tw=%" PRIu64 " fallthrough=%" PRIu64 "\n",
+            tight.treewidth_delegations, tight.branch_fallthroughs);
+    return 1;
+  }
+
+  long double re_wide = 0, im_wide = 0, re_tight = 0, im_tight = 0;
+  if (!qsop_amplitude_normalized(&amp_wide, 0, &re_wide, &im_wide) ||
+      !qsop_amplitude_normalized(&amp_tight, 0, &re_tight, &im_tight) ||
+      fabsl(re_wide - re_tight) > 1e-9L || fabsl(im_wide - im_tight) > 1e-9L) {
+    fprintf(stderr, "FAIL single_mode_dp_work_gate: amplitude differs across gate paths\n");
+    return 1;
+  }
+  fprintf(stderr, "PASS single_mode_dp_work_gate\n");
+  return 0;
+}
+
+static int expect_treewidth_preference(const char *name, uint32_t prefix_cut_rank, uint32_t nvars,
+                                       uint64_t dp_work, bool expected) {
+  const bool actual = qsop_branch_single_treewidth_clearly_preferred(
+      prefix_cut_rank, nvars, dp_work, NULL);
+  if (actual != expected) {
+    fprintf(stderr,
+            "FAIL policy_%s: prefix=%" PRIu32 " nvars=%" PRIu32 " dp_work=%" PRIu64
+            " expected treewidth_preferred=%d, got %d\n",
+            name, prefix_cut_rank, nvars, dp_work, expected, actual);
+    return 1;
+  }
+  fprintf(stderr, "PASS policy_%s\n", name);
+  return 0;
+}
+
+/* Guard the pre-probe model with shapes measured from the regression corpora. Prefix cut-rank is
+ * intentionally only a zero/nonzero signal here: the InferQ graph's natural order has rank 21,
+ * but the generated decomposition has width 10. Conversely, the two huge Shor graphs remain cheap
+ * enough for treewidth that the O(n^2 * words) probe cost excludes rankwidth even at best-case
+ * generated width one. The complete-bipartite win and cheap treewidth cases pin the old boundaries. */
+static int test_rankwidth_preprobe_policy(void) {
+  int failures = 0;
+  failures += expect_treewidth_preference("inferq_472592", 21U, 123U, UINT64_C(4206906), false);
+  failures +=
+      expect_treewidth_preference("shor_15_4", 11U, 23768U, UINT64_C(53768770), true);
+  failures +=
+      expect_treewidth_preference("shor_9_4", 11U, 25992U, UINT64_C(99438302), true);
+  failures += expect_treewidth_preference("k12_12", 1U, 24U, UINT64_C(106494), false);
+  failures += expect_treewidth_preference("path32", 1U, 32U, UINT64_C(126), true);
+  failures += expect_treewidth_preference("grid6", 6U, 36U, UINT64_C(1374), true);
+  return failures;
+}
+
 int main(void) {
   int failures = 0;
   failures += test_null_options();
@@ -219,10 +316,12 @@ int main(void) {
   failures += test_null_out_with_options();
   failures += test_null_qsop_rejected();
   failures += test_unsupported_mode_rejected();
+  failures += test_single_mode_dp_work_gate();
+  failures += test_rankwidth_preprobe_policy();
   if (failures > 0) {
     fprintf(stderr, "\n%d test(s) FAILED\n", failures);
     return 1;
   }
-  fprintf(stderr, "\n9 test(s) passed\n");
+  fprintf(stderr, "\n16 test(s) passed\n");
   return 0;
 }
