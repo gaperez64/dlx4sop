@@ -61,13 +61,26 @@ def main() -> int:
         "rankwidth_delegations": "1",
         "treewidth_delegations": "0",
         "rankwidth_cutrank_width": "10",
-        "simd_vectorized_ops": "0",
     }
     for key, value in expected.items():
         if branch.get(key) != value:
             raise AssertionError(f"branch {key}: expected {value!r}, got {branch.get(key)!r}")
-    if int(branch.get("simd_scalar_fallback_ops", "0")) <= 0:
-        raise AssertionError("branch did not report the expected scalar bitset fallback work")
+    bitset_kernel = branch.get("bitset_kernel")
+    vectorized_ops = int(branch.get("simd_vectorized_ops", "0"))
+    scalar_fallback_ops = int(branch.get("simd_scalar_fallback_ops", "0"))
+    if bitset_kernel == "neon":
+        # The fixture occupies two 64-bit words, exactly NEON's minimum vector width.
+        if vectorized_ops <= 0:
+            raise AssertionError("branch did not report the expected NEON bitset vector work")
+    elif bitset_kernel in {"scalar", "avx2", "avx512"}:
+        # Two words are shorter than AVX2's four lanes and AVX-512's eight lanes.
+        if vectorized_ops != 0 or scalar_fallback_ops <= 0:
+            raise AssertionError(
+                f"branch reported unexpected {bitset_kernel} SIMD counters: "
+                f"vectorized={vectorized_ops}, scalar_fallback={scalar_fallback_ops}"
+            )
+    else:
+        raise AssertionError(f"branch reported unknown bitset kernel {bitset_kernel!r}")
     for key in ("rankwidth_table_forecast", "rankwidth_join_pair_forecast", "join_pairs"):
         if int(branch.get(key, "0")) <= 0:
             raise AssertionError(f"branch did not report {key}")
