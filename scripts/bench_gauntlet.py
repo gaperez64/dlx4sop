@@ -12,7 +12,8 @@ produced the amplitudes the gauntlet ranks -- rather than re-deriving one from
     (the same OpenQASM 2 lowering the adapter feeds to qasm2sop),
   * `qasm2sop --input 0^n --output 0^n` (exact first, `--approx` only when the
     exact failure is a phase-representability one), then
-  * `sop-solve --format stats --include-result` under a timeout.
+  * `sop-solve --format stats --include-result` under a timeout, unless
+    `--import-only` stops after qasm2sop for corpus auditing.
 
 Emits one CSV row per instance: shape, `sop-stats` width diagnostics, per-stage
 wall time (`load_s` qpy->qasm, `import_s` qasm2sop, `wall_s` the solve itself),
@@ -102,7 +103,8 @@ SHAPE_KEYS = [
 ]
 
 FIELDS = (
-    ["suite", "instance", "qubits", "import_mode", "outcome", "load_s", "import_s", "wall_s"]
+    ["suite", "instance", "qubits", "import_mode", "exact_error_class", "exact_error",
+     "outcome", "load_s", "import_s", "wall_s"]
     + SHAPE_KEYS
     + STAT_KEYS
 )
@@ -145,13 +147,15 @@ def _address_space_limiter(limit_bytes: int):
 
 class Bench:
     def __init__(self, qasm2sop: pathlib.Path, sop_stats: pathlib.Path, sop_solve: pathlib.Path,
-                 timeout: float, solve_args: list[str], mem_limit_bytes: int):
+                 timeout: float, solve_args: list[str], mem_limit_bytes: int,
+                 import_only: bool = False):
         self.qasm2sop = str(qasm2sop)
         self.sop_stats = str(sop_stats)
         self.sop_solve = str(sop_solve)
         self.timeout = timeout
         self.solve_args = solve_args
         self.mem_limit_bytes = mem_limit_bytes
+        self.import_only = import_only
 
     def translate(self, payload: pathlib.Path) -> tuple[str, int]:
         """The gauntlet's qpy recipe: adapter.load_circuit -> qasm2 dumps -> inline."""
@@ -162,20 +166,27 @@ class Bench:
         qasm_text = manifest_tool.inline_simple_gates(qasm_text)
         return qasm_text, manifest_tool.qasm_qubits(qasm_text)
 
-    def import_qsop(self, qasm: str, zero: str) -> tuple[str, str]:
+    def import_qsop(self, qasm: str, zero: str,
+                    exact_only: bool = False) -> tuple[str, str, str, str]:
         exact = run([self.qasm2sop, "--input", zero, "--output", zero, "-"], stdin=qasm,
                     timeout=self.timeout)
         if exact.returncode == 0:
-            return exact.stdout, "exact"
+            return exact.stdout, "exact", "", ""
         if "angle" not in exact.stderr and "non-sign quadratic" not in exact.stderr:
             raise RuntimeError(exact.stderr.strip())
+        diagnostic = manifest_tool.diagnostic_from_exception(RuntimeError(exact.stderr))
+        error_class = manifest_tool.classify_error(diagnostic)
+        # Import-only audits need the exact/approx classification, not the approximate SOP itself.
+        # Avoid materializing huge approximate QNN/QFT instances that will never be solved.
+        if exact_only:
+            return "", "approx", error_class, diagnostic
         approx = run(
             [self.qasm2sop, "--approx", repr(APPROX_EPSILON), "--input", zero, "--output", zero,
              "-"],
             stdin=qasm, timeout=self.timeout)
         if approx.returncode != 0:
             raise RuntimeError(approx.stderr.strip())
-        return approx.stdout, "approx"
+        return approx.stdout, "approx", error_class, diagnostic
 
     def shape(self, qsop: str) -> dict:
         # The width diagnostic (min-fill / cut-rank) can itself blow past the timeout on a wide
@@ -235,13 +246,22 @@ class Bench:
         zero = "0" * qubits
         import_started = time.monotonic()
         try:
-            qsop, row["import_mode"] = self.import_qsop(qasm, zero)
+            (qsop, row["import_mode"], row["exact_error_class"],
+             row["exact_error"]) = self.import_qsop(qasm, zero, self.import_only)
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             row["outcome"] = "import-failed"
-            row["import_mode"] = str(exc).splitlines()[0][:80] if str(exc) else "timeout"
+            diagnostic = (manifest_tool.diagnostic_from_exception(exc)
+                          if str(exc) else "timeout")
+            row["import_mode"] = diagnostic[:80]
+            row["exact_error"] = diagnostic
+            row["exact_error_class"] = manifest_tool.classify_error(diagnostic)
             row["import_s"] = f"{time.monotonic() - import_started:.3f}"
             return row
         row["import_s"] = f"{time.monotonic() - import_started:.3f}"
+
+        if self.import_only:
+            row["outcome"] = "imported"
+            return row
 
         row.update(self.shape(qsop))
         row["outcome"], wall, stats = self.solve(qsop)
@@ -296,11 +316,13 @@ def main() -> int:
                              "machine")
     parser.add_argument("--solve-arg", action="append", default=[], dest="solve_args",
                         help="extra flag forwarded to sop-solve; repeatable")
+    parser.add_argument("--import-only", action="store_true",
+                        help="stop after qasm2sop; skip shape diagnostics and solving")
     args = parser.parse_args()
 
     mem_limit_bytes = int(args.mem_max_gib * (1 << 30))
     bench = Bench(args.build / "qasm2sop", args.build / "sop-stats", args.build / "sop-solve",
-                  args.timeout, args.solve_args, mem_limit_bytes)
+                  args.timeout, args.solve_args, mem_limit_bytes, args.import_only)
     cases = collect(args.paths)
     if not cases:
         print("no .qpy found", file=sys.stderr)

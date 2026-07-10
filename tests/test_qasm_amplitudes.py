@@ -798,6 +798,34 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             """,
             [("00", "11"), ("00", "00"), ("00", "10")],
         ),
+        # Direct P-H-P lowering keeps odd pi/8 phi/lambda exact for theta=pi/2.
+        (
+            "u_half_pi_eighths",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            u(pi/2,-pi/8,-3*pi/4) q[0];
+            """,
+            [("0", "0"), ("0", "1"), ("1", "0"), ("1", "1")],
+        ),
+        (
+            "u2_eighths",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            u2(pi/8,-pi) q[0];
+            """,
+            [("0", "0"), ("0", "1"), ("1", "0"), ("1", "1")],
+        ),
+        (
+            "u_pi_eighths",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            u3(pi,-pi,-pi/8) q[0];
+            """,
+            [("0", "0"), ("0", "1"), ("1", "0"), ("1", "1")],
+        ),
     ]
 
     for name, qasm, boundaries in cases:

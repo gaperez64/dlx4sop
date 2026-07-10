@@ -520,6 +520,14 @@ if python3.found()
     ],
   )
   test(
+    'gauntlet import-only smoke',
+    python3,
+    args: [
+      files('tests/test_bench_gauntlet.py'),
+      files('scripts/bench_gauntlet.py'),
+    ],
+  )
+  test(
     'branch policy smoke',
     python3,
     args: [

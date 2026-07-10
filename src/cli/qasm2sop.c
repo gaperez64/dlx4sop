@@ -2394,6 +2394,42 @@ static bool apply_phase_units(qasm_importer_t *importer, uint32_t qubit, int64_t
   return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, units));
 }
 
+/* U(pi/2,phi,lambda) = P(phi) H P(lambda+pi), and
+ * U(-pi/2,phi,lambda) = P(phi+pi) H P(lambda). These direct forms keep odd pi/8 phase
+ * parameters exact without introducing the pi/16 rotations from the generic RZ-RY-RZ path. */
+static bool apply_u3_half_pi(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
+                             int64_t phi_units, int64_t lambda_units) {
+  if (theta_units == 4) {
+    return apply_phase(importer, qubit,
+                       coeff_from_pi_over_eight_units(importer, lambda_units + 8)) &&
+           apply_h(importer, qubit) &&
+           apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units));
+  }
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, lambda_units)) &&
+         apply_h(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units + 8));
+}
+
+static bool apply_u2_eighths(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
+                             int64_t lambda_units) {
+  return apply_u3_half_pi(importer, qubit, 4, phi_units, lambda_units);
+}
+
+/* U(pi,phi,lambda) = P(phi) X P(lambda+pi); the negative-theta form moves the pi shift
+ * to phi. Like the half-pi identities, this avoids artificial half-angle phases. */
+static bool apply_u3_pi(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
+                        int64_t phi_units, int64_t lambda_units) {
+  if (theta_units == 8) {
+    return apply_phase(importer, qubit,
+                       coeff_from_pi_over_eight_units(importer, lambda_units + 8)) &&
+           apply_x_decomposition(importer, qubit) &&
+           apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units));
+  }
+  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, lambda_units)) &&
+         apply_x_decomposition(importer, qubit) &&
+         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units + 8));
+}
+
 /* Exact u3/u dispatch with angles already parsed as pi/8 counts. A theta of 0 makes the gate the
  * pure phase U(0, phi, lambda) = P(phi + lambda), which a single phase represents exactly for any
  * phi + lambda (no rz angle-halving) -- this is what lets e.g. Qiskit's u(0, 5pi/8, -3pi/8) = T
@@ -2405,6 +2441,14 @@ static bool apply_u3_eighths_operand(qasm_importer_t *importer, char *rest, cons
                                      const int64_t units8[3]) {
   if (units8[0] == 0) {
     return apply_param_one_qubit_operand(importer, rest, units8[1] + units8[2], apply_phase_units);
+  }
+  if (units8[0] == 4 || units8[0] == -4) {
+    return apply_param_three_qubit_operand(importer, rest, units8[0], units8[1], units8[2],
+                                           apply_u3_half_pi);
+  }
+  if (units8[0] == 8 || units8[0] == -8) {
+    return apply_param_three_qubit_operand(importer, rest, units8[0], units8[1], units8[2],
+                                           apply_u3_pi);
   }
   if (((units8[0] | units8[1] | units8[2]) & 1) != 0) {
     set_error(importer, "unsupported u angle '%s'", gate);
@@ -2459,11 +2503,12 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   int64_t u2_units[2] = {0};
   bool is_u2 = false;
-  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, 4, &is_u2)) {
+  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, 8, &is_u2)) {
     return false;
   }
   if (is_u2) {
-    return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1], apply_u2);
+    return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1],
+                                         apply_u2_eighths);
   }
 
   int64_t rz_units = 0;

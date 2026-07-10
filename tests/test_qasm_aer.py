@@ -87,11 +87,32 @@ def bitflip_code_no_error() -> tuple[str, QuantumCircuit, list[str]]:
     return qasm2.dumps(qc), qc, ["00000", "00001", "00010"]
 
 
+def u_half_pi_eighths() -> tuple[str, QuantumCircuit, list[str]]:
+    qc = QuantumCircuit(1)
+    qc.u(np.pi / 2, -np.pi / 8, -3 * np.pi / 4, 0)
+    return qasm2.dumps(qc), qc, ["0", "1"]
+
+
+def u2_eighths() -> tuple[str, QuantumCircuit, list[str]]:
+    qc = QuantumCircuit(1)
+    qc.u(np.pi / 2, np.pi / 8, -np.pi, 0)
+    return "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[1];\nu2(pi/8,-pi) q[0];\n", qc, ["0", "1"]
+
+
+def u_pi_eighths() -> tuple[str, QuantumCircuit, list[str]]:
+    qc = QuantumCircuit(1)
+    qc.u(np.pi, -np.pi, -np.pi / 8, 0)
+    return qasm2.dumps(qc), qc, ["0", "1"]
+
+
 def run_aer_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None:
     cases = {
         "recycle_phase": recycle_phase(),
         "measure_midcircuit": measure_midcircuit(),
         "bitflip_code_no_error": bitflip_code_no_error(),
+        "u_half_pi_eighths": u_half_pi_eighths(),
+        "u2_eighths": u2_eighths(),
+        "u_pi_eighths": u_pi_eighths(),
     }
     checks = 0
     for name, (qasm, circuit, outputs) in cases.items():

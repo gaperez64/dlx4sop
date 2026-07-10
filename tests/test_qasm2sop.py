@@ -175,8 +175,8 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected bad phase result:\n{bad_phase.stderr}")
 
     # A theta=0 u-gate lowers to the single phase P(phi+lambda), so odd pi/8-unit phi/lambda are
-    # fine (u(0,5pi/8,-3pi/8)=T imports exactly). But a NONZERO theta still needs the rz-ry-rz path,
-    # which halves each angle, so an odd pi/8-unit angle there is refused in exact mode.
+    # fine (u(0,5pi/8,-3*pi/8)=T imports exactly). theta=+/-pi/2 also has a direct P-H-P
+    # lowering, while other nonzero theta values still need the rz-ry-rz path and reject odd units.
     u_theta0_ok = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nu(0,5*pi/8,-3*pi/8) q[0];\n",
@@ -184,13 +184,20 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if u_theta0_ok.returncode != 0 or "p qsop-sign" not in u_theta0_ok.stdout:
         raise AssertionError(f"expected theta=0 u-gate to import exactly:\n{u_theta0_ok.stderr}")
-    u_theta_odd = subprocess.run(
+    u_half_pi_ok = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nu(pi/2,pi/8,0) q[0];\n",
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
+    if u_half_pi_ok.returncode != 0 or "p qsop-sign 16" not in u_half_pi_ok.stdout:
+        raise AssertionError(f"expected theta=pi/2 u-gate to import exactly:\n{u_half_pi_ok.stderr}")
+    u_theta_odd = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi/4,pi/8,0) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
     if u_theta_odd.returncode == 0 or "unsupported u angle" not in u_theta_odd.stderr:
-        raise AssertionError(f"expected odd-angle nonzero-theta u-gate rejection:\n{u_theta_odd.stderr}")
+        raise AssertionError(f"expected generic odd-angle u-gate rejection:\n{u_theta_odd.stderr}")
 
     approx_phase = subprocess.run(
         [str(exe), "--approx", "5e-2", "--input", "0", "--output", "0", "-"],
@@ -680,7 +687,13 @@ def main() -> int:
     run_case(exe, source_root, "qasm_u1")
     run_case(exe, source_root, "qasm_u1_negative")
     run_case(exe, source_root, "qasm_u2")
+    run_boundary_case(exe, source_root, "qasm_u2_eighths",
+                      ["--input", "0", "--output", "1"])
     run_case(exe, source_root, "qasm_u3")
+    run_boundary_case(exe, source_root, "qasm_u_half_pi",
+                      ["--input", "00", "--output", "11"])
+    run_boundary_case(exe, source_root, "qasm_u_pi_eighths",
+                      ["--input", "0", "--output", "1"])
     run_case(exe, source_root, "qasm_p")
     run_case(exe, source_root, "qasm_sx")
     run_case(exe, source_root, "qasm_sxdg")
