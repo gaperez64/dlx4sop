@@ -204,8 +204,8 @@ typedef struct qsop_rankwidth_solve_options {
 typedef struct qsop_rankwidth_single_mode_options {
   qsop_rankwidth_single_kernel_t kernel; /* default AUTO */
   uint64_t materialize_join_max_pairs;   /* 0 = use built-in default */
-  /* Recorded in stats->simd_kernel, but the rankwidth joins are signature-keyed CSR gathers and
-   * currently call no vectorized kernel: stats->simd_vectorized_ops stays 0 on this backend. */
+  /* Used by contiguous complex kernels and rankwidth's integer bitset work. Signature-keyed CSR
+   * gathers remain scalar because their output writes are scattered. */
   const qsop_simd_vtable_t *simd;
 } qsop_rankwidth_single_mode_options_t;
 

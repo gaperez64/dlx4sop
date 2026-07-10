@@ -22,6 +22,7 @@ void qsop_bitset_or(uint64_t *dst, const uint64_t *src, size_t words);
 void qsop_bitset_and(uint64_t *dst, const uint64_t *src, size_t words);
 void qsop_bitset_and_not(uint64_t *dst, const uint64_t *src, size_t words);
 void qsop_bitset_xor(uint64_t *dst, const uint64_t *src, size_t words);
+bool qsop_bitset_simd_worthwhile(const qsop_simd_vtable_t *simd, size_t words);
 void qsop_bitset_or_simd(uint64_t *dst, const uint64_t *src, size_t words,
                          const qsop_simd_vtable_t *simd);
 void qsop_bitset_and_simd(uint64_t *dst, const uint64_t *src, size_t words,

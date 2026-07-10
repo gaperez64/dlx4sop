@@ -93,6 +93,19 @@ static void bench_popcount_and(const qsop_simd_vtable_t *vt, const char *simd,
   emit_u64_record("bitset.popcount_and", simd, words, iterations, elapsed, checksum);
 }
 
+static void bench_popcount_andnot(const qsop_simd_vtable_t *vt, const char *simd,
+                                  const uint64_t *a, const uint64_t *b,
+                                  size_t words, size_t iterations) {
+  uint64_t checksum = 0;
+  const uint64_t start = now_ns();
+  for (size_t i = 0; i < iterations; i++) {
+    checksum += vt->popcount_andnot_u64(a, b, words);
+  }
+  const uint64_t elapsed = now_ns() - start;
+  bench_sink_u64 = checksum;
+  emit_u64_record("bitset.popcount_andnot", simd, words, iterations, elapsed, checksum);
+}
+
 static void bench_row_xor(const qsop_simd_vtable_t *vt, const char *simd,
                           uint64_t *dst, const uint64_t *src, size_t words,
                           size_t iterations) {
@@ -105,6 +118,21 @@ static void bench_row_xor(const qsop_simd_vtable_t *vt, const char *simd,
   const uint64_t elapsed = now_ns() - start;
   bench_sink_u64 = checksum;
   emit_u64_record("bitset.xor_row", simd, words, iterations, elapsed, checksum);
+}
+
+static void bench_row_binary(const char *kernel, const char *simd,
+                             void (*operation)(uint64_t *, const uint64_t *, size_t),
+                             uint64_t *dst, const uint64_t *src, size_t words,
+                             size_t iterations) {
+  uint64_t checksum = 0;
+  const uint64_t start = now_ns();
+  for (size_t i = 0; i < iterations; i++) {
+    operation(dst, src, words);
+    checksum ^= dst[i % words];
+  }
+  const uint64_t elapsed = now_ns() - start;
+  bench_sink_u64 = checksum;
+  emit_u64_record(kernel, simd, words, iterations, elapsed, checksum);
 }
 
 static void bench_complex_mul(const qsop_simd_vtable_t *vt, const char *simd,
@@ -136,6 +164,21 @@ static void bench_complex_sum_out(const qsop_simd_vtable_t *vt, const char *simd
   const uint64_t elapsed = now_ns() - start;
   bench_sink_f64 = checksum;
   emit_f64_record("complex.sum_out_pairs_f64", simd, pairs, iterations, elapsed, checksum);
+}
+
+static void bench_complex_scale(const qsop_simd_vtable_t *vt, const char *simd,
+                                double *out_re, double *out_im,
+                                const double *in_re, const double *in_im,
+                                size_t n, size_t iterations) {
+  double checksum = 0.0;
+  const uint64_t start = now_ns();
+  for (size_t i = 0; i < iterations; i++) {
+    vt->complex_scale_f64(out_re, out_im, in_re, in_im, 0.75, -0.25, n);
+    checksum += out_re[i % n] + out_im[(i * 17U) % n];
+  }
+  const uint64_t elapsed = now_ns() - start;
+  bench_sink_f64 = checksum;
+  emit_f64_record("complex.scale_f64", simd, n, iterations, elapsed, checksum);
 }
 
 int main(int argc, char **argv) {
@@ -233,9 +276,17 @@ int main(int argc, char **argv) {
   fill_f64(sum_in_im, 2U * items, UINT64_C(0x6666666666666666));
 
   bench_popcount_and(vt, simd, a, b, words, iterations);
+  bench_popcount_andnot(vt, simd, a, b, words, iterations);
   bench_row_xor(vt, simd, dst, b, words, iterations);
+  memcpy(dst, a, words * sizeof(*dst));
+  bench_row_binary("bitset.or_row", simd, vt->or_u64, dst, b, words, iterations);
+  memcpy(dst, a, words * sizeof(*dst));
+  bench_row_binary("bitset.and_row", simd, vt->and_u64, dst, b, words, iterations);
+  memcpy(dst, a, words * sizeof(*dst));
+  bench_row_binary("bitset.andnot_row", simd, vt->andnot_u64, dst, b, words, iterations);
   bench_complex_mul(vt, simd, out_re, out_im, left_re, left_im, right_re, right_im,
                     items, iterations);
+  bench_complex_scale(vt, simd, out_re, out_im, left_re, left_im, items, iterations);
   bench_complex_sum_out(vt, simd, out_re, out_im, sum_in_re, sum_in_im, items,
                         iterations);
 

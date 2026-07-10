@@ -2650,6 +2650,38 @@ def run_kernel_diagnostics(exe: pathlib.Path) -> None:
             f"{rankwidth_double.stdout}"
         )
 
+    rankwidth_wide = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--rankwidth-generate",
+            "balanced",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--max-vars",
+            "512",
+            "-",
+        ],
+        input=_path_qsop(512, 8),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    rankwidth_wide_stats = parse_solver_stats(rankwidth_wide.stdout)
+    if rankwidth_wide.returncode != 0 or (
+        active_simd != "scalar" and rankwidth_wide_stats.get("simd_vectorized_ops", 0) <= 0
+    ):
+        raise AssertionError(
+            f"wide rankwidth path did not report vectorized bitset work\n"
+            f"{rankwidth_wide.stdout}\n{rankwidth_wide.stderr}"
+        )
+
     rankwidth_materialized = subprocess.run(
         [
             str(exe),

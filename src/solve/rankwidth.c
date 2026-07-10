@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,32 @@ static void add_saturating_u64(uint64_t *dst, uint64_t value) {
     *dst = UINT64_MAX;
   } else {
     *dst += value;
+  }
+}
+
+static const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
+  static _Atomic(const qsop_simd_vtable_t *) cached;
+  const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
+  if (simd == NULL) {
+    simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
+    atomic_store_explicit(&cached, simd, memory_order_release);
+  }
+  return simd;
+}
+
+static void note_rankwidth_bitset_ops(qsop_solve_stats_t *stats,
+                                      const qsop_simd_vtable_t *simd, size_t words,
+                                      uint64_t calls) {
+  if (stats == NULL || calls == 0) {
+    return;
+  }
+  const uint64_t ops = words != 0 && calls > UINT64_MAX / words
+                           ? UINT64_MAX
+                           : calls * (uint64_t)words;
+  if (simd != qsop_simd_scalar_vtable() && qsop_bitset_simd_worthwhile(simd, words)) {
+    add_saturating_u64(&stats->simd_vectorized_ops, ops);
+  } else {
+    add_saturating_u64(&stats->simd_scalar_fallback_ops, ops);
   }
 }
 
@@ -310,6 +337,8 @@ static void record_rankwidth_f64_simd_kernel(qsop_solve_stats_t *stats,
   const char *name = qsop_simd_kernel_name(simd);
   if (strcmp(name, "avx512") == 0) {
     stats->simd_kernel = QSOP_SIMD_KERNEL_AVX512;
+  } else if (strcmp(name, "avx2") == 0) {
+    stats->simd_kernel = QSOP_SIMD_KERNEL_AVX2;
   } else if (strcmp(name, "neon") == 0) {
     stats->simd_kernel = QSOP_SIMD_KERNEL_NEON;
   } else {
@@ -641,11 +670,13 @@ static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bit
 
 static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words, qsop_error_t *error);
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
-                                 const uint64_t *right, size_t words, qsop_error_t *error);
+                                 const uint64_t *right, size_t words, qsop_solve_stats_t *stats,
+                                 qsop_error_t *error);
 static uint64_t saturating_add_u64(uint64_t left, uint64_t right);
 static uint64_t binary_signature_bound(uint32_t width);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
-                                    const uint64_t *adj, qsop_error_t *error);
+                                    const uint64_t *adj, qsop_solve_stats_t *stats,
+                                    qsop_error_t *error);
 static bool decomposition_score(const qsop_instance_t *qsop,
                                 const qsop_rankwidth_decomposition_t *decomposition,
                                 const uint64_t *adj, rw_decomposition_score_t *out,
@@ -2004,7 +2035,7 @@ static bool choose_cut_rank_split(uint32_t nvars, const uint64_t *adj, const uin
     range_bits(prefix_masks, words, split, end, right);
     qsop_bitset_copy(outside, all, words);
     qsop_bitset_and_not(outside, left, words);
-    const uint32_t left_rank = cut_rank_bitsets(nvars, adj, left, outside, words, error);
+    const uint32_t left_rank = cut_rank_bitsets(nvars, adj, left, outside, words, NULL, error);
     if (left_rank == UINT32_MAX) {
       free(left);
       free(right);
@@ -2013,7 +2044,7 @@ static bool choose_cut_rank_split(uint32_t nvars, const uint64_t *adj, const uin
     }
     qsop_bitset_copy(outside, all, words);
     qsop_bitset_and_not(outside, right, words);
-    const uint32_t right_rank = cut_rank_bitsets(nvars, adj, right, outside, words, error);
+    const uint32_t right_rank = cut_rank_bitsets(nvars, adj, right, outside, words, NULL, error);
     if (right_rank == UINT32_MAX) {
       free(left);
       free(right);
@@ -3042,29 +3073,32 @@ static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words, qs
 }
 
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
-                                 const uint64_t *right, size_t words, qsop_error_t *error) {
+                                 const uint64_t *right, size_t words, qsop_solve_stats_t *stats,
+                                 qsop_error_t *error) {
   uint64_t *rows = calloc((nvars == 0 ? 1U : nvars) * words, sizeof(*rows));
   if (rows == NULL) {
     set_error(error, "out of memory while computing rankwidth cut rank");
     return UINT32_MAX;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t nrows = 0;
   for (uint32_t v = 0; v < nvars; v++) {
     if (qsop_bitset_get(left, v)) {
       const uint64_t *source = qsop_bitset_const_row(adj, words, v);
       uint64_t *target = qsop_bitset_row(rows, words, nrows++);
-      for (size_t w = 0; w < words; w++) {
-        target[w] = source[w] & right[w];
-      }
+      qsop_bitset_copy(target, source, words);
+      qsop_bitset_and_simd(target, right, words, simd);
     }
   }
-  const uint32_t rank = qsop_gf2_rank_bitsets(rows, nrows, nvars, words);
+  note_rankwidth_bitset_ops(stats, simd, words, nrows);
+  const uint32_t rank = qsop_gf2_rank_bitsets_simd(rows, nrows, nvars, words, simd);
   free(rows);
   return rank;
 }
 
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
-                                    const uint64_t *adj, qsop_error_t *error) {
+                                    const uint64_t *adj, qsop_solve_stats_t *stats,
+                                    qsop_error_t *error) {
   uint64_t *all = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*all));
   uint64_t *right = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*right));
   if (all == NULL || right == NULL) {
@@ -3085,7 +3119,7 @@ static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomp
     qsop_bitset_copy(right, all, decomposition->words);
     qsop_bitset_and_not(right, left, decomposition->words);
     const uint32_t rank =
-        cut_rank_bitsets(decomposition->nvars, adj, left, right, decomposition->words, error);
+        cut_rank_bitsets(decomposition->nvars, adj, left, right, decomposition->words, stats, error);
     if (rank == UINT32_MAX) {
       free(all);
       free(right);
@@ -3108,7 +3142,7 @@ static bool decomposition_score(const qsop_instance_t *qsop,
     set_error(error, "internal error: null rankwidth decomposition score output");
     return false;
   }
-  const uint32_t cutrank_width = decomposition_width(decomposition, adj, error);
+  const uint32_t cutrank_width = decomposition_width(decomposition, adj, NULL, error);
   if (cutrank_width == UINT32_MAX) {
     return false;
   }
@@ -3281,8 +3315,8 @@ bool qsop_rankwidth_decomposition_forecast(const qsop_instance_t *qsop,
       const uint64_t *left = node_vars_const(decomposition, node_id);
       qsop_bitset_copy(right, all, decomposition->words);
       qsop_bitset_and_not(right, left, decomposition->words);
-      const uint32_t width =
-          cut_rank_bitsets(decomposition->nvars, adj, left, right, decomposition->words, error);
+      const uint32_t width = cut_rank_bitsets(decomposition->nvars, adj, left, right,
+                                              decomposition->words, NULL, error);
       if (width == UINT32_MAX) {
         ok = false;
         break;
@@ -3389,6 +3423,7 @@ static uint32_t rw_ctz_u64(uint64_t value) {
 static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
                                            const uint64_t *selected_assignment,
                                            const uint64_t *other_assignment, size_t words) {
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t parity = 0;
   for (size_t w = 0; w < words; w++) {
     uint64_t bits = selected_assignment[w];
@@ -3398,8 +3433,8 @@ static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
       if (v >= nvars) {
         break;
       }
-      parity ^= qsop_bitset_popcount_intersection(qsop_bitset_const_row(adj, words, (uint32_t)v),
-                                                  other_assignment, words) &
+      parity ^= qsop_bitset_popcount_intersection_simd(
+                    qsop_bitset_const_row(adj, words, (uint32_t)v), other_assignment, words, simd) &
                 1U;
       bits &= bits - 1U;
     }
@@ -3578,7 +3613,7 @@ static bool solve_rankwidth_linear_count_table_mod_once(
     stats->join_signature_pairs = signature_transitions;
     stats->rankwidth_linear_transition_events = value_transitions;
     stats->rankwidth_table_assignment_bytes = 0;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       goto cleanup;
     }
@@ -3706,12 +3741,13 @@ static bool rw_compute_join_transition_sign(uint32_t nvars, const uint64_t *adj,
                                             uint32_t right_signature, const uint64_t *right_rep,
                                             uint32_t right_weight, uint64_t *scratch_sig,
                                             rw_transition_eval_t *out, qsop_error_t *error) {
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const uint32_t sign = r / 2U;
   const uint32_t parity = cross_parity_bitsets_weighted(nvars, adj, left_rep, left_weight,
                                                         right_rep, right_weight, words);
   qsop_bitset_copy(scratch_sig, signature_bits(pool, left_signature), words);
-  qsop_bitset_xor(scratch_sig, signature_bits(pool, right_signature), words);
-  qsop_bitset_and(scratch_sig, outside, words);
+  qsop_bitset_xor_simd(scratch_sig, signature_bits(pool, right_signature), words, simd);
+  qsop_bitset_and_simd(scratch_sig, outside, words, simd);
   uint32_t parent_sig = 0;
   if (!signature_pool_intern(pool, scratch_sig, &parent_sig, error)) {
     return false;
@@ -6203,7 +6239,7 @@ static bool solve_rankwidth_count_table_mod_once(
     stats->max_signature_entries = max_signature_entries;
     stats->join_pairs = join_pairs;
     stats->join_signature_pairs = join_signature_pairs;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         table_free(&tables[t]);
@@ -6294,7 +6330,7 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
     stats->max_signature_entries = max_signature_entries;
     stats->join_pairs = join_pairs;
     stats->join_signature_pairs = join_signature_pairs;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < nnodes; t++) {
         table_free(&tables[t]);
@@ -6918,7 +6954,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     stats->rankwidth_streaming_join_emitted_pairs += streaming_emitted_pairs;
     stats->rankwidth_table_assignment_bytes =
         (uint64_t)signature_entries * decomposition->words * sizeof(uint64_t);
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         table_free(&tables[t]);
@@ -7260,7 +7296,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
     stats->join_pairs = saturating_mul_u64(join_signature_pairs, odd_modes);
     stats->join_signature_pairs = join_signature_pairs;
     stats->rankwidth_fourier_kernel = (uint32_t)kernel;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         fourier_table_free(&tables[t]);
@@ -7535,7 +7571,7 @@ static bool solve_rankwidth_single_mode_once(
     stats->rankwidth_dense_join_events += dense_join_events;
     stats->rankwidth_materialized_join_events += materialized_join_events;
     stats->rankwidth_streaming_join_events += streaming_join_events;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         complex_table_free(&tables[t]);
@@ -7766,7 +7802,7 @@ static bool solve_rankwidth_single_mode_once_f64(
     stats->rankwidth_dense_join_events += dense_join_events;
     stats->rankwidth_materialized_join_events += materialized_join_events;
     stats->rankwidth_streaming_join_events += streaming_join_events;
-    stats->decomposition_width = decomposition_width(decomposition, adj, error);
+    stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {
         complex64_table_free(&tables[t]);

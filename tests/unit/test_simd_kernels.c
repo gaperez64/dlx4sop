@@ -3,6 +3,7 @@
  * SIGILL rather than a wrong answer. Both properties are checked here across the vector-width
  * boundary (n < width, n == width, n with a tail) because that boundary is where a hand-written
  * remainder loop goes wrong. */
+#include "dlx4sop/bitset.h"
 #include "dlx4sop/simd.h"
 
 #include <inttypes.h>
@@ -137,6 +138,55 @@ static int check_bitset_ops(const qsop_simd_vtable_t *vt, const char *name, uint
         return 1;
       }
     }
+
+    memcpy(got, a, words * sizeof(*a));
+    memcpy(want, a, words * sizeof(*a));
+    qsop_bitset_xor_simd(got, b, words, vt);
+    ref->xor_u64(want, b, words);
+    if (words != 0 && memcmp(got, want, words * sizeof(*a)) != 0) {
+      fprintf(stderr, "%s: guarded xor wrapper mismatch at words=%zu\n", name, words);
+      return 1;
+    }
+    memcpy(got, a, words * sizeof(*a));
+    memcpy(want, a, words * sizeof(*a));
+    qsop_bitset_or_simd(got, b, words, vt);
+    ref->or_u64(want, b, words);
+    if (words != 0 && memcmp(got, want, words * sizeof(*a)) != 0) {
+      fprintf(stderr, "%s: guarded or wrapper mismatch at words=%zu\n", name, words);
+      return 1;
+    }
+    memcpy(got, a, words * sizeof(*a));
+    memcpy(want, a, words * sizeof(*a));
+    qsop_bitset_and_simd(got, b, words, vt);
+    ref->and_u64(want, b, words);
+    if (words != 0 && memcmp(got, want, words * sizeof(*a)) != 0) {
+      fprintf(stderr, "%s: guarded and wrapper mismatch at words=%zu\n", name, words);
+      return 1;
+    }
+    memcpy(got, a, words * sizeof(*a));
+    memcpy(want, a, words * sizeof(*a));
+    qsop_bitset_and_not_simd(got, b, words, vt);
+    ref->andnot_u64(want, b, words);
+    if (words != 0 && memcmp(got, want, words * sizeof(*a)) != 0) {
+      fprintf(stderr, "%s: guarded andnot wrapper mismatch at words=%zu\n", name, words);
+      return 1;
+    }
+    if (qsop_bitset_popcount_intersection_simd(a, b, words, vt) !=
+            ref->popcount_and_u64(a, b, words) ||
+        qsop_bitset_popcount_andnot_simd(a, b, words, vt) !=
+            ref->popcount_andnot_u64(a, b, words)) {
+      fprintf(stderr, "%s: guarded popcount wrapper mismatch at words=%zu\n", name, words);
+      return 1;
+    }
+  }
+  if (vt->min_lanes > 0 &&
+      qsop_bitset_simd_worthwhile(vt, vt->min_lanes - 1U)) {
+    fprintf(stderr, "%s: bitset SIMD guard accepted a short row\n", name);
+    return 1;
+  }
+  if (!qsop_bitset_simd_worthwhile(vt, vt->min_lanes)) {
+    fprintf(stderr, "%s: bitset SIMD guard rejected one full vector\n", name);
+    return 1;
   }
   return 0;
 }
