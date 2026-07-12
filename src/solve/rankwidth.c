@@ -3,6 +3,7 @@
 #include "dlx4sop/residue.h"
 #include "dlx4sop/simd.h"
 #include "trace.h"
+#include "../core/qsop_internal.h"
 
 #include <float.h>
 #include <inttypes.h>
@@ -14,26 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Long-double pi, matching the precision (and literal) already used for amplitude
- * reconstruction in src/cli/sop_solve.c and the treewidth single-mode path. */
-static const long double rw_two_pi =
-    6.283185307179586476925286766559005768394338798750211641949889L;
-
 #define RW_JOIN_MAP_INITIAL_CAP 1024U
 #define RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT UINT64_C(1000000)
 #define RW_DENSE_REFERENCE_MAX_DIM 22U
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 
-static void add_saturating_u64(uint64_t *dst, uint64_t value) {
-  if (dst == NULL) {
-    return;
-  }
-  if (UINT64_MAX - *dst < value) {
-    *dst = UINT64_MAX;
-  } else {
-    *dst += value;
-  }
-}
 
 static const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
@@ -55,9 +41,9 @@ static void note_rankwidth_bitset_ops(qsop_solve_stats_t *stats,
                            ? UINT64_MAX
                            : calls * (uint64_t)words;
   if (simd != qsop_simd_scalar_vtable() && qsop_bitset_simd_worthwhile(simd, words)) {
-    add_saturating_u64(&stats->simd_vectorized_ops, ops);
+    qsop_add_saturating_u64(&stats->simd_vectorized_ops, ops);
   } else {
-    add_saturating_u64(&stats->simd_scalar_fallback_ops, ops);
+    qsop_add_saturating_u64(&stats->simd_scalar_fallback_ops, ops);
   }
 }
 
@@ -348,7 +334,7 @@ static void record_rankwidth_f64_simd_kernel(qsop_solve_stats_t *stats,
 
 static void note_rankwidth_f64_scalar_fallback(const rw_complex64_context_t *ctx, uint64_t ops) {
   if (ctx != NULL && ctx->stats != NULL) {
-    add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, ops);
+    qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, ops);
   }
 }
 
@@ -399,20 +385,6 @@ static int compare_decomposition_scores(rw_decomposition_score_t left,
   return 0;
 }
 
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
 
 /* Count-table / all-modes-Fourier paths below allocate O(r) or O(r^2) structures per
  * signature, so their entry points refuse a modulus that would not fit uint32_t rather
@@ -420,7 +392,7 @@ static void set_error(qsop_error_t *error, const char *fmt, ...) {
  * limit. Mirrors treewidth_refuse_large_modulus in treewidth.c. */
 static bool rw_refuse_large_modulus(const qsop_instance_t *qsop, qsop_error_t *error) {
   if (qsop != NULL && qsop->r > UINT32_MAX) {
-    set_error(error, "rankwidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
+    qsop_set_error(error, "rankwidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
                      "--solve-mode single-fourier");
     return false;
   }
@@ -477,22 +449,6 @@ static uint64_t *complex64_assignment(const rw_complex64_table_t *table, size_t 
   return qsop_bitset_row(table->assignments, words, (uint32_t)index);
 }
 
-/* omega_r^{target_mode * k}, computed directly from a scalar angle: r never sizes an
- * array in this path, only a divisor here, so table cost is fully independent of r. */
-static void rw_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
-                             long double *im) {
-  const long double angle = rw_two_pi * (long double)target_mode * (long double)k / (long double)r;
-  *re = cosl(angle);
-  *im = sinl(angle);
-}
-
-static void rw_root_of_unity_f64(uint64_t r, uint32_t target_mode, uint64_t k, double *re,
-                                 double *im) {
-  const double angle = (double)rw_two_pi * (double)target_mode * (double)k / (double)r;
-  *re = cos(angle);
-  *im = sin(angle);
-}
-
 static const uint64_t *signature_bits(const rw_signature_pool_t *pool, uint32_t signature) {
   return qsop_bitset_const_row(pool->bits, pool->words, signature);
 }
@@ -509,7 +465,7 @@ static bool rw_sig_ht_build(rw_sig_ht_t *ht, const uint64_t *fingerprints, uint3
   if (slots == NULL || keys == NULL) {
     free(slots);
     free(keys);
-    set_error(error, "out of memory building signature hash table");
+    qsop_set_error(error, "out of memory building signature hash table");
     return false;
   }
   memset(slots, 0xFF, cap * sizeof(*slots)); /* UINT32_MAX = empty */
@@ -538,7 +494,7 @@ static void rw_sig_ht_free(rw_sig_ht_t *ht) {
 
 static bool signature_pool_init(rw_signature_pool_t *pool, size_t words, qsop_error_t *error) {
   if (pool == NULL) {
-    set_error(error, "internal error: null rankwidth signature pool");
+    qsop_set_error(error, "internal error: null rankwidth signature pool");
     return false;
   }
   *pool = (rw_signature_pool_t){
@@ -565,13 +521,13 @@ static bool signature_pool_reserve(rw_signature_pool_t *pool, size_t needed, qso
   size_t new_cap = pool->cap == 0 ? 8U : pool->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth signature pool is too large");
+      qsop_set_error(error, "rankwidth signature pool is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (pool->words != 0 && new_cap > SIZE_MAX / pool->words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth signature pool is too large");
+    qsop_set_error(error, "rankwidth signature pool is too large");
     return false;
   }
   uint64_t *bits = calloc(new_cap * pool->words, sizeof(*bits));
@@ -579,7 +535,7 @@ static bool signature_pool_reserve(rw_signature_pool_t *pool, size_t needed, qso
   if (bits == NULL || fingerprints == NULL) {
     free(bits);
     free(fingerprints);
-    set_error(error, "out of memory while growing rankwidth signature pool");
+    qsop_set_error(error, "out of memory while growing rankwidth signature pool");
     return false;
   }
   if (pool->len != 0) {
@@ -597,7 +553,7 @@ static bool signature_pool_reserve(rw_signature_pool_t *pool, size_t needed, qso
 static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bits, uint32_t *out,
                                   qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null rankwidth signature output");
+    qsop_set_error(error, "internal error: null rankwidth signature output");
     return false;
   }
 
@@ -626,7 +582,7 @@ static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bit
         h = (h + 1U) & ht->mask;
     }
     if (pool->len > UINT32_MAX) {
-      set_error(error, "rankwidth signature pool exceeds uint32 ids");
+      qsop_set_error(error, "rankwidth signature pool exceeds uint32 ids");
       return false;
     }
     if (!signature_pool_reserve(pool, pool->len + 1U, error))
@@ -650,7 +606,7 @@ static bool signature_pool_intern(rw_signature_pool_t *pool, const uint64_t *bit
     }
   }
   if (pool->len > UINT32_MAX) {
-    set_error(error, "rankwidth signature pool exceeds uint32 ids");
+    qsop_set_error(error, "rankwidth signature pool exceeds uint32 ids");
     return false;
   }
   if (!signature_pool_reserve(pool, pool->len + 1U, error))
@@ -672,7 +628,6 @@ static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words, qs
 static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint64_t *left,
                                  const uint64_t *right, size_t words, qsop_solve_stats_t *stats,
                                  qsop_error_t *error);
-static uint64_t saturating_add_u64(uint64_t left, uint64_t right);
 static uint64_t binary_signature_bound(uint32_t width);
 static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                     const uint64_t *adj, qsop_solve_stats_t *stats,
@@ -690,14 +645,14 @@ static bool reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *erro
   size_t new_cap = table->cap == 0 ? 8U : table->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth table is too large");
+      qsop_set_error(error, "rankwidth table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   rw_entry_t *entries = realloc(table->entries, new_cap * sizeof(*entries));
   if (entries == NULL) {
-    set_error(error, "out of memory while growing rankwidth table");
+    qsop_set_error(error, "out of memory while growing rankwidth table");
     return false;
   }
   table->entries = entries;
@@ -713,13 +668,13 @@ static bool reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_er
   size_t new_cap = table->reps_cap == 0 ? 8U : table->reps_cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth signature table is too large");
+      qsop_set_error(error, "rankwidth signature table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth representative assignment table is too large");
+    qsop_set_error(error, "rankwidth representative assignment table is too large");
     return false;
   }
   rw_signature_rep_t *reps = calloc(new_cap, sizeof(*reps));
@@ -729,7 +684,7 @@ static bool reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_er
     free(reps);
     free(assignments);
     free(rep_weights);
-    set_error(error, "out of memory while growing rankwidth signature table");
+    qsop_set_error(error, "out of memory while growing rankwidth signature table");
     return false;
   }
   if (table->reps_len != 0) {
@@ -760,7 +715,7 @@ static bool rep_slots_rehash(rw_table_t *table, qsop_error_t *error) {
   }
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
-    set_error(error, "out of memory while growing rankwidth signature index");
+    qsop_set_error(error, "out of memory while growing rankwidth signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots)); /* UINT32_MAX = empty */
@@ -786,7 +741,7 @@ static bool fourier_slots_rehash(rw_fourier_table_t *table, qsop_error_t *error)
   }
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
-    set_error(error, "out of memory while growing rankwidth Fourier signature index");
+    qsop_set_error(error, "out of memory while growing rankwidth Fourier signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots));
@@ -812,7 +767,7 @@ static bool complex_slots_rehash(rw_complex_table_t *table, qsop_error_t *error)
   }
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
-    set_error(error, "out of memory while growing rankwidth single-mode signature index");
+    qsop_set_error(error, "out of memory while growing rankwidth single-mode signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots));
@@ -838,7 +793,7 @@ static bool complex64_slots_rehash(rw_complex64_table_t *table, qsop_error_t *er
   }
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
-    set_error(error, "out of memory while growing rankwidth double single-mode signature index");
+    qsop_set_error(error, "out of memory while growing rankwidth double single-mode signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots));
@@ -970,7 +925,7 @@ static bool build_sig_range_index(const rw_table_t *table, uint32_t max_sig, uin
   if (starts == NULL || ends == NULL) {
     free(starts);
     free(ends);
-    set_error(error, "out of memory allocating sig range index");
+    qsop_set_error(error, "out of memory allocating sig range index");
     return false;
   }
   memset(starts, 0xFF, n * sizeof(*starts));
@@ -1049,7 +1004,7 @@ static bool join_workspace_alloc(size_t cap_sigs, uint32_t r, rw_join_workspace_
     free(ws->right_starts);
     free(ws->right_ends);
     *ws = (rw_join_workspace_t){0};
-    set_error(error, "out of memory allocating join workspace");
+    qsop_set_error(error, "out of memory allocating join workspace");
     return false;
   }
   return true;
@@ -1086,13 +1041,13 @@ static bool linear_table_reserve(rw_linear_table_t *table, size_t needed, uint32
   size_t new_cap = table->cap == 0 ? 8U : table->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth linear table is too large");
+      qsop_set_error(error, "rankwidth linear table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (r != 0 && new_cap > SIZE_MAX / r / sizeof(uint64_t)) {
-    set_error(error, "rankwidth linear table is too large");
+    qsop_set_error(error, "rankwidth linear table is too large");
     return false;
   }
   uint32_t *signatures = malloc(new_cap * sizeof(*signatures));
@@ -1100,7 +1055,7 @@ static bool linear_table_reserve(rw_linear_table_t *table, size_t needed, uint32
   if (signatures == NULL || counts == NULL) {
     free(signatures);
     free(counts);
-    set_error(error, "out of memory while growing rankwidth linear table");
+    qsop_set_error(error, "out of memory while growing rankwidth linear table");
     return false;
   }
   if (table->signatures != NULL && table->len != 0) {
@@ -1122,14 +1077,14 @@ static bool linear_table_rehash(rw_linear_table_t *table, qsop_error_t *error) {
   const size_t need = (table->len + 1U) * 2U;
   while (new_cap < need) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth linear signature index is too large");
+      qsop_set_error(error, "rankwidth linear signature index is too large");
       return false;
     }
     new_cap *= 2U;
   }
   uint32_t *slots = malloc(new_cap * sizeof(*slots));
   if (slots == NULL) {
-    set_error(error, "out of memory while growing rankwidth linear signature index");
+    qsop_set_error(error, "out of memory while growing rankwidth linear signature index");
     return false;
   }
   memset(slots, 0xFF, new_cap * sizeof(*slots));
@@ -1178,7 +1133,7 @@ static bool linear_table_signature_index(rw_linear_table_t *table, uint32_t sign
     slot = (slot + 1U) & mask;
   }
   if (table->len > UINT32_MAX) {
-    set_error(error, "rankwidth linear table exceeds uint32 rows");
+    qsop_set_error(error, "rankwidth linear table exceeds uint32 rows");
     return false;
   }
   if (!linear_table_reserve(table, table->len + 1U, r, error)) {
@@ -1255,13 +1210,13 @@ static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qs
   size_t new_cap = map->cap == 0 ? 8U : map->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth join map is too large");
+      qsop_set_error(error, "rankwidth join map is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth join assignment map is too large");
+    qsop_set_error(error, "rankwidth join assignment map is too large");
     return false;
   }
   rw_join_map_entry_t *entries = calloc(new_cap, sizeof(*entries));
@@ -1269,7 +1224,7 @@ static bool reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qs
   if (entries == NULL || assignments == NULL) {
     free(entries);
     free(assignments);
-    set_error(error, "out of memory while growing rankwidth join map");
+    qsop_set_error(error, "out of memory while growing rankwidth join map");
     return false;
   }
   if (map->len != 0) {
@@ -1358,7 +1313,7 @@ static bool join_map_build_sorted_idx(rw_join_map_t *map, qsop_error_t *error) {
     free(tmp);
     free(sorted_idx);
     free(sorted_keys);
-    set_error(error, "out of memory while building rankwidth join map index");
+    qsop_set_error(error, "out of memory while building rankwidth join map index");
     return false;
   }
   for (size_t i = 0; i < map->len; i++) {
@@ -1385,17 +1340,17 @@ static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint
   size_t new_cap = table->cap == 0 ? 8U : table->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth Fourier table is too large");
+      qsop_set_error(error, "rankwidth Fourier table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (new_cap > SIZE_MAX / (value_slots == 0 ? 1U : (size_t)value_slots) / sizeof(uint64_t)) {
-    set_error(error, "rankwidth Fourier table is too large");
+    qsop_set_error(error, "rankwidth Fourier table is too large");
     return false;
   }
   if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth Fourier assignment table is too large");
+    qsop_set_error(error, "rankwidth Fourier assignment table is too large");
     return false;
   }
 
@@ -1408,7 +1363,7 @@ static bool reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint
     free(assignments);
     free(assignment_weights);
     free(values);
-    set_error(error, "out of memory while growing rankwidth Fourier table");
+    qsop_set_error(error, "out of memory while growing rankwidth Fourier table");
     return false;
   }
   if (table->len != 0) {
@@ -1450,17 +1405,17 @@ static bool reserve_complex_table(rw_complex_table_t *table, size_t needed, size
   size_t new_cap = table->cap == 0 ? 8U : table->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth single-mode table is too large");
+      qsop_set_error(error, "rankwidth single-mode table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (new_cap > SIZE_MAX / sizeof(long double)) {
-    set_error(error, "rankwidth single-mode table is too large");
+    qsop_set_error(error, "rankwidth single-mode table is too large");
     return false;
   }
   if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth single-mode assignment table is too large");
+    qsop_set_error(error, "rankwidth single-mode assignment table is too large");
     return false;
   }
 
@@ -1479,7 +1434,7 @@ static bool reserve_complex_table(rw_complex_table_t *table, size_t needed, size
     free(assignment_weights);
     free(re);
     free(im);
-    set_error(error, "out of memory while growing rankwidth single-mode table");
+    qsop_set_error(error, "out of memory while growing rankwidth single-mode table");
     return false;
   }
   if (table->len != 0) {
@@ -1525,17 +1480,17 @@ static bool reserve_complex64_table(rw_complex64_table_t *table, size_t needed, 
   size_t new_cap = table->cap == 0 ? 8U : table->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "rankwidth double single-mode table is too large");
+      qsop_set_error(error, "rankwidth double single-mode table is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (new_cap > SIZE_MAX / sizeof(double)) {
-    set_error(error, "rankwidth double single-mode table is too large");
+    qsop_set_error(error, "rankwidth double single-mode table is too large");
     return false;
   }
   if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    set_error(error, "rankwidth double single-mode assignment table is too large");
+    qsop_set_error(error, "rankwidth double single-mode assignment table is too large");
     return false;
   }
 
@@ -1551,7 +1506,7 @@ static bool reserve_complex64_table(rw_complex64_table_t *table, size_t needed, 
     free(assignment_weights);
     free(re);
     free(im);
-    set_error(error, "out of memory while growing rankwidth double single-mode table");
+    qsop_set_error(error, "out of memory while growing rankwidth double single-mode table");
     return false;
   }
   if (table->len != 0) {
@@ -1604,11 +1559,11 @@ static bool parse_u32_token(const char *text, uint32_t *out) {
 static bool validate_decomposition_dfs(qsop_rankwidth_decomposition_t *decomposition, uint32_t node,
                                        uint8_t *state, uint8_t *seen_var, qsop_error_t *error) {
   if (node >= decomposition->nnodes) {
-    set_error(error, "rankwidth decomposition references node outside range");
+    qsop_set_error(error, "rankwidth decomposition references node outside range");
     return false;
   }
   if (state[node] == 1U) {
-    set_error(error, "rankwidth decomposition contains a cycle");
+    qsop_set_error(error, "rankwidth decomposition contains a cycle");
     return false;
   }
   if (state[node] == 2U) {
@@ -1617,17 +1572,17 @@ static bool validate_decomposition_dfs(qsop_rankwidth_decomposition_t *decomposi
 
   rw_node_t *entry = &decomposition->nodes[node];
   if (entry->kind == RW_NODE_UNDEFINED) {
-    set_error(error, "rankwidth decomposition references undefined node %" PRIu32, node);
+    qsop_set_error(error, "rankwidth decomposition references undefined node %" PRIu32, node);
     return false;
   }
   state[node] = 1U;
   if (entry->kind == RW_NODE_LEAF) {
     if (entry->var >= decomposition->nvars) {
-      set_error(error, "rankwidth decomposition leaf variable is outside range");
+      qsop_set_error(error, "rankwidth decomposition leaf variable is outside range");
       return false;
     }
     if (seen_var[entry->var] != 0) {
-      set_error(error, "rankwidth decomposition maps variable %" PRIu32 " more than once",
+      qsop_set_error(error, "rankwidth decomposition maps variable %" PRIu32 " more than once",
                 entry->var);
       return false;
     }
@@ -1645,13 +1600,13 @@ static bool validate_decomposition_dfs(qsop_rankwidth_decomposition_t *decomposi
     uint64_t *vars = node_vars(decomposition, node);
     for (size_t w = 0; w < decomposition->words; w++) {
       if ((left[w] & right[w]) != 0) {
-        set_error(error, "rankwidth decomposition children are not disjoint");
+        qsop_set_error(error, "rankwidth decomposition children are not disjoint");
         return false;
       }
       vars[w] = left[w] | right[w];
     }
     if (qsop_bitset_empty(vars, decomposition->words)) {
-      set_error(error, "rankwidth decomposition children are not disjoint");
+      qsop_set_error(error, "rankwidth decomposition children are not disjoint");
       return false;
     }
   }
@@ -1672,7 +1627,7 @@ static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition
   if (state == NULL || seen_var == NULL) {
     free(state);
     free(seen_var);
-    set_error(error, "out of memory while validating rankwidth decomposition");
+    qsop_set_error(error, "out of memory while validating rankwidth decomposition");
     return false;
   }
 
@@ -1682,7 +1637,7 @@ static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition
   if (all == NULL) {
     free(state);
     free(seen_var);
-    set_error(error, "out of memory while validating rankwidth decomposition");
+    qsop_set_error(error, "out of memory while validating rankwidth decomposition");
     return false;
   }
   for (uint32_t v = 0; v < decomposition->nvars; v++) {
@@ -1690,7 +1645,7 @@ static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition
   }
   if (ok && !qsop_bitset_equal(node_vars_const(decomposition, decomposition->root), all,
                                decomposition->words)) {
-    set_error(error, "rankwidth decomposition root does not cover every variable");
+    qsop_set_error(error, "rankwidth decomposition root does not cover every variable");
     free(all);
     free(state);
     free(seen_var);
@@ -1698,7 +1653,7 @@ static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition
   }
   for (uint32_t v = 0; ok && v < decomposition->nvars; v++) {
     if (seen_var[v] == 0) {
-      set_error(error, "rankwidth decomposition does not include variable %" PRIu32, v);
+      qsop_set_error(error, "rankwidth decomposition does not include variable %" PRIu32, v);
       free(all);
       free(state);
       free(seen_var);
@@ -1716,14 +1671,14 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error) {
   if (file == NULL || out == NULL) {
-    set_error(error, "internal error: null rankwidth decomposition parse argument");
+    qsop_set_error(error, "internal error: null rankwidth decomposition parse argument");
     return false;
   }
   *out = NULL;
 
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
   if (decomposition == NULL) {
-    set_error(error, "out of memory while allocating rankwidth decomposition");
+    qsop_set_error(error, "out of memory while allocating rankwidth decomposition");
     return false;
   }
 
@@ -1782,7 +1737,7 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
       decomposition->postorder = calloc(nnodes, sizeof(*decomposition->postorder));
       if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
           decomposition->postorder == NULL) {
-        set_error(error, "out of memory while allocating rankwidth decomposition nodes");
+        qsop_set_error(error, "out of memory while allocating rankwidth decomposition nodes");
         qsop_rankwidth_decomposition_free(decomposition);
         return false;
       }
@@ -1835,7 +1790,7 @@ bool qsop_rankwidth_decomposition_parse_file(FILE *file, const char *path, uint3
   }
 
   if (!saw_header) {
-    set_error(error, "rankwidth decomposition missing header");
+    qsop_set_error(error, "rankwidth decomposition missing header");
     qsop_rankwidth_decomposition_free(decomposition);
     return false;
   }
@@ -1852,7 +1807,7 @@ bool qsop_rankwidth_decomposition_write_file(FILE *file,
                                              const qsop_rankwidth_decomposition_t *decomposition,
                                              qsop_error_t *error) {
   if (file == NULL || decomposition == NULL) {
-    set_error(error, "internal error: null rankwidth decomposition write argument");
+    qsop_set_error(error, "internal error: null rankwidth decomposition write argument");
     return false;
   }
 
@@ -1869,7 +1824,7 @@ bool qsop_rankwidth_decomposition_write_file(FILE *file,
   }
 
   if (ferror(file)) {
-    set_error(error, "write error while serializing rankwidth decomposition");
+    qsop_set_error(error, "write error while serializing rankwidth decomposition");
     return false;
   }
   return true;
@@ -1911,7 +1866,7 @@ static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, qs
     free(work);
     free(active);
     free(scratch);
-    set_error(error, "out of memory while building rankwidth min-fill order");
+    qsop_set_error(error, "out of memory while building rankwidth min-fill order");
     return false;
   }
   for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -1948,7 +1903,7 @@ static bool make_min_fill_order(const qsop_instance_t *qsop, uint32_t *order, qs
       free(work);
       free(active);
       free(scratch);
-      set_error(error, "internal error: rankwidth min-fill order stopped early");
+      qsop_set_error(error, "internal error: rankwidth min-fill order stopped early");
       return false;
     }
     order[pos] = best;
@@ -2020,7 +1975,7 @@ static bool choose_cut_rank_split(uint32_t nvars, const uint64_t *adj, const uin
     free(left);
     free(right);
     free(outside);
-    set_error(error, "out of memory while choosing rankwidth cut-rank split");
+    qsop_set_error(error, "out of memory while choosing rankwidth cut-rank split");
     return false;
   }
 
@@ -2144,7 +2099,7 @@ static bool generate_left_deep_search(const qsop_instance_t *qsop, const uint32_
   if (decomp == NULL || order == NULL) {
     free(decomp);
     free(order);
-    set_error(error, "out of memory in left-deep search");
+    qsop_set_error(error, "out of memory in left-deep search");
     return false;
   }
   decomp->nvars = nvars;
@@ -2159,7 +2114,7 @@ static bool generate_left_deep_search(const qsop_instance_t *qsop, const uint32_
   if (decomp->nodes == NULL || decomp->node_vars == NULL || decomp->postorder == NULL) {
     qsop_rankwidth_decomposition_free(decomp);
     free(order);
-    set_error(error, "out of memory in left-deep search nodes");
+    qsop_set_error(error, "out of memory in left-deep search nodes");
     return false;
   }
 
@@ -2231,14 +2186,14 @@ static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
                                                    qsop_rankwidth_decomposition_t **out,
                                                    qsop_error_t *error) {
   if (qsop == NULL || out == NULL) {
-    set_error(error, "internal error: null left-deep rankwidth generation argument");
+    qsop_set_error(error, "internal error: null left-deep rankwidth generation argument");
     return false;
   }
   *out = NULL;
 
   qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
   if (decomposition == NULL) {
-    set_error(error, "out of memory while allocating left-deep rankwidth decomposition");
+    qsop_set_error(error, "out of memory while allocating left-deep rankwidth decomposition");
     return false;
   }
 
@@ -2253,7 +2208,7 @@ static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
   if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
       decomposition->postorder == NULL) {
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory while allocating left-deep rankwidth decomposition nodes");
+    qsop_set_error(error, "out of memory while allocating left-deep rankwidth decomposition nodes");
     return false;
   }
 
@@ -2301,7 +2256,7 @@ static bool make_fill_in_and_parents(const qsop_instance_t *qsop, const uint32_t
   if (active == NULL || scratch == NULL) {
     free(active);
     free(scratch);
-    set_error(error, "out of memory building fill-in graph");
+    qsop_set_error(error, "out of memory building fill-in graph");
     return false;
   }
 
@@ -2340,7 +2295,7 @@ static bool make_fill_in_and_parents(const qsop_instance_t *qsop, const uint32_t
   if (pos_of == NULL) {
     free(active);
     free(scratch);
-    set_error(error, "out of memory building pos_of map");
+    qsop_set_error(error, "out of memory building pos_of map");
     return false;
   }
   for (uint32_t pos = 0; pos < n; pos++) {
@@ -2388,7 +2343,7 @@ static bool build_etree_subtrees(qsop_rankwidth_decomposition_t *d, uint32_t roo
   if (stack == NULL || result == NULL) {
     free(stack);
     free(result);
-    set_error(error, "out of memory building from-treewidth subtrees");
+    qsop_set_error(error, "out of memory building from-treewidth subtrees");
     return false;
   }
   uint32_t sp = 0;
@@ -2399,7 +2354,7 @@ static bool build_etree_subtrees(qsop_rankwidth_decomposition_t *d, uint32_t roo
   if (visit_order == NULL) {
     free(stack);
     free(result);
-    set_error(error, "out of memory building from-treewidth visit order");
+    qsop_set_error(error, "out of memory building from-treewidth visit order");
     return false;
   }
   uint32_t visit_len = 0;
@@ -2461,7 +2416,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
   /* Step 1: compute min-fill elimination order. */
   uint32_t *order = calloc(n == 0 ? 1U : n, sizeof(*order));
   if (order == NULL) {
-    set_error(error, "out of memory in from-treewidth generator");
+    qsop_set_error(error, "out of memory in from-treewidth generator");
     return false;
   }
   for (uint32_t v = 0; v < n; v++) {
@@ -2479,7 +2434,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     free(order);
     free(fill);
     free(parent_pos);
-    set_error(error, "out of memory in from-treewidth fill-in allocation");
+    qsop_set_error(error, "out of memory in from-treewidth fill-in allocation");
     return false;
   }
   /* Initialize fill from original graph. */
@@ -2505,7 +2460,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     free(children_flat);
     free(children_arr);
     free(children_cnt);
-    set_error(error, "out of memory building elimination tree children");
+    qsop_set_error(error, "out of memory building elimination tree children");
     return false;
   }
 
@@ -2516,7 +2471,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     free(children_flat);
     free(children_arr);
     free(children_cnt);
-    set_error(error, "out of memory building elimination tree roots");
+    qsop_set_error(error, "out of memory building elimination tree roots");
     return false;
   }
   uint32_t root_count = 0;
@@ -2551,7 +2506,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     free(children_flat);
     free(children_arr);
     free(children_cnt);
-    set_error(error, "out of memory allocating from-treewidth decomposition");
+    qsop_set_error(error, "out of memory allocating from-treewidth decomposition");
     return false;
   }
   decomposition->nvars = n;
@@ -2569,7 +2524,7 @@ static bool make_from_treewidth_decomposition(const qsop_instance_t *qsop,
     free(children_arr);
     free(children_cnt);
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory allocating from-treewidth decomposition nodes");
+    qsop_set_error(error, "out of memory allocating from-treewidth decomposition nodes");
     return false;
   }
 
@@ -2629,21 +2584,21 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
                                              qsop_rankwidth_decomposition_t **out,
                                              qsop_error_t *error) {
   if (qsop == NULL || out == NULL) {
-    set_error(error, "internal error: null argument to rankwidth decomposition from-order");
+    qsop_set_error(error, "internal error: null argument to rankwidth decomposition from-order");
     return false;
   }
   *out = NULL;
   if (qsop->nvars == 0) {
     qsop_rankwidth_decomposition_t *empty = calloc(1, sizeof(*empty));
     if (empty == NULL) {
-      set_error(error, "out of memory while allocating empty rankwidth decomposition");
+      qsop_set_error(error, "out of memory while allocating empty rankwidth decomposition");
       return false;
     }
     *out = empty;
     return true;
   }
   if (order == NULL) {
-    set_error(error, "internal error: null order for rankwidth decomposition from-order");
+    qsop_set_error(error, "internal error: null order for rankwidth decomposition from-order");
     return false;
   }
   /* Copy the provided order into a writable buffer (make_fill_in_and_parents needs a uint32_t[]).
@@ -2651,7 +2606,7 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
   const uint32_t n = qsop->nvars;
   uint32_t *order_copy = malloc(n * sizeof(*order_copy));
   if (order_copy == NULL) {
-    set_error(error, "out of memory while copying order for rankwidth from-order");
+    qsop_set_error(error, "out of memory while copying order for rankwidth from-order");
     return false;
   }
   memcpy(order_copy, order, n * sizeof(*order_copy));
@@ -2664,7 +2619,7 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
     free(order_copy);
     free(fill);
     free(parent_pos);
-    set_error(error, "out of memory in from-order fill-in allocation");
+    qsop_set_error(error, "out of memory in from-order fill-in allocation");
     return false;
   }
   for (uint32_t e = 0; e < qsop->nedges; e++) {
@@ -2693,7 +2648,7 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
     free(children_cnt);
     free(parent_pos);
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory in from-order children allocation");
+    qsop_set_error(error, "out of memory in from-order children allocation");
     return false;
   }
   decomposition->nvars = n;
@@ -2710,7 +2665,7 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
     free(children_cnt);
     free(parent_pos);
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory in from-order decomposition nodes");
+    qsop_set_error(error, "out of memory in from-order decomposition nodes");
     return false;
   }
 
@@ -2722,7 +2677,7 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
     free(children_cnt);
     free(parent_pos);
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory in from-order root allocation");
+    qsop_set_error(error, "out of memory in from-order root allocation");
     return false;
   }
   uint32_t root_count = 0;
@@ -2798,14 +2753,14 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_decomposition_t **out,
                                            qsop_error_t *error) {
   if (qsop == NULL || out == NULL) {
-    set_error(error, "internal error: null rankwidth decomposition generation argument");
+    qsop_set_error(error, "internal error: null rankwidth decomposition generation argument");
     return false;
   }
   *out = NULL;
   if (qsop->nvars == 0) {
     qsop_rankwidth_decomposition_t *empty = calloc(1, sizeof(*empty));
     if (empty == NULL) {
-      set_error(error, "out of memory while allocating empty rankwidth decomposition");
+      qsop_set_error(error, "out of memory while allocating empty rankwidth decomposition");
       return false;
     }
     *out = empty;
@@ -2856,7 +2811,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
   if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH) {
     uint32_t *mfs_order = calloc(qsop->nvars, sizeof(*mfs_order));
     if (mfs_order == NULL) {
-      set_error(error, "out of memory while allocating min-fill-search order");
+      qsop_set_error(error, "out of memory while allocating min-fill-search order");
       return false;
     }
     for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -2878,7 +2833,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     free(order);
     free(leaf_nodes);
     free(decomposition);
-    set_error(error, "out of memory while allocating generated rankwidth decomposition");
+    qsop_set_error(error, "out of memory while allocating generated rankwidth decomposition");
     return false;
   }
 
@@ -2919,7 +2874,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     free(order);
     free(leaf_nodes);
     qsop_rankwidth_decomposition_free(decomposition);
-    set_error(error, "out of memory while allocating generated rankwidth decomposition nodes");
+    qsop_set_error(error, "out of memory while allocating generated rankwidth decomposition nodes");
     return false;
   }
 
@@ -2956,7 +2911,7 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       free(order);
       free(leaf_nodes);
       qsop_rankwidth_decomposition_free(decomposition);
-      set_error(error, "out of memory while building rankwidth cut-rank prefix masks");
+      qsop_set_error(error, "out of memory while building rankwidth cut-rank prefix masks");
       return false;
     }
     for (uint32_t i = 0; i < qsop->nvars; i++) {
@@ -3062,7 +3017,7 @@ void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposi
 static uint64_t *adjacency_bitsets(const qsop_instance_t *qsop, size_t words, qsop_error_t *error) {
   uint64_t *adj = calloc((qsop->nvars == 0 ? 1U : qsop->nvars) * words, sizeof(*adj));
   if (adj == NULL) {
-    set_error(error, "out of memory while allocating rankwidth adjacency bitsets");
+    qsop_set_error(error, "out of memory while allocating rankwidth adjacency bitsets");
     return NULL;
   }
   for (uint32_t e = 0; e < qsop->nedges; e++) {
@@ -3077,7 +3032,7 @@ static uint32_t cut_rank_bitsets(uint32_t nvars, const uint64_t *adj, const uint
                                  qsop_error_t *error) {
   uint64_t *rows = calloc((nvars == 0 ? 1U : nvars) * words, sizeof(*rows));
   if (rows == NULL) {
-    set_error(error, "out of memory while computing rankwidth cut rank");
+    qsop_set_error(error, "out of memory while computing rankwidth cut rank");
     return UINT32_MAX;
   }
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
@@ -3104,7 +3059,7 @@ static uint32_t decomposition_width(const qsop_rankwidth_decomposition_t *decomp
   if (all == NULL || right == NULL) {
     free(all);
     free(right);
-    set_error(error, "out of memory while computing rankwidth decomposition width");
+    qsop_set_error(error, "out of memory while computing rankwidth decomposition width");
     return UINT32_MAX;
   }
   for (uint32_t v = 0; v < decomposition->nvars; v++) {
@@ -3139,7 +3094,7 @@ static bool decomposition_score(const qsop_instance_t *qsop,
                                 const uint64_t *adj, rw_decomposition_score_t *out,
                                 qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null rankwidth decomposition score output");
+    qsop_set_error(error, "internal error: null rankwidth decomposition score output");
     return false;
   }
   const uint32_t cutrank_width = decomposition_width(decomposition, adj, NULL, error);
@@ -3164,11 +3119,11 @@ bool qsop_rankwidth_decomposition_width(const qsop_instance_t *qsop,
                                         qsop_rankwidth_decomposition_t *decomposition,
                                         uint32_t *cutrank_width_out, qsop_error_t *error) {
   if (qsop == NULL || decomposition == NULL || cutrank_width_out == NULL) {
-    set_error(error, "internal error: null rankwidth width argument");
+    qsop_set_error(error, "internal error: null rankwidth width argument");
     return false;
   }
   if (decomposition->nvars != qsop->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (qsop->nedges == 0) {
@@ -3202,17 +3157,6 @@ bool qsop_rankwidth_decomposition_width(const qsop_instance_t *qsop,
   return true;
 }
 
-static uint64_t saturating_add_u64(uint64_t left, uint64_t right) {
-  return UINT64_MAX - left < right ? UINT64_MAX : left + right;
-}
-
-static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
-  if (left != 0 && right > UINT64_MAX / left) {
-    return UINT64_MAX;
-  }
-  return left * right;
-}
-
 static uint64_t binary_signature_bound(uint32_t width) {
   if (width >= 64U) {
     return UINT64_MAX;
@@ -3225,7 +3169,7 @@ static void rankwidth_dense_fourier_forecast(const qsop_instance_t *qsop,
                                              uint32_t cutrank_width, uint64_t *dense_table_out,
                                              uint64_t *dense_even_join_out) {
   const uint64_t dense_signatures = binary_signature_bound(cutrank_width);
-  const uint64_t dense_table = saturating_mul_u64(dense_signatures, qsop->r);
+  const uint64_t dense_table = qsop_saturating_mul_u64(dense_signatures, qsop->r);
   uint64_t join_nodes = 0;
   for (uint32_t i = 0; i < decomposition->nnodes; i++) {
     if (decomposition->nodes[i].kind == RW_NODE_JOIN) {
@@ -3233,13 +3177,13 @@ static void rankwidth_dense_fourier_forecast(const qsop_instance_t *qsop,
     }
   }
   const uint64_t even_modes = qsop->r / 2U;
-  const uint64_t width_work = saturating_mul_u64(cutrank_width, dense_signatures);
-  const uint64_t per_join = saturating_mul_u64(saturating_mul_u64(3U, even_modes), width_work);
+  const uint64_t width_work = qsop_saturating_mul_u64(cutrank_width, dense_signatures);
+  const uint64_t per_join = qsop_saturating_mul_u64(qsop_saturating_mul_u64(3U, even_modes), width_work);
   if (dense_table_out != NULL) {
     *dense_table_out = dense_table;
   }
   if (dense_even_join_out != NULL) {
-    *dense_even_join_out = saturating_mul_u64(join_nodes, per_join);
+    *dense_even_join_out = qsop_saturating_mul_u64(join_nodes, per_join);
   }
 }
 
@@ -3253,11 +3197,11 @@ bool qsop_rankwidth_decomposition_forecast(const qsop_instance_t *qsop,
                                            uint64_t *join_pairs_out, qsop_error_t *error) {
   if (qsop == NULL || decomposition == NULL ||
       (max_table_entries_out == NULL && join_pairs_out == NULL)) {
-    set_error(error, "internal error: null rankwidth forecast argument");
+    qsop_set_error(error, "internal error: null rankwidth forecast argument");
     return false;
   }
   if (decomposition->nvars != qsop->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (decomposition->score_cached) {
@@ -3296,7 +3240,7 @@ bool qsop_rankwidth_decomposition_forecast(const qsop_instance_t *qsop,
     free(all);
     free(right);
     free(signature_counts);
-    set_error(error, "out of memory while forecasting rankwidth table pressure");
+    qsop_set_error(error, "out of memory while forecasting rankwidth table pressure");
     return false;
   }
   for (uint32_t v = 0; v < decomposition->nvars; v++) {
@@ -3329,12 +3273,12 @@ bool qsop_rankwidth_decomposition_forecast(const qsop_instance_t *qsop,
       signatures = min_u64(2U, signature_cap);
     } else {
       const uint64_t pair_count =
-          saturating_mul_u64(signature_counts[node->left], signature_counts[node->right]);
-      join_pairs = saturating_add_u64(join_pairs, pair_count);
+          qsop_saturating_mul_u64(signature_counts[node->left], signature_counts[node->right]);
+      join_pairs = qsop_saturating_add_u64(join_pairs, pair_count);
       signatures = min_u64(pair_count, signature_cap);
     }
     signature_counts[node_id] = signatures;
-    const uint64_t table_entries = saturating_mul_u64(signatures, qsop->r);
+    const uint64_t table_entries = qsop_saturating_mul_u64(signatures, qsop->r);
     if (table_entries > max_table_entries) {
       max_table_entries = table_entries;
     }
@@ -3471,7 +3415,7 @@ static bool solve_rankwidth_linear_count_table_mod_once(
     const uint64_t *adj, const uint32_t *order, uint64_t count_modulus, uint64_t *counts,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (count_modulus == 0 && qsop->nvars >= 64U) {
-    set_error(error, "rankwidth exact linear count-table handoff requires fewer than 64 variables");
+    qsop_set_error(error, "rankwidth exact linear count-table handoff requires fewer than 64 variables");
     return false;
   }
 
@@ -3491,7 +3435,7 @@ static bool solve_rankwidth_linear_count_table_mod_once(
   bool ok = false;
   if (suffix == NULL || zero_bits == NULL || one_bits == NULL ||
       !signature_pool_init(&pool, words, error)) {
-    set_error(error, "out of memory while allocating rankwidth linear DP state");
+    qsop_set_error(error, "out of memory while allocating rankwidth linear DP state");
     goto cleanup;
   }
 
@@ -3572,8 +3516,8 @@ static bool solve_rankwidth_linear_count_table_mod_once(
     next = tmp;
 
     const uint64_t step_entries = linear_table_nonzero_entries(&current, r);
-    table_entries = saturating_add_u64(table_entries, step_entries);
-    signature_entries = saturating_add_u64(signature_entries, current.len);
+    table_entries = qsop_saturating_add_u64(table_entries, step_entries);
+    signature_entries = qsop_saturating_add_u64(signature_entries, current.len);
     if (step_entries > max_table_entries) {
       max_table_entries = step_entries;
     }
@@ -3648,21 +3592,21 @@ static bool solve_rankwidth_linear_count_table_crt(
     return false;
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
-    set_error(error, "rankwidth linear CRT count table is too large");
+    qsop_set_error(error, "rankwidth linear CRT count table is too large");
     goto cleanup;
   }
   all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
   residues = calloc(nprimes == 0 ? 1U : nprimes, sizeof(*residues));
   result = calloc(1, sizeof(*result));
   if (all_counts == NULL || residues == NULL || result == NULL) {
-    set_error(error, "out of memory for rankwidth linear CRT state");
+    qsop_set_error(error, "out of memory for rankwidth linear CRT state");
     goto cleanup;
   }
   result->r = r32;
   result->norm_h = qsop->norm_h;
   result->count_strings = calloc(r32, sizeof(*result->count_strings));
   if (result->count_strings == NULL) {
-    set_error(error, "out of memory for rankwidth linear CRT result strings");
+    qsop_set_error(error, "out of memory for rankwidth linear CRT result strings");
     goto cleanup;
   }
 
@@ -3716,7 +3660,7 @@ static bool solve_rankwidth_linear_count_table(const qsop_instance_t *qsop,
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL || !qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth linear result");
+    qsop_set_error(error, "out of memory while allocating rankwidth linear result");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -3784,7 +3728,7 @@ static bool rw_transition_csr_build_sign(
   /* Pass 1: count transitions per left rep and track max parent sig id. */
   uint64_t *counts = calloc(lreps, sizeof(*counts));
   if (counts == NULL) {
-    set_error(error, "out of memory building CSR transition counts");
+    qsop_set_error(error, "out of memory building CSR transition counts");
     return false;
   }
   uint32_t max_rsig = 0;
@@ -3834,7 +3778,7 @@ static bool rw_transition_csr_build_sign(
     free(counts);
     free(left_signatures);
     free(offsets);
-    set_error(error, "out of memory building CSR offsets");
+    qsop_set_error(error, "out of memory building CSR offsets");
     return false;
   }
   for (uint32_t i = 0; i < left_sig_count; i++) {
@@ -3857,7 +3801,7 @@ static bool rw_transition_csr_build_sign(
     if (items == NULL) {
       free(left_signatures);
       free(offsets);
-      set_error(error, "out of memory building CSR transition items");
+      qsop_set_error(error, "out of memory building CSR transition items");
       return false;
     }
   }
@@ -3868,7 +3812,7 @@ static bool rw_transition_csr_build_sign(
     free(left_signatures);
     free(offsets);
     free(items);
-    set_error(error, "out of memory building CSR cursors");
+    qsop_set_error(error, "out of memory building CSR cursors");
     return false;
   }
   memcpy(cursors, offsets, left_sig_count * sizeof(*cursors));
@@ -3991,7 +3935,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
       free(right_starts);
       free(right_ends);
       if (acc == NULL)
-        set_error(error, "out of memory in CSR join accumulator");
+        qsop_set_error(error, "out of memory in CSR join accumulator");
       return false;
     }
   }
@@ -4008,7 +3952,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
     }
     free(sig_map_left);
     free(sig_map_right);
-    set_error(error, "out of memory in CSR join witness map");
+    qsop_set_error(error, "out of memory in CSR join witness map");
     return false;
   }
   memset(sig_map_left, 0xFF, n_psigs * sizeof(*sig_map_left));
@@ -4029,7 +3973,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
     free(sig_map_right);
     free(left_rep_idx);
     free(right_rep_idx);
-    set_error(error, "out of memory building rep index for CSR join");
+    qsop_set_error(error, "out of memory building rep index for CSR join");
     return false;
   }
   memset(left_rep_idx, 0xFF, ((size_t)max_lsig + 1U) * sizeof(*left_rep_idx));
@@ -4122,7 +4066,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
   uint64_t *parent_rep = calloc(w, sizeof(*parent_rep));
   if (parent_rep == NULL) {
     CSR_JOIN_CLEANUP();
-    set_error(error, "out of memory for CSR join parent rep");
+    qsop_set_error(error, "out of memory for CSR join parent rep");
     return false;
   }
 
@@ -4306,7 +4250,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t sign = (uint32_t)qsop->r / 2U;
   if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
-    set_error(error, "rankwidth join map is too large");
+    qsop_set_error(error, "rankwidth join map is too large");
     return false;
   }
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
@@ -4319,7 +4263,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
   if (outside == NULL || signature == NULL) {
     free(outside);
     free(signature);
-    set_error(error, "out of memory while building rankwidth join map");
+    qsop_set_error(error, "out of memory while building rankwidth join map");
     return false;
   }
   rankwidth_fill_all_vars(outside, decomposition->nvars, words);
@@ -4372,7 +4316,7 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t sign = (uint32_t)qsop->r / 2U;
   if (left->reps_len > 0 && right->reps_len > SIZE_MAX / left->reps_len) {
-    set_error(error, "rankwidth join map is too large");
+    qsop_set_error(error, "rankwidth join map is too large");
     return false;
   }
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
@@ -4484,7 +4428,7 @@ static bool solve_leaf_mod(const qsop_instance_t *qsop, const uint64_t *adj, con
     free(zero);
     free(assignment);
     free(signature);
-    set_error(error, "out of memory while solving modular rankwidth leaf");
+    qsop_set_error(error, "out of memory while solving modular rankwidth leaf");
     return false;
   }
 
@@ -4517,7 +4461,7 @@ static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map
       const rw_join_map_entry_t *mapped =
           join_map_get(map, left->entries[i].signature, right->entries[j].signature, &map_index);
       if (mapped == NULL) {
-        set_error(error, "internal error: missing modular rankwidth join-map entry");
+        qsop_set_error(error, "internal error: missing modular rankwidth join-map entry");
         return false;
       }
       const uint32_t residue = (uint32_t)(((uint64_t)left->entries[i].residue +
@@ -4575,7 +4519,7 @@ static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t 
     free(right_starts);
     free(right_ends);
     if (acc == NULL || sig_map_idx == NULL) {
-      set_error(error, "out of memory while allocating rankwidth join accumulator");
+      qsop_set_error(error, "out of memory while allocating rankwidth join accumulator");
     }
     return false;
   }
@@ -4837,7 +4781,7 @@ static bool solve_leaf_complex(const qsop_instance_t *qsop, const uint64_t *adj,
   table->re[zero] += 1.0L;
   long double re = 0.0L;
   long double im = 0.0L;
-  rw_root_of_unity(qsop->r, target_mode, qsop->unary[node->var] % qsop->r, &re, &im);
+  qsop_root_of_unity_l(qsop->r, target_mode, qsop->unary[node->var] % qsop->r, &re, &im);
   table->re[one] += re;
   table->im[one] += im;
   return true;
@@ -4869,7 +4813,7 @@ static bool solve_leaf_complex64(const qsop_instance_t *qsop, const uint64_t *ad
   table->re[zero] += 1.0;
   double re = 0.0;
   double im = 0.0;
-  rw_root_of_unity_f64(qsop->r, target_mode, qsop->unary[node->var] % qsop->r, &re, &im);
+  qsop_root_of_unity_f64(qsop->r, target_mode, qsop->unary[node->var] % qsop->r, &re, &im);
   table->re[one] += re;
   table->im[one] += im;
   return true;
@@ -4943,7 +4887,7 @@ static bool dense_basis_init(rw_dense_basis_t *basis, uint32_t nbits, size_t wor
     free(basis->pivot_rows);
     free(basis->pivot_coords);
     *basis = (rw_dense_basis_t){0};
-    set_error(error, "out of memory while allocating dense rankwidth basis");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth basis");
     return false;
   }
   basis->nbits = nbits;
@@ -4998,7 +4942,7 @@ static bool dense_basis_add(rw_dense_basis_t *basis, const uint64_t *bits, uint6
     return true;
   }
   if (basis->dim >= RW_DENSE_REFERENCE_MAX_DIM) {
-    set_error(error, "rankwidth dense-reference basis dimension exceeds %" PRIu32,
+    qsop_set_error(error, "rankwidth dense-reference basis dimension exceeds %" PRIu32,
               (uint32_t)RW_DENSE_REFERENCE_MAX_DIM);
     return false;
   }
@@ -5060,7 +5004,7 @@ static bool dense_basis_from_complex64_table(const rw_complex64_table_t *table,
 static bool dense_basis_coord(const rw_dense_basis_t *basis, const uint64_t *bits,
                               uint64_t *scratch, uint64_t *coord_out, qsop_error_t *error) {
   if (!dense_basis_reduce(basis, bits, scratch, coord_out)) {
-    set_error(error, "rankwidth dense-reference signature is outside its dense basis");
+    qsop_set_error(error, "rankwidth dense-reference signature is outside its dense basis");
     return false;
   }
   return true;
@@ -5069,17 +5013,17 @@ static bool dense_basis_coord(const rw_dense_basis_t *basis, const uint64_t *bit
 static bool dense_reference_value_count(uint32_t dim, uint32_t slots_per_signature, size_t *out,
                                         qsop_error_t *error) {
   if (dim >= sizeof(size_t) * CHAR_BIT) {
-    set_error(error, "rankwidth dense-reference dimension is too large for this platform");
+    qsop_set_error(error, "rankwidth dense-reference dimension is too large for this platform");
     return false;
   }
   const size_t signatures = (size_t)1U << dim;
   if (slots_per_signature != 0 && signatures > SIZE_MAX / (size_t)slots_per_signature) {
-    set_error(error, "rankwidth dense-reference table is too large");
+    qsop_set_error(error, "rankwidth dense-reference table is too large");
     return false;
   }
   const size_t values = signatures * (size_t)slots_per_signature;
   if (values > RW_DENSE_REFERENCE_MAX_VALUES) {
-    set_error(error, "rankwidth dense-reference table exceeds %" PRIu64 " value slots",
+    qsop_set_error(error, "rankwidth dense-reference table exceeds %" PRIu64 " value slots",
               (uint64_t)RW_DENSE_REFERENCE_MAX_VALUES);
     return false;
   }
@@ -5090,12 +5034,12 @@ static bool dense_reference_value_count(uint32_t dim, uint32_t slots_per_signatu
 static bool dense_single_pair_count(size_t left_signatures, size_t right_signatures, uint64_t *out,
                                     qsop_error_t *error) {
   if (left_signatures != 0 && right_signatures > UINT64_MAX / (uint64_t)left_signatures) {
-    set_error(error, "rankwidth dense single-mode join coordinate space is too large");
+    qsop_set_error(error, "rankwidth dense single-mode join coordinate space is too large");
     return false;
   }
   const uint64_t pairs = (uint64_t)left_signatures * (uint64_t)right_signatures;
   if (pairs > RW_DENSE_REFERENCE_MAX_VALUES) {
-    set_error(error, "rankwidth dense single-mode join exceeds %" PRIu64 " coordinate pairs",
+    qsop_set_error(error, "rankwidth dense single-mode join exceeds %" PRIu64 " coordinate pairs",
               (uint64_t)RW_DENSE_REFERENCE_MAX_VALUES);
     return false;
   }
@@ -5113,7 +5057,7 @@ dense_single_join_feasibility(const uint32_t *left_signatures, size_t left_len,
   const size_t w = words == 0 ? 1U : words;
   uint64_t *scratch = calloc(w, sizeof(*scratch));
   if (scratch == NULL) {
-    set_error(error, "out of memory while checking dense rankwidth single-mode feasibility");
+    qsop_set_error(error, "out of memory while checking dense rankwidth single-mode feasibility");
     return RW_DENSE_JOIN_ERROR;
   }
 
@@ -5177,7 +5121,7 @@ static bool solve_fourier_join_dense_reference(const qsop_instance_t *qsop, cons
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
   if (basis_scratch == NULL) {
-    set_error(error, "out of memory while allocating dense rankwidth scratch");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth scratch");
     return false;
   }
 
@@ -5217,7 +5161,7 @@ static bool solve_fourier_join_dense_reference(const qsop_instance_t *qsop, cons
     dense_basis_free(&left_basis);
     dense_basis_free(&right_basis);
     free(basis_scratch);
-    set_error(error, "out of memory while allocating dense-reference rankwidth tables");
+    qsop_set_error(error, "out of memory while allocating dense-reference rankwidth tables");
     return false;
   }
   memset(left_index, 0xFF, left_signatures * sizeof(*left_index));
@@ -5526,7 +5470,7 @@ static bool solve_join_complex_dense_reference(
     rw_complex_table_t *out, const uint64_t *outside, uint64_t *scratch_sig,
     uint64_t *parent_assignment, size_t words, qsop_error_t *error) {
   if (left->len > UINT32_MAX || right->len > UINT32_MAX) {
-    set_error(error, "rankwidth dense single-mode table is too large");
+    qsop_set_error(error, "rankwidth dense single-mode table is too large");
     return false;
   }
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
@@ -5534,7 +5478,7 @@ static bool solve_join_complex_dense_reference(
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
   if (basis_scratch == NULL) {
-    set_error(error, "out of memory while allocating dense rankwidth single-mode scratch");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth single-mode scratch");
     return false;
   }
 
@@ -5576,7 +5520,7 @@ static bool solve_join_complex_dense_reference(
   right_index = malloc(right_signatures * sizeof(*right_index));
   if (left_dense_re == NULL || left_dense_im == NULL || right_dense_re == NULL ||
       right_dense_im == NULL || left_index == NULL || right_index == NULL) {
-    set_error(error, "out of memory while allocating dense rankwidth single-mode tables");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth single-mode tables");
     goto cleanup;
   }
   memset(left_index, 0xFF, left_signatures * sizeof(*left_index));
@@ -5680,7 +5624,7 @@ static bool solve_join_complex64_dense_reference(
     rw_complex64_context_t *ctx, rw_complex64_table_t *out, const uint64_t *outside,
     uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words, qsop_error_t *error) {
   if (left->len > UINT32_MAX || right->len > UINT32_MAX) {
-    set_error(error, "rankwidth dense double single-mode table is too large");
+    qsop_set_error(error, "rankwidth dense double single-mode table is too large");
     return false;
   }
   const qsop_simd_vtable_t *simd = ctx->simd;
@@ -5688,7 +5632,7 @@ static bool solve_join_complex64_dense_reference(
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
   if (basis_scratch == NULL) {
-    set_error(error, "out of memory while allocating dense rankwidth double single-mode scratch");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth double single-mode scratch");
     return false;
   }
 
@@ -5731,7 +5675,7 @@ static bool solve_join_complex64_dense_reference(
   right_index = malloc(right_signatures * sizeof(*right_index));
   if (left_dense_re == NULL || left_dense_im == NULL || right_dense_re == NULL ||
       right_dense_im == NULL || left_index == NULL || right_index == NULL) {
-    set_error(error, "out of memory while allocating dense rankwidth double single-mode tables");
+    qsop_set_error(error, "out of memory while allocating dense rankwidth double single-mode tables");
     goto cleanup;
   }
   memset(left_index, 0xFF, left_signatures * sizeof(*left_index));
@@ -5841,14 +5785,14 @@ static bool rw_complex_transition_csr_build(
     const uint64_t *outside, uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words,
     rw_complex_transition_csr_t *csr, qsop_error_t *error) {
   if (left->len > UINT32_MAX || right->len > UINT32_MAX) {
-    set_error(error, "rankwidth single-mode materialized join table is too large");
+    qsop_set_error(error, "rankwidth single-mode materialized join table is too large");
     return false;
   }
   const uint32_t r = (uint32_t)qsop->r;
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t *counts = calloc(left->len == 0 ? 1U : left->len, sizeof(*counts));
   if (counts == NULL) {
-    set_error(error, "out of memory while building rankwidth single-mode transition counts");
+    qsop_set_error(error, "out of memory while building rankwidth single-mode transition counts");
     return false;
   }
 
@@ -5881,7 +5825,7 @@ static bool rw_complex_transition_csr_build(
       total++;
       if (total > UINT32_MAX) {
         free(counts);
-        set_error(error, "rankwidth single-mode materialized join has too many transitions");
+        qsop_set_error(error, "rankwidth single-mode materialized join has too many transitions");
         return false;
       }
     }
@@ -5893,7 +5837,7 @@ static bool rw_complex_transition_csr_build(
     free(counts);
     free(offsets);
     free(items);
-    set_error(error, "out of memory while building rankwidth single-mode transitions");
+    qsop_set_error(error, "out of memory while building rankwidth single-mode transitions");
     return false;
   }
   offsets[0] = 0;
@@ -5924,7 +5868,7 @@ static bool rw_complex_transition_csr_build(
         free(counts);
         free(offsets);
         free(items);
-        set_error(error, "internal error: missing rankwidth single-mode parent signature");
+        qsop_set_error(error, "internal error: missing rankwidth single-mode parent signature");
         return false;
       }
       const uint32_t pos = counts[i]++;
@@ -5975,14 +5919,14 @@ static bool rw_complex64_transition_csr_build(
     const uint64_t *outside, uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words,
     rw_complex_transition_csr_t *csr, qsop_error_t *error) {
   if (left->len > UINT32_MAX || right->len > UINT32_MAX) {
-    set_error(error, "rankwidth double single-mode materialized join table is too large");
+    qsop_set_error(error, "rankwidth double single-mode materialized join table is too large");
     return false;
   }
   const uint32_t r = (uint32_t)qsop->r;
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t *counts = calloc(left->len == 0 ? 1U : left->len, sizeof(*counts));
   if (counts == NULL) {
-    set_error(error, "out of memory while building rankwidth double single-mode transition counts");
+    qsop_set_error(error, "out of memory while building rankwidth double single-mode transition counts");
     return false;
   }
 
@@ -6015,7 +5959,7 @@ static bool rw_complex64_transition_csr_build(
       total++;
       if (total > UINT32_MAX) {
         free(counts);
-        set_error(error, "rankwidth double single-mode materialized join has too many transitions");
+        qsop_set_error(error, "rankwidth double single-mode materialized join has too many transitions");
         return false;
       }
     }
@@ -6027,7 +5971,7 @@ static bool rw_complex64_transition_csr_build(
     free(counts);
     free(offsets);
     free(items);
-    set_error(error, "out of memory while building rankwidth double single-mode transitions");
+    qsop_set_error(error, "out of memory while building rankwidth double single-mode transitions");
     return false;
   }
   offsets[0] = 0;
@@ -6045,7 +5989,7 @@ static bool rw_complex64_transition_csr_build(
     free(counts);
     free(offsets);
     free(items);
-    set_error(error, "out of memory while building rankwidth double single-mode transitions");
+    qsop_set_error(error, "out of memory while building rankwidth double single-mode transitions");
     return false;
   }
   memcpy(counts, offsets, left->len * sizeof(*counts));
@@ -6077,7 +6021,7 @@ static bool rw_complex64_transition_csr_build(
         free(offsets);
         free(items);
         free(back);
-        set_error(error, "internal error: missing rankwidth double single-mode parent signature");
+        qsop_set_error(error, "internal error: missing rankwidth double single-mode parent signature");
         return false;
       }
       const uint32_t pos = eval.sign_flip ? back[i]-- : counts[i]++;
@@ -6166,7 +6110,7 @@ static void rw_complex64_execute_row(const rw_complex_transition32_t *items, uin
     /* Matches note_rankwidth_bitset_ops's convention: the scalar vtable's own complex_scale_f64
      * is a plain loop, not actually vectorized, even though it takes this same batched path. */
     if (ctx->stats != NULL && simd != qsop_simd_scalar_vtable()) {
-      add_saturating_u64(&ctx->stats->simd_vectorized_ops, plen);
+      qsop_add_saturating_u64(&ctx->stats->simd_vectorized_ops, plen);
     }
   }
 }
@@ -6256,7 +6200,7 @@ static bool solve_rankwidth_count_table_mod_once(
     qsop_solve_trace_t *trace, qsop_error_t *error) {
   uint32_t *linear_order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*linear_order));
   if (linear_order == NULL) {
-    set_error(error, "out of memory while allocating rankwidth linear order");
+    qsop_set_error(error, "out of memory while allocating rankwidth linear order");
     return false;
   }
   if (extract_left_deep_order(decomposition, linear_order)) {
@@ -6272,7 +6216,7 @@ static bool solve_rankwidth_count_table_mod_once(
   rw_signature_pool_t pool = {0};
   if (tables == NULL || !signature_pool_init(&pool, decomposition->words, error)) {
     free(tables);
-    set_error(error, "out of memory while allocating modular rankwidth solve state");
+    qsop_set_error(error, "out of memory while allocating modular rankwidth solve state");
     return false;
   }
 
@@ -6370,7 +6314,7 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in sign-edge CRT transition build");
+    qsop_set_error(error, "out of memory in sign-edge CRT transition build");
     return false;
   }
   uint64_t join_pairs = 0, join_signature_pairs = 0;
@@ -6455,7 +6399,7 @@ static bool solve_sign_edge_crt_use_maps(const qsop_instance_t *qsop,
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
   rw_table_t *tables = calloc(nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory in sign-edge CRT cached pass");
+    qsop_set_error(error, "out of memory in sign-edge CRT cached pass");
     return false;
   }
   uint64_t join_pairs = 0;
@@ -6509,7 +6453,7 @@ static bool solve_rankwidth_count_table_crt(const qsop_instance_t *qsop,
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "rankwidth CRT count table is too large");
+    qsop_set_error(error, "rankwidth CRT count table is too large");
     return false;
   }
   uint64_t *all_counts = calloc(nprimes * (size_t)r32, sizeof(*all_counts));
@@ -6520,7 +6464,7 @@ static bool solve_rankwidth_count_table_crt(const qsop_instance_t *qsop,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth CRT state");
+    qsop_set_error(error, "out of memory for rankwidth CRT state");
     return false;
   }
   result->r = r32;
@@ -6531,7 +6475,7 @@ static bool solve_rankwidth_count_table_crt(const qsop_instance_t *qsop,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth CRT result strings");
+    qsop_set_error(error, "out of memory for rankwidth CRT result strings");
     return false;
   }
   const uint32_t nnodes = decomposition->nnodes == 0 ? 1U : decomposition->nnodes;
@@ -6549,7 +6493,7 @@ static bool solve_rankwidth_count_table_crt(const qsop_instance_t *qsop,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory for rankwidth CRT transition cache");
+    qsop_set_error(error, "out of memory for rankwidth CRT transition cache");
     return false;
   }
   bool ok = solve_sign_edge_crt_build_maps(qsop, decomposition, adj, primes[0], &all_counts[0],
@@ -6649,7 +6593,7 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(const qsop_instance_t 
                                                           qsop_solve_trace_t *trace,
                                                           qsop_error_t *error) {
   if (count_modulus == 0 && qsop->nvars >= 64U) {
-    set_error(error,
+    qsop_set_error(error,
               "rankwidth exact no-edge count-table handoff requires fewer than 64 variables");
     return false;
   }
@@ -6705,7 +6649,7 @@ static bool solve_rankwidth_no_edges_count_table_mod_once(const qsop_instance_t 
     }
   }
   qsop_trace_emit_elapsed(trace, "rankwidth.count_table_factorized", 0,
-                          saturating_mul_u64(qsop->nvars, r32), start);
+                          qsop_saturating_mul_u64(qsop->nvars, r32), start);
   rankwidth_no_edges_stats(qsop, stats);
   free(current);
   free(next);
@@ -6726,7 +6670,7 @@ static bool solve_rankwidth_no_edges_count_table_crt(const qsop_instance_t *qsop
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "rankwidth no-edge CRT count table is too large");
+    qsop_set_error(error, "rankwidth no-edge CRT count table is too large");
     return false;
   }
 
@@ -6738,7 +6682,7 @@ static bool solve_rankwidth_no_edges_count_table_crt(const qsop_instance_t *qsop
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth no-edge CRT state");
+    qsop_set_error(error, "out of memory while allocating rankwidth no-edge CRT state");
     return false;
   }
   result->r = r32;
@@ -6749,7 +6693,7 @@ static bool solve_rankwidth_no_edges_count_table_crt(const qsop_instance_t *qsop
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth no-edge CRT result strings");
+    qsop_set_error(error, "out of memory while allocating rankwidth no-edge CRT result strings");
     return false;
   }
 
@@ -6805,7 +6749,7 @@ static bool solve_rankwidth_no_edges_count_table(const qsop_instance_t *qsop, qs
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL || !qsop_counts_alloc((uint32_t)qsop->r, &result->counts, error)) {
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth no-edge result");
+    qsop_set_error(error, "out of memory while allocating rankwidth no-edge result");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -6836,7 +6780,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
   if (join_strategy == QSOP_RANKWIDTH_JOIN_AUTO) {
     uint32_t *linear_order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*linear_order));
     if (linear_order == NULL) {
-      set_error(error, "out of memory while allocating rankwidth linear order");
+      qsop_set_error(error, "out of memory while allocating rankwidth linear order");
       return false;
     }
     if (extract_left_deep_order(decomposition, linear_order)) {
@@ -6860,7 +6804,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
   if (result == NULL || tables == NULL || !qsop_counts_alloc(r32, &result->counts, error)) {
     free(tables);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth solve state");
+    qsop_set_error(error, "out of memory while allocating rankwidth solve state");
     return false;
   }
   result->r = r32;
@@ -6882,7 +6826,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     free(tables);
     signature_pool_free(&pool);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth scratch");
+    qsop_set_error(error, "out of memory while allocating rankwidth scratch");
     return false;
   }
 
@@ -6914,7 +6858,7 @@ static bool solve_rankwidth_count_table(const qsop_instance_t *qsop,
     free(tables);
     signature_pool_free(&pool);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth outside bitset");
+    qsop_set_error(error, "out of memory while allocating rankwidth outside bitset");
     return false;
   }
 
@@ -7104,7 +7048,7 @@ static bool solve_rankwidth_constant_result(const qsop_instance_t *qsop, qsop_re
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL || !qsop_counts_alloc(r32, &result->counts, error)) {
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth constant result");
+    qsop_set_error(error, "out of memory while allocating rankwidth constant result");
     return false;
   }
   result->r = r32;
@@ -7138,11 +7082,11 @@ bool qsop_solve_rankwidth_count_table_mod_stats(const qsop_instance_t *qsop,
     *stats = (qsop_solve_stats_t){0};
   }
   if (qsop == NULL || decomposition == NULL || counts == NULL) {
-    set_error(error, "internal error: null rankwidth modular solve argument");
+    qsop_set_error(error, "internal error: null rankwidth modular solve argument");
     return false;
   }
   if (decomposition->nvars != qsop->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (!rw_refuse_large_modulus(qsop, error)) {
@@ -7158,7 +7102,7 @@ bool qsop_solve_rankwidth_count_table_mod_stats(const qsop_instance_t *qsop,
 
   if (count_modulus == 0) {
     if (qsop->nvars >= 64U) {
-      set_error(error, "rankwidth exact count-table handoff requires fewer than 64 variables");
+      qsop_set_error(error, "rankwidth exact count-table handoff requires fewer than 64 variables");
       return false;
     }
     if (qsop->nedges == 0) {
@@ -7227,7 +7171,7 @@ static bool solve_rankwidth_fourier_no_edges_mod_once(
   const uint32_t r32 = (uint32_t)qsop->r;
   uint64_t *modes = calloc(r32, sizeof(*modes));
   if (modes == NULL) {
-    set_error(error, "out of memory while allocating factorized rankwidth Fourier modes");
+    qsop_set_error(error, "out of memory while allocating factorized rankwidth Fourier modes");
     return false;
   }
   const uint64_t start = qsop_trace_begin(trace);
@@ -7269,7 +7213,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
   if (tables == NULL) {
     free(tables);
-    set_error(error, "out of memory while allocating rankwidth Fourier solve state");
+    qsop_set_error(error, "out of memory while allocating rankwidth Fourier solve state");
     return false;
   }
 
@@ -7284,7 +7228,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
   if (scratch == NULL) {
     free(tables);
     signature_pool_free(&pool);
-    set_error(error, "out of memory while allocating rankwidth Fourier scratch");
+    qsop_set_error(error, "out of memory while allocating rankwidth Fourier scratch");
     return false;
   }
   uint64_t *outside = scratch;
@@ -7313,7 +7257,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
       const size_t left_len = tables[node->left].len;
       const size_t right_len = tables[node->right].len;
       if (left_len > 0 && right_len > UINT64_MAX / left_len) {
-        set_error(error, "rankwidth Fourier streaming join is too large");
+        qsop_set_error(error, "rankwidth Fourier streaming join is too large");
         ok = false;
       } else {
         const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
@@ -7332,7 +7276,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
               outside, scratch_sig, parent_assignment, decomposition->words, &join_signature_pairs,
               error);
         } else {
-          set_error(error, "rankwidth Fourier kernel is not implemented for this join");
+          qsop_set_error(error, "rankwidth Fourier kernel is not implemented for this join");
           ok = false;
         }
         qsop_trace_emit_elapsed(trace, "rankwidth.fourier_join", 0, tables[node_id].len,
@@ -7368,7 +7312,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
     free(scratch);
     free(tables);
     signature_pool_free(&pool);
-    set_error(error, "out of memory while allocating rankwidth Fourier root modes");
+    qsop_set_error(error, "out of memory while allocating rankwidth Fourier root modes");
     return false;
   }
   const uint64_t even_start = qsop_trace_begin(trace);
@@ -7393,7 +7337,7 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
     stats->max_table_entries = max_table_entries;
     stats->signature_entries = signature_entries;
     stats->max_signature_entries = max_signature_entries;
-    stats->join_pairs = saturating_mul_u64(join_signature_pairs, odd_modes);
+    stats->join_pairs = qsop_saturating_mul_u64(join_signature_pairs, odd_modes);
     stats->join_signature_pairs = join_signature_pairs;
     stats->rankwidth_fourier_kernel = (uint32_t)kernel;
     stats->decomposition_width = decomposition_width(decomposition, adj, stats, error);
@@ -7418,23 +7362,6 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
   return true;
 }
 
-/* Conservative worst-case bound on floating-point error accumulated by the single-mode
- * complex DP -- same derivation as treewidth.c's single_mode_error_bound (standard
- * backward-error analysis for long double arithmetic; validated empirically against
- * exact histogram reconstruction in the differential tests). Duplicated rather than
- * shared across translation units, matching this file's existing convention of
- * duplicating small helpers (e.g. adjacency_bitsets) alongside treewidth.c. */
-static long double single_mode_error_bound(uint64_t complex_ops) {
-  static const long double ops_per_step =
-      8.0L; /* complex multiply: 4 mul + 2 add/sub, plus margin */
-  return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
-}
-
-static long double single_mode_error_bound_f64(uint64_t complex_ops) {
-  static const long double ops_per_step = 8.0L;
-  return (long double)complex_ops * ops_per_step * DBL_EPSILON;
-}
-
 /* Closed-form single-mode value when there are no sign edges: every variable
  * contributes independently, S(f) = prod_v (1 + omega_r^{target_mode * b_v}). Mirrors
  * fourier_factorized_mode_value's "no sign edges" shortcut but for one target mode and
@@ -7447,7 +7374,7 @@ static void solve_rankwidth_single_mode_no_edges(const qsop_instance_t *qsop, ui
   for (uint32_t v = 0; v < qsop->nvars; v++) {
     long double term_re = 0.0L;
     long double term_im = 0.0L;
-    rw_root_of_unity(qsop->r, target_mode, qsop->unary[v] % qsop->r, &term_re, &term_im);
+    qsop_root_of_unity_l(qsop->r, target_mode, qsop->unary[v] % qsop->r, &term_re, &term_im);
     term_re += 1.0L;
     const long double new_re = acc_re * term_re - acc_im * term_im;
     const long double new_im = acc_re * term_im + acc_im * term_re;
@@ -7467,7 +7394,7 @@ static void solve_rankwidth_single_mode_no_edges_f64(const qsop_instance_t *qsop
   for (uint32_t v = 0; v < qsop->nvars; v++) {
     double term_re = 0.0;
     double term_im = 0.0;
-    rw_root_of_unity_f64(qsop->r, target_mode, qsop->unary[v] % qsop->r, &term_re, &term_im);
+    qsop_root_of_unity_f64(qsop->r, target_mode, qsop->unary[v] % qsop->r, &term_re, &term_im);
     term_re += 1.0;
     const double new_re = acc_re * term_re - acc_im * term_im;
     const double new_im = acc_re * term_im + acc_im * term_re;
@@ -7502,12 +7429,12 @@ static bool solve_rankwidth_single_mode_once(
     solve_rankwidth_single_mode_no_edges(qsop, target_mode, &re, &im, &ctx.complex_ops);
     long double c_re = 0.0L;
     long double c_im = 0.0L;
-    rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    qsop_root_of_unity_l(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
     *out_re = re * c_re - im * c_im;
     *out_im = re * c_im + im * c_re;
     *out_scale_exp2 = 0;
     if (out_numeric_error_bound != NULL) {
-      *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
+      *out_numeric_error_bound = qsop_single_mode_error_bound_l(ctx.complex_ops);
     }
     return true;
   }
@@ -7515,7 +7442,7 @@ static bool solve_rankwidth_single_mode_once(
   rw_complex_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory while allocating rankwidth single-mode solve state");
+    qsop_set_error(error, "out of memory while allocating rankwidth single-mode solve state");
     return false;
   }
 
@@ -7530,7 +7457,7 @@ static bool solve_rankwidth_single_mode_once(
   if (scratch == NULL) {
     free(tables);
     signature_pool_free(&pool);
-    set_error(error, "out of memory while allocating rankwidth single-mode scratch");
+    qsop_set_error(error, "out of memory while allocating rankwidth single-mode scratch");
     return false;
   }
   uint64_t *outside = scratch;
@@ -7565,7 +7492,7 @@ static bool solve_rankwidth_single_mode_once(
       const size_t left_len = tables[node->left].len;
       const size_t right_len = tables[node->right].len;
       if (left_len > 0 && right_len > UINT64_MAX / left_len) {
-        set_error(error, "rankwidth single-mode join is too large");
+        qsop_set_error(error, "rankwidth single-mode join is too large");
         ok = false;
       } else {
         const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
@@ -7658,7 +7585,7 @@ static bool solve_rankwidth_single_mode_once(
 
   long double c_re = 0.0L;
   long double c_im = 0.0L;
-  rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  qsop_root_of_unity_l(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
   *out_re = root_re * c_re - root_im * c_im;
   *out_im = root_re * c_im + root_im * c_re;
   *out_scale_exp2 = ctx.scale_exp2;
@@ -7683,7 +7610,7 @@ static bool solve_rankwidth_single_mode_once(
     }
   }
   if (out_numeric_error_bound != NULL) {
-    *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
+    *out_numeric_error_bound = qsop_single_mode_error_bound_l(ctx.complex_ops);
   }
 
   for (uint32_t t = 0; t < decomposition->nnodes; t++) {
@@ -7720,7 +7647,7 @@ static bool solve_rankwidth_single_mode_once_f64(
     solve_rankwidth_single_mode_no_edges_f64(qsop, target_mode, &re, &im, &ctx.complex_ops);
     double c_re = 0.0;
     double c_im = 0.0;
-    rw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    qsop_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
     /* The edge-free product is 2^nvars in the worst case; long double is enough headroom for the
      * few thousand independent variables this branch can see, and the exponent stays 0. */
     *out_re = (long double)re * (long double)c_re - (long double)im * (long double)c_im;
@@ -7730,10 +7657,10 @@ static bool solve_rankwidth_single_mode_once_f64(
       stats->rankwidth_single_complex_kernel = 2U;
       stats->join_pairs = ctx.complex_ops;
       record_rankwidth_f64_simd_kernel(stats, simd);
-      add_saturating_u64(&stats->simd_scalar_fallback_ops, ctx.complex_ops);
+      qsop_add_saturating_u64(&stats->simd_scalar_fallback_ops, ctx.complex_ops);
     }
     if (out_numeric_error_bound != NULL) {
-      *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
+      *out_numeric_error_bound = qsop_single_mode_error_bound_f64(ctx.complex_ops);
     }
     return true;
   }
@@ -7741,7 +7668,7 @@ static bool solve_rankwidth_single_mode_once_f64(
   rw_complex64_table_t *tables =
       calloc(decomposition->nnodes == 0 ? 1U : decomposition->nnodes, sizeof(*tables));
   if (tables == NULL) {
-    set_error(error, "out of memory while allocating rankwidth double single-mode solve state");
+    qsop_set_error(error, "out of memory while allocating rankwidth double single-mode solve state");
     return false;
   }
 
@@ -7756,7 +7683,7 @@ static bool solve_rankwidth_single_mode_once_f64(
   if (scratch == NULL) {
     free(tables);
     signature_pool_free(&pool);
-    set_error(error, "out of memory while allocating rankwidth double single-mode scratch");
+    qsop_set_error(error, "out of memory while allocating rankwidth double single-mode scratch");
     return false;
   }
   uint64_t *outside = scratch;
@@ -7792,7 +7719,7 @@ static bool solve_rankwidth_single_mode_once_f64(
       const size_t left_len = tables[node->left].len;
       const size_t right_len = tables[node->right].len;
       if (left_len > 0 && right_len > UINT64_MAX / left_len) {
-        set_error(error, "rankwidth double single-mode join is too large");
+        qsop_set_error(error, "rankwidth double single-mode join is too large");
         ok = false;
       } else {
         const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
@@ -7887,7 +7814,7 @@ static bool solve_rankwidth_single_mode_once_f64(
 
   double c_re = 0.0;
   double c_im = 0.0;
-  rw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  qsop_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
   *out_re = (long double)(root_re * c_re - root_im * c_im);
   *out_im = (long double)(root_re * c_im + root_im * c_re);
   *out_scale_exp2 = ctx.scale_exp2;
@@ -7914,7 +7841,7 @@ static bool solve_rankwidth_single_mode_once_f64(
     }
   }
   if (out_numeric_error_bound != NULL) {
-    *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
+    *out_numeric_error_bound = qsop_single_mode_error_bound_f64(ctx.complex_ops);
   }
 
   for (uint32_t t = 0; t < decomposition->nnodes; t++) {
@@ -7955,7 +7882,7 @@ static bool rankwidth_fourier_kernel_resolve(qsop_rankwidth_fourier_kernel_t req
     *resolved = requested;
     return true;
   }
-  set_error(error, "rankwidth Fourier kernel '%s' is not implemented yet",
+  qsop_set_error(error, "rankwidth Fourier kernel '%s' is not implemented yet",
             rankwidth_fourier_kernel_internal_name(requested));
   return false;
 }
@@ -7983,7 +7910,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "rankwidth Fourier CRT count table is too large");
+    qsop_set_error(error, "rankwidth Fourier CRT count table is too large");
     return false;
   }
 
@@ -7995,7 +7922,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating rankwidth Fourier CRT solve state");
+    qsop_set_error(error, "out of memory while allocating rankwidth Fourier CRT solve state");
     return false;
   }
   result->r = r32;
@@ -8015,7 +7942,7 @@ static bool solve_rankwidth_fourier(const qsop_instance_t *qsop,
       free(all_counts);
       free(residues);
       qsop_result_free(result);
-      set_error(error, "out of memory while allocating rankwidth Fourier CRT result strings");
+      qsop_set_error(error, "out of memory while allocating rankwidth Fourier CRT result strings");
       return false;
     }
   }
@@ -8077,20 +8004,20 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
     *stats = (qsop_solve_stats_t){0};
   }
   if (out == NULL) {
-    set_error(error, "internal error: null result pointer");
+    qsop_set_error(error, "internal error: null result pointer");
     return false;
   }
   *out = NULL;
   if (qsop == NULL || decomposition == NULL) {
-    set_error(error, "internal error: null rankwidth solve argument");
+    qsop_set_error(error, "internal error: null rankwidth solve argument");
     return false;
   }
   if (qsop->nvars != decomposition->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (qsop->nvars > max_vars) {
-    set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
+    qsop_set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
               qsop->nvars);
     return false;
   }
@@ -8136,15 +8063,6 @@ bool qsop_solve_rankwidth_mode_trace_stats(const qsop_instance_t *qsop,
                                                        out, stats, trace, error);
 }
 
-bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
-                                      const qsop_rankwidth_decomposition_t *decomposition,
-                                      uint32_t max_vars, qsop_result_t **out,
-                                      qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                                      qsop_error_t *error) {
-  return qsop_solve_rankwidth_mode_trace_stats(
-      qsop, decomposition, max_vars, QSOP_RANKWIDTH_SOLVE_COUNT_TABLE, out, stats, trace, error);
-}
-
 bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
                                               const qsop_rankwidth_decomposition_t *decomposition,
                                               uint32_t max_vars, uint32_t target_mode,
@@ -8155,31 +8073,31 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
     *stats = (qsop_solve_stats_t){0};
   }
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL || decomposition == NULL) {
-    set_error(error, "internal error: null rankwidth solve argument");
+    qsop_set_error(error, "internal error: null rankwidth solve argument");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
   if (qsop->nvars != decomposition->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (qsop->nvars > max_vars) {
-    set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
+    qsop_set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
               qsop->nvars);
     return false;
   }
   if (qsop->nvars == 0) {
     long double c_re = 0.0L;
     long double c_im = 0.0L;
-    rw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    qsop_root_of_unity_l(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
     out->re = c_re;
     out->im = c_im;
     return true;
@@ -8234,31 +8152,31 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
     *stats = (qsop_solve_stats_t){0};
   }
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL || decomposition == NULL) {
-    set_error(error, "internal error: null rankwidth solve argument");
+    qsop_set_error(error, "internal error: null rankwidth solve argument");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
   if (qsop->nvars != decomposition->nvars) {
-    set_error(error, "rankwidth decomposition variable count does not match QSOP");
+    qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
   if (qsop->nvars > max_vars) {
-    set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
+    qsop_set_error(error, "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
               qsop->nvars);
     return false;
   }
   if (qsop->nvars == 0) {
     double c_re = 0.0;
     double c_im = 0.0;
-    rw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+    qsop_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
     out->re = (long double)c_re;
     out->im = (long double)c_im;
     if (stats != NULL) {

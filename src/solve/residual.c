@@ -2,6 +2,7 @@
 #include "dlx4sop/bitset.h"
 #include "dlx4sop/min_fill.h"
 #include "dlx4sop/simd.h"
+#include "../core/qsop_internal.h"
 
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -62,21 +63,6 @@ struct qsop_residual {
   size_t trail_cap;
 };
 
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
-
 static uint64_t add_mod_u64(uint64_t a, uint64_t b, uint64_t r) {
   if (r == 0) {
     return 0;
@@ -105,7 +91,7 @@ static bool reserve_trail(qsop_residual_t *residual, size_t needed, qsop_error_t
   size_t new_cap = residual->trail_cap == 0 ? 32U : residual->trail_cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "trail is too large");
+      qsop_set_error(error, "trail is too large");
       return false;
     }
     new_cap *= 2U;
@@ -113,7 +99,7 @@ static bool reserve_trail(qsop_residual_t *residual, size_t needed, qsop_error_t
 
   trail_entry_t *new_trail = realloc(residual->trail, new_cap * sizeof(*new_trail));
   if (new_trail == NULL) {
-    set_error(error, "out of memory while growing residual trail");
+    qsop_set_error(error, "out of memory while growing residual trail");
     return false;
   }
 
@@ -262,7 +248,7 @@ static bool set_edge_active(qsop_residual_t *residual, uint32_t e, bool active,
   const size_t trail_entries = (self_loop ? 2U : 3U) + incidence_entries;
   if (!active &&
       (residual->active_degree[u] == 0 || (!self_loop && residual->active_degree[v] == 0))) {
-    set_error(error, "internal error: residual degree underflow");
+    qsop_set_error(error, "internal error: residual degree underflow");
     return false;
   }
   if (!reserve_trail(residual, residual->trail_len + trail_entries, error) ||
@@ -308,7 +294,7 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
     } else if (incidence_count <= UINT32_MAX - 2U) {
       incidence_count += 2U;
     } else {
-      set_error(error, "too many residual incidence entries");
+      qsop_set_error(error, "too many residual incidence entries");
       return false;
     }
   }
@@ -339,7 +325,7 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
       residual->edge_slot_u == NULL || residual->edge_slot_v == NULL ||
       residual->active_degree == NULL || cursor == NULL) {
     free(cursor);
-    set_error(error, "out of memory while building residual incidence lists");
+    qsop_set_error(error, "out of memory while building residual incidence lists");
     return false;
   }
 
@@ -390,19 +376,19 @@ static bool build_incidence(qsop_residual_t *residual, qsop_error_t *error) {
 
 bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residual output");
+    qsop_set_error(error, "internal error: null residual output");
     return false;
   }
   *out = NULL;
 
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
 
   qsop_residual_t *residual = calloc(1, sizeof(*residual));
   if (residual == NULL) {
-    set_error(error, "out of memory while allocating residual state");
+    qsop_set_error(error, "out of memory while allocating residual state");
     return false;
   }
 
@@ -431,7 +417,7 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out, qs
       residual->propagate_stack == NULL || residual->propagate_stacked == NULL ||
       residual->propagate_neighbors == NULL) {
     qsop_residual_free(residual);
-    set_error(error, "out of memory while copying residual state");
+    qsop_set_error(error, "out of memory while copying residual state");
     return false;
   }
 
@@ -483,11 +469,11 @@ size_t qsop_residual_checkpoint(const qsop_residual_t *residual) {
 
 bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error_t *error) {
   if (residual == NULL) {
-    set_error(error, "internal error: null residual state");
+    qsop_set_error(error, "internal error: null residual state");
     return false;
   }
   if (checkpoint > residual->trail_len) {
-    set_error(error, "invalid residual checkpoint");
+    qsop_set_error(error, "invalid residual checkpoint");
     return false;
   }
 
@@ -545,19 +531,19 @@ bool qsop_residual_undo(qsop_residual_t *residual, size_t checkpoint, qsop_error
 bool qsop_residual_branch(qsop_residual_t *residual, uint32_t v, uint8_t value,
                           qsop_error_t *error) {
   if (residual == NULL) {
-    set_error(error, "internal error: null residual state");
+    qsop_set_error(error, "internal error: null residual state");
     return false;
   }
   if (v >= residual->nvars) {
-    set_error(error, "branch variable is outside residual range");
+    qsop_set_error(error, "branch variable is outside residual range");
     return false;
   }
   if (value > 1U) {
-    set_error(error, "branch value must be 0 or 1");
+    qsop_set_error(error, "branch value must be 0 or 1");
     return false;
   }
   if (residual->active_var[v] == 0) {
-    set_error(error, "cannot branch on inactive variable");
+    qsop_set_error(error, "cannot branch on inactive variable");
     return false;
   }
 
@@ -639,7 +625,7 @@ static uint32_t residual_only_neighbor(const qsop_residual_t *residual, uint32_t
 bool qsop_residual_propagate(qsop_residual_t *residual, uint32_t *out_doublings, bool *out_zero,
                              qsop_error_t *error) {
   if (residual == NULL || out_doublings == NULL || out_zero == NULL) {
-    set_error(error, "internal error: null residual propagate argument");
+    qsop_set_error(error, "internal error: null residual propagate argument");
     return false;
   }
   *out_doublings = 0;
@@ -687,7 +673,7 @@ bool qsop_residual_propagate(qsop_residual_t *residual, uint32_t *out_doublings,
 
     const uint32_t a = residual_only_neighbor(residual, v);
     if (a == RESIDUAL_NIL) {
-      set_error(error, "internal error: residual degree-1 variable has no active neighbour");
+      qsop_set_error(error, "internal error: residual degree-1 variable has no active neighbour");
       return false;
     }
 
@@ -824,19 +810,19 @@ uint32_t qsop_residual_active_degree(const qsop_residual_t *residual, uint32_t v
 bool qsop_residual_active_components(const qsop_residual_t *residual, uint32_t *component,
                                      uint32_t *ncomponents, qsop_error_t *error) {
   if (component == NULL || ncomponents == NULL) {
-    set_error(error, "internal error: null residual component output");
+    qsop_set_error(error, "internal error: null residual component output");
     return false;
   }
   *ncomponents = 0;
 
   if (residual == NULL) {
-    set_error(error, "internal error: null residual state");
+    qsop_set_error(error, "internal error: null residual state");
     return false;
   }
 
   uint32_t *queue = calloc(residual->nvars == 0 ? 1U : residual->nvars, sizeof(*queue));
   if (queue == NULL) {
-    set_error(error, "out of memory while labelling residual components");
+    qsop_set_error(error, "out of memory while labelling residual components");
     return false;
   }
 
@@ -885,22 +871,22 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
                                      uint32_t *ncomponents, uint32_t *largest_component,
                                      qsop_error_t *error) {
   if (ncomponents == NULL || largest_component == NULL) {
-    set_error(error, "internal error: null residual component output");
+    qsop_set_error(error, "internal error: null residual component output");
     return false;
   }
   *ncomponents = 0;
   *largest_component = 0;
 
   if (residual == NULL) {
-    set_error(error, "internal error: null residual state");
+    qsop_set_error(error, "internal error: null residual state");
     return false;
   }
   if (removed >= residual->nvars) {
-    set_error(error, "removed variable is outside residual range");
+    qsop_set_error(error, "removed variable is outside residual range");
     return false;
   }
   if (residual->active_var[removed] == 0) {
-    set_error(error, "removed variable must be active");
+    qsop_set_error(error, "removed variable must be active");
     return false;
   }
 
@@ -909,7 +895,7 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
   if (visited == NULL || queue == NULL) {
     free(visited);
     free(queue);
-    set_error(error, "out of memory while estimating residual components");
+    qsop_set_error(error, "out of memory while estimating residual components");
     return false;
   }
 
@@ -962,7 +948,7 @@ bool qsop_residual_split_without_var(const qsop_residual_t *residual, uint32_t r
 bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint32_t removed,
                                           uint32_t *out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residual component output");
+    qsop_set_error(error, "internal error: null residual component output");
     return false;
   }
   uint32_t largest = 0;
@@ -972,15 +958,15 @@ bool qsop_residual_components_without_var(const qsop_residual_t *residual, uint3
 static bool validate_active_variable(const qsop_residual_t *residual, uint32_t v, const char *what,
                                      qsop_error_t *error) {
   if (residual == NULL) {
-    set_error(error, "internal error: null residual state");
+    qsop_set_error(error, "internal error: null residual state");
     return false;
   }
   if (v >= residual->nvars) {
-    set_error(error, "%s variable is outside residual range", what);
+    qsop_set_error(error, "%s variable is outside residual range", what);
     return false;
   }
   if (residual->active_var[v] == 0) {
-    set_error(error, "%s variable must be active", what);
+    qsop_set_error(error, "%s variable must be active", what);
     return false;
   }
   return true;
@@ -1018,7 +1004,7 @@ static bool residual_active_neighbors(const qsop_residual_t *residual, uint32_t 
 bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint32_t removed,
                                           uint64_t *out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residual fill output");
+    qsop_set_error(error, "internal error: null residual fill output");
     return false;
   }
   *out = 0;
@@ -1031,7 +1017,7 @@ bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint3
   if (neighbors == NULL || is_neighbor == NULL) {
     free(neighbors);
     free(is_neighbor);
-    set_error(error, "out of memory while estimating residual fill");
+    qsop_set_error(error, "out of memory while estimating residual fill");
     return false;
   }
 
@@ -1055,7 +1041,7 @@ bool qsop_residual_fill_edges_without_var(const qsop_residual_t *residual, uint3
 bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, uint32_t removed,
                                               uint32_t *out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residual min-fill width output");
+    qsop_set_error(error, "internal error: null residual min-fill width output");
     return false;
   }
   *out = 0;
@@ -1078,7 +1064,7 @@ bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, u
     free(map);
     free(ce_u);
     free(ce_v);
-    set_error(error, "out of memory while computing residual min-fill probe");
+    qsop_set_error(error, "out of memory while computing residual min-fill probe");
     return false;
   }
 
@@ -1131,7 +1117,7 @@ static const qsop_simd_vtable_t *residual_bitset_simd(void) {
 bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v, uint32_t *out,
                                      qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residual cut-rank output");
+    qsop_set_error(error, "internal error: null residual cut-rank output");
     return false;
   }
   *out = 0;
@@ -1146,7 +1132,7 @@ bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v
     free(neighbors);
     free(is_neighbor);
     free(col_index);
-    set_error(error, "out of memory while estimating residual cut-rank");
+    qsop_set_error(error, "out of memory while estimating residual cut-rank");
     return false;
   }
 
@@ -1175,7 +1161,7 @@ bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v
     free(neighbors);
     free(is_neighbor);
     free(col_index);
-    set_error(error, "out of memory while allocating residual cut-rank matrix");
+    qsop_set_error(error, "out of memory while allocating residual cut-rank matrix");
     return false;
   }
 

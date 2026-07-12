@@ -4,6 +4,7 @@
 #include "dlx4sop/residue.h"
 #include "dlx4sop/simd.h"
 #include "trace.h"
+#include "../core/qsop_internal.h"
 
 #include <float.h>
 #include <inttypes.h>
@@ -13,11 +14,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Long-double pi, matching the precision (and literal) already used for amplitude
- * reconstruction in src/cli/sop_solve.c's write_probability_stats. */
-static const long double tw_two_pi =
-    6.283185307179586476925286766559005768394338798750211641949889L;
 
 typedef struct tw_factor {
   uint32_t arity;
@@ -127,35 +123,13 @@ typedef struct tw_complex64_context {
   tw_pool_t pool;
 } tw_complex64_context_t;
 
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
-
-static void add_saturating_u64(uint64_t *dst, uint64_t value) {
-  if (UINT64_MAX - *dst < value) {
-    *dst = UINT64_MAX;
-  } else {
-    *dst += value;
-  }
-}
 
 /* Count-table / all-modes-Fourier paths below allocate O(r) or O(r^2) structures per bag, so
  * their entry points refuse a modulus that would not fit uint32_t rather than silently
  * truncating it; the single-mode path (tw_complex_context_t below) has no such limit. */
 static bool treewidth_refuse_large_modulus(const qsop_instance_t *qsop, qsop_error_t *error) {
   if (qsop != NULL && qsop->r > UINT32_MAX) {
-    set_error(error, "treewidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
+    qsop_set_error(error, "treewidth count-table/all-modes-Fourier solve refuses modulus > 2^32-1; use "
                      "--solve-mode single-fourier");
     return false;
   }
@@ -211,7 +185,7 @@ static void factor_free(tw_factor_t *factor) {
 
 static bool checked_assignment_count(uint32_t arity, size_t *out, qsop_error_t *error) {
   if (arity >= sizeof(size_t) * CHAR_BIT) {
-    set_error(error, "treewidth bag has too many variables for dense factor storage");
+    qsop_set_error(error, "treewidth bag has too many variables for dense factor storage");
     return false;
   }
   *out = (size_t)1U << arity;
@@ -227,7 +201,7 @@ static bool factor_alloc_scope(const uint32_t *vars, uint32_t arity, uint32_t r,
     return false;
   }
   if (assignments > SIZE_MAX / (r == 0 ? 1U : (size_t)r) / sizeof(uint64_t)) {
-    set_error(error, "treewidth factor table is too large");
+    qsop_set_error(error, "treewidth factor table is too large");
     return false;
   }
 
@@ -236,7 +210,7 @@ static bool factor_alloc_scope(const uint32_t *vars, uint32_t arity, uint32_t r,
   if (scope == NULL || counts == NULL) {
     free(scope);
     free(counts);
-    set_error(error, "out of memory while allocating treewidth factor");
+    qsop_set_error(error, "out of memory while allocating treewidth factor");
     return false;
   }
   if (arity != 0) {
@@ -302,7 +276,7 @@ static bool make_scope_union(const uint32_t *left_vars, uint32_t left_arity,
   uint32_t arity = 0;
   uint32_t *vars = malloc(((size_t)left_arity + right_arity + 1U) * sizeof(*vars));
   if (vars == NULL) {
-    set_error(error, "out of memory while building treewidth factor scope");
+    qsop_set_error(error, "out of memory while building treewidth factor scope");
     return false;
   }
 
@@ -334,7 +308,7 @@ static bool map_scope_positions(const uint32_t *superset, uint32_t superset_arit
       cursor++;
     }
     if (cursor == superset_arity || superset[cursor] != subset[i]) {
-      set_error(error, "internal error: treewidth factor scope is inconsistent");
+      qsop_set_error(error, "internal error: treewidth factor scope is inconsistent");
       return false;
     }
     positions[i] = cursor;
@@ -361,7 +335,7 @@ static bool projection_map_alloc(size_t assignments, uint32_t superset_arity,
                                  qsop_error_t *error) {
   size_t *map = calloc(assignments == 0 ? 1U : assignments, sizeof(*map));
   if (map == NULL) {
-    set_error(error, "out of memory while allocating treewidth projection map");
+    qsop_set_error(error, "out of memory while allocating treewidth projection map");
     return false;
   }
 
@@ -369,7 +343,7 @@ static bool projection_map_alloc(size_t assignments, uint32_t superset_arity,
   for (uint32_t i = 0; i < arity; i++) {
     if (positions[i] >= superset_arity) {
       free(map);
-      set_error(error, "internal error: treewidth projection position is out of range");
+      qsop_set_error(error, "internal error: treewidth projection position is out of range");
       return false;
     }
     projection_bits[positions[i]] = (size_t)1U << i;
@@ -468,7 +442,7 @@ static bool factor_multiply(const tw_factor_t *left, const tw_factor_t *right,
   }
   if (arity > ctx->max_bag_vars) {
     free(vars);
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses a %" PRIu32
               "-variable bag; pass a larger --max-vars or use another backend",
               arity);
@@ -483,7 +457,7 @@ static bool factor_multiply(const tw_factor_t *left, const tw_factor_t *right,
     free(vars);
     free(left_positions);
     free(right_positions);
-    set_error(error, "out of memory while multiplying treewidth factors");
+    qsop_set_error(error, "out of memory while multiplying treewidth factors");
     return false;
   }
   if (!map_scope_positions(vars, arity, left->vars, left->arity, left_positions, error) ||
@@ -538,7 +512,7 @@ static bool factor_multiply(const tw_factor_t *left, const tw_factor_t *right,
   free(left_map);
   free(right_map);
   if (ctx->stats != NULL) {
-    add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
+    qsop_add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_factor_table(ctx, out);
   qsop_trace_emit_elapsed(ctx->trace, "treewidth.multiply", arity, out->assignments, start);
@@ -555,7 +529,7 @@ static bool factor_multiply_fourier(const tw_factor_t *left, const tw_factor_t *
   }
   if (arity > ctx->max_bag_vars) {
     free(vars);
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses a %" PRIu32
               "-variable bag; pass a larger --max-vars or use another backend",
               arity);
@@ -570,7 +544,7 @@ static bool factor_multiply_fourier(const tw_factor_t *left, const tw_factor_t *
     free(vars);
     free(left_positions);
     free(right_positions);
-    set_error(error, "out of memory while multiplying treewidth Fourier factors");
+    qsop_set_error(error, "out of memory while multiplying treewidth Fourier factors");
     return false;
   }
   if (!map_scope_positions(vars, arity, left->vars, left->arity, left_positions, error) ||
@@ -629,7 +603,7 @@ static bool factor_multiply_fourier(const tw_factor_t *left, const tw_factor_t *
   free(left_map);
   free(right_map);
   if (ctx->stats != NULL) {
-    add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
+    qsop_add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_factor_table(ctx, out);
   qsop_trace_emit_elapsed(ctx->trace, "treewidth.fourier_multiply", arity, out->assignments, start);
@@ -667,13 +641,13 @@ static bool factor_sum_out(const tw_factor_t *input, uint32_t var, const tw_cont
                            tw_factor_t *out, qsop_error_t *error) {
   const uint32_t pos = factor_var_pos(input, var);
   if (pos == UINT32_MAX) {
-    set_error(error, "internal error: treewidth factor does not contain eliminated variable");
+    qsop_set_error(error, "internal error: treewidth factor does not contain eliminated variable");
     return false;
   }
 
   uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
   if (vars == NULL) {
-    set_error(error, "out of memory while projecting treewidth factor");
+    qsop_set_error(error, "out of memory while projecting treewidth factor");
     return false;
   }
   uint32_t arity = 0;
@@ -708,13 +682,13 @@ static bool factor_sum_out_fourier(const tw_factor_t *input, uint32_t var, const
                                    tw_factor_t *out, qsop_error_t *error) {
   const uint32_t pos = factor_var_pos(input, var);
   if (pos == UINT32_MAX) {
-    set_error(error, "internal error: treewidth factor does not contain eliminated variable");
+    qsop_set_error(error, "internal error: treewidth factor does not contain eliminated variable");
     return false;
   }
 
   uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
   if (vars == NULL) {
-    set_error(error, "out of memory while projecting treewidth Fourier factor");
+    qsop_set_error(error, "out of memory while projecting treewidth Fourier factor");
     return false;
   }
   uint32_t arity = 0;
@@ -792,7 +766,7 @@ static bool factor_complex_alloc_scope(const uint32_t *vars, uint32_t arity,
     return false;
   }
   if (assignments > SIZE_MAX / sizeof(long double)) {
-    set_error(error, "treewidth single-mode factor table is too large");
+    qsop_set_error(error, "treewidth single-mode factor table is too large");
     return false;
   }
 
@@ -807,7 +781,7 @@ static bool factor_complex_alloc_scope(const uint32_t *vars, uint32_t arity,
     free(scope);
     free(re);
     free(im);
-    set_error(error, "out of memory while allocating treewidth single-mode factor");
+    qsop_set_error(error, "out of memory while allocating treewidth single-mode factor");
     return false;
   }
   if (arity != 0) {
@@ -833,15 +807,6 @@ static bool factor_complex_identity(tw_factor_complex_t *out, qsop_error_t *erro
   return true;
 }
 
-/* omega_r^{target_mode * k}, computed directly from a scalar angle: r never sizes an
- * array in this path, only a divisor here, so table cost is fully independent of r. */
-static void tw_root_of_unity(uint64_t r, uint32_t target_mode, uint64_t k, long double *re,
-                             long double *im) {
-  const long double angle = tw_two_pi * (long double)target_mode * (long double)k / (long double)r;
-  *re = cosl(angle);
-  *im = sinl(angle);
-}
-
 static void note_complex_factor_table(const tw_complex_context_t *ctx,
                                       const tw_factor_complex_t *factor) {
   if (ctx->stats == NULL) {
@@ -864,7 +829,7 @@ static bool factor_multiply_complex(const tw_factor_complex_t *left,
   }
   if (arity > ctx->max_bag_vars) {
     free(vars);
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses a %" PRIu32
               "-variable bag; pass a larger --max-vars or use another backend",
               arity);
@@ -879,7 +844,7 @@ static bool factor_multiply_complex(const tw_factor_complex_t *left,
     free(vars);
     free(left_positions);
     free(right_positions);
-    set_error(error, "out of memory while multiplying treewidth single-mode factors");
+    qsop_set_error(error, "out of memory while multiplying treewidth single-mode factors");
     return false;
   }
   if (!map_scope_positions(vars, arity, left->vars, left->arity, left_positions, error) ||
@@ -930,7 +895,7 @@ static bool factor_multiply_complex(const tw_factor_complex_t *left,
   free(left_map);
   free(right_map);
   if (ctx->stats != NULL) {
-    add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
+    qsop_add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_complex_factor_table(ctx, out);
   qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_multiply", arity, out->assignments,
@@ -943,13 +908,13 @@ static bool factor_sum_out_complex(const tw_factor_complex_t *input, uint32_t va
                                    qsop_error_t *error) {
   const uint32_t pos = scope_var_pos(input->vars, input->arity, var);
   if (pos == UINT32_MAX) {
-    set_error(error, "internal error: treewidth factor does not contain eliminated variable");
+    qsop_set_error(error, "internal error: treewidth factor does not contain eliminated variable");
     return false;
   }
 
   uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
   if (vars == NULL) {
-    set_error(error, "out of memory while projecting treewidth single-mode factor");
+    qsop_set_error(error, "out of memory while projecting treewidth single-mode factor");
     return false;
   }
   uint32_t arity = 0;
@@ -993,14 +958,14 @@ static bool factor_list_reserve(tw_factor_list_t *list, size_t needed, qsop_erro
   size_t new_cap = list->cap == 0 ? 16U : list->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "treewidth factor list is too large");
+      qsop_set_error(error, "treewidth factor list is too large");
       return false;
     }
     new_cap *= 2U;
   }
   tw_factor_t *items = realloc(list->items, new_cap * sizeof(*items));
   if (items == NULL) {
-    set_error(error, "out of memory while growing treewidth factor list");
+    qsop_set_error(error, "out of memory while growing treewidth factor list");
     return false;
   }
   for (size_t i = list->cap; i < new_cap; i++) {
@@ -1060,14 +1025,14 @@ static bool factor_complex_list_reserve(tw_factor_complex_list_t *list, size_t n
   size_t new_cap = list->cap == 0 ? 16U : list->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "treewidth single-mode factor list is too large");
+      qsop_set_error(error, "treewidth single-mode factor list is too large");
       return false;
     }
     new_cap *= 2U;
   }
   tw_factor_complex_t *items = realloc(list->items, new_cap * sizeof(*items));
   if (items == NULL) {
-    set_error(error, "out of memory while growing treewidth single-mode factor list");
+    qsop_set_error(error, "out of memory while growing treewidth single-mode factor list");
     return false;
   }
   for (size_t i = list->cap; i < new_cap; i++) {
@@ -1268,7 +1233,7 @@ static bool append_unary_factor_complex(const qsop_instance_t *qsop, uint32_t va
   }
   factor.re[0] = 1.0L;
   factor.im[0] = 0.0L;
-  tw_root_of_unity(qsop->r, target_mode, qsop->unary[var] % qsop->r, &factor.re[1], &factor.im[1]);
+  qsop_root_of_unity_l(qsop->r, target_mode, qsop->unary[var] % qsop->r, &factor.re[1], &factor.im[1]);
   if (!factor_complex_list_push_take(list, &factor, error)) {
     factor_complex_free(&factor);
     return false;
@@ -1350,7 +1315,7 @@ static bool eliminate_variable(tw_factor_list_t *list, uint32_t var, const tw_co
   }
 
   if (!collected) {
-    set_error(error, "internal error: treewidth elimination found no factor for variable");
+    qsop_set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
 
@@ -1395,7 +1360,7 @@ static bool eliminate_variable_fourier(tw_factor_list_t *list, uint32_t var,
   }
 
   if (!collected) {
-    set_error(error, "internal error: treewidth elimination found no factor for variable");
+    qsop_set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
 
@@ -1482,7 +1447,7 @@ static bool eliminate_variable_complex(tw_factor_complex_list_t *list, uint32_t 
   }
 
   if (!collected) {
-    set_error(error, "internal error: treewidth elimination found no factor for variable");
+    qsop_set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
 
@@ -1600,7 +1565,7 @@ static bool factor_complex64_alloc_scope(tw_pool_t *pool, const uint32_t *vars, 
     return false;
   }
   if (assignments > SIZE_MAX / sizeof(double)) {
-    set_error(error, "treewidth double single-mode factor table is too large");
+    qsop_set_error(error, "treewidth double single-mode factor table is too large");
     return false;
   }
 
@@ -1611,7 +1576,7 @@ static bool factor_complex64_alloc_scope(tw_pool_t *pool, const uint32_t *vars, 
     free(scope);
     tw_pool_give(pool, arity, re);
     tw_pool_give(pool, arity, im);
-    set_error(error, "out of memory while allocating treewidth double single-mode factor");
+    qsop_set_error(error, "out of memory while allocating treewidth double single-mode factor");
     return false;
   }
   if (arity != 0) {
@@ -1637,13 +1602,6 @@ static bool factor_complex64_identity(tw_pool_t *pool, tw_factor_complex64_t *ou
   out->re[0] = 1.0;
   out->im[0] = 0.0;
   return true;
-}
-
-static void tw_root_of_unity_f64(uint64_t r, uint32_t target_mode, uint64_t k, double *re,
-                                 double *im) {
-  const double angle = (double)tw_two_pi * (double)target_mode * (double)k / (double)r;
-  *re = cos(angle);
-  *im = sin(angle);
 }
 
 static void note_complex64_factor_table(const tw_complex64_context_t *ctx,
@@ -1765,7 +1723,7 @@ static void factor_join_complex64(const tw_factor_complex64_t *left, const uint3
       out->re[a] = lre * rre - lim * rim;
       out->im[a] = lre * rim + lim * rre;
     }
-    add_saturating_u64(scalar, (uint64_t)assignments);
+    qsop_add_saturating_u64(scalar, (uint64_t)assignments);
     return;
   }
 
@@ -1792,9 +1750,9 @@ static void factor_join_complex64(const tw_factor_complex64_t *left, const uint3
     }
   }
   if (strcmp(qsop_simd_kernel_name(simd), "scalar") != 0) {
-    add_saturating_u64(vectorized, (uint64_t)assignments);
+    qsop_add_saturating_u64(vectorized, (uint64_t)assignments);
   } else {
-    add_saturating_u64(scalar, (uint64_t)assignments);
+    qsop_add_saturating_u64(scalar, (uint64_t)assignments);
   }
 }
 
@@ -1809,7 +1767,7 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
   }
   if (arity > ctx->max_bag_vars) {
     free(vars);
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses a %" PRIu32
               "-variable bag; pass a larger --max-vars or use another backend",
               arity);
@@ -1824,7 +1782,7 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
     free(vars);
     free(left_positions);
     free(right_positions);
-    set_error(error, "out of memory while multiplying treewidth double single-mode factors");
+    qsop_set_error(error, "out of memory while multiplying treewidth double single-mode factors");
     return false;
   }
   if (!map_scope_positions(vars, arity, left->vars, left->arity, left_positions, error) ||
@@ -1848,14 +1806,14 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
   uint64_t scalar = 0;
   factor_join_complex64(left, left_positions, right, right_positions, arity, out, ctx->simd,
                         &vectorized, &scalar);
-  add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
+  qsop_add_saturating_u64(&ctx->complex_ops, (uint64_t)out->assignments);
 
   free(left_positions);
   free(right_positions);
   if (ctx->stats != NULL) {
-    add_saturating_u64(&ctx->stats->simd_vectorized_ops, vectorized);
-    add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, scalar);
-    add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
+    qsop_add_saturating_u64(&ctx->stats->simd_vectorized_ops, vectorized);
+    qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, scalar);
+    qsop_add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_complex64_factor_table(ctx, out);
   qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_multiply_f64", arity, out->assignments,
@@ -1868,13 +1826,13 @@ static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_
                                      qsop_error_t *error) {
   const uint32_t pos = scope_var_pos(input->vars, input->arity, var);
   if (pos == UINT32_MAX) {
-    set_error(error, "internal error: treewidth factor does not contain eliminated variable");
+    qsop_set_error(error, "internal error: treewidth factor does not contain eliminated variable");
     return false;
   }
 
   uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
   if (vars == NULL) {
-    set_error(error, "out of memory while projecting treewidth double single-mode factor");
+    qsop_set_error(error, "out of memory while projecting treewidth double single-mode factor");
     return false;
   }
   uint32_t arity = 0;
@@ -1900,7 +1858,7 @@ static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_
       ctx->simd->complex_sum_out_pairs_f64(out->re + out_base, out->im + out_base, input->re + base,
                                            input->im + base, stride);
       if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
-        add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)stride);
+        qsop_add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)stride);
       }
     } else {
       for (size_t off = 0; off < stride; off++) {
@@ -1911,10 +1869,10 @@ static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_
         out->im[projected] = input->im[lower] + input->im[upper];
       }
       if (ctx->stats != NULL) {
-        add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)stride);
+        qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)stride);
       }
     }
-    add_saturating_u64(&ctx->complex_ops, (uint64_t)(2U * stride));
+    qsop_add_saturating_u64(&ctx->complex_ops, (uint64_t)(2U * stride));
   }
 
   note_complex64_factor_table(ctx, out);
@@ -1932,14 +1890,14 @@ static bool factor_complex64_list_reserve(tw_factor_complex64_list_t *list, size
   size_t new_cap = list->cap == 0 ? 16U : list->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "treewidth double single-mode factor list is too large");
+      qsop_set_error(error, "treewidth double single-mode factor list is too large");
       return false;
     }
     new_cap *= 2U;
   }
   tw_factor_complex64_t *items = realloc(list->items, new_cap * sizeof(*items));
   if (items == NULL) {
-    set_error(error, "out of memory while growing treewidth double single-mode factor list");
+    qsop_set_error(error, "out of memory while growing treewidth double single-mode factor list");
     return false;
   }
   for (size_t i = list->cap; i < new_cap; i++) {
@@ -2001,7 +1959,7 @@ static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t 
   }
   factor.re[0] = 1.0;
   factor.im[0] = 0.0;
-  tw_root_of_unity_f64(qsop->r, target_mode, qsop->unary[var] % qsop->r, &factor.re[1],
+  qsop_root_of_unity_f64(qsop->r, target_mode, qsop->unary[var] % qsop->r, &factor.re[1],
                        &factor.im[1]);
   if (!factor_complex64_list_push_take(list, &factor, error)) {
     factor_complex64_free(&factor);
@@ -2093,7 +2051,7 @@ static bool eliminate_variable_complex64(tw_factor_complex64_list_t *list, uint3
   }
 
   if (!collected) {
-    set_error(error, "internal error: treewidth elimination found no factor for variable");
+    qsop_set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
 
@@ -2163,11 +2121,11 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
     *stats = (qsop_solve_stats_t){0};
   }
   if (qsop == NULL || order == NULL || counts == NULL) {
-    set_error(error, "internal error: null treewidth solve argument");
+    qsop_set_error(error, "internal error: null treewidth solve argument");
     return false;
   }
   if (max_bag_vars == 0 && qsop->nvars != 0) {
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
               "--max-vars");
     return false;
@@ -2212,7 +2170,7 @@ static bool solve_treewidth_once(const qsop_instance_t *qsop, uint32_t max_bag_v
   if (final.arity != 0) {
     factor_list_free(&factors);
     factor_free(&final);
-    set_error(error, "internal error: treewidth solve left an uneliminated factor");
+    qsop_set_error(error, "internal error: treewidth solve left an uneliminated factor");
     return false;
   }
   if (!shift_result_counts(r32, counts, final.counts, (uint32_t)qsop->constant, &ctx, error)) {
@@ -2257,11 +2215,11 @@ static bool solve_treewidth_fourier_mod_once(const qsop_instance_t *qsop, uint32
     *stats = (qsop_solve_stats_t){0};
   }
   if (qsop == NULL || order == NULL || counts == NULL) {
-    set_error(error, "internal error: null treewidth Fourier solve argument");
+    qsop_set_error(error, "internal error: null treewidth Fourier solve argument");
     return false;
   }
   if (max_bag_vars == 0 && qsop->nvars != 0) {
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
               "--max-vars");
     return false;
@@ -2306,7 +2264,7 @@ static bool solve_treewidth_fourier_mod_once(const qsop_instance_t *qsop, uint32
   if (final.arity != 0) {
     factor_list_free(&factors);
     factor_free(&final);
-    set_error(error, "internal error: treewidth Fourier solve left an uneliminated factor");
+    qsop_set_error(error, "internal error: treewidth Fourier solve left an uneliminated factor");
     return false;
   }
   const bool ok = qsop_fourier_inverse_counts(r32, final.counts, (uint32_t)qsop->constant, powers,
@@ -2331,7 +2289,7 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "treewidth Fourier CRT count table is too large");
+    qsop_set_error(error, "treewidth Fourier CRT count table is too large");
     return false;
   }
 
@@ -2343,7 +2301,7 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating treewidth Fourier CRT solve state");
+    qsop_set_error(error, "out of memory while allocating treewidth Fourier CRT solve state");
     return false;
   }
   result->r = r32;
@@ -2363,7 +2321,7 @@ static bool solve_treewidth_fourier_once(const qsop_instance_t *qsop, uint32_t m
       free(all_counts);
       free(residues);
       qsop_result_free(result);
-      set_error(error, "out of memory while allocating treewidth Fourier CRT result strings");
+      qsop_set_error(error, "out of memory while allocating treewidth Fourier CRT result strings");
       return false;
     }
   }
@@ -2451,23 +2409,6 @@ solve_treewidth_fourier_order_policy_once(const qsop_instance_t *qsop, uint32_t 
   return ok;
 }
 
-/* Conservative worst-case bound on floating-point error accumulated by the single-mode
- * complex DP, following standard backward-error analysis for long double (80-bit extended,
- * unit roundoff ~5.42e-20) arithmetic: each complex multiply-accumulate or complex add
- * counted in complex_ops contributes at most a small constant multiple of the unit roundoff
- * to the (unnormalized) result's error. This bound is intentionally not tight -- it is
- * validated empirically against exact histogram reconstruction in the differential tests. */
-static long double single_mode_error_bound(uint64_t complex_ops) {
-  static const long double ops_per_step =
-      8.0L; /* complex multiply: 4 mul + 2 add/sub, plus margin */
-  return (long double)complex_ops * ops_per_step * LDBL_EPSILON;
-}
-
-static long double single_mode_error_bound_f64(uint64_t complex_ops) {
-  static const long double ops_per_step = 8.0L;
-  return (long double)complex_ops * ops_per_step * DBL_EPSILON;
-}
-
 static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                              const uint32_t *order, uint32_t order_width,
                                              uint32_t target_mode, int *out_scale_exp2,
@@ -2479,11 +2420,11 @@ static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32
     *stats = (qsop_solve_stats_t){0};
   }
   if (qsop == NULL || order == NULL || out_re == NULL || out_im == NULL) {
-    set_error(error, "internal error: null treewidth single-mode solve argument");
+    qsop_set_error(error, "internal error: null treewidth single-mode solve argument");
     return false;
   }
   if (max_bag_vars == 0 && qsop->nvars != 0) {
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
               "--max-vars");
     return false;
@@ -2525,7 +2466,7 @@ static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32
   if (final.arity != 0) {
     factor_complex_list_free(&factors);
     factor_complex_free(&final);
-    set_error(error, "internal error: treewidth single-mode solve left an uneliminated factor");
+    qsop_set_error(error, "internal error: treewidth single-mode solve left an uneliminated factor");
     return false;
   }
 
@@ -2534,7 +2475,7 @@ static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32
      this by omega_r^{target_mode * c}. */
   long double c_re = 0.0L;
   long double c_im = 0.0L;
-  tw_root_of_unity(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  qsop_root_of_unity_l(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
   const long double result_re = final.re[0] * c_re - final.im[0] * c_im;
   const long double result_im = final.re[0] * c_im + final.im[0] * c_re;
 
@@ -2545,7 +2486,7 @@ static bool solve_treewidth_single_mode_once(const qsop_instance_t *qsop, uint32
   *out_im = result_im;
   *out_scale_exp2 = ctx.scale_exp2;
   if (out_numeric_error_bound != NULL) {
-    *out_numeric_error_bound = single_mode_error_bound(ctx.complex_ops);
+    *out_numeric_error_bound = qsop_single_mode_error_bound_l(ctx.complex_ops);
   }
   return true;
 }
@@ -2564,11 +2505,11 @@ static bool solve_treewidth_single_mode_once_f64(
     *stats = (qsop_solve_stats_t){0};
   }
   if (qsop == NULL || order == NULL || out_re == NULL || out_im == NULL) {
-    set_error(error, "internal error: null treewidth double single-mode solve argument");
+    qsop_set_error(error, "internal error: null treewidth double single-mode solve argument");
     return false;
   }
   if (max_bag_vars == 0 && qsop->nvars != 0) {
-    set_error(error,
+    qsop_set_error(error,
               "treewidth backend refuses non-constant instances with --max-vars 0; pass a larger "
               "--max-vars");
     return false;
@@ -2592,7 +2533,7 @@ static bool solve_treewidth_single_mode_once_f64(
    * live, hence last in every scope. See build_initial_factors_complex64. */
   uint32_t *relabel = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*relabel));
   if (relabel == NULL) {
-    set_error(error, "out of memory while relabelling treewidth single-mode variables");
+    qsop_set_error(error, "out of memory while relabelling treewidth single-mode variables");
     return false;
   }
   /* Everything below frees its factors before returning, so every exit path drains the recycler
@@ -2631,14 +2572,14 @@ static bool solve_treewidth_single_mode_once_f64(
     factor_complex64_list_free(&factors);
     factor_complex64_free(&final);
     tw_pool_drain(&ctx.pool);
-    set_error(error,
+    qsop_set_error(error,
               "internal error: treewidth double single-mode solve left an uneliminated factor");
     return false;
   }
 
   double c_re = 0.0;
   double c_im = 0.0;
-  tw_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
+  qsop_root_of_unity_f64(qsop->r, target_mode, qsop->constant % qsop->r, &c_re, &c_im);
   const double mantissa_re = final.re[0] * c_re - final.im[0] * c_im;
   const double mantissa_im = final.re[0] * c_im + final.im[0] * c_re;
   const int scale_exp2 = ctx.scale_exp2;
@@ -2651,7 +2592,7 @@ static bool solve_treewidth_single_mode_once_f64(
   *out_im = (long double)mantissa_im;
   *out_scale_exp2 = scale_exp2;
   if (out_numeric_error_bound != NULL) {
-    *out_numeric_error_bound = single_mode_error_bound_f64(ctx.complex_ops);
+    *out_numeric_error_bound = qsop_single_mode_error_bound_f64(ctx.complex_ops);
   }
   return true;
 }
@@ -2710,7 +2651,7 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "treewidth CRT count table is too large");
+    qsop_set_error(error, "treewidth CRT count table is too large");
     return false;
   }
 
@@ -2722,7 +2663,7 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating treewidth CRT solve state");
+    qsop_set_error(error, "out of memory while allocating treewidth CRT solve state");
     return false;
   }
   result->r = r32;
@@ -2733,7 +2674,7 @@ static bool solve_treewidth_crt(const qsop_instance_t *qsop, uint32_t max_bag_va
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating treewidth CRT result strings");
+    qsop_set_error(error, "out of memory while allocating treewidth CRT result strings");
     return false;
   }
 
@@ -2786,7 +2727,7 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
   }
   if (nprimes > SIZE_MAX / (r32 == 0 ? 1U : (size_t)r32) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "treewidth CRT count table is too large");
+    qsop_set_error(error, "treewidth CRT count table is too large");
     return false;
   }
 
@@ -2798,7 +2739,7 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating treewidth CRT solve state");
+    qsop_set_error(error, "out of memory while allocating treewidth CRT solve state");
     return false;
   }
   result->r = r32;
@@ -2809,7 +2750,7 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating treewidth CRT result strings");
+    qsop_set_error(error, "out of memory while allocating treewidth CRT result strings");
     return false;
   }
 
@@ -2848,11 +2789,6 @@ static bool solve_treewidth_precomputed_crt(const qsop_instance_t *qsop, uint32_
   return true;
 }
 
-bool qsop_solve_treewidth(const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_result_t **out,
-                          qsop_error_t *error) {
-  return qsop_solve_treewidth_stats(qsop, max_bag_vars, out, NULL, error);
-}
-
 bool qsop_solve_treewidth_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                 qsop_result_t **out, qsop_solve_stats_t *stats,
                                 qsop_error_t *error) {
@@ -2878,7 +2814,7 @@ bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_orde
                                 uint32_t **order_out, uint32_t *width_out, uint64_t *dp_work_out,
                                 qsop_error_t *error) {
   if (qsop == NULL || order_out == NULL || width_out == NULL) {
-    set_error(error, "internal error: null treewidth order argument");
+    qsop_set_error(error, "internal error: null treewidth order argument");
     return false;
   }
   *order_out = NULL;
@@ -2886,7 +2822,7 @@ bool qsop_treewidth_order_alloc(const qsop_instance_t *qsop, qsop_treewidth_orde
 
   uint32_t *order = calloc(qsop->nvars == 0 ? 1U : qsop->nvars, sizeof(*order));
   if (order == NULL) {
-    set_error(error, "out of memory while allocating treewidth order");
+    qsop_set_error(error, "out of memory while allocating treewidth order");
     return false;
   }
 
@@ -2915,16 +2851,16 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
     qsop_solve_mode_t mode, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null result pointer");
+    qsop_set_error(error, "internal error: null result pointer");
     return false;
   }
   *out = NULL;
   if (qsop == NULL || order == NULL) {
-    set_error(error, "internal error: null treewidth precomputed-order solve argument");
+    qsop_set_error(error, "internal error: null treewidth precomputed-order solve argument");
     return false;
   }
   if (mode != QSOP_SOLVE_MODE_COUNT_TABLE && mode != QSOP_SOLVE_MODE_FOURIER) {
-    set_error(error, "internal error: unsupported treewidth solve mode");
+    qsop_set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
   if (!treewidth_refuse_large_modulus(qsop, error)) {
@@ -2941,7 +2877,7 @@ bool qsop_solve_treewidth_precomputed_order_mode_trace_stats(
 
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL) {
-    set_error(error, "out of memory while allocating treewidth result");
+    qsop_set_error(error, "out of memory while allocating treewidth result");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -2974,16 +2910,16 @@ bool qsop_solve_treewidth_order_mode_trace_stats(const qsop_instance_t *qsop, ui
                                                  qsop_solve_stats_t *stats,
                                                  qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null result pointer");
+    qsop_set_error(error, "internal error: null result pointer");
     return false;
   }
   *out = NULL;
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
   if (mode != QSOP_SOLVE_MODE_COUNT_TABLE && mode != QSOP_SOLVE_MODE_FOURIER) {
-    set_error(error, "internal error: unsupported treewidth solve mode");
+    qsop_set_error(error, "internal error: unsupported treewidth solve mode");
     return false;
   }
   if (!treewidth_refuse_large_modulus(qsop, error)) {
@@ -2999,7 +2935,7 @@ bool qsop_solve_treewidth_order_mode_trace_stats(const qsop_instance_t *qsop, ui
 
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL) {
-    set_error(error, "out of memory while allocating treewidth result");
+    qsop_set_error(error, "out of memory while allocating treewidth result");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -3023,16 +2959,16 @@ bool qsop_solve_treewidth_single_mode(const qsop_instance_t *qsop, uint32_t max_
                                       qsop_amplitude_t *out, qsop_solve_stats_t *stats,
                                       qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
 
@@ -3058,16 +2994,16 @@ bool qsop_solve_treewidth_single_mode_f64(const qsop_instance_t *qsop, uint32_t 
                                           qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
                                           qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
 
@@ -3092,16 +3028,16 @@ bool qsop_solve_treewidth_precomputed_order_single_mode(
     uint32_t target_mode, qsop_amplitude_t *out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL || order == NULL) {
-    set_error(error, "internal error: null treewidth precomputed-order single-mode solve argument");
+    qsop_set_error(error, "internal error: null treewidth precomputed-order single-mode solve argument");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
 
@@ -3126,17 +3062,17 @@ bool qsop_solve_treewidth_precomputed_order_single_mode_f64(
     uint32_t target_mode, const qsop_simd_vtable_t *simd, qsop_amplitude_t *out,
     qsop_solve_stats_t *stats, qsop_solve_trace_t *trace, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL || order == NULL) {
-    set_error(error,
+    qsop_set_error(error,
               "internal error: null treewidth precomputed-order double single-mode solve argument");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
 
@@ -3161,7 +3097,7 @@ bool qsop_solve_treewidth_precomputed_order_count_mod_stats(
     uint64_t count_modulus, uint64_t *counts, qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
     qsop_error_t *error) {
   if (qsop == NULL || order == NULL || counts == NULL) {
-    set_error(error, "internal error: null treewidth precomputed-order modular solve argument");
+    qsop_set_error(error, "internal error: null treewidth precomputed-order modular solve argument");
     return false;
   }
   if (!treewidth_refuse_large_modulus(qsop, error)) {

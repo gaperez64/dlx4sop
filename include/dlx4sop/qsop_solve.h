@@ -235,9 +235,6 @@ typedef struct qsop_solve_trace {
 
 void qsop_result_free(qsop_result_t *result);
 
-bool qsop_solve_treewidth(const qsop_instance_t *qsop, uint32_t max_bag_vars, qsop_result_t **out,
-                          qsop_error_t *error);
-
 bool qsop_solve_treewidth_stats(const qsop_instance_t *qsop, uint32_t max_bag_vars,
                                 qsop_result_t **out, qsop_solve_stats_t *stats,
                                 qsop_error_t *error);
@@ -355,12 +352,6 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
     uint32_t max_vars, qsop_rankwidth_solve_mode_t mode,
     const qsop_rankwidth_solve_options_t *options, qsop_result_t **out, qsop_solve_stats_t *stats,
     qsop_solve_trace_t *trace, qsop_error_t *error);
-
-bool qsop_solve_rankwidth_trace_stats(const qsop_instance_t *qsop,
-                                      const qsop_rankwidth_decomposition_t *decomposition,
-                                      uint32_t max_vars, qsop_result_t **out,
-                                      qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
-                                      qsop_error_t *error);
 
 /* Compute a single Fourier mode (target_mode, typically 1 for one amplitude) directly via
  * a complex-arithmetic dynamic program over the given rank-decomposition: table size is
