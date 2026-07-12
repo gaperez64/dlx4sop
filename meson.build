@@ -294,6 +294,14 @@ test_qsop_simplify = executable(
 
 test('qsop simplify unit', test_qsop_simplify, suite: 'unit')
 
+test_qsop_simplify_differential = executable(
+  'test-qsop-simplify-differential',
+  ['tests/unit/test_qsop_simplify_differential.c', 'tests/unit/qsop_simplify_reference.c'],
+  dependencies: dlx4sop_core_dep,
+)
+
+test('qsop simplify differential unit', test_qsop_simplify_differential, suite: 'unit')
+
 test_min_fill = executable(
   'test-min-fill',
   'tests/unit/test_min_fill.c',
