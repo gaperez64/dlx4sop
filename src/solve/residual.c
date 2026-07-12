@@ -1,8 +1,10 @@
 #include "dlx4sop/residual.h"
 #include "dlx4sop/bitset.h"
 #include "dlx4sop/min_fill.h"
+#include "dlx4sop/simd.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1113,38 +1115,17 @@ bool qsop_residual_min_fill_width_without_var(const qsop_residual_t *residual, u
   return ok;
 }
 
-static uint32_t gf2_rank(uint64_t *rows, uint32_t nrows, uint32_t ncols, uint32_t nwords) {
-  uint32_t rank = 0;
-  for (uint32_t col = 0; col < ncols && rank < nrows; col++) {
-    const uint32_t word = col / 64U;
-    const uint64_t mask = UINT64_C(1) << (col % 64U);
-    uint32_t pivot = rank;
-    while (pivot < nrows && (rows[(size_t)pivot * nwords + word] & mask) == 0) {
-      pivot++;
-    }
-    if (pivot == nrows) {
-      continue;
-    }
-    if (pivot != rank) {
-      for (uint32_t w = 0; w < nwords; w++) {
-        const size_t a = (size_t)rank * nwords + w;
-        const size_t b = (size_t)pivot * nwords + w;
-        const uint64_t tmp = rows[a];
-        rows[a] = rows[b];
-        rows[b] = tmp;
-      }
-    }
-    for (uint32_t row = 0; row < nrows; row++) {
-      if (row == rank || (rows[(size_t)row * nwords + word] & mask) == 0) {
-        continue;
-      }
-      for (uint32_t w = 0; w < nwords; w++) {
-        rows[(size_t)row * nwords + w] ^= rows[(size_t)rank * nwords + w];
-      }
-    }
-    rank++;
+/* Cached vtable resolver: this rank computation runs once per branch-candidate variable (the
+ * hot path in qsop_residual_neighbor_cut_rank below), so resolving the SIMD kernel once instead
+ * of per call matters. */
+static const qsop_simd_vtable_t *residual_bitset_simd(void) {
+  static _Atomic(const qsop_simd_vtable_t *) cached;
+  const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
+  if (simd == NULL) {
+    simd = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
+    atomic_store_explicit(&cached, simd, memory_order_release);
   }
-  return rank;
+  return simd;
 }
 
 bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v, uint32_t *out,
@@ -1211,7 +1192,7 @@ bool qsop_residual_neighbor_cut_rank(const qsop_residual_t *residual, uint32_t v
     }
   }
 
-  *out = gf2_rank(rows, nneighbors, ncols, nwords);
+  *out = qsop_gf2_rank_bitsets_simd(rows, nneighbors, ncols, nwords, residual_bitset_simd());
   free(rows);
   free(neighbors);
   free(is_neighbor);

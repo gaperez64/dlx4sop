@@ -1,5 +1,9 @@
 #include "dlx4sop/residual.h"
+#include "dlx4sop/bitset.h"
+#include "dlx4sop/simd.h"
 
+#include <inttypes.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -501,6 +505,83 @@ static int test_large_residual_values(void) {
   return 0;
 }
 
+static uint64_t rank_xorshift(uint64_t *state) {
+  uint64_t x = *state;
+  x ^= x << 13;
+  x ^= x >> 7;
+  x ^= x << 17;
+  *state = x;
+  return x;
+}
+
+/* Independent reference GF2 rank via incremental basis reduction indexed by pivot bit position,
+ * rather than bitset.c's column-scan-and-swap-then-eliminate approach -- a separately-written
+ * implementation of the same linear algebra is unlikely to share a bug with the code under test.
+ * Rows are consumed as single 64-bit words, so this only covers ncols <= 64 (fine for a focused
+ * differential check; qsop_residual_neighbor_cut_rank itself is exercised at realistic widths by
+ * the fixture-based tests above). */
+static uint32_t naive_gf2_rank(const uint64_t *rows, uint32_t nrows, uint32_t ncols) {
+  uint64_t basis[64] = {0};
+  const uint64_t col_mask = ncols >= 64U ? UINT64_MAX : ((UINT64_C(1) << ncols) - 1U);
+  uint32_t rank = 0;
+  for (uint32_t i = 0; i < nrows; i++) {
+    uint64_t v = rows[i] & col_mask;
+    while (v != 0) {
+      const uint32_t bit = 63U - (uint32_t)__builtin_clzll(v);
+      if (basis[bit] == 0) {
+        basis[bit] = v;
+        rank++;
+        break;
+      }
+      v ^= basis[bit];
+    }
+  }
+  return rank;
+}
+
+/* Differential check for the SIMD-backed GF2 rank kernel qsop_residual_neighbor_cut_rank now
+ * calls (residual.c's own hand-rolled Gaussian elimination was replaced with
+ * qsop_gf2_rank_bitsets_simd): random bit matrices, rank computed three ways -- forced scalar
+ * (simd=NULL), the runtime-native kernel, and the independent reference above -- must all agree. */
+static int test_gf2_rank_differential(void) {
+  const qsop_simd_vtable_t *native = qsop_simd_resolve(QSOP_SIMD_KERNEL_AUTO);
+  uint64_t seed = UINT64_C(0xC0FFEE1234567891);
+  uint64_t rows[64];
+  uint64_t scratch[64];
+
+  for (uint32_t trial = 0; trial < 500U; trial++) {
+    const uint32_t nrows = 1U + (uint32_t)(rank_xorshift(&seed) % 40U);
+    const uint32_t ncols = 1U + (uint32_t)(rank_xorshift(&seed) % 40U);
+    const uint32_t density = 1U + (uint32_t)(rank_xorshift(&seed) % 100U);
+    const uint64_t col_mask = ncols >= 64U ? UINT64_MAX : ((UINT64_C(1) << ncols) - 1U);
+    for (uint32_t i = 0; i < nrows; i++) {
+      uint64_t row = 0;
+      for (uint32_t c = 0; c < ncols; c++) {
+        if (rank_xorshift(&seed) % 100U < density) {
+          row |= UINT64_C(1) << c;
+        }
+      }
+      rows[i] = row & col_mask;
+    }
+
+    const uint32_t want = naive_gf2_rank(rows, nrows, ncols);
+
+    memcpy(scratch, rows, nrows * sizeof(*rows));
+    const uint32_t scalar_rank = qsop_gf2_rank_bitsets(scratch, nrows, ncols, 1);
+
+    memcpy(scratch, rows, nrows * sizeof(*rows));
+    const uint32_t native_rank = qsop_gf2_rank_bitsets_simd(scratch, nrows, ncols, 1, native);
+
+    if (expect_u32("gf2 rank scalar vs naive", scalar_rank, want) != 0 ||
+        expect_u32("gf2 rank native vs naive", native_rank, want) != 0) {
+      fprintf(stderr, "trial %" PRIu32 ": nrows=%" PRIu32 " ncols=%" PRIu32 " density=%" PRIu32 "\n",
+              trial, nrows, ncols, density);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 int main(void) {
   if (test_branch_zero_undo() != 0) {
     return 1;
@@ -524,6 +605,9 @@ int main(void) {
     return 1;
   }
   if (test_large_residual_values() != 0) {
+    return 1;
+  }
+  if (test_gf2_rank_differential() != 0) {
     return 1;
   }
   return 0;

@@ -329,6 +329,14 @@ test_treewidth_join = executable(
 
 test('treewidth join unit', test_treewidth_join, suite: 'unit', timeout: 120)
 
+test_rankwidth_join = executable(
+  'test-rankwidth-join',
+  'tests/unit/test_rankwidth_join.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('rankwidth join unit', test_rankwidth_join, suite: 'unit', timeout: 120)
+
 test(
   'kernel benchmark smoke',
   bench_kernels,

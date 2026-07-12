@@ -3929,6 +3929,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
   if (csr->transition_count == 0) {
     return true;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
 
   /* Find max parent sig across all items. */
   uint32_t max_psig = 0;
@@ -4133,7 +4134,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
     /* Reconstruct parent representative: left_rep | right_rep. */
     if (li != UINT32_MAX && ri != UINT32_MAX) {
       qsop_bitset_copy(parent_rep, table_assignment(left, li, words), words);
-      qsop_bitset_or(parent_rep, table_assignment(right, ri, words), words);
+      qsop_bitset_or_simd(parent_rep, table_assignment(right, ri, words), words, simd);
     } else {
       memset(parent_rep, 0, w * sizeof(*parent_rep));
     }
@@ -4189,6 +4190,7 @@ static bool rw_join_count_table_streaming_sign(
   if (lreps == 0 || rreps == 0) {
     return true;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
 
   uint32_t max_lsig = 0, max_rsig = 0;
   for (size_t i = 0; i < lreps; i++) {
@@ -4250,7 +4252,7 @@ static bool rw_join_count_table_streaming_sign(
         uint64_t *parent_rep = scratch_sig; /* reuse scratch after transition is computed */
         const size_t w = words == 0 ? 1U : words;
         qsop_bitset_copy(parent_rep, lrep, words);
-        qsop_bitset_or(parent_rep, rrep, words);
+        qsop_bitset_or_simd(parent_rep, rrep, words, simd);
         if (!table_add_rep(out, psig, parent_rep, words, error)) {
           free(left_starts);
           free(left_ends);
@@ -4307,6 +4309,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
     set_error(error, "rankwidth join map is too large");
     return false;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const size_t words = decomposition->words;
   if (!reserve_join_map(map, left->reps_len * right->reps_len, words, error)) {
     return false;
@@ -4330,7 +4333,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
           cross_parity_bitsets_weighted(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
                                         right->rep_weights[j], words);
       qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
-      qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
+      qsop_bitset_xor_simd(signature, signature_bits(pool, right->reps[j].signature), words, simd);
       qsop_bitset_and(signature, outside, words);
       uint32_t parent_signature = 0;
       if (!signature_pool_intern(pool, signature, &parent_signature, error)) {
@@ -4342,7 +4345,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
       const size_t index = map->len++;
       uint64_t *assignment = join_map_assignment(map, index, words);
       qsop_bitset_copy(assignment, left_rep, words);
-      qsop_bitset_or(assignment, right_rep, words);
+      qsop_bitset_or_simd(assignment, right_rep, words, simd);
       map->entries[index] = (rw_join_map_entry_t){
           .left_signature = left->reps[i].signature,
           .right_signature = right->reps[j].signature,
@@ -4372,6 +4375,7 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
     set_error(error, "rankwidth join map is too large");
     return false;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const size_t words = decomposition->words;
   const size_t w = words == 0 ? 1U : words;
   if (!reserve_join_map(map, left->reps_len * right->reps_len, words, error)) {
@@ -4390,7 +4394,7 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
           cross_parity_bitsets_weighted(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
                                         right->rep_weights[j], words);
       qsop_bitset_copy(signature, signature_bits(pool, left->reps[i].signature), words);
-      qsop_bitset_xor(signature, signature_bits(pool, right->reps[j].signature), words);
+      qsop_bitset_xor_simd(signature, signature_bits(pool, right->reps[j].signature), words, simd);
       qsop_bitset_and(signature, outside, words);
       uint32_t parent_signature = 0;
       if (!signature_pool_intern(pool, signature, &parent_signature, error)) {
@@ -4400,7 +4404,7 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
       const size_t index = map->len++;
       uint64_t *assignment = join_map_assignment(map, index, words);
       qsop_bitset_copy(assignment, left_rep, words);
-      qsop_bitset_or(assignment, right_rep, words);
+      qsop_bitset_or_simd(assignment, right_rep, words, simd);
       map->entries[index] = (rw_join_map_entry_t){
           .left_signature = left->reps[i].signature,
           .right_signature = right->reps[j].signature,
@@ -4963,6 +4967,7 @@ static uint64_t *dense_basis_pivot_row(const rw_dense_basis_t *basis, uint32_t p
 
 static bool dense_basis_reduce(const rw_dense_basis_t *basis, const uint64_t *bits,
                                uint64_t *scratch, uint64_t *coord_out) {
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const size_t w = basis->words == 0 ? 1U : basis->words;
   memcpy(scratch, bits, w * sizeof(*scratch));
   uint64_t coord = 0;
@@ -4973,7 +4978,7 @@ static bool dense_basis_reduce(const rw_dense_basis_t *basis, const uint64_t *bi
       *coord_out = coord;
       return false;
     }
-    qsop_bitset_xor(scratch, dense_basis_pivot_row(basis, pivot), basis->words);
+    qsop_bitset_xor_simd(scratch, dense_basis_pivot_row(basis, pivot), basis->words, simd);
     coord ^= pivot_coord;
   }
   *coord_out = coord;
@@ -5167,6 +5172,7 @@ static bool solve_fourier_join_dense_reference(const qsop_instance_t *qsop, cons
                                                qsop_error_t *error) {
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const uint32_t odd_modes = fourier_odd_mode_count((uint32_t)qsop->r);
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
@@ -5294,7 +5300,7 @@ static bool solve_fourier_join_dense_reference(const qsop_instance_t *qsop, cons
       size_t out_index = 0;
       if (!fourier_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment, odd_modes,
                                            words, &out_index, error)) {
           free(left_dense);
@@ -5346,6 +5352,7 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
                                          qsop_error_t *error) {
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this all-modes-Fourier path, which allocates O(r) structures below. */
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const uint32_t r = (uint32_t)qsop->r;
   const uint32_t odd_modes = fourier_odd_mode_count(r);
   for (size_t i = 0; i < left->len; i++) {
@@ -5367,7 +5374,7 @@ static bool solve_fourier_join_streaming(const qsop_instance_t *qsop, const uint
       size_t out_index = 0;
       if (!fourier_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!fourier_table_signature_index(out, eval.parent_signature, parent_assignment, odd_modes,
                                            words, &out_index, error)) {
           return false;
@@ -5418,6 +5425,7 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
    * alone with no mod-r reduction) -- so truncating it here cannot affect correctness even
    * when ctx->r exceeds UINT32_MAX. */
   const uint32_t r = (uint32_t)ctx->r;
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = complex_assignment(left, i, words);
     const long double left_re = left->re[i];
@@ -5438,7 +5446,7 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
       size_t out_index = 0;
       if (!complex_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                            &out_index, error)) {
           return false;
@@ -5466,6 +5474,7 @@ static bool solve_join_complex64_streaming(
     rw_complex64_context_t *ctx, rw_complex64_table_t *out, const uint64_t *outside,
     uint64_t *scratch_sig, uint64_t *parent_assignment, size_t words, qsop_error_t *error) {
   const uint32_t r = (uint32_t)ctx->r;
+  const qsop_simd_vtable_t *simd = ctx->simd;
   uint64_t scalar_ops = 0;
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = complex64_assignment(left, i, words);
@@ -5487,7 +5496,7 @@ static bool solve_join_complex64_streaming(
       size_t out_index = 0;
       if (!complex64_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex64_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                              &out_index, error)) {
           return false;
@@ -5520,6 +5529,7 @@ static bool solve_join_complex_dense_reference(
     set_error(error, "rankwidth dense single-mode table is too large");
     return false;
   }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
 
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
@@ -5630,7 +5640,7 @@ static bool solve_join_complex_dense_reference(
       size_t out_index = 0;
       if (!complex_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                            &out_index, error)) {
           goto cleanup;
@@ -5673,6 +5683,7 @@ static bool solve_join_complex64_dense_reference(
     set_error(error, "rankwidth dense double single-mode table is too large");
     return false;
   }
+  const qsop_simd_vtable_t *simd = ctx->simd;
 
   const size_t w = words == 0 ? 1U : words;
   uint64_t *basis_scratch = calloc(w, sizeof(*basis_scratch));
@@ -5785,7 +5796,7 @@ static bool solve_join_complex64_dense_reference(
       size_t out_index = 0;
       if (!complex64_table_find_signature(out, eval.parent_signature, &out_index)) {
         qsop_bitset_copy(parent_assignment, left_rep, words);
-        qsop_bitset_or(parent_assignment, right_rep, words);
+        qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex64_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                              &out_index, error)) {
           goto cleanup;
@@ -5834,6 +5845,7 @@ static bool rw_complex_transition_csr_build(
     return false;
   }
   const uint32_t r = (uint32_t)qsop->r;
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t *counts = calloc(left->len == 0 ? 1U : left->len, sizeof(*counts));
   if (counts == NULL) {
     set_error(error, "out of memory while building rankwidth single-mode transition counts");
@@ -5857,7 +5869,7 @@ static bool rw_complex_transition_csr_build(
         continue;
       }
       qsop_bitset_copy(parent_assignment, left_rep, words);
-      qsop_bitset_or(parent_assignment, right_rep, words);
+      qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
       size_t out_index = 0;
       if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                          &out_index, error)) {
@@ -5967,6 +5979,7 @@ static bool rw_complex64_transition_csr_build(
     return false;
   }
   const uint32_t r = (uint32_t)qsop->r;
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   uint32_t *counts = calloc(left->len == 0 ? 1U : left->len, sizeof(*counts));
   if (counts == NULL) {
     set_error(error, "out of memory while building rankwidth double single-mode transition counts");
@@ -5990,7 +6003,7 @@ static bool rw_complex64_transition_csr_build(
         continue;
       }
       qsop_bitset_copy(parent_assignment, left_rep, words);
-      qsop_bitset_or(parent_assignment, right_rep, words);
+      qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
       size_t out_index = 0;
       if (!complex64_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                            &out_index, error)) {
@@ -6021,7 +6034,24 @@ static bool rw_complex64_transition_csr_build(
   for (uint32_t i = 0; i < (uint32_t)left->len; i++) {
     offsets[i + 1U] = offsets[i] + counts[i];
   }
+  /* Two cursors per row, growing toward each other: flag=0 items fill from the front, flag=1
+   * items fill from the back. Each row ends up stably partitioned (all flag=0 before all
+   * flag=1, though the flag=1 sub-run lands in reverse right_index order) without needing to
+   * know each row's flag=1 count ahead of time -- rw_complex64_execute_row below relies on this
+   * partition to scale each sign class with one complex_scale_f64 call instead of a branch per
+   * item. */
+  uint32_t *back = malloc((left->len == 0 ? 1U : left->len) * sizeof(*back));
+  if (back == NULL) {
+    free(counts);
+    free(offsets);
+    free(items);
+    set_error(error, "out of memory while building rankwidth double single-mode transitions");
+    return false;
+  }
   memcpy(counts, offsets, left->len * sizeof(*counts));
+  for (uint32_t i = 0; i < (uint32_t)left->len; i++) {
+    back[i] = offsets[i + 1U] - 1U;
+  }
 
   for (uint32_t i = 0; i < (uint32_t)left->len; i++) {
     const uint64_t *left_rep = complex64_assignment(left, i, words);
@@ -6035,6 +6065,7 @@ static bool rw_complex64_transition_csr_build(
         free(counts);
         free(offsets);
         free(items);
+        free(back);
         return false;
       }
       if (!eval.valid) {
@@ -6045,10 +6076,11 @@ static bool rw_complex64_transition_csr_build(
         free(counts);
         free(offsets);
         free(items);
+        free(back);
         set_error(error, "internal error: missing rankwidth double single-mode parent signature");
         return false;
       }
-      const uint32_t pos = counts[i]++;
+      const uint32_t pos = eval.sign_flip ? back[i]-- : counts[i]++;
       items[pos] = (rw_complex_transition32_t){
           .right_index = j,
           .parent_index = (uint32_t)parent_index,
@@ -6058,6 +6090,7 @@ static bool rw_complex64_transition_csr_build(
   }
 
   free(counts);
+  free(back);
   *csr = (rw_complex_transition_csr_t){
       .left_count = (uint32_t)left->len,
       .offsets = offsets,
@@ -6067,31 +6100,98 @@ static bool rw_complex64_transition_csr_build(
   return true;
 }
 
+/* Executes one CSR/streaming row: a fixed left value against the (possibly scattered)
+ * right-hand items in items[start,end). rw_complex64_transition_csr_build stably partitions
+ * each row's items by sign (flag=0 first, flag=1 last), so -- given scratch wide enough for the
+ * row and a row at least min_lanes long -- each partition is a single contiguous sign class,
+ * scalable by one complex_scale_f64 call after gathering its right-hand operands, rather than a
+ * branch-per-item scalar multiply. Below that threshold (or without scratch), falls back to
+ * today's per-item scalar loop; the accumulation into out->re/im[parent_index] always stays
+ * scalar since parent_index is scattered. gather_re/gather_im/product_re/product_im may be
+ * NULL (forces the fallback) but otherwise must each hold at least (end - start) doubles. */
+static void rw_complex64_execute_row(const rw_complex_transition32_t *items, uint32_t start,
+                                     uint32_t end, double left_re, double left_im,
+                                     const rw_complex64_table_t *right, rw_complex64_context_t *ctx,
+                                     rw_complex64_table_t *out, double *gather_re,
+                                     double *gather_im, double *product_re, double *product_im) {
+  const qsop_simd_vtable_t *simd = ctx->simd;
+  const uint32_t len = end - start;
+  const bool have_scratch =
+      gather_re != NULL && gather_im != NULL && product_re != NULL && product_im != NULL;
+  if (!have_scratch || simd == NULL || simd->complex_scale_f64 == NULL || len < simd->min_lanes) {
+    for (uint32_t p = start; p < end; p++) {
+      const rw_complex_transition32_t *t = &items[p];
+      const uint32_t j = t->right_index;
+      double item_re = left_re * right->re[j] - left_im * right->im[j];
+      double item_im = left_re * right->im[j] + left_im * right->re[j];
+      if ((t->flags & 1U) != 0) {
+        item_re *= ctx->sign_re;
+        item_im *= ctx->sign_re;
+      }
+      out->re[t->parent_index] += item_re;
+      out->im[t->parent_index] += item_im;
+      ctx->complex_ops++;
+    }
+    note_rankwidth_f64_scalar_fallback(ctx, len);
+    return;
+  }
+
+  uint32_t mid = start;
+  while (mid < end && (items[mid].flags & 1U) == 0) {
+    mid++;
+  }
+  const uint32_t bounds[3] = {start, mid, end};
+  for (uint32_t part = 0; part < 2; part++) {
+    const uint32_t pstart = bounds[part];
+    const uint32_t pend = bounds[part + 1U];
+    const uint32_t plen = pend - pstart;
+    if (plen == 0) {
+      continue;
+    }
+    for (uint32_t k = 0; k < plen; k++) {
+      const uint32_t j = items[pstart + k].right_index;
+      gather_re[k] = right->re[j];
+      gather_im[k] = right->im[j];
+    }
+    const double scale_re = part == 0 ? left_re : left_re * ctx->sign_re;
+    const double scale_im = part == 0 ? left_im : left_im * ctx->sign_re;
+    simd->complex_scale_f64(product_re, product_im, gather_re, gather_im, scale_re, scale_im,
+                            plen);
+    for (uint32_t k = 0; k < plen; k++) {
+      const uint32_t parent_index = items[pstart + k].parent_index;
+      out->re[parent_index] += product_re[k];
+      out->im[parent_index] += product_im[k];
+    }
+    ctx->complex_ops += plen;
+    /* Matches note_rankwidth_bitset_ops's convention: the scalar vtable's own complex_scale_f64
+     * is a plain loop, not actually vectorized, even though it takes this same batched path. */
+    if (ctx->stats != NULL && simd != qsop_simd_scalar_vtable()) {
+      add_saturating_u64(&ctx->stats->simd_vectorized_ops, plen);
+    }
+  }
+}
+
 static void rw_execute_complex64_transition_csr(const rw_complex_transition_csr_t *csr,
                                                 const rw_complex64_table_t *left,
                                                 const rw_complex64_table_t *right,
                                                 rw_complex64_context_t *ctx,
                                                 rw_complex64_table_t *out) {
+  const size_t max_row = right->len == 0 ? 1U : right->len;
+  double *gather_re = malloc(max_row * sizeof(*gather_re));
+  double *gather_im = malloc(max_row * sizeof(*gather_im));
+  double *product_re = malloc(max_row * sizeof(*product_re));
+  double *product_im = malloc(max_row * sizeof(*product_im));
+  /* A failed allocation just makes rw_complex64_execute_row take its scalar fallback below --
+   * degrades performance, never correctness. */
   for (uint32_t i = 0; i < csr->left_count; i++) {
-    const double left_re = left->re[i];
-    const double left_im = left->im[i];
-    for (uint32_t p = csr->offsets[i]; p < csr->offsets[i + 1U]; p++) {
-      const rw_complex_transition32_t *t = &csr->items[p];
-      const uint32_t j = t->right_index;
-      double product_re = left_re * right->re[j] - left_im * right->im[j];
-      double product_im = left_re * right->im[j] + left_im * right->re[j];
-      if ((t->flags & 1U) != 0) {
-        product_re *= ctx->sign_re;
-        product_im *= ctx->sign_re;
-      }
-      out->re[t->parent_index] += product_re;
-      out->im[t->parent_index] += product_im;
-      ctx->complex_ops++;
-    }
+    rw_complex64_execute_row(csr->items, csr->offsets[i], csr->offsets[i + 1U], left->re[i],
+                             left->im[i], right, ctx, out, gather_re, gather_im, product_re,
+                             product_im);
   }
-  /* The materialized transition table removes recomputation, but each product still
-   * accumulates into a possibly scattered parent signature index. */
-  note_rankwidth_f64_scalar_fallback(ctx, csr->transition_count);
+  free(gather_re);
+  free(gather_im);
+  free(product_re);
+  free(product_im);
 }
 
 /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
