@@ -1,24 +1,10 @@
 #include "component_key.h"
+#include "../core/qsop_internal.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
 
 static void swap_u32(uint32_t *a, uint32_t *b) {
   const uint32_t tmp = *a;
@@ -158,7 +144,7 @@ bool qsop_canonicalize_small_component(qsop_instance_t *sub, uint32_t max_nvars,
     free(ctx.best_unary);
     free(ctx.best_edge_u);
     free(ctx.best_edge_v);
-    set_error(error, "out of memory while canonicalizing small component");
+    qsop_set_error(error, "out of memory while canonicalizing small component");
     return false;
   }
 

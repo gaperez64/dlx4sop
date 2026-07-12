@@ -1,5 +1,6 @@
 #include "dlx4sop/qsop_wmc.h"
 #include "dlx4sop/bitset.h"
+#include "qsop_internal.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -40,19 +41,6 @@ typedef struct wmc_builder {
   uint64_t nclauses; /* number of base clauses */
   bool failed;       /* sticky out-of-memory flag */
 } wmc_builder_t;
-
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
 
 static void builder_free(wmc_builder_t *b) {
   if (b == NULL) {
@@ -232,7 +220,7 @@ static bool build_shared(const qsop_instance_t *qsop, wmc_builder_t *b, int *afi
   }
 
   if (b->failed) {
-    set_error(error, "out of memory while building WMC CNF");
+    qsop_set_error(error, "out of memory while building WMC CNF");
     return false;
   }
   return true;
@@ -265,7 +253,7 @@ static bool write_block(FILE *file, const wmc_builder_t *b, const qsop_instance_
     fprintf(file, "c --- residue %" PRIu32 " ---\n", residue);
   }
   if (metadata && !write_metadata(file, qsop, w, afinal, residue)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
 
@@ -282,7 +270,7 @@ static bool write_block(FILE *file, const wmc_builder_t *b, const qsop_instance_
     fprintf(file, "%d 0\n", lit);
   }
   if (ferror(file)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
   return true;
@@ -305,13 +293,6 @@ qsop_wmc_options_t qsop_wmc_options_default(void) {
   return options;
 }
 
-static uint64_t wmc_saturating_add(uint64_t a, uint64_t b) {
-  return b > UINT64_MAX - a ? UINT64_MAX : a + b;
-}
-
-static uint64_t wmc_saturating_mul(uint64_t a, uint64_t b) {
-  return a != 0 && b > UINT64_MAX / a ? UINT64_MAX : a * b;
-}
 
 static void wmc_stats_init(qsop_wmc_stats_t *stats, const qsop_instance_t *qsop) {
   if (stats == NULL) {
@@ -329,10 +310,10 @@ static void wmc_stats_init(qsop_wmc_stats_t *stats, const qsop_instance_t *qsop)
 static uint64_t wmc_estimate_cnf_bytes(uint32_t nvars, uint64_t clauses, uint64_t literal_slots,
                                        uint64_t metadata_lines) {
   uint64_t bytes = 32U; /* p cnf line */
-  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(metadata_lines, 80U));
-  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(clauses, 4U));
-  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(literal_slots, 12U));
-  bytes = wmc_saturating_add(bytes, wmc_saturating_mul(nvars, 24U));
+  bytes = qsop_saturating_add_u64(bytes, qsop_saturating_mul_u64(metadata_lines, 80U));
+  bytes = qsop_saturating_add_u64(bytes, qsop_saturating_mul_u64(clauses, 4U));
+  bytes = qsop_saturating_add_u64(bytes, qsop_saturating_mul_u64(literal_slots, 12U));
+  bytes = qsop_saturating_add_u64(bytes, qsop_saturating_mul_u64(nvars, 24U));
   return bytes;
 }
 
@@ -341,13 +322,13 @@ static void wmc_stats_finalize(qsop_wmc_stats_t *stats, uint32_t nvars_total,
   if (stats == NULL) {
     return;
   }
-  stats->total_clauses = wmc_saturating_add(
+  stats->total_clauses = qsop_saturating_add_u64(
       stats->clauses_unit,
-      wmc_saturating_add(stats->clauses_binary, stats->clauses_ternary));
+      qsop_saturating_add_u64(stats->clauses_binary, stats->clauses_ternary));
   const uint64_t literal_slots =
-      wmc_saturating_add(stats->clauses_unit,
-                         wmc_saturating_add(wmc_saturating_mul(stats->clauses_binary, 2U),
-                                            wmc_saturating_mul(stats->clauses_ternary, 3U)));
+      qsop_saturating_add_u64(stats->clauses_unit,
+                         qsop_saturating_add_u64(qsop_saturating_mul_u64(stats->clauses_binary, 2U),
+                                            qsop_saturating_mul_u64(stats->clauses_ternary, 3U)));
   stats->estimated_bytes =
       wmc_estimate_cnf_bytes(nvars_total, stats->total_clauses, literal_slots, metadata_lines);
 }
@@ -430,7 +411,7 @@ static bool fg_reserve_pairs(wmc_factor_graph_t *fg, size_t needed, qsop_error_t
   size_t new_cap = fg->npairs_cap == 0 ? 8U : fg->npairs_cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "WMC factor graph pair table is too large");
+      qsop_set_error(error, "WMC factor graph pair table is too large");
       return false;
     }
     new_cap *= 2U;
@@ -440,7 +421,7 @@ static bool fg_reserve_pairs(wmc_factor_graph_t *fg, size_t needed, qsop_error_t
   if (pairs == NULL || pair_active == NULL) {
     free(pairs);
     free(pair_active);
-    set_error(error, "out of memory growing WMC factor graph");
+    qsop_set_error(error, "out of memory growing WMC factor graph");
     return false;
   }
   if (fg->npairs != 0) {
@@ -545,7 +526,7 @@ static bool fg_from_qsop(const qsop_instance_t *qsop, uint32_t t, wmc_factor_gra
     fg->var_active = malloc(qsop->nvars * sizeof(*fg->var_active));
     fg->var_forced = calloc(qsop->nvars, sizeof(*fg->var_forced));
     if (!fg->w_true_re || !fg->w_true_im || !fg->var_active || !fg->var_forced) {
-      set_error(error, "out of memory building WMC factor graph");
+      qsop_set_error(error, "out of memory building WMC factor graph");
       fg_free(fg);
       return false;
     }
@@ -647,7 +628,7 @@ static bool fg_peel2_once(wmc_factor_graph_t *fg, uint32_t *fill_used,
     free(degree);
     free(pair_idx);
     free(nbr);
-    set_error(error, "out of memory while indexing WMC peel2 degrees");
+    qsop_set_error(error, "out of memory while indexing WMC peel2 degrees");
     return false;
   }
 
@@ -982,7 +963,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
   uint32_t n_active_vars = 0;
   int *var_dimacs = fg_build_var_map(fg, &n_active_vars);
   if (fg->nvars > 0 && var_dimacs == NULL) {
-    set_error(error, "out of memory while building amplitude CNF");
+    qsop_set_error(error, "out of memory while building amplitude CNF");
     return false;
   }
 
@@ -1057,7 +1038,7 @@ static bool write_amplitude(FILE *file, const qsop_instance_t *qsop,
 
   free(var_dimacs);
   if (ferror(file)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
   return true;
@@ -1073,7 +1054,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
   uint32_t n_active_vars = 0;
   int *var_dimacs = fg_build_var_map(fg, &n_active_vars);
   if (fg->nvars > 0 && var_dimacs == NULL) {
-    set_error(error, "out of memory while building amp-soft CNF");
+    qsop_set_error(error, "out of memory while building amp-soft CNF");
     return false;
   }
 
@@ -1149,7 +1130,7 @@ static bool write_amp_soft(FILE *file, const qsop_instance_t *qsop,
 
   free(var_dimacs);
   if (ferror(file)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
   return true;
@@ -1181,7 +1162,7 @@ static bool write_zero_amplitude(FILE *file, const qsop_instance_t *qsop, bool e
     wmc_stats_finalize(stats_out, 0U, emit_metadata ? 3U : 0U);
   }
   if (ferror(file)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
   return true;
@@ -1227,7 +1208,7 @@ static bool sign_blocks_push(wmc_sign_blocks_t *blocks, wmc_sign_block_t *block,
     const size_t new_cap = blocks->cap == 0 ? 4U : blocks->cap * 2U;
     wmc_sign_block_t *items = realloc(blocks->items, new_cap * sizeof(*items));
     if (items == NULL) {
-      set_error(error, "out of memory storing amp-block parity blocks");
+      qsop_set_error(error, "out of memory storing amp-block parity blocks");
       return false;
     }
     blocks->items = items;
@@ -1323,7 +1304,7 @@ static bool find_best_sign_block(const wmc_factor_graph_t *fg, const uint64_t *a
       best_b = malloc(b_len * sizeof(*best_b));
       if (!best_a || !best_b) {
         free(best_a); free(best_b);
-        set_error(error, "out of memory searching amp-block parity blocks");
+        qsop_set_error(error, "out of memory searching amp-block parity blocks");
         return false;
       }
       memcpy(best_a, a_tmp, a_len * sizeof(*best_a));
@@ -1348,7 +1329,7 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
                                 bool **covered_out, qsop_error_t *error) {
   bool *covered = calloc(fg->npairs == 0 ? 1U : fg->npairs, sizeof(*covered));
   if (covered == NULL) {
-    set_error(error, "out of memory extracting amp-block parity blocks");
+    qsop_set_error(error, "out of memory extracting amp-block parity blocks");
     return false;
   }
   if (fg->nvars == 0 || fg->npairs == 0) {
@@ -1375,7 +1356,7 @@ static bool extract_sign_blocks(const wmc_factor_graph_t *fg, uint32_t min_side,
     free(mark_a);
     free(mark_b);
     free(covered);
-    set_error(error, "out of memory extracting amp-block parity blocks");
+    qsop_set_error(error, "out of memory extracting amp-block parity blocks");
     return false;
   }
 
@@ -1499,7 +1480,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   if (fg->nvars > 0 && var_dimacs == NULL) {
     free(covered);
     sign_blocks_free(&blocks);
-    set_error(error, "out of memory building amp-block CNF");
+    qsop_set_error(error, "out of memory building amp-block CNF");
     return false;
   }
 
@@ -1513,7 +1494,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
     free(var_dimacs);
     free(covered);
     sign_blocks_free(&blocks);
-    set_error(error, "out of memory building amp-block CNF");
+    qsop_set_error(error, "out of memory building amp-block CNF");
     return false;
   }
 
@@ -1529,7 +1510,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
       free(covered);
       sign_blocks_free(&blocks);
       builder_free(&b);
-      set_error(error, "out of memory building amp-block CNF");
+      qsop_set_error(error, "out of memory building amp-block CNF");
       return false;
     }
     for (uint32_t i = 0; i < block->a_len; i++) {
@@ -1572,7 +1553,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
     free(covered);
     sign_blocks_free(&blocks);
     builder_free(&b);
-    set_error(error, "out of memory building amp-block CNF");
+    qsop_set_error(error, "out of memory building amp-block CNF");
     return false;
   }
 
@@ -1680,7 +1661,7 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
   builder_free(&b);
 
   if (ferror(file)) {
-    set_error(error, "write failed: %s", strerror(errno));
+    qsop_set_error(error, "write failed: %s", strerror(errno));
     return false;
   }
   return true;
@@ -1689,11 +1670,11 @@ static bool write_amp_block(FILE *file, const qsop_instance_t *qsop,
 bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_options_t *options,
                     qsop_error_t *error) {
   if (file == NULL || qsop == NULL || options == NULL) {
-    set_error(error, "internal error: null WMC write argument");
+    qsop_set_error(error, "internal error: null WMC write argument");
     return false;
   }
   if (qsop->r < 2U || (qsop->r % 2U) != 0U) {
-    set_error(error, "WMC export requires a positive even modulus, got %" PRIu64, qsop->r);
+    qsop_set_error(error, "WMC export requires a positive even modulus, got %" PRIu64, qsop->r);
     return false;
   }
 
@@ -1747,12 +1728,12 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
      * modulus ceiling. Emitting every mode, below, is a distinct O(r) loop and is gated on its
      * own right before it runs. */
     if (!options->fourier_all_modes && (uint64_t)options->fourier_mode >= qsop->r) {
-      set_error(error, "Fourier mode %" PRIu32 " is out of range for modulus %" PRIu64,
+      qsop_set_error(error, "Fourier mode %" PRIu32 " is out of range for modulus %" PRIu64,
                 options->fourier_mode, qsop->r);
       return false;
     }
     if (options->fourier_all_modes && qsop->r > UINT32_MAX) {
-      set_error(error,
+      qsop_set_error(error,
                 "WMC residue-fourier(all-modes) encoding refuses modulus > 2^32-1; export a "
                 "single --fourier-mode instead");
       return false;
@@ -1783,7 +1764,7 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
           fputs("c z0 = 2^nvars (trivial: no Ganak call needed)\n", file);
         }
         if (ferror(file)) {
-          set_error(error, "write failed: %s", strerror(errno));
+          qsop_set_error(error, "write failed: %s", strerror(errno));
           return false;
         }
         continue;
@@ -1820,11 +1801,11 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
    * and would otherwise silently truncate a too-wide qsop->r before the WMC_MAX_WIDTH check
    * below ever saw the real value). */
   if (qsop->r > UINT32_MAX || width_for_modulus((uint32_t)qsop->r) > WMC_MAX_WIDTH) {
-    set_error(error, "WMC export modulus %" PRIu64 " is too large", qsop->r);
+    qsop_set_error(error, "WMC export modulus %" PRIu64 " is too large", qsop->r);
     return false;
   }
   if (!options->all_residues && (uint64_t)options->residue >= qsop->r) {
-    set_error(error, "residue %" PRIu32 " is out of range for modulus %" PRIu64, options->residue,
+    qsop_set_error(error, "residue %" PRIu32 " is out of range for modulus %" PRIu64, options->residue,
               qsop->r);
     return false;
   }
@@ -1845,10 +1826,10 @@ bool qsop_wmc_write(FILE *file, const qsop_instance_t *qsop, const qsop_wmc_opti
     options->stats_out->encoded_edges = qsop->nedges;
     const uint32_t blocks = options->all_residues ? (uint32_t)qsop->r : 1U;
     options->stats_out->total_clauses =
-        wmc_saturating_mul((uint64_t)blocks, builder.nclauses + w);
+        qsop_saturating_mul_u64((uint64_t)blocks, builder.nclauses + w);
     options->stats_out->estimated_bytes =
         wmc_estimate_cnf_bytes(builder.nvars, options->stats_out->total_clauses,
-                               wmc_saturating_mul(options->stats_out->total_clauses, 3U),
+                               qsop_saturating_mul_u64(options->stats_out->total_clauses, 3U),
                                options->emit_metadata ? (uint64_t)blocks * (6U + qsop->nvars) : 0U);
   }
 

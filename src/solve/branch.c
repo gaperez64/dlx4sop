@@ -4,6 +4,7 @@
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
 #include "trace.h"
+#include "../core/qsop_internal.h"
 
 #include <float.h>
 #include <inttypes.h>
@@ -178,21 +179,6 @@ static void branch_emit_jsonl_record(qsop_backend_stats_sink_t *sink, uint32_t n
   }
   fputs("}\n", f);
   (void)fflush(f);
-}
-
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
 }
 
 /* The residual's additive constant is deliberately absent: see qsop_residual_fingerprint. Both
@@ -400,21 +386,6 @@ static void free_subinstance(qsop_instance_t *sub) {
   *sub = (qsop_instance_t){0};
 }
 
-static void add_saturating_u64(uint64_t *dst, uint64_t value) {
-  if (UINT64_MAX - *dst < value) {
-    *dst = UINT64_MAX;
-  } else {
-    *dst += value;
-  }
-}
-
-static uint64_t saturating_mul_u64(uint64_t left, uint64_t right) {
-  if (left != 0 && right > UINT64_MAX / left) {
-    return UINT64_MAX;
-  }
-  return left * right;
-}
-
 static uint64_t binary_assignment_forecast(uint32_t nvars) {
   if (nvars >= 64U) {
     return UINT64_MAX;
@@ -424,12 +395,12 @@ static uint64_t binary_assignment_forecast(uint32_t nvars) {
 
 static uint64_t treewidth_table_forecast(uint32_t width, uint32_t r) {
   const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
-  return saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
+  return qsop_saturating_mul_u64(binary_assignment_forecast(bag_vars), r);
 }
 
 static uint64_t treewidth_join_pair_forecast(uint32_t width, uint32_t nvars) {
   const uint32_t bag_vars = width >= UINT32_MAX ? UINT32_MAX : width + 1U;
-  return saturating_mul_u64(binary_assignment_forecast(bag_vars), nvars);
+  return qsop_saturating_mul_u64(binary_assignment_forecast(bag_vars), nvars);
 }
 
 static void max_u32(uint32_t *dst, uint32_t value) {
@@ -459,7 +430,7 @@ static bool note_component_shape(branch_search_stats_t *stats, const qsop_residu
 
   uint32_t *sizes = calloc(ncomponents, sizeof(*sizes));
   if (sizes == NULL) {
-    set_error(error, "out of memory while recording residual component shape");
+    qsop_set_error(error, "out of memory while recording residual component shape");
     return false;
   }
   for (uint32_t v = 0; v < qsop_residual_nvars(residual); v++) {
@@ -468,7 +439,7 @@ static bool note_component_shape(branch_search_stats_t *stats, const qsop_residu
     }
     if (component[v] >= ncomponents) {
       free(sizes);
-      set_error(error, "internal error: residual component index is out of range");
+      qsop_set_error(error, "internal error: residual component index is out of range");
       return false;
     }
     sizes[component[v]]++;
@@ -536,7 +507,7 @@ static bool add_counts(uint32_t r, uint64_t *dst, const uint64_t *src,
 static bool branch_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint32_t shift,
                                     const branch_search_stats_t *stats, qsop_error_t *error) {
   if (r == 0 || dst == NULL || src == NULL) {
-    set_error(error, "internal error: invalid branch residue shift-add argument");
+    qsop_set_error(error, "internal error: invalid branch residue shift-add argument");
     return false;
   }
 
@@ -572,7 +543,7 @@ static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *le
                                    const uint64_t *right, const branch_search_stats_t *stats,
                                    qsop_error_t *error) {
   if (r == 0 || dst == NULL || left == NULL || right == NULL) {
-    set_error(error, "internal error: invalid branch residue convolution argument");
+    qsop_set_error(error, "internal error: invalid branch residue convolution argument");
     return false;
   }
 
@@ -602,7 +573,7 @@ static bool branch_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *le
 static bool branch_counts_to_fourier(uint32_t r, const uint64_t *counts, const uint64_t *powers,
                                      uint64_t prime, uint64_t *modes, qsop_error_t *error) {
   if (r == 0 || counts == NULL || powers == NULL || modes == NULL) {
-    set_error(error, "internal error: invalid branch Fourier transform argument");
+    qsop_set_error(error, "internal error: invalid branch Fourier transform argument");
     return false;
   }
   for (uint32_t mode = 0; mode < r; mode++) {
@@ -623,7 +594,7 @@ static bool branch_counts_to_fourier(uint32_t r, const uint64_t *counts, const u
 static bool branch_fourier_multiply(uint32_t r, uint64_t *acc, const uint64_t *part, uint64_t prime,
                                     qsop_error_t *error) {
   if (r == 0 || acc == NULL || part == NULL) {
-    set_error(error, "internal error: invalid branch Fourier multiply argument");
+    qsop_set_error(error, "internal error: invalid branch Fourier multiply argument");
     return false;
   }
   for (uint32_t mode = 0; mode < r; mode++) {
@@ -648,7 +619,7 @@ static void residual_cache_key_free(residual_cache_key_t *key) {
 static bool residual_cache_key_create(const qsop_residual_t *residual, residual_cache_key_t *key,
                                       qsop_error_t *error) {
   if (key == NULL) {
-    set_error(error, "internal error: null residual cache key output");
+    qsop_set_error(error, "internal error: null residual cache key output");
     return false;
   }
   *key = (residual_cache_key_t){0};
@@ -670,7 +641,7 @@ static bool residual_cache_key_create(const qsop_residual_t *residual, residual_
   if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
       key->edge_u == NULL || key->edge_v == NULL) {
     residual_cache_key_free(key);
-    set_error(error, "out of memory while allocating residual cache key");
+    qsop_set_error(error, "out of memory while allocating residual cache key");
     return false;
   }
 
@@ -723,7 +694,7 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub,
                                                     residual_cache_key_t *key,
                                                     qsop_error_t *error) {
   if (key == NULL) {
-    set_error(error, "internal error: null residual cache key output");
+    qsop_set_error(error, "internal error: null residual cache key output");
     return false;
   }
   *key = (residual_cache_key_t){0};
@@ -743,7 +714,7 @@ static bool residual_cache_key_create_from_instance(const qsop_instance_t *sub,
   if (key->active_var == NULL || key->active_edge == NULL || key->unary == NULL ||
       key->edge_u == NULL || key->edge_v == NULL) {
     residual_cache_key_free(key);
-    set_error(error, "out of memory while allocating canonical residual cache key");
+    qsop_set_error(error, "out of memory while allocating canonical residual cache key");
     return false;
   }
 
@@ -890,19 +861,19 @@ static bool residual_cache_reserve(residual_cache_t *cache, size_t needed, qsop_
   size_t new_cap = cache->cap == 0 ? 32U : cache->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "residual cache is too large");
+      qsop_set_error(error, "residual cache is too large");
       return false;
     }
     new_cap *= 2U;
   }
   if (new_cap > SIZE_MAX / sizeof(*cache->entries)) {
-    set_error(error, "residual cache is too large");
+    qsop_set_error(error, "residual cache is too large");
     return false;
   }
 
   residual_cache_entry_t *new_entries = realloc(cache->entries, new_cap * sizeof(*cache->entries));
   if (new_entries == NULL) {
-    set_error(error, "out of memory while growing residual cache");
+    qsop_set_error(error, "out of memory while growing residual cache");
     return false;
   }
 
@@ -914,13 +885,13 @@ static bool residual_cache_reserve(residual_cache_t *cache, size_t needed, qsop_
 static bool residual_cache_rehash(residual_cache_t *cache, size_t bucket_count,
                                   qsop_error_t *error) {
   if (bucket_count == 0 || bucket_count > SIZE_MAX / sizeof(*cache->buckets)) {
-    set_error(error, "residual cache is too large");
+    qsop_set_error(error, "residual cache is too large");
     return false;
   }
 
   size_t *buckets = malloc(bucket_count * sizeof(*buckets));
   if (buckets == NULL) {
-    set_error(error, "out of memory while allocating residual cache buckets");
+    qsop_set_error(error, "out of memory while allocating residual cache buckets");
     return false;
   }
   for (size_t i = 0; i < bucket_count; i++) {
@@ -957,7 +928,7 @@ static bool residual_cache_store(residual_cache_t *cache, const qsop_residual_t 
 
   if (entry.key.r > UINT32_MAX) {
     residual_cache_key_free(&entry.key);
-    set_error(error, "count-table branch residual cache requires R <= UINT32_MAX");
+    qsop_set_error(error, "count-table branch residual cache requires R <= UINT32_MAX");
     return false;
   }
   if (!qsop_counts_alloc((uint32_t)entry.key.r, &entry.counts, error)) {
@@ -1023,11 +994,11 @@ static uint64_t residual_cache_key_bytes(const residual_cache_t *cache) {
   uint64_t bytes = 0;
   for (size_t i = 0; i < cache->len; i++) {
     const residual_cache_key_t *key = &cache->entries[i].key;
-    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
-    add_saturating_u64(&bytes,
-                       saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
-    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
-    add_saturating_u64(&bytes, saturating_mul_u64(saturating_mul_u64((uint64_t)key->nedges, 3U),
+    qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
+    qsop_add_saturating_u64(&bytes,
+                       qsop_saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
+    qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
+    qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64(qsop_saturating_mul_u64((uint64_t)key->nedges, 3U),
                                                   sizeof(*key->edge_u)));
   }
   return bytes;
@@ -1036,18 +1007,18 @@ static uint64_t residual_cache_key_bytes(const residual_cache_t *cache) {
 static uint64_t residual_cache_count_bytes(const residual_cache_t *cache) {
   uint64_t bytes = 0;
   for (size_t i = 0; i < cache->len; i++) {
-    add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)cache->entries[i].key.r,
+    qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)cache->entries[i].key.r,
                                                   sizeof(*cache->entries[i].counts)));
   }
   return bytes;
 }
 
 static uint64_t residual_cache_estimated_bytes(const residual_cache_t *cache) {
-  uint64_t bytes = saturating_mul_u64((uint64_t)cache->cap, sizeof(*cache->entries));
-  add_saturating_u64(&bytes,
-                     saturating_mul_u64((uint64_t)cache->bucket_count, sizeof(*cache->buckets)));
-  add_saturating_u64(&bytes, residual_cache_key_bytes(cache));
-  add_saturating_u64(&bytes, residual_cache_count_bytes(cache));
+  uint64_t bytes = qsop_saturating_mul_u64((uint64_t)cache->cap, sizeof(*cache->entries));
+  qsop_add_saturating_u64(&bytes,
+                     qsop_saturating_mul_u64((uint64_t)cache->bucket_count, sizeof(*cache->buckets)));
+  qsop_add_saturating_u64(&bytes, residual_cache_key_bytes(cache));
+  qsop_add_saturating_u64(&bytes, residual_cache_count_bytes(cache));
   return bytes;
 }
 
@@ -1057,7 +1028,7 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
   const uint32_t source_edges = qsop_residual_nedges(residual);
   uint32_t *map = malloc((source_vars == 0 ? 1U : source_vars) * sizeof(*map));
   if (map == NULL) {
-    set_error(error, "out of memory while building residual component subinstance");
+    qsop_set_error(error, "out of memory while building residual component subinstance");
     return false;
   }
   for (uint32_t v = 0; v < source_vars; v++) {
@@ -1093,7 +1064,7 @@ static bool build_residual_subinstance(const qsop_residual_t *residual, const ui
   if (sub->unary == NULL || sub->edge_u == NULL || sub->edge_v == NULL) {
     free(map);
     free_subinstance(sub);
-    set_error(error, "out of memory while allocating residual component subinstance");
+    qsop_set_error(error, "out of memory while allocating residual component subinstance");
     return false;
   }
 
@@ -1129,7 +1100,7 @@ static bool build_active_residual_subinstance(const qsop_residual_t *residual, q
   const uint32_t nvars = qsop_residual_nvars(residual);
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
   if (component == NULL) {
-    set_error(error, "out of memory while building active residual subinstance");
+    qsop_set_error(error, "out of memory while building active residual subinstance");
     return false;
   }
   for (uint32_t v = 0; v < nvars; v++) {
@@ -1142,16 +1113,16 @@ static bool build_active_residual_subinstance(const qsop_residual_t *residual, q
 
 static void merge_delegated_stats(branch_search_stats_t *stats, const qsop_solve_stats_t *delegated,
                                   uint32_t delegated_nvars) {
-  add_saturating_u64(&stats->leaves, assignment_count(delegated_nvars));
-  add_saturating_u64(&stats->treewidth_delegations, delegated->treewidth_delegations);
-  add_saturating_u64(&stats->rankwidth_delegations, delegated->rankwidth_delegations);
-  add_saturating_u64(&stats->table_entries, delegated->table_entries);
-  add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
-  add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
-  add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
-  add_saturating_u64(&stats->branch_fallthroughs, delegated->branch_fallthroughs);
-  add_saturating_u64(&stats->branch_treewidth_skips, delegated->branch_treewidth_skips);
-  add_saturating_u64(&stats->branch_rankwidth_skips, delegated->branch_rankwidth_skips);
+  qsop_add_saturating_u64(&stats->leaves, assignment_count(delegated_nvars));
+  qsop_add_saturating_u64(&stats->treewidth_delegations, delegated->treewidth_delegations);
+  qsop_add_saturating_u64(&stats->rankwidth_delegations, delegated->rankwidth_delegations);
+  qsop_add_saturating_u64(&stats->table_entries, delegated->table_entries);
+  qsop_add_saturating_u64(&stats->signature_entries, delegated->signature_entries);
+  qsop_add_saturating_u64(&stats->join_pairs, delegated->join_pairs);
+  qsop_add_saturating_u64(&stats->join_signature_pairs, delegated->join_signature_pairs);
+  qsop_add_saturating_u64(&stats->branch_fallthroughs, delegated->branch_fallthroughs);
+  qsop_add_saturating_u64(&stats->branch_treewidth_skips, delegated->branch_treewidth_skips);
+  qsop_add_saturating_u64(&stats->branch_rankwidth_skips, delegated->branch_rankwidth_skips);
   if (delegated->max_table_entries > stats->max_table_entries) {
     stats->max_table_entries = delegated->max_table_entries;
   }
@@ -1208,8 +1179,8 @@ static uint64_t branch_treewidth_estimate_ns(const qsop_branch_policy_t *pol, bo
   if (!usable) {
     return UINT64_MAX;
   }
-  uint64_t est = saturating_mul_u64(pol->C_tw_table, tw_dp_work);
-  add_saturating_u64(&est, pol->tw_fixed_overhead_ns);
+  uint64_t est = qsop_saturating_mul_u64(pol->C_tw_table, tw_dp_work);
+  qsop_add_saturating_u64(&est, pol->tw_fixed_overhead_ns);
   return est;
 }
 
@@ -1217,12 +1188,12 @@ static uint64_t branch_treewidth_estimate_ns(const qsop_branch_policy_t *pol, bo
  * before the probe has run, zero afterwards. */
 static uint64_t branch_rankwidth_estimate_ns(const qsop_branch_policy_t *pol, uint64_t rw_table,
                                              uint64_t rw_join, uint64_t rw_sig, uint64_t probe_ns) {
-  uint64_t est = saturating_mul_u64(pol->C_rw_table, rw_table);
-  add_saturating_u64(&est, saturating_mul_u64(pol->C_rw_join, rw_join));
-  add_saturating_u64(&est, saturating_mul_u64(pol->C_rw_sig, rw_sig));
-  add_saturating_u64(&est, pol->rw_fixed_overhead_ns);
-  add_saturating_u64(&est, pol->rw_memory_penalty_ns);
-  add_saturating_u64(&est, probe_ns);
+  uint64_t est = qsop_saturating_mul_u64(pol->C_rw_table, rw_table);
+  qsop_add_saturating_u64(&est, qsop_saturating_mul_u64(pol->C_rw_join, rw_join));
+  qsop_add_saturating_u64(&est, qsop_saturating_mul_u64(pol->C_rw_sig, rw_sig));
+  qsop_add_saturating_u64(&est, pol->rw_fixed_overhead_ns);
+  qsop_add_saturating_u64(&est, pol->rw_memory_penalty_ns);
+  qsop_add_saturating_u64(&est, probe_ns);
   return est;
 }
 
@@ -1239,9 +1210,9 @@ static bool branch_rankwidth_wins(const qsop_branch_policy_t *pol, uint64_t rw_e
  * O(nvars^2 * words) bitset work, superlinear in the component size and with a large constant. */
 static uint64_t rankwidth_probe_estimate_ns(const qsop_branch_policy_t *pol, uint32_t nvars) {
   const uint64_t words = ((uint64_t)nvars + 63U) / 64U;
-  uint64_t units = saturating_mul_u64((uint64_t)nvars, (uint64_t)nvars);
-  units = saturating_mul_u64(units, words == 0 ? 1U : words);
-  return saturating_mul_u64(units, pol->C_rw_probe);
+  uint64_t units = qsop_saturating_mul_u64((uint64_t)nvars, (uint64_t)nvars);
+  units = qsop_saturating_mul_u64(units, words == 0 ? 1U : words);
+  return qsop_saturating_mul_u64(units, pol->C_rw_probe);
 }
 
 /* Is the probe worth running? Natural-order prefix cut-rank is not a lower bound on the width of a
@@ -1256,7 +1227,7 @@ static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint6
                                           uint64_t table_r_factor) {
   const uint32_t optimistic_width = prefix_cut_rank == 0 ? 0U : 1U;
   const uint64_t rw_sig = binary_assignment_forecast(optimistic_width);
-  const uint64_t rw_table = saturating_mul_u64(rw_sig, table_r_factor);
+  const uint64_t rw_table = qsop_saturating_mul_u64(rw_sig, table_r_factor);
   const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rw_table, 0, rw_sig,
                                                        rankwidth_probe_estimate_ns(pol, nvars));
   return branch_rankwidth_wins(pol, rw_est, tw_est);
@@ -1300,7 +1271,7 @@ static void branch_rankwidth_maybe_prefer_native(
                                              &native_error)) {
     return;
   }
-  uint64_t native_table = saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
+  uint64_t native_table = qsop_saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
   uint64_t native_join = 0;
   if (qsop_rankwidth_decomposition_forecast(sub, native_dec, &native_table, &native_join, NULL) &&
       (native_table < *table_forecast ||
@@ -1356,7 +1327,7 @@ static bool branch_try_rankwidth_delegate(
   const bool treewidth_usable =
       treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
   const uint64_t tw_est = branch_treewidth_estimate_ns(
-      pol, treewidth_usable, saturating_mul_u64(treewidth_dp_work, (uint64_t)sub->r));
+      pol, treewidth_usable, qsop_saturating_mul_u64(treewidth_dp_work, (uint64_t)sub->r));
 
   if (!branch_should_probe_rankwidth(pol, tw_est, sub->nvars, prefix_cut_rank, sub->r)) {
     note_rankwidth_skip(stats, "branch.rankwidth_skip_predicted_cost", sub->nvars);
@@ -1402,7 +1373,7 @@ static bool branch_try_rankwidth_delegate(
   branch_trace_event(stats, "branch.rankwidth_cutrank_probe", cutrank_width);
   max_u32(&stats->rankwidth_cutrank_width, cutrank_width);
   uint64_t rankwidth_table_forecast =
-      saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
+      qsop_saturating_mul_u64(binary_assignment_forecast(cutrank_width), sub->r);
   uint64_t rankwidth_join_pair_forecast = 0;
   if (!qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table_forecast,
                                              &rankwidth_join_pair_forecast, error)) {
@@ -1548,7 +1519,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     order_from_stats = calloc(sub.nvars, sizeof(*order_from_stats));
     if (order_from_stats == NULL) {
       free_subinstance(&sub);
-      set_error(error, "out of memory for stats order buffer");
+      qsop_set_error(error, "out of memory for stats order buffer");
       return false;
     }
   }
@@ -1775,7 +1746,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
         rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
         rw_data.cutrank_width = cal_width;
         if (cal_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH) {
-          uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_width), sub.r);
+          uint64_t cal_fe = qsop_saturating_mul_u64(binary_assignment_forecast(cal_width), sub.r);
           uint64_t cal_jp = 0;
           qsop_error_t fore_err = {0};
           qsop_rankwidth_decomposition_forecast(&sub, cal_decomp, &cal_fe, &cal_jp, &fore_err);
@@ -1879,7 +1850,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->cache_canonical_stores = search.cache_canonical_stores;
     stats->cache_entries = (uint64_t)search.cache.len;
     stats->cache_canonical_entries = residual_cache_canonical_entries(&search.cache);
-    stats->cache_stored_residue_slots = saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
+    stats->cache_stored_residue_slots = qsop_saturating_mul_u64((uint64_t)search.cache.len, qsop->r);
     stats->cache_key_bytes = residual_cache_key_bytes(&search.cache);
     stats->cache_count_bytes = residual_cache_count_bytes(&search.cache);
     stats->cache_estimated_bytes = residual_cache_estimated_bytes(&search.cache);
@@ -1946,7 +1917,7 @@ static bool branch_sum_components(qsop_residual_t *residual, uint64_t *counts,
     free(component);
     free(acc);
     free(tmp);
-    set_error(error, "out of memory while splitting residual components");
+    qsop_set_error(error, "out of memory while splitting residual components");
     return false;
   }
 
@@ -2206,7 +2177,7 @@ static bool choose_branch_var(const qsop_residual_t *residual, qsop_branch_heuri
   }
 
   if (!found) {
-    set_error(error, "residual active-var count disagrees with active flags");
+    qsop_set_error(error, "residual active-var count disagrees with active flags");
     return false;
   }
 
@@ -2252,7 +2223,7 @@ static bool edge_free_sum(const qsop_residual_t *residual, uint64_t *counts,
     }
   }
   const uint64_t leaves = assignment_count(qsop_residual_active_vars(residual));
-  add_saturating_u64(&stats->leaves, leaves);
+  qsop_add_saturating_u64(&stats->leaves, leaves);
   qsop_trace_emit_elapsed(stats->trace, "branch.edge_free_leaf", stats->depth, leaves,
                           edge_free_start);
   return true;
@@ -2291,7 +2262,7 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
    * unbounded exhaustive branching. */
   const uint32_t active_vars = qsop_residual_active_vars(residual);
   if (active_vars > stats->max_vars) {
-    set_error(error,
+    qsop_set_error(error,
               "residual branch solver refuses a %" PRIu32
               "-variable component; pass a larger --max-vars or use a future backend",
               active_vars);
@@ -2349,7 +2320,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
       stats->cache_canonical_hits++;
     }
     if (entry->search_nodes > 1U) {
-      add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
+      qsop_add_saturating_u64(&stats->cache_avoided_nodes, entry->search_nodes - 1U);
     }
     const uint32_t hit_r = (uint32_t)qsop_residual_modulus(residual);
     return branch_counts_shift_add(hit_r, counts, entry->counts,
@@ -2403,7 +2374,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
   }
   if (nprimes > SIZE_MAX / (qsop->r == 0 ? 1U : (size_t)qsop->r) / sizeof(uint64_t)) {
     free(primes);
-    set_error(error, "branch CRT count table is too large");
+    qsop_set_error(error, "branch CRT count table is too large");
     return false;
   }
 
@@ -2415,7 +2386,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating branch CRT solve state");
+    qsop_set_error(error, "out of memory while allocating branch CRT solve state");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -2426,7 +2397,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     free(all_counts);
     free(residues);
     qsop_result_free(result);
-    set_error(error, "out of memory while allocating branch CRT result strings");
+    qsop_set_error(error, "out of memory while allocating branch CRT result strings");
     return false;
   }
 
@@ -2491,7 +2462,7 @@ static bool support_component_count(const qsop_instance_t *qsop, uint32_t *out,
                                     qsop_error_t *error) {
   uint32_t *parent = malloc((qsop->nvars == 0 ? 1U : qsop->nvars) * sizeof(*parent));
   if (parent == NULL) {
-    set_error(error, "out of memory while counting support components");
+    qsop_set_error(error, "out of memory while counting support components");
     return false;
   }
   for (uint32_t v = 0; v < qsop->nvars; v++) {
@@ -2560,7 +2531,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   qsop_error_t stats_err = {0};
   if (qsop_compute_stats(qsop, &root_stats, &stats_err) && root_stats.width_diagnostics_available) {
     const uint64_t tw_est = branch_treewidth_estimate_ns(
-        policy, true, saturating_mul_u64(root_stats.min_fill_dp_work, qsop->r));
+        policy, true, qsop_saturating_mul_u64(root_stats.min_fill_dp_work, qsop->r));
     if (branch_should_probe_rankwidth(policy, tw_est, qsop->nvars, root_stats.prefix_cut_rank,
                                       qsop->r)) {
       free(order);
@@ -2625,7 +2596,7 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
           rw_data.generation_ms = branch_ns_to_ms(qsop_trace_elapsed_ns(rw_gen_start));
           rw_data.cutrank_width = cal_width;
           if (cal_width <= BRANCH_CALIBRATION_MAX_WIDTH) {
-            uint64_t cal_fe = saturating_mul_u64(binary_assignment_forecast(cal_width), qsop->r);
+            uint64_t cal_fe = qsop_saturating_mul_u64(binary_assignment_forecast(cal_width), qsop->r);
             uint64_t cal_jp = 0;
             qsop_rankwidth_decomposition_forecast(qsop, cal_decomp, &cal_fe, &cal_jp, &cal_err);
             rw_data.forecast_entries = cal_fe;
@@ -2668,22 +2639,22 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     *stats = (qsop_solve_stats_t){0};
   }
   if (out == NULL) {
-    set_error(error, "internal error: null result pointer");
+    qsop_set_error(error, "internal error: null result pointer");
     return false;
   }
   *out = NULL;
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
   if (qsop->r > UINT32_MAX) {
-    set_error(error, "count-table/all-modes branch backend requires R <= UINT32_MAX; use "
+    qsop_set_error(error, "count-table/all-modes branch backend requires R <= UINT32_MAX; use "
                      "--solve-mode single-fourier");
     return false;
   }
   const qsop_branch_policy_t policy = branch_policy_normalize(&o.policy);
   if (o.mode != QSOP_SOLVE_MODE_COUNT_TABLE && o.mode != QSOP_SOLVE_MODE_FOURIER) {
-    set_error(error, "internal error: unsupported residual branch solve mode");
+    qsop_set_error(error, "internal error: unsupported residual branch solve mode");
     return false;
   }
   bool root_handled = false;
@@ -2707,7 +2678,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
    * max_fallback_vars-style cap of its own. */
   const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_ROOT_SANITY_MULTIPLIER;
   if ((uint64_t)qsop->nvars > root_sanity_limit) {
-    set_error(error,
+    qsop_set_error(error,
               "residual branch solver refuses %" PRIu32
               " variables outright (exceeds %ux --max-vars); pass a larger --max-vars or use a "
               "future backend",
@@ -2730,7 +2701,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
 
   qsop_result_t *result = calloc(1, sizeof(*result));
   if (result == NULL) {
-    set_error(error, "out of memory while allocating result");
+    qsop_set_error(error, "out of memory while allocating result");
     return false;
   }
   result->r = (uint32_t)qsop->r;
@@ -2942,7 +2913,7 @@ static bool branch_phase_cache_init(branch_phase_cache_t *cache, uint64_t r, uin
     lg_cap = BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP;
   }
   if (lg_cap > BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP) {
-    set_error(error, "branch single-Fourier phase cache is too large");
+    qsop_set_error(error, "branch single-Fourier phase cache is too large");
     return false;
   }
   cache->cap = (size_t)1U << lg_cap;
@@ -2956,7 +2927,7 @@ static bool branch_phase_cache_init(branch_phase_cache_t *cache, uint64_t r, uin
     free(cache->im);
     free(cache->used);
     *cache = (branch_phase_cache_t){0};
-    set_error(error, "out of memory while allocating branch single-Fourier phase cache");
+    qsop_set_error(error, "out of memory while allocating branch single-Fourier phase cache");
     return false;
   }
   return true;
@@ -3057,11 +3028,11 @@ static branch_c64_t branch_phase_lookup(branch_phase_cache_t *cache, uint64_t re
 
 static uint64_t residual_key_estimated_bytes(const residual_cache_key_t *key) {
   uint64_t bytes = sizeof(*key);
-  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
-  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
-  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
-  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_u)));
-  add_saturating_u64(&bytes, saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_v)));
+  qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->active_var)));
+  qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->active_edge)));
+  qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nvars, sizeof(*key->unary)));
+  qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_u)));
+  qsop_add_saturating_u64(&bytes, qsop_saturating_mul_u64((uint64_t)key->nedges, sizeof(*key->edge_v)));
   return bytes;
 }
 
@@ -3085,14 +3056,14 @@ static bool branch_amp_cache_reserve(branch_amp_cache_t *cache, size_t needed,
   size_t new_cap = cache->cap == 0 ? 32U : cache->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "branch single-Fourier amplitude cache is too large");
+      qsop_set_error(error, "branch single-Fourier amplitude cache is too large");
       return false;
     }
     new_cap *= 2U;
   }
   branch_amp_cache_entry_t *entries = realloc(cache->entries, new_cap * sizeof(*entries));
   if (entries == NULL) {
-    set_error(error, "out of memory while growing branch single-Fourier amplitude cache");
+    qsop_set_error(error, "out of memory while growing branch single-Fourier amplitude cache");
     return false;
   }
   cache->entries = entries;
@@ -3104,7 +3075,7 @@ static bool branch_amp_cache_rehash(branch_amp_cache_t *cache, size_t bucket_cou
                                     qsop_error_t *error) {
   size_t *buckets = malloc(bucket_count * sizeof(*buckets));
   if (buckets == NULL) {
-    set_error(error, "out of memory while allocating branch single-Fourier amplitude cache");
+    qsop_set_error(error, "out of memory while allocating branch single-Fourier amplitude cache");
     return false;
   }
   for (size_t i = 0; i < bucket_count; i++) {
@@ -3180,7 +3151,7 @@ static bool branch_amp_cache_store(branch_amp_cache_t *cache, const qsop_residua
   cache->entries[cache->len] = entry;
   cache->buckets[bucket] = cache->len;
   cache->len++;
-  add_saturating_u64(&cache->estimated_bytes, entry_bytes);
+  qsop_add_saturating_u64(&cache->estimated_bytes, entry_bytes);
   return true;
 }
 
@@ -3212,8 +3183,8 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats,
   }
   /* Without these the branch backend reports 0/0 SIMD work for its delegates, so `simd_kernel:
    * avx2` in --format stats reads like a claim the kernels ran when nothing was measured. */
-  add_saturating_u64(&stats->simd_vectorized_ops, delegated->simd_vectorized_ops);
-  add_saturating_u64(&stats->simd_scalar_fallback_ops, delegated->simd_scalar_fallback_ops);
+  qsop_add_saturating_u64(&stats->simd_vectorized_ops, delegated->simd_vectorized_ops);
+  qsop_add_saturating_u64(&stats->simd_scalar_fallback_ops, delegated->simd_scalar_fallback_ops);
 }
 
 /* Per-component delegate-or-error decision. Duplicates (does not share) the veto/cost-model
@@ -3267,7 +3238,7 @@ static bool branch_single_mode_delegate_component(
     return true;
   }
   if (sub->nvars > max_vars) {
-    set_error(error,
+    qsop_set_error(error,
               "branch single-fourier solver refuses a %" PRIu32
               "-variable component; pass a larger --max-vars",
               sub->nvars);
@@ -3300,7 +3271,7 @@ static bool branch_single_mode_delegate_component(
   const bool want_stats_order = sub->nvars <= 63U;
   uint32_t *stats_order = want_stats_order ? calloc(sub->nvars, sizeof(*stats_order)) : NULL;
   if (want_stats_order && stats_order == NULL) {
-    set_error(error, "out of memory while allocating branch single-fourier stats order buffer");
+    qsop_set_error(error, "out of memory while allocating branch single-fourier stats order buffer");
     return false;
   }
   qsop_stats_t sub_stats = {0};
@@ -3434,7 +3405,7 @@ static bool branch_single_mode_delegate_component(
     delegated.rankwidth_delegations++;
   } else {
     if (fail_on_refusal) {
-      set_error(error,
+      qsop_set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " (DP work %" PRIu64 ", budget %" PRIu64
                 ") and rankwidth cutrank %" PRIu32
@@ -3469,7 +3440,7 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_
                                        branch_c64_t *out, qsop_error_t *error);
 
 static uint64_t branch_cache_budget_bytes(uint64_t mib) {
-  return saturating_mul_u64(mib, UINT64_C(1024) * UINT64_C(1024));
+  return qsop_saturating_mul_u64(mib, UINT64_C(1024) * UINT64_C(1024));
 }
 
 static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
@@ -3570,7 +3541,7 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
       factor = (branch_c64_t){1.0L, 0.0L, 1}; /* 2 = 1 * 2^1 */
     } else if ((r & 1U) == 0 && unary == r / 2U && (state->target_mode & 1U) != 0) {
       *out = c64_zero();
-      add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
+      qsop_add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
       qsop_trace_emit_elapsed(state->trace, "branch.single.edge_free", state->depth,
                               qsop_residual_active_vars(residual), edge_free_start);
       return true;
@@ -3582,7 +3553,7 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
     c64_accum_error(1, &state->numeric_error_bound);
   }
   *out = z;
-  add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
+  qsop_add_saturating_u64(&state->leaves, assignment_count(qsop_residual_active_vars(residual)));
   qsop_trace_emit_elapsed(state->trace, "branch.single.edge_free", state->depth,
                           qsop_residual_active_vars(residual), edge_free_start);
   return true;
@@ -3609,7 +3580,7 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   const uint32_t nvars = qsop_residual_nvars(residual);
   uint32_t *component = malloc((nvars == 0 ? 1U : nvars) * sizeof(*component));
   if (component == NULL) {
-    set_error(error, "out of memory while splitting branch single-Fourier residual components");
+    qsop_set_error(error, "out of memory while splitting branch single-Fourier residual components");
     return false;
   }
 
@@ -3710,7 +3681,7 @@ static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
   }
   state->cache_hits++;
   if (entry->search_nodes > 1U) {
-    add_saturating_u64(&state->cache_avoided_nodes, entry->search_nodes - 1U);
+    qsop_add_saturating_u64(&state->cache_avoided_nodes, entry->search_nodes - 1U);
   }
   state->numeric_error_bound += entry->numeric_error_bound;
   /* Entries are stored constant-free (see residual_cache_key_t); re-apply this residual's own
@@ -3750,7 +3721,7 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
       ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
       if (ok && !delegated) {
         if (qsop_residual_active_vars(residual) > state->max_fallback_vars) {
-          set_error(error,
+          qsop_set_error(error,
                     "branch single-Fourier fallback refused component with %" PRIu32
                     " active vars: residual fallback cap %" PRIu32
                     " exceeded; try --branch-single-max-fallback-vars=%" PRIu32
@@ -3759,7 +3730,7 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
                     qsop_residual_active_vars(residual));
           ok = false;
         } else if (state->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
-          set_error(error, "branch single-Fourier residual fallback does not implement "
+          qsop_set_error(error, "branch single-Fourier residual fallback does not implement "
                            "--branch-single-precision long-double yet");
           ok = false;
         } else {
@@ -3844,12 +3815,12 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
 static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_mode_state_t *state,
                                        branch_c64_t *out, qsop_error_t *error) {
   if (state->max_recursion_depth != 0 && state->depth > state->max_recursion_depth) {
-    set_error(error, "branch single-Fourier recursion-depth cap exceeded");
+    qsop_set_error(error, "branch single-Fourier recursion-depth cap exceeded");
     return false;
   }
   state->nodes++;
   if (state->max_search_nodes != 0 && state->nodes > state->max_search_nodes) {
-    set_error(error,
+    qsop_set_error(error,
               "branch single-Fourier search-node cap exceeded (%" PRIu64
               "); try --branch-single-max-search-nodes with a larger value",
               state->max_search_nodes);
@@ -3930,16 +3901,16 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
     *stats = (qsop_solve_stats_t){0};
   }
   if (out == NULL) {
-    set_error(error, "internal error: null amplitude result pointer");
+    qsop_set_error(error, "internal error: null amplitude result pointer");
     return false;
   }
   *out = (qsop_amplitude_t){0};
   if (qsop == NULL) {
-    set_error(error, "internal error: null QSOP instance");
+    qsop_set_error(error, "internal error: null QSOP instance");
     return false;
   }
   if (qsop->r == 0) {
-    set_error(error, "internal error: QSOP instance has a zero modulus");
+    qsop_set_error(error, "internal error: QSOP instance has a zero modulus");
     return false;
   }
   /* Deliberately no `qsop->r > UINT32_MAX` guard here -- that's the entire point of this
@@ -3954,7 +3925,7 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
    * expensive width diagnostic. */
   const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_ROOT_SANITY_MULTIPLIER;
   if ((uint64_t)qsop->nvars > root_sanity_limit) {
-    set_error(error,
+    qsop_set_error(error,
               "branch single-fourier solver refuses %" PRIu32
               " variables outright (exceeds %ux --max-vars); pass a larger --max-vars",
               qsop->nvars, BRANCH_ROOT_SANITY_MULTIPLIER);

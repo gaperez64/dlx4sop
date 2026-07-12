@@ -1,4 +1,5 @@
 #include "dlx4sop/residue.h"
+#include "qsop_internal.h"
 
 #include <inttypes.h>
 #include <stdarg.h>
@@ -6,36 +7,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
-
 bool qsop_counts_alloc(uint32_t r, uint64_t **out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residue-count allocation output");
+    qsop_set_error(error, "internal error: null residue-count allocation output");
     return false;
   }
   *out = NULL;
 
   if (r == 0) {
-    set_error(error, "cannot allocate residue vector for modulus 0");
+    qsop_set_error(error, "cannot allocate residue vector for modulus 0");
     return false;
   }
 
   uint64_t *counts = calloc(r, sizeof(*counts));
   if (counts == NULL) {
-    set_error(error, "out of memory while allocating residue counts");
+    qsop_set_error(error, "out of memory while allocating residue counts");
     return false;
   }
 
@@ -52,11 +38,11 @@ void qsop_counts_clear(uint32_t r, uint64_t *counts) {
 
 bool qsop_count_add(uint64_t *dst, uint64_t value, qsop_error_t *error) {
   if (dst == NULL) {
-    set_error(error, "internal error: null residue-count add argument");
+    qsop_set_error(error, "internal error: null residue-count add argument");
     return false;
   }
   if (UINT64_MAX - *dst < value) {
-    set_error(error, "residue count exceeds uint64 capacity; use a CRT-backed solver path");
+    qsop_set_error(error, "residue count exceeds uint64 capacity; use a CRT-backed solver path");
     return false;
   }
   *dst += value;
@@ -65,11 +51,11 @@ bool qsop_count_add(uint64_t *dst, uint64_t value, qsop_error_t *error) {
 
 bool qsop_count_mul(uint64_t left, uint64_t right, uint64_t *out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null residue-count multiply output");
+    qsop_set_error(error, "internal error: null residue-count multiply output");
     return false;
   }
   if (left != 0 && right > UINT64_MAX / left) {
-    set_error(error,
+    qsop_set_error(error,
               "residue count product %" PRIu64 " * %" PRIu64
               " exceeds uint64 capacity; use a CRT-backed solver path",
               left, right);
@@ -174,14 +160,14 @@ static bool big_uint_reserve(big_uint_t *value, size_t needed, qsop_error_t *err
   size_t new_cap = value->cap == 0 ? 4U : value->cap;
   while (new_cap < needed) {
     if (new_cap > SIZE_MAX / 2U) {
-      set_error(error, "CRT integer is too large");
+      qsop_set_error(error, "CRT integer is too large");
       return false;
     }
     new_cap *= 2U;
   }
   uint32_t *limbs = realloc(value->limbs, new_cap * sizeof(*limbs));
   if (limbs == NULL) {
-    set_error(error, "out of memory while growing CRT integer");
+    qsop_set_error(error, "out of memory while growing CRT integer");
     return false;
   }
   for (size_t i = value->cap; i < new_cap; i++) {
@@ -295,7 +281,7 @@ static char *big_uint_to_string(const big_uint_t *value, qsop_error_t *error) {
   if (value->len == 0) {
     char *zero = malloc(2);
     if (zero == NULL) {
-      set_error(error, "out of memory while formatting CRT count");
+      qsop_set_error(error, "out of memory while formatting CRT count");
       return NULL;
     }
     zero[0] = '0';
@@ -305,7 +291,7 @@ static char *big_uint_to_string(const big_uint_t *value, qsop_error_t *error) {
   const size_t cap = value->len * 9U + 2U;
   char *text = malloc(cap);
   if (text == NULL) {
-    set_error(error, "out of memory while formatting CRT count");
+    qsop_set_error(error, "out of memory while formatting CRT count");
     return NULL;
   }
   size_t offset = (size_t)snprintf(text, cap, "%" PRIu32, value->limbs[value->len - 1U]);
@@ -318,7 +304,7 @@ static char *big_uint_to_string(const big_uint_t *value, qsop_error_t *error) {
 bool qsop_crt_reconstruct_decimal(const uint64_t *residues, const uint64_t *primes,
                                   size_t nprimes, char **out, qsop_error_t *error) {
   if (residues == NULL || primes == NULL || out == NULL) {
-    set_error(error, "internal error: invalid CRT reconstruction argument");
+    qsop_set_error(error, "internal error: invalid CRT reconstruction argument");
     return false;
   }
   *out = NULL;
@@ -357,7 +343,7 @@ bool qsop_crt_reconstruct_decimal(const uint64_t *residues, const uint64_t *prim
 bool qsop_crt_find_primes_for_nvars(uint32_t nvars, uint64_t **out_primes, size_t *out_len,
                                     qsop_error_t *error) {
   if (out_primes == NULL || out_len == NULL) {
-    set_error(error, "internal error: null CRT prime output");
+    qsop_set_error(error, "internal error: null CRT prime output");
     return false;
   }
   *out_primes = NULL;
@@ -366,7 +352,7 @@ bool qsop_crt_find_primes_for_nvars(uint32_t nvars, uint64_t **out_primes, size_
   const size_t needed = (size_t)nvars / 63U + 1U;
   uint64_t *primes = calloc(needed, sizeof(*primes));
   if (primes == NULL) {
-    set_error(error, "out of memory while allocating CRT primes");
+    qsop_set_error(error, "out of memory while allocating CRT primes");
     return false;
   }
 
@@ -380,7 +366,7 @@ bool qsop_crt_find_primes_for_nvars(uint32_t nvars, uint64_t **out_primes, size_
   }
   if (found != needed) {
     free(primes);
-    set_error(error, "CRT mode could not find enough 64-bit primes");
+    qsop_set_error(error, "CRT mode could not find enough 64-bit primes");
     return false;
   }
   *out_primes = primes;
@@ -411,12 +397,12 @@ static uint32_t factor_u32(uint32_t value, uint32_t *factors, uint32_t cap) {
 bool qsop_fourier_find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime,
                                  qsop_error_t *error) {
   if (prime == NULL) {
-    set_error(error, "internal error: null Fourier prime output");
+    qsop_set_error(error, "internal error: null Fourier prime output");
     return false;
   }
   *prime = 0;
   if (r == 0 || nvars >= 64U) {
-    set_error(error, "Fourier NTT prime search requires nonzero modulus and fewer than 64 variables");
+    qsop_set_error(error, "Fourier NTT prime search requires nonzero modulus and fewer than 64 variables");
     return false;
   }
   const uint64_t count_bound = UINT64_C(1) << nvars;
@@ -431,26 +417,26 @@ bool qsop_fourier_find_ntt_prime(uint32_t r, uint32_t nvars, uint64_t *prime,
       return true;
     }
   }
-  set_error(error, "Fourier mode could not find a 64-bit NTT prime for modulus %" PRIu32, r);
+  qsop_set_error(error, "Fourier mode could not find a 64-bit NTT prime for modulus %" PRIu32, r);
   return false;
 }
 
 bool qsop_fourier_find_ntt_primes_for_nvars(uint32_t r, uint32_t nvars, uint64_t **out_primes,
                                             size_t *out_len, qsop_error_t *error) {
   if (out_primes == NULL || out_len == NULL) {
-    set_error(error, "internal error: null Fourier CRT prime output");
+    qsop_set_error(error, "internal error: null Fourier CRT prime output");
     return false;
   }
   *out_primes = NULL;
   *out_len = 0;
   if (r == 0) {
-    set_error(error, "Fourier CRT prime search requires nonzero modulus");
+    qsop_set_error(error, "Fourier CRT prime search requires nonzero modulus");
     return false;
   }
   if (nvars < 64U) {
     uint64_t *primes = calloc(1, sizeof(*primes));
     if (primes == NULL) {
-      set_error(error, "out of memory while allocating Fourier CRT primes");
+      qsop_set_error(error, "out of memory while allocating Fourier CRT primes");
       return false;
     }
     if (!qsop_fourier_find_ntt_prime(r, nvars, &primes[0], error)) {
@@ -465,7 +451,7 @@ bool qsop_fourier_find_ntt_primes_for_nvars(uint32_t r, uint32_t nvars, uint64_t
   const size_t needed = (size_t)nvars / 63U + 1U;
   uint64_t *primes = calloc(needed, sizeof(*primes));
   if (primes == NULL) {
-    set_error(error, "out of memory while allocating Fourier CRT primes");
+    qsop_set_error(error, "out of memory while allocating Fourier CRT primes");
     return false;
   }
 
@@ -480,7 +466,7 @@ bool qsop_fourier_find_ntt_primes_for_nvars(uint32_t r, uint32_t nvars, uint64_t
   }
   if (found != needed) {
     free(primes);
-    set_error(error, "Fourier CRT mode could not find enough 64-bit NTT primes");
+    qsop_set_error(error, "Fourier CRT mode could not find enough 64-bit NTT primes");
     return false;
   }
   *out_primes = primes;
@@ -491,12 +477,12 @@ bool qsop_fourier_find_ntt_primes_for_nvars(uint32_t r, uint32_t nvars, uint64_t
 bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
                                   qsop_error_t *error) {
   if (root == NULL) {
-    set_error(error, "internal error: null Fourier root output");
+    qsop_set_error(error, "internal error: null Fourier root output");
     return false;
   }
   *root = 0;
   if (r == 0 || prime <= 2U || (prime - 1U) % r != 0) {
-    set_error(error, "Fourier root search requires prime congruent to 1 modulo %" PRIu32, r);
+    qsop_set_error(error, "Fourier root search requires prime congruent to 1 modulo %" PRIu32, r);
     return false;
   }
 
@@ -519,24 +505,24 @@ bool qsop_fourier_find_order_root(uint64_t prime, uint32_t r, uint64_t *root,
       return true;
     }
   }
-  set_error(error, "Fourier mode could not find an order-%" PRIu32 " root", r);
+  qsop_set_error(error, "Fourier mode could not find an order-%" PRIu32 " root", r);
   return false;
 }
 
 bool qsop_fourier_make_root_powers(uint32_t r, uint64_t root, uint64_t prime,
                                    uint64_t **out, qsop_error_t *error) {
   if (out == NULL) {
-    set_error(error, "internal error: null Fourier powers output");
+    qsop_set_error(error, "internal error: null Fourier powers output");
     return false;
   }
   *out = NULL;
   if ((size_t)r > SIZE_MAX / (r == 0 ? 1U : (size_t)r) / sizeof(uint64_t)) {
-    set_error(error, "Fourier modulus is too large for dense mode tables");
+    qsop_set_error(error, "Fourier modulus is too large for dense mode tables");
     return false;
   }
   uint64_t *powers = calloc((size_t)r * r, sizeof(*powers));
   if (powers == NULL) {
-    set_error(error, "out of memory while allocating Fourier powers");
+    qsop_set_error(error, "out of memory while allocating Fourier powers");
     return false;
   }
   for (uint32_t mode = 0; mode < r; mode++) {
@@ -553,7 +539,7 @@ bool qsop_fourier_inverse_counts(uint32_t r, const uint64_t *modes, uint32_t shi
                                  const uint64_t *powers, const uint64_t *inv_powers,
                                  uint64_t prime, uint64_t *counts, qsop_error_t *error) {
   if (r == 0 || modes == NULL || powers == NULL || inv_powers == NULL || counts == NULL) {
-    set_error(error, "internal error: null Fourier inverse argument");
+    qsop_set_error(error, "internal error: null Fourier inverse argument");
     return false;
   }
   const uint64_t inv_r = qsop_mod_pow_u64(r, prime - 2U, prime);
@@ -588,7 +574,7 @@ void qsop_counts_shift_add(uint32_t r, uint64_t *dst, const uint64_t *src, uint3
 bool qsop_counts_shift_add_checked(uint32_t r, uint64_t *dst, const uint64_t *src,
                                    uint32_t shift, qsop_error_t *error) {
   if (r == 0 || dst == NULL || src == NULL) {
-    set_error(error, "internal error: invalid residue shift-add argument");
+    qsop_set_error(error, "internal error: invalid residue shift-add argument");
     return false;
   }
 
@@ -608,7 +594,7 @@ bool qsop_counts_shift_add_checked(uint32_t r, uint64_t *dst, const uint64_t *sr
 bool qsop_counts_convolve(uint32_t r, uint64_t *dst, const uint64_t *left,
                           const uint64_t *right, qsop_error_t *error) {
   if (r == 0 || dst == NULL || left == NULL || right == NULL) {
-    set_error(error, "internal error: invalid residue convolution argument");
+    qsop_set_error(error, "internal error: invalid residue convolution argument");
     return false;
   }
 

@@ -45,7 +45,12 @@ dlx4sop_core_sources = files(
     'src/core/qsop_write.c',
     'src/solve/branch.c',
     'src/solve/component_key.c',
-    'src/solve/rankwidth.c',
+    'src/solve/rankwidth_tables.c',
+    'src/solve/rankwidth_decomp.c',
+    'src/solve/rankwidth_cutrank.c',
+    'src/solve/rankwidth_dp_counts.c',
+    'src/solve/rankwidth_dp_complex.c',
+    'src/solve/rankwidth_drivers.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
 )
@@ -289,6 +294,14 @@ test_qsop_simplify = executable(
 
 test('qsop simplify unit', test_qsop_simplify, suite: 'unit')
 
+test_qsop_simplify_differential = executable(
+  'test-qsop-simplify-differential',
+  ['tests/unit/test_qsop_simplify_differential.c', 'tests/unit/qsop_simplify_reference.c'],
+  dependencies: dlx4sop_core_dep,
+)
+
+test('qsop simplify differential unit', test_qsop_simplify_differential, suite: 'unit')
+
 test_min_fill = executable(
   'test-min-fill',
   'tests/unit/test_min_fill.c',
@@ -328,6 +341,14 @@ test_treewidth_join = executable(
 )
 
 test('treewidth join unit', test_treewidth_join, suite: 'unit', timeout: 120)
+
+test_rankwidth_join = executable(
+  'test-rankwidth-join',
+  'tests/unit/test_rankwidth_join.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('rankwidth join unit', test_rankwidth_join, suite: 'unit', timeout: 120)
 
 test(
   'kernel benchmark smoke',
@@ -526,6 +547,17 @@ if python3.found()
       files('tests/test_bench_gauntlet.py'),
       files('scripts/bench_gauntlet.py'),
     ],
+  )
+  test(
+    'bench common import classification smoke',
+    python3,
+    args: [
+      files('tests/test_bench_common.py'),
+      files('scripts/bench_common.py'),
+      files('scripts/build_external_qasm_manifest.py'),
+      qasm2sop.full_path(),
+    ],
+    depends: qasm2sop,
   )
   test(
     'branch policy smoke',

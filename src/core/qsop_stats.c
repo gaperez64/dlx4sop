@@ -1,6 +1,7 @@
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/bitset.h"
 #include "dlx4sop/min_fill.h"
+#include "qsop_internal.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -10,26 +11,11 @@
 
 #define QSOP_EXACT_WIDTH_HARD_MAX 16U
 
-static void set_error(qsop_error_t *error, const char *fmt, ...) {
-  if (error == NULL) {
-    return;
-  }
-
-  error->path = NULL;
-  error->line = 0;
-  error->column = 0;
-
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(error->message, sizeof(error->message), fmt, args);
-  va_end(args);
-}
-
 static bool write_failed(FILE *file, qsop_error_t *error) {
   if (!ferror(file)) {
     return false;
   }
-  set_error(error, "write failed: %s", strerror(errno));
+  qsop_set_error(error, "write failed: %s", strerror(errno));
   return true;
 }
 
@@ -57,32 +43,6 @@ static uint32_t first_set_bit_u64(uint64_t value) {
     bit++;
   }
   return bit;
-}
-
-static uint32_t gf2_rank_masks(uint64_t *rows, uint32_t nrows, uint32_t nvars) {
-  uint32_t rank = 0;
-  for (uint32_t col = 0; col < nvars && rank < nrows; col++) {
-    const uint64_t bit = bit_for_var(col);
-    uint32_t pivot = rank;
-    while (pivot < nrows && (rows[pivot] & bit) == 0) {
-      pivot++;
-    }
-    if (pivot == nrows) {
-      continue;
-    }
-    if (pivot != rank) {
-      const uint64_t tmp = rows[rank];
-      rows[rank] = rows[pivot];
-      rows[pivot] = tmp;
-    }
-    for (uint32_t row = 0; row < nrows; row++) {
-      if (row != rank && (rows[row] & bit) != 0) {
-        rows[row] ^= rows[rank];
-      }
-    }
-    rank++;
-  }
-  return rank;
 }
 
 static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
@@ -221,7 +181,7 @@ static bool exact_rankwidth_masks(uint32_t nvars, const uint64_t *adj, uint32_t 
   if (cutrank == NULL || dp == NULL) {
     free(cutrank);
     free(dp);
-    set_error(error, "out of memory while computing exact rankwidth");
+    qsop_set_error(error, "out of memory while computing exact rankwidth");
     return false;
   }
 
@@ -235,7 +195,7 @@ static bool exact_rankwidth_masks(uint32_t nvars, const uint64_t *adj, uint32_t 
         rows[nrows++] = adj[v] & right;
       }
     }
-    cutrank[mask] = (uint8_t)gf2_rank_masks(rows, nrows, nvars);
+    cutrank[mask] = (uint8_t)qsop_gf2_rank_bitsets(rows, nrows, nvars, 1);
   }
 
   for (uint32_t size = 2; size <= nvars; size++) {
@@ -297,7 +257,7 @@ static bool compute_exact_widths(const qsop_instance_t *qsop, const qsop_stats_o
 static bool compute_stats_internal(const qsop_instance_t *qsop, const qsop_stats_options_t *options,
                                    qsop_stats_t *stats, uint32_t *order, qsop_error_t *error) {
   if (qsop == NULL || stats == NULL) {
-    set_error(error, "internal error: null stats argument");
+    qsop_set_error(error, "internal error: null stats argument");
     return false;
   }
 
@@ -328,7 +288,7 @@ static bool compute_stats_internal(const qsop_instance_t *qsop, const qsop_stats
     free(colind);
     free(visited);
     free(queue);
-    set_error(error, "out of memory while computing stats");
+    qsop_set_error(error, "out of memory while computing stats");
     return false;
   }
 
@@ -401,7 +361,7 @@ bool qsop_compute_stats_with_order(const qsop_instance_t *qsop, qsop_stats_t *st
 
 bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *error) {
   if (file == NULL || stats == NULL) {
-    set_error(error, "internal error: null stats text write argument");
+    qsop_set_error(error, "internal error: null stats text write argument");
     return false;
   }
 
@@ -433,7 +393,7 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
 
 bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *error) {
   if (file == NULL || stats == NULL) {
-    set_error(error, "internal error: null stats JSON write argument");
+    qsop_set_error(error, "internal error: null stats JSON write argument");
     return false;
   }
 
