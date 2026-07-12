@@ -45,7 +45,12 @@ dlx4sop_core_sources = files(
     'src/core/qsop_write.c',
     'src/solve/branch.c',
     'src/solve/component_key.c',
-    'src/solve/rankwidth.c',
+    'src/solve/rankwidth_tables.c',
+    'src/solve/rankwidth_decomp.c',
+    'src/solve/rankwidth_cutrank.c',
+    'src/solve/rankwidth_dp_counts.c',
+    'src/solve/rankwidth_dp_complex.c',
+    'src/solve/rankwidth_drivers.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
 )
