@@ -1170,6 +1170,23 @@ static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
  * of encoding a direct weighted edge. */
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target);
 
+/* phase(coeff) conditioned on left XOR right (applied iff exactly one of the two qubits is 1):
+ * cx(left,right) computes right ^= left, a plain phase on right then applies iff that XOR was
+ * 1, and the second cx uncomputes it back to right's original value. Sign-only (2 cx + 1
+ * single-qubit phase), no weighted edge and no halving needed at all -- this is what
+ * apply_ccz_decomposition (ccx/ccz/cswap) and apply_controlled_phase use, and was previously
+ * the actual source of the "non-sign quadratic" export failures on circuits using Toffoli
+ * gates. */
+static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                                uint64_t coeff) {
+  if (coeff % importer->modulus == 0) {
+    return true;
+  }
+  return apply_cx_decomposition(importer, left, right) &&
+         apply_phase(importer, right, coeff) &&
+         apply_cx_decomposition(importer, left, right);
+}
+
 /* CP(theta) = diag(1,1,1,e^{i*theta}): p(theta/2) c; p(theta/2) t; cx c,t; p(-theta/2) t; cx c,t
  * gives exactly this matrix for ANY theta (verified by tracing all 4 basis states) -- every
  * 2-qubit interaction is a cx (sign-only via apply_cx_decomposition), theta only ever lands on
@@ -1203,26 +1220,9 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
   }
   const uint64_t half_coeff = coeff / 2;
   return apply_phase(importer, left, half_coeff) && apply_phase(importer, right, half_coeff) &&
-         apply_cx_decomposition(importer, left, right) &&
-         apply_phase(importer, right,
-                     mod_i64((qasm_int128_t)-1 * (qasm_int128_t)half_coeff, importer->modulus)) &&
-         apply_cx_decomposition(importer, left, right);
-}
-
-/* phase(coeff) conditioned on left XOR right (applied iff exactly one of the two qubits is 1):
- * cx(left,right) computes right ^= left, a plain phase on right then applies iff that XOR was
- * 1, and the second cx uncomputes it back to right's original value. Sign-only (2 cx + 1
- * single-qubit phase), no weighted edge and no halving needed at all -- this is what
- * apply_ccz_decomposition (ccx/ccz/cswap) uses, and was previously the actual source of the
- * "non-sign quadratic" export failures on circuits using Toffoli gates. */
-static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32_t right,
-                                uint64_t coeff) {
-  if (coeff % importer->modulus == 0) {
-    return true;
-  }
-  return apply_cx_decomposition(importer, left, right) &&
-         apply_phase(importer, right, coeff) &&
-         apply_cx_decomposition(importer, left, right);
+         apply_phase_on_xor2(
+             importer, left, right,
+             mod_i64((qasm_int128_t)-1 * (qasm_int128_t)half_coeff, importer->modulus));
 }
 
 /* units is now the gate's full angle expressed directly in modulus ticks (angle =
@@ -1548,9 +1548,8 @@ static bool apply_ccz_decomposition(qasm_importer_t *importer, uint32_t first, u
          apply_phase_on_xor2(importer, second, third,
                              coeff_from_pi_over_eight_units(importer, 14)) &&
          apply_cx_decomposition(importer, first, third) &&
-         apply_cx_decomposition(importer, second, third) &&
-         apply_phase(importer, third, coeff_from_pi_over_eight_units(importer, 2)) &&
-         apply_cx_decomposition(importer, second, third) &&
+         apply_phase_on_xor2(importer, second, third,
+                             coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_cx_decomposition(importer, first, third);
 }
 
@@ -1722,13 +1721,16 @@ static bool apply_measure(qasm_importer_t *importer, char *rest) {
   return true;
 }
 
-static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op, uint32_t qubit,
-                               uint64_t phase_coeff) {
-  switch (op) {
+/* Matches qasm_param_two_qubit_fn (a single qubit, two int64 values) so a one-qubit fixed-enum
+ * dispatch can broadcast over a qreg through the same generic apply_param_two_qubit_operand the
+ * continuously-parameterized gates already use, instead of its own copy of that loop. */
+static bool apply_one_qubit_op_values(qasm_importer_t *importer, uint32_t qubit, int64_t op,
+                                      int64_t phase_coeff) {
+  switch ((qasm_one_qubit_op_t)op) {
   case QASM_ONE_ID:
     return true;
   case QASM_ONE_PHASE:
-    return apply_phase(importer, qubit, phase_coeff);
+    return apply_phase(importer, qubit, (uint64_t)phase_coeff);
   case QASM_ONE_H:
     return apply_h(importer, qubit);
   case QASM_ONE_X:
@@ -1742,35 +1744,6 @@ static bool apply_one_qubit_op(qasm_importer_t *importer, qasm_one_qubit_op_t op
   }
   set_error(importer, "internal error: unknown one-qubit operation");
   return false;
-}
-
-static bool apply_one_qubit_operand(qasm_importer_t *importer, char *rest, qasm_one_qubit_op_t op,
-                                    uint64_t phase_coeff) {
-  rest = trim(rest);
-  if (strchr(rest, '[') != NULL) {
-    uint32_t qubit = 0;
-    if (!parse_qref(importer, rest, &qubit)) {
-      return false;
-    }
-    return apply_one_qubit_op(importer, op, qubit, phase_coeff);
-  }
-
-  if (!valid_identifier(rest)) {
-    set_error(importer, "invalid qreg name '%s'", rest);
-    return false;
-  }
-
-  qasm_reg_t *reg = find_reg(importer, rest);
-  if (reg == NULL) {
-    set_error(importer, "unknown qreg '%s'", rest);
-    return false;
-  }
-  for (uint32_t i = 0; i < reg->size; i++) {
-    if (!apply_one_qubit_op(importer, op, reg->offset + i, phase_coeff)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 typedef bool (*qasm_param_one_qubit_fn)(qasm_importer_t *importer, uint32_t qubit, int64_t units);
@@ -1967,13 +1940,19 @@ static bool apply_radian_three_param_one_qubit_operand(
   return true;
 }
 
-static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op, uint32_t left,
-                               uint32_t right, uint64_t phase_coeff) {
-  switch (op) {
+typedef bool (*qasm_angle_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
+                                        uint32_t right, int64_t units);
+
+/* Matches qasm_two_value_two_qubit_fn (two int64 values) so the two-qubit fixed-enum dispatch can
+ * broadcast over qreg operands through the same generic apply_two_value_two_qubit_operand the
+ * continuously-parameterized two-qubit gates already use, instead of its own copy of that loop. */
+static bool apply_two_qubit_op_values(qasm_importer_t *importer, uint32_t left, uint32_t right,
+                                      int64_t op, int64_t phase_coeff) {
+  switch ((qasm_two_qubit_op_t)op) {
   case QASM_TWO_CZ:
     return apply_cz(importer, left, right);
   case QASM_TWO_CPHASE:
-    return apply_controlled_phase(importer, left, right, phase_coeff);
+    return apply_controlled_phase(importer, left, right, (uint64_t)phase_coeff);
   case QASM_TWO_CH:
     return apply_h(importer, right) && apply_cz(importer, left, right) &&
            apply_h(importer, right);
@@ -2002,82 +1981,6 @@ static bool apply_two_qubit_op(qasm_importer_t *importer, qasm_two_qubit_op_t op
   set_error(importer, "internal error: unknown two-qubit operation");
   return false;
 }
-
-static bool apply_two_qubit_operands(qasm_importer_t *importer, char *rest, qasm_two_qubit_op_t op,
-                                     uint64_t phase_coeff) {
-  char *left_text = NULL;
-  char *right_text = NULL;
-  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
-    return false;
-  }
-
-  qasm_operand_t left = {0};
-  qasm_operand_t right = {0};
-  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
-      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
-    return false;
-  }
-
-  if (!left.is_reg && !right.is_reg) {
-    return apply_two_qubit_op(importer, op, left.qubit, right.qubit, phase_coeff);
-  }
-  if (left.is_reg != right.is_reg) {
-    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
-    return false;
-  }
-  if (left.reg->size != right.reg->size) {
-    set_error(importer, "two-qubit qreg operands must have matching sizes");
-    return false;
-  }
-
-  for (uint32_t i = 0; i < left.reg->size; i++) {
-    const uint32_t left_qubit = left.reg->offset + i;
-    const uint32_t right_qubit = right.reg->offset + i;
-    if (!apply_two_qubit_op(importer, op, left_qubit, right_qubit, phase_coeff)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static bool apply_crz_operands(qasm_importer_t *importer, char *rest, int64_t units) {
-  char *left_text = NULL;
-  char *right_text = NULL;
-  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
-    return false;
-  }
-
-  qasm_operand_t left = {0};
-  qasm_operand_t right = {0};
-  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
-      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
-    return false;
-  }
-
-  if (!left.is_reg && !right.is_reg) {
-    return apply_crz(importer, left.qubit, right.qubit, units);
-  }
-  if (left.is_reg != right.is_reg) {
-    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
-    return false;
-  }
-  if (left.reg->size != right.reg->size) {
-    set_error(importer, "two-qubit qreg operands must have matching sizes");
-    return false;
-  }
-
-  for (uint32_t i = 0; i < left.reg->size; i++) {
-    const uint32_t left_qubit = left.reg->offset + i;
-    const uint32_t right_qubit = right.reg->offset + i;
-    if (!apply_crz(importer, left_qubit, right_qubit, units)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-typedef bool (*qasm_angle_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
-                                        uint32_t right, int64_t units);
 
 static bool apply_angle_two_qubit_operands(qasm_importer_t *importer, char *rest, int64_t units,
                                            qasm_angle_two_qubit_fn apply) {
@@ -2110,6 +2013,47 @@ static bool apply_angle_two_qubit_operands(qasm_importer_t *importer, char *rest
     const uint32_t left_qubit = left.reg->offset + i;
     const uint32_t right_qubit = right.reg->offset + i;
     if (!apply(importer, left_qubit, right_qubit, units)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+typedef bool (*qasm_two_value_two_qubit_fn)(qasm_importer_t *importer, uint32_t left,
+                                            uint32_t right, int64_t first, int64_t second);
+
+static bool apply_two_value_two_qubit_operand(qasm_importer_t *importer, char *rest,
+                                              int64_t first, int64_t second,
+                                              qasm_two_value_two_qubit_fn apply) {
+  char *left_text = NULL;
+  char *right_text = NULL;
+  if (!split_two_operands(importer, rest, &left_text, &right_text)) {
+    return false;
+  }
+
+  qasm_operand_t left = {0};
+  qasm_operand_t right = {0};
+  if (!parse_qubit_or_reg_operand(importer, left_text, &left) ||
+      !parse_qubit_or_reg_operand(importer, right_text, &right)) {
+    return false;
+  }
+
+  if (!left.is_reg && !right.is_reg) {
+    return apply(importer, left.qubit, right.qubit, first, second);
+  }
+  if (left.is_reg != right.is_reg) {
+    set_error(importer, "two-qubit gates cannot mix qreg and indexed qubit operands");
+    return false;
+  }
+  if (left.reg->size != right.reg->size) {
+    set_error(importer, "two-qubit qreg operands must have matching sizes");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < left.reg->size; i++) {
+    const uint32_t left_qubit = left.reg->offset + i;
+    const uint32_t right_qubit = right.reg->offset + i;
+    if (!apply(importer, left_qubit, right_qubit, first, second)) {
       return false;
     }
   }
@@ -2601,7 +2545,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_crz) {
-    return apply_crz_operands(importer, rest, crz_units);
+    return apply_angle_two_qubit_operands(importer, rest, crz_units, apply_crz);
   }
 
   int64_t cry_units = 0;
@@ -2656,7 +2600,8 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_phase) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_PHASE, phase_coeff);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_PHASE,
+                                         (int64_t)phase_coeff, apply_one_qubit_op_values);
   }
 
   uint64_t controlled_phase_coeff = 0;
@@ -2666,67 +2611,84 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
     return false;
   }
   if (is_controlled_phase) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CPHASE, controlled_phase_coeff);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CPHASE,
+                                             (int64_t)controlled_phase_coeff,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "h") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_H, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_H, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "id") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_ID, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_ID, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "x") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_X, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_X, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "y") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_Y, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_Y, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "sx") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_SX, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_SX, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "sxdg") == 0) {
-    return apply_one_qubit_operand(importer, rest, QASM_ONE_SXDG, 0);
+    return apply_param_two_qubit_operand(importer, rest, (int64_t)QASM_ONE_SXDG, 0,
+                                         apply_one_qubit_op_values);
   }
 
   if (strcmp(gate, "cz") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CZ, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CZ, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "ch") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CH, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CH, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "cx") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CX, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CX, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "cy") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CY, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CY, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "csx") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CSX, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CSX, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "csxdg") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_CSXDG, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_CSXDG, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "swap") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_SWAP, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_SWAP, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "dcx") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_DCX, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_DCX, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "iswap") == 0) {
-    return apply_two_qubit_operands(importer, rest, QASM_TWO_ISWAP, 0);
+    return apply_two_value_two_qubit_operand(importer, rest, (int64_t)QASM_TWO_ISWAP, 0,
+                                             apply_two_qubit_op_values);
   }
 
   if (strcmp(gate, "ccz") == 0) {
