@@ -102,6 +102,11 @@ typedef struct qasm_importer {
   uint64_t approx_phase_count;
   bool have_openqasm;
   bool saw_gate;
+  /* Set whenever exact mode refuses a gate because its angle needs a finer tick than the
+   * current modulus provides (as opposed to an arity/syntax error). qasm2sop_main uses this to
+   * decide whether a bigger-modulus retry is worth attempting; a false positive here just costs
+   * one wasted re-parse. */
+  bool angle_refusal;
 } qasm_importer_t;
 
 static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
@@ -194,9 +199,28 @@ static uint64_t mod_i64(qasm_int128_t value, uint64_t modulus) {
   return (uint64_t)residue;
 }
 
+/* For FIXED structural angles that are always an exact multiple of pi/8 (H-sandwich twists,
+ * sign flips, CX-sandwich building blocks) regardless of the target modulus -- these never
+ * change with the modulus-dependent parsing below, since they aren't user-parsed values. */
 static uint64_t coeff_from_pi_over_eight_units(const qasm_importer_t *importer, int64_t units) {
   const uint64_t scale = importer->modulus / 16U;
   return mod_i64((qasm_int128_t)units * (qasm_int128_t)scale, importer->modulus);
+}
+
+/* For USER-PARSED angles, already expressed directly as modulus ticks (angle = 2*pi*units/M) by
+ * the dynamic-resolution parser below -- unlike coeff_from_pi_over_eight_units, no further
+ * scaling is needed, just modular reduction. */
+static uint64_t coeff_from_units(const qasm_importer_t *importer, int64_t units) {
+  return mod_i64((qasm_int128_t)units, importer->modulus);
+}
+
+/* As coeff_from_units, but for the handful of call sites that must scale units by a small
+ * constant first (e.g. -2x for an rzz edge coefficient); the multiply happens in 128-bit
+ * space so a units value near INT64_MAX (as parse_pi_units's own overflow checks allow) can't
+ * overflow before the modular reduction. */
+static uint64_t coeff_from_units_scaled(const qasm_importer_t *importer, int64_t units,
+                                        int64_t multiplier) {
+  return mod_i64((qasm_int128_t)units * (qasm_int128_t)multiplier, importer->modulus);
 }
 
 static uint64_t sign_coeff(const qasm_importer_t *importer) {
@@ -212,13 +236,23 @@ static bool parse_numeric_pi_units(const char *expr, uint64_t unit_denominator,
     return false;
   }
 
-  const double units = value / (3.14159265358979323846 / (double)unit_denominator);
-  const int64_t rounded = units >= 0.0 ? (int64_t)(units + 0.5) : (int64_t)(units - 0.5);
-  double diff = units - (double)rounded;
-  if (diff < 0.0) {
+  const long double units =
+      (long double)value / ((long double)QASM_PI / (long double)unit_denominator);
+  const int64_t rounded = units >= 0.0L ? (int64_t)(units + 0.5L) : (int64_t)(units - 0.5L);
+  long double diff = units - (long double)rounded;
+  if (diff < 0.0L) {
     diff = -diff;
   }
-  if (diff > 1e-9) {
+  /* Absolute tolerance is the historical (modulus-16) bound, dominant for small unit counts.
+   * The relative term additionally covers large unit counts (e.g. a QFT chain's accumulated
+   * pi/2^k tick multiplier at a wide modulus), where a decimal literal's own double-precision
+   * round-trip error grows with |units| faster than a fixed absolute epsilon -- decimal-printed
+   * dyadics round-trip at <= ~4*2^-53 relative error, so 2^-45 leaves ~250x headroom. A false
+   * snap here perturbs the angle by at most pi/2^31, well below the 1e-8 amplitude epsilon
+   * --approx would certify anyway. */
+  const long double relative_bound =
+      (units < 0.0L ? -units : units) * 0x1p-45L;
+  if (diff > 1e-9L && diff > relative_bound) {
     return false;
   }
 
@@ -613,18 +647,9 @@ static bool parse_pi_units(const char *expr, uint64_t unit_denominator, int64_t 
   return true;
 }
 
-static bool parse_pi_over_four_units(const char *expr, int64_t *out_units) {
-  return parse_pi_units(expr, 4U, out_units);
-}
-
-static bool parse_pi_over_eight_units(const char *expr, int64_t *out_units) {
-  return parse_pi_units(expr, 8U, out_units);
-}
-
 static bool parse_param_angle_units(qasm_importer_t *importer, const char *gate,
                                     const char *prefix, const char *name,
-                                    int64_t *out_units, bool *out_matches,
-                                    bool (*parse_angle)(const char *, int64_t *)) {
+                                    int64_t *out_units, bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -641,6 +666,7 @@ static bool parse_param_angle_units(qasm_importer_t *importer, const char *gate,
   const size_t expr_len = gate_len - prefix_len - 1U;
   char expr[64];
   if (expr_len == 0 || expr_len >= sizeof(expr)) {
+    importer->angle_refusal = true;
     set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
@@ -648,7 +674,8 @@ static bool parse_param_angle_units(qasm_importer_t *importer, const char *gate,
   expr[expr_len] = '\0';
 
   int64_t units = 0;
-  if (!parse_angle(expr, &units)) {
+  if (!parse_pi_units(expr, sign_coeff(importer), &units)) {
+    importer->angle_refusal = true;
     set_error(importer, "unsupported %s phase angle '%s'", name, gate);
     return false;
   }
@@ -658,27 +685,25 @@ static bool parse_param_angle_units(qasm_importer_t *importer, const char *gate,
 
 static bool parse_param_phase_units(qasm_importer_t *importer, const char *gate, const char *prefix,
                                     const char *name, int64_t *out_units, bool *out_matches) {
-  return parse_param_angle_units(importer, gate, prefix, name, out_units, out_matches,
-                                 parse_pi_over_four_units);
+  return parse_param_angle_units(importer, gate, prefix, name, out_units, out_matches);
 }
 
 static bool parse_param_phase_coeff(qasm_importer_t *importer, const char *gate, const char *prefix,
                                     const char *name, uint64_t *out_coeff, bool *out_matches) {
   int64_t units = 0;
-  if (!parse_param_angle_units(importer, gate, prefix, name, &units, out_matches,
-                               parse_pi_over_eight_units)) {
+  if (!parse_param_angle_units(importer, gate, prefix, name, &units, out_matches)) {
     return false;
   }
   if (!*out_matches) {
     return true;
   }
-  *out_coeff = coeff_from_pi_over_eight_units(importer, units);
+  *out_coeff = coeff_from_units(importer, units);
   return true;
 }
 
 static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, const char *prefix,
                                   const char *name, int64_t *out_units, size_t expected,
-                                  uint64_t unit_denominator, bool *out_matches) {
+                                  bool *out_matches) {
   const size_t prefix_len = strlen(prefix);
   const size_t gate_len = strlen(gate);
   if (strncmp(gate, prefix, prefix_len) != 0) {
@@ -719,7 +744,8 @@ static bool parse_param_unit_list(qasm_importer_t *importer, const char *gate, c
     }
 
     char *expr = trim(cursor);
-    if (!parse_pi_units(expr, unit_denominator, &out_units[i])) {
+    if (!parse_pi_units(expr, sign_coeff(importer), &out_units[i])) {
+      importer->angle_refusal = true;
       set_error(importer, "unsupported %s angle '%s'", name, gate);
       return false;
     }
@@ -1169,6 +1195,7 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
     return add_edge(importer, importer->current[left], importer->current[right], coeff);
   }
   if (coeff % 2 != 0) {
+    importer->angle_refusal = true;
     set_error(importer,
               "unsupported cp/cu1 angle in exact mode (must be an even multiple of the "
               "finest representable tick); use --approx");
@@ -1198,15 +1225,33 @@ static bool apply_phase_on_xor2(qasm_importer_t *importer, uint32_t left, uint32
          apply_cx_decomposition(importer, left, right);
 }
 
+/* units is now the gate's full angle expressed directly in modulus ticks (angle =
+ * 2*pi*units/modulus), produced by the dynamic-resolution parser in parse_param_angle_units.
+ * RZ(theta)'s global phase term -theta/2 needs units/2 to land on an exact tick -- refuse
+ * cleanly when it doesn't (one more halving than the current modulus provides); the retry at
+ * QASM_EXACT_MODULUS_MAX resolves this for any angle that's an honest dyadic fraction of pi. */
 static bool apply_rz(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  return add_constant(importer, coeff_from_pi_over_eight_units(importer, -units)) &&
-         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 2 * units));
+  if (units % 2 != 0) {
+    importer->angle_refusal = true;
+    set_error(importer,
+              "unsupported rz/rx/ry angle in exact mode (needs one more halving than the "
+              "current modulus provides); use --approx");
+    return false;
+  }
+  return add_constant(importer, coeff_from_units(importer, -(units / 2))) &&
+         apply_phase(importer, qubit, coeff_from_units(importer, units));
 }
 
 static bool apply_crz(qasm_importer_t *importer, uint32_t control, uint32_t target, int64_t units) {
-  return apply_phase(importer, control, coeff_from_pi_over_eight_units(importer, -units)) &&
-         apply_controlled_phase(importer, control, target,
-                                coeff_from_pi_over_eight_units(importer, 2 * units));
+  if (units % 2 != 0) {
+    importer->angle_refusal = true;
+    set_error(importer,
+              "unsupported crz/cry angle in exact mode (needs one more halving than the "
+              "current modulus provides); use --approx");
+    return false;
+  }
+  return apply_phase(importer, control, coeff_from_units(importer, -(units / 2))) &&
+         apply_controlled_phase(importer, control, target, coeff_from_units(importer, units));
 }
 
 /* CRY(theta) = (I (x) P(pi/2).H) . CRZ(theta) . (I (x) H.P(-pi/2)): the same H/phase sandwich
@@ -1220,12 +1265,21 @@ static bool apply_cry(qasm_importer_t *importer, uint32_t control, uint32_t targ
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 4));
 }
 
+/* units is the full RZZ(theta) angle in modulus ticks (see apply_rz); RZZ's global -theta/2 term
+ * needs the same one-tick-of-headroom as RZ's. */
 static bool apply_rzz(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
-  return add_constant(importer, coeff_from_pi_over_eight_units(importer, -units)) &&
-         apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 2 * units)) &&
-         apply_phase(importer, right, coeff_from_pi_over_eight_units(importer, 2 * units)) &&
+  if (units % 2 != 0) {
+    importer->angle_refusal = true;
+    set_error(importer,
+              "unsupported rzz/rxx/ryy angle in exact mode (needs one more halving than the "
+              "current modulus provides); use --approx");
+    return false;
+  }
+  return add_constant(importer, coeff_from_units(importer, -(units / 2))) &&
+         apply_phase(importer, left, coeff_from_units(importer, units)) &&
+         apply_phase(importer, right, coeff_from_units(importer, units)) &&
          apply_controlled_phase(importer, left, right,
-                                coeff_from_pi_over_eight_units(importer, -4 * units));
+                                coeff_from_units_scaled(importer, units, -2));
 }
 
 static bool apply_rxx(qasm_importer_t *importer, uint32_t left, uint32_t right, int64_t units) {
@@ -1280,17 +1334,23 @@ static bool apply_ry(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
          apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 4));
 }
 
+/* theta/phi/lambda_units are the gate's full angles in modulus ticks (see apply_rz). Unlike the
+ * old fixed pi/4-unit convention, lambda and phi land as bare qubit-conditional phases here (no
+ * per-term global-phase side effect to correct away): only theta goes through apply_ry (hence
+ * apply_rz), which is where U3's own net global phase of -theta/2 comes from -- verified against
+ * the old formula (which routed lambda/phi through apply_rz too and then cancelled their global
+ * contributions with an explicit +(phi+lambda)/2 correction) to produce an identical qsop output
+ * with one fewer refusal case, since lambda/phi no longer need their own halving. */
 static bool apply_u3(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
                      int64_t phi_units, int64_t lambda_units) {
-  return add_constant(importer,
-                      coeff_from_pi_over_eight_units(importer, phi_units + lambda_units)) &&
-         apply_rz(importer, qubit, lambda_units) && apply_ry(importer, qubit, theta_units) &&
-         apply_rz(importer, qubit, phi_units);
+  return apply_phase(importer, qubit, coeff_from_units(importer, lambda_units)) &&
+         apply_ry(importer, qubit, theta_units) &&
+         apply_phase(importer, qubit, coeff_from_units(importer, phi_units));
 }
 
 static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
                      int64_t lambda_units) {
-  return apply_u3(importer, qubit, 2, phi_units, lambda_units);
+  return apply_u3(importer, qubit, (int64_t)sign_coeff(importer) / 2, phi_units, lambda_units);
 }
 
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
@@ -1304,31 +1364,28 @@ static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, 
  * single-qubit phase terms, which have no sign-only restriction -- so this needs no format
  * change to support arbitrary angles via --approx.
  *
- * apply_u3's convention represents an angle as an integer count of pi/4. The two u(...)
- * sub-calls below need theta/2 and (phi+lambda)/2 as apply_u3 parameters, which are exact
- * pi/4-multiples only when theta_units and (phi_units+lambda_units) are even -- refuse
- * cleanly otherwise (matching how the rest of exact mode already narrows: e.g. rz(pi/3) is
- * already an unsupported-angle error) rather than silently rounding. The three p(...) terms
- * have no such restriction: a single "/2" from pi/4-granularity always lands exactly on the
- * existing pi/8-tick primitive coeff_from_pi_over_eight_units, regardless of parity -- the
- * same trick apply_rz/apply_crz already use. */
+ * theta/phi/lambda/gamma_units are the gate's full angles in modulus ticks (see apply_rz). The
+ * two u(...) sub-calls below need theta/2 and (phi+lambda)/2 as apply_u3 parameters, exact only
+ * when theta_units and (phi_units+lambda_units) are each even -- refuse cleanly otherwise
+ * (matching how the rest of exact mode already narrows) rather than silently rounding; lambda
+ * and phi always have the same parity (they differ by 2*phi), so checking the sum covers both
+ * of the p(...) terms below that use their difference. */
 static bool apply_cu(qasm_importer_t *importer, uint32_t control, uint32_t target,
                      int64_t theta_units, int64_t phi_units, int64_t lambda_units,
                      int64_t gamma_units) {
   if (theta_units % 2 != 0 || (phi_units + lambda_units) % 2 != 0) {
+    importer->angle_refusal = true;
     set_error(importer,
-              "unsupported cu angle combination in exact mode (theta and phi+lambda must be "
-              "even multiples of pi/4); use --approx");
+              "unsupported cu angle combination in exact mode (theta and phi+lambda need one "
+              "more halving than the current modulus provides); use --approx");
     return false;
   }
   const int64_t half_theta = theta_units / 2;
   const int64_t half_phi_plus_lambda = (phi_units + lambda_units) / 2;
-  return apply_phase(importer, control,
-                     coeff_from_pi_over_eight_units(importer, 2 * gamma_units)) &&
-         apply_phase(importer, control,
-                     coeff_from_pi_over_eight_units(importer, lambda_units + phi_units)) &&
-         apply_phase(importer, target,
-                     coeff_from_pi_over_eight_units(importer, lambda_units - phi_units)) &&
+  const int64_t half_lambda_minus_phi = (lambda_units - phi_units) / 2;
+  return apply_phase(importer, control, coeff_from_units(importer, gamma_units)) &&
+         apply_phase(importer, control, coeff_from_units(importer, half_phi_plus_lambda)) &&
+         apply_phase(importer, target, coeff_from_units(importer, half_lambda_minus_phi)) &&
          apply_cx_decomposition(importer, control, target) &&
          apply_u3(importer, target, -half_theta, 0, -half_phi_plus_lambda) &&
          apply_cx_decomposition(importer, control, target) &&
@@ -1505,7 +1562,7 @@ static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, u
 
 static bool apply_rccx_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                      uint32_t target) {
-  return apply_u2(importer, target, 0, 4) &&
+  return apply_u2(importer, target, 0, (int64_t)sign_coeff(importer)) &&
          apply_phase(importer, first, coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 2)) &&
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
@@ -1516,7 +1573,7 @@ static bool apply_rccx_decomposition(qasm_importer_t *importer, uint32_t first, 
          apply_cx_decomposition(importer, second, target) &&
          apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 14)) &&
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
-         apply_u2(importer, target, 0, 4);
+         apply_u2(importer, target, 0, (int64_t)sign_coeff(importer));
 }
 
 static bool apply_cswap_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t left,
@@ -2389,73 +2446,73 @@ static bool apply_approx_gate(qasm_importer_t *importer, char *gate, char *rest,
   return true;
 }
 
-/* P(units * pi/8) on one wire; the qasm_param_one_qubit_fn used to broadcast a theta=0 u-gate. */
+/* P(units), units already a full modulus-tick coeff; the qasm_param_one_qubit_fn used to
+ * broadcast a theta=0 u-gate. */
 static bool apply_phase_units(qasm_importer_t *importer, uint32_t qubit, int64_t units) {
-  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, units));
+  return apply_phase(importer, qubit, coeff_from_units(importer, units));
 }
 
 /* U(pi/2,phi,lambda) = P(phi) H P(lambda+pi), and
- * U(-pi/2,phi,lambda) = P(phi+pi) H P(lambda). These direct forms keep odd pi/8 phase
- * parameters exact without introducing the pi/16 rotations from the generic RZ-RY-RZ path. */
+ * U(-pi/2,phi,lambda) = P(phi+pi) H P(lambda). These direct forms keep odd phase parameters
+ * exact without introducing an extra halving from the generic RZ-RY-RZ path. theta/phi/lambda
+ * are full modulus-tick coeffs (see apply_rz); the pi/2 threshold is +-sign_coeff/2. */
 static bool apply_u3_half_pi(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
                              int64_t phi_units, int64_t lambda_units) {
-  if (theta_units == 4) {
-    return apply_phase(importer, qubit,
-                       coeff_from_pi_over_eight_units(importer, lambda_units + 8)) &&
+  const int64_t pi_units = (int64_t)sign_coeff(importer);
+  if (theta_units == pi_units / 2) {
+    return apply_phase(importer, qubit, coeff_from_units(importer, lambda_units + pi_units)) &&
            apply_h(importer, qubit) &&
-           apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units));
+           apply_phase(importer, qubit, coeff_from_units(importer, phi_units));
   }
-  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, lambda_units)) &&
+  return apply_phase(importer, qubit, coeff_from_units(importer, lambda_units)) &&
          apply_h(importer, qubit) &&
-         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units + 8));
+         apply_phase(importer, qubit, coeff_from_units(importer, phi_units + pi_units));
 }
 
-static bool apply_u2_eighths(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
-                             int64_t lambda_units) {
-  return apply_u3_half_pi(importer, qubit, 4, phi_units, lambda_units);
+static bool apply_u2_units(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
+                           int64_t lambda_units) {
+  return apply_u3_half_pi(importer, qubit, (int64_t)sign_coeff(importer) / 2, phi_units,
+                          lambda_units);
 }
 
 /* U(pi,phi,lambda) = P(phi) X P(lambda+pi); the negative-theta form moves the pi shift
  * to phi. Like the half-pi identities, this avoids artificial half-angle phases. */
 static bool apply_u3_pi(qasm_importer_t *importer, uint32_t qubit, int64_t theta_units,
                         int64_t phi_units, int64_t lambda_units) {
-  if (theta_units == 8) {
-    return apply_phase(importer, qubit,
-                       coeff_from_pi_over_eight_units(importer, lambda_units + 8)) &&
+  const int64_t pi_units = (int64_t)sign_coeff(importer);
+  if (theta_units == pi_units) {
+    return apply_phase(importer, qubit, coeff_from_units(importer, lambda_units + pi_units)) &&
            apply_x_decomposition(importer, qubit) &&
-           apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units));
+           apply_phase(importer, qubit, coeff_from_units(importer, phi_units));
   }
-  return apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, lambda_units)) &&
+  return apply_phase(importer, qubit, coeff_from_units(importer, lambda_units)) &&
          apply_x_decomposition(importer, qubit) &&
-         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, phi_units + 8));
+         apply_phase(importer, qubit, coeff_from_units(importer, phi_units + pi_units));
 }
 
-/* Exact u3/u dispatch with angles already parsed as pi/8 counts. A theta of 0 makes the gate the
- * pure phase U(0, phi, lambda) = P(phi + lambda), which a single phase represents exactly for any
- * phi + lambda (no rz angle-halving) -- this is what lets e.g. Qiskit's u(0, 5pi/8, -3pi/8) = T
- * import exactly instead of only via --approx. A nonzero theta takes the rz-ry-rz path, which
- * halves each angle, so theta/phi/lambda must each be an even pi/8 count (a pi/4 multiple);
- * halving to pi/4 units then reproduces the original apply_u3 lowering exactly, and an odd count is
- * refused as before. */
-static bool apply_u3_eighths_operand(qasm_importer_t *importer, char *rest, const char *gate,
-                                     const int64_t units8[3]) {
-  if (units8[0] == 0) {
-    return apply_param_one_qubit_operand(importer, rest, units8[1] + units8[2], apply_phase_units);
+/* Exact u3/u dispatch; theta/phi/lambda are full modulus-tick coeffs from the dynamic-resolution
+ * parser (see apply_rz). A theta of 0 makes the gate the pure phase U(0, phi, lambda) =
+ * P(phi + lambda), exact for any phi + lambda (no rz angle-halving) -- this is what lets e.g.
+ * Qiskit's u(0, 5pi/8, -3pi/8) = T import exactly instead of only via --approx. +-pi/2 and +-pi
+ * get direct identities avoiding an extra halving. Any other theta takes the general rz-ry-rz
+ * path (apply_u3), which now only needs theta itself to halve evenly (enforced by apply_rz,
+ * reached via apply_ry) -- unlike the old fixed pi/8-tick scheme, phi and lambda need no parity
+ * check of their own here. */
+static bool apply_u3_units_operand(qasm_importer_t *importer, char *rest,
+                                   const int64_t units[3]) {
+  const int64_t pi_units = (int64_t)sign_coeff(importer);
+  if (units[0] == 0) {
+    return apply_param_one_qubit_operand(importer, rest, units[1] + units[2], apply_phase_units);
   }
-  if (units8[0] == 4 || units8[0] == -4) {
-    return apply_param_three_qubit_operand(importer, rest, units8[0], units8[1], units8[2],
+  if (units[0] == pi_units / 2 || units[0] == -(pi_units / 2)) {
+    return apply_param_three_qubit_operand(importer, rest, units[0], units[1], units[2],
                                            apply_u3_half_pi);
   }
-  if (units8[0] == 8 || units8[0] == -8) {
-    return apply_param_three_qubit_operand(importer, rest, units8[0], units8[1], units8[2],
+  if (units[0] == pi_units || units[0] == -pi_units) {
+    return apply_param_three_qubit_operand(importer, rest, units[0], units[1], units[2],
                                            apply_u3_pi);
   }
-  if (((units8[0] | units8[1] | units8[2]) & 1) != 0) {
-    set_error(importer, "unsupported u angle '%s'", gate);
-    return false;
-  }
-  return apply_param_three_qubit_operand(importer, rest, units8[0] / 2, units8[1] / 2,
-                                         units8[2] / 2, apply_u3);
+  return apply_param_three_qubit_operand(importer, rest, units[0], units[1], units[2], apply_u3);
 }
 
 static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
@@ -2487,28 +2544,28 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   int64_t u3_units[3] = {0};
   bool is_u3 = false;
-  if (!parse_param_unit_list(importer, gate, "u3(", "u3", u3_units, 3, 8, &is_u3)) {
+  if (!parse_param_unit_list(importer, gate, "u3(", "u3", u3_units, 3, &is_u3)) {
     return false;
   }
   if (is_u3) {
-    return apply_u3_eighths_operand(importer, rest, gate, u3_units);
+    return apply_u3_units_operand(importer, rest, u3_units);
   }
 
-  if (!parse_param_unit_list(importer, gate, "u(", "u", u3_units, 3, 8, &is_u3)) {
+  if (!parse_param_unit_list(importer, gate, "u(", "u", u3_units, 3, &is_u3)) {
     return false;
   }
   if (is_u3) {
-    return apply_u3_eighths_operand(importer, rest, gate, u3_units);
+    return apply_u3_units_operand(importer, rest, u3_units);
   }
 
   int64_t u2_units[2] = {0};
   bool is_u2 = false;
-  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, 8, &is_u2)) {
+  if (!parse_param_unit_list(importer, gate, "u2(", "u2", u2_units, 2, &is_u2)) {
     return false;
   }
   if (is_u2) {
     return apply_param_two_qubit_operand(importer, rest, u2_units[0], u2_units[1],
-                                         apply_u2_eighths);
+                                         apply_u2_units);
   }
 
   int64_t rz_units = 0;
@@ -2558,7 +2615,7 @@ static bool apply_gate(qasm_importer_t *importer, char *gate, char *rest) {
 
   int64_t cu_units[4] = {0};
   bool is_cu = false;
-  if (!parse_param_unit_list(importer, gate, "cu(", "cu", cu_units, 4, 4, &is_cu)) {
+  if (!parse_param_unit_list(importer, gate, "cu(", "cu", cu_units, 4, &is_cu)) {
     return false;
   }
   if (is_cu) {
@@ -2898,24 +2955,31 @@ static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_
   return true;
 }
 
+/* Finds the coarsest modulus (a divisor of importer->modulus, floored at 8) that still
+ * represents every accumulated coefficient exactly, halving one step at a time from the parse
+ * modulus. At the historical fixed parse modulus of 16, this is exactly the old single
+ * 16-or-8 check; at a wider retry modulus, it walks all the way down if the circuit's angles
+ * turn out not to need the extra resolution after all, keeping goldens byte-stable. */
 static uint64_t output_modulus(const qasm_importer_t *importer) {
   if (importer->approx_enabled) {
     return importer->modulus;
   }
-  if (importer->constant % 2U != 0) {
-    return 16;
-  }
-  for (uint32_t i = 0; i < importer->unary_len; i++) {
-    if (importer->unary[i].q % 2U != 0) {
-      return 16;
+  uint64_t modulus = importer->modulus;
+  while (modulus > 8) {
+    const uint64_t scale = importer->modulus / (modulus / 2U);
+    bool all_even = importer->constant % scale == 0;
+    for (uint32_t i = 0; all_even && i < importer->unary_len; i++) {
+      all_even = importer->unary[i].q % scale == 0;
     }
-  }
-  for (uint32_t i = 0; i < importer->edges_len; i++) {
-    if (importer->edges[i].q % 2U != 0) {
-      return 16;
+    for (uint32_t i = 0; all_even && i < importer->edges_len; i++) {
+      all_even = importer->edges[i].q % scale == 0;
     }
+    if (!all_even) {
+      break;
+    }
+    modulus /= 2U;
   }
-  return 8;
+  return modulus;
 }
 
 static uint64_t output_coeff(const qasm_importer_t *importer, uint64_t coeff, uint64_t modulus) {
@@ -3185,6 +3249,12 @@ static bool estimate_approx_phase_ops(const char *source, uint64_t *out_phase_op
  * caller's doubling retry loop (qasm2sop_main), can never overflow uint64_t. */
 #define QASM_APPROX_MODULUS_MAX (UINT64_MAX / 32U)
 
+/* Single retry cap for exact mode's dynamic modulus (see qasm2sop_main): matches the solver's
+ * own `qsop->r <= UINT32_MAX` gate on the count-table/all-modes backends, so anything exact
+ * mode can produce here stays solvable downstream. Covers a QFT-30-scale cp(pi/2^k) chain
+ * (needs modulus 2^(k+2) after the CX-sandwich halving, i.e. 2^32 at k=30). */
+#define QASM_EXACT_MODULUS_MAX ((uint64_t)UINT32_MAX + 1U)
+
 static bool choose_approx_modulus(uint64_t estimated_phase_ops, double epsilon,
                                   uint64_t *out_modulus, char *error, size_t error_size) {
   if (estimated_phase_ops == 0) {
@@ -3335,12 +3405,48 @@ int main(int argc, char **argv) {
   size_t source_len = 0;
 
   if (!approx_enabled) {
+    char read_error[256] = {0};
+    if (!read_stream_to_memory(input, &source, &source_len, read_error, sizeof(read_error))) {
+      if (input != stdin) {
+        fclose(input);
+      }
+      fprintf(stderr, "error: %s\n", read_error);
+      return 1;
+    }
+    if (input != stdin) {
+      fclose(input);
+    }
+
     importer.input_bits = input_bits;
     importer.output_bits = output_bits;
     importer.modulus = 16;
-    ok = parse_qasm(input, diagnostic_path, &importer);
-    if (input != stdin) {
-      fclose(input);
+    FILE *memory_input = fmemopen(source, source_len, "rb");
+    if (memory_input == NULL) {
+      fprintf(stderr, "error: failed to read buffered input\n");
+      free(source);
+      return 1;
+    }
+    ok = parse_qasm(memory_input, diagnostic_path, &importer);
+    fclose(memory_input);
+
+    /* A dyadic angle that needs a finer tick than modulus 16 provides (e.g. a QFT cp(pi/2^k)
+     * chain, or a plain rz(pi/8)) fails the first parse with angle_refusal set; retry once at
+     * the cap and let output_modulus narrow the result back down, rather than doubling ~28
+     * times to find the minimal modulus. */
+    if (!ok && importer.angle_refusal) {
+      free_importer(&importer);
+      importer = (qasm_importer_t){0};
+      importer.input_bits = input_bits;
+      importer.output_bits = output_bits;
+      importer.modulus = QASM_EXACT_MODULUS_MAX;
+      memory_input = fmemopen(source, source_len, "rb");
+      if (memory_input == NULL) {
+        fprintf(stderr, "error: failed to read buffered input\n");
+        free(source);
+        return 1;
+      }
+      ok = parse_qasm(memory_input, diagnostic_path, &importer);
+      fclose(memory_input);
     }
   } else {
     char read_error[256] = {0};

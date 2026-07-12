@@ -826,6 +826,55 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             """,
             [("0", "0"), ("0", "1"), ("1", "0"), ("1", "1")],
         ),
+        # Dynamic exact-mode modulus: angles finer than pi/8 that only import exactly after the
+        # modulus-16 -> QASM_EXACT_MODULUS_MAX retry.
+        (
+            "rz_sixteenth",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            rz(pi/16) q[0];
+            """,
+            [("0", "0"), ("0", "1")],
+        ),
+        (
+            "u_theta_sixteenth",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            u(pi/8,pi/8,0) q[0];
+            """,
+            [("0", "0"), ("0", "1")],
+        ),
+        (
+            "cp_decimal_dyadic",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            h q[0];
+            cp(0.0030679615757712823) q[1],q[0];
+            """,
+            [("01", "00"), ("01", "01"), ("11", "10"), ("11", "11")],
+        ),
+        # A 4-qubit QFT's cp(pi/2^k) chain, k up to 3 -- the retry's marquee case.
+        (
+            "qft4",
+            """OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[4];
+            h q[0];
+            cp(pi/2) q[1],q[0];
+            h q[1];
+            cp(pi/4) q[2],q[0];
+            cp(pi/2) q[2],q[1];
+            h q[2];
+            cp(pi/8) q[3],q[0];
+            cp(pi/4) q[3],q[1];
+            cp(pi/2) q[3],q[2];
+            h q[3];
+            """,
+            [("1011", "1010"), ("0000", "0000"), ("1111", "1111"), ("0110", "0011")],
+        ),
     ]
 
     for name, qasm, boundaries in cases:

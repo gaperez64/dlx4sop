@@ -176,7 +176,9 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
 
     # A theta=0 u-gate lowers to the single phase P(phi+lambda), so odd pi/8-unit phi/lambda are
     # fine (u(0,5pi/8,-3*pi/8)=T imports exactly). theta=+/-pi/2 also has a direct P-H-P
-    # lowering, while other nonzero theta values still need the rz-ry-rz path and reject odd units.
+    # lowering. Any other theta takes the general rz-ry-rz path (apply_u3), which -- since phi
+    # and lambda no longer need their own halving there -- only rejects when theta itself needs
+    # a finer tick than the modulus provides (rz(pi/8)-style; see u_theta_needs_retry below).
     u_theta0_ok = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nu(0,5*pi/8,-3*pi/8) q[0];\n",
@@ -191,13 +193,33 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     )
     if u_half_pi_ok.returncode != 0 or "p qsop-sign 16" not in u_half_pi_ok.stdout:
         raise AssertionError(f"expected theta=pi/2 u-gate to import exactly:\n{u_half_pi_ok.stderr}")
-    u_theta_odd = subprocess.run(
+    u_theta_even_ok = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nu(pi/4,pi/8,0) q[0];\n",
         check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
+    if u_theta_even_ok.returncode != 0 or "p qsop-sign 16" not in u_theta_even_ok.stdout:
+        raise AssertionError(
+            f"expected even-eighths-theta u-gate to import exactly:\n{u_theta_even_ok.stderr}"
+        )
+    # theta=pi/8 (an odd eighths-tick) needs the modulus-16 -> cap retry to halve exactly.
+    u_theta_needs_retry = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi/8,pi/8,0) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if u_theta_needs_retry.returncode != 0 or "p qsop-sign" not in u_theta_needs_retry.stdout:
+        raise AssertionError(
+            f"expected pi/8-theta u-gate to import via the modulus retry:\n"
+            f"{u_theta_needs_retry.stderr}"
+        )
+    u_theta_odd = subprocess.run(
+        [str(exe), "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nu(pi/3,pi/8,0) q[0];\n",
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
     if u_theta_odd.returncode == 0 or "unsupported u angle" not in u_theta_odd.stderr:
-        raise AssertionError(f"expected generic odd-angle u-gate rejection:\n{u_theta_odd.stderr}")
+        raise AssertionError(f"expected non-dyadic-theta u-gate rejection:\n{u_theta_odd.stderr}")
 
     approx_phase = subprocess.run(
         [str(exe), "--approx", "5e-2", "--input", "0", "--output", "0", "-"],
@@ -554,7 +576,9 @@ u(0.19,0.23,0.29) q;
     if bad_rz.returncode == 0 or "unsupported rz phase angle" not in bad_rz.stderr:
         raise AssertionError(f"unexpected bad rz result:\n{bad_rz.stderr}")
 
-    bad_rz_eighth = subprocess.run(
+    # rz(pi/8) is an odd eighths-tick: apply_rz's global -theta/2 term doesn't halve exactly at
+    # modulus 16, but does after the retry at QASM_EXACT_MODULUS_MAX.
+    rz_eighth_ok = subprocess.run(
         [str(exe), "-"],
         input="OPENQASM 2.0;\nqreg q[1];\nrz(pi/8) q[0];\n",
         check=False,
@@ -562,8 +586,8 @@ u(0.19,0.23,0.29) q;
         stderr=subprocess.PIPE,
         text=True,
     )
-    if bad_rz_eighth.returncode == 0 or "unsupported rz phase angle" not in bad_rz_eighth.stderr:
-        raise AssertionError(f"unexpected bad eighth-turn rz result:\n{bad_rz_eighth.stderr}")
+    if rz_eighth_ok.returncode != 0 or "p qsop-sign" not in rz_eighth_ok.stdout:
+        raise AssertionError(f"expected pi/8-turn rz to import via the modulus retry:\n{rz_eighth_ok.stderr}")
 
     bad_rx = subprocess.run(
         [str(exe), "-"],
@@ -733,21 +757,18 @@ def main() -> int:
     run_boundary_case(exe, source_root, "qasm_csx_dcx", ["--input", "10", "--output", "01"])
 
     # cp(-7*pi/8): an odd multiple of the finest representable tick (pi/8) needs pi/16
-    # granularity to lower exactly (see apply_controlled_phase) -- still a genuine, expected
-    # rejection in exact mode, unlike the cases above.
-    for name, options in [
-        ("qasm_phase_eighth", ["--input", "11", "--output", "11"]),
-    ]:
-        qasm = source_root / "tests" / "golden" / f"{name}.qasm"
-        failed = subprocess.run(
-            [str(exe), *options, str(qasm)],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if failed.returncode == 0 or "unsupported cp/cu1 angle in exact mode" not in failed.stderr:
-            raise AssertionError(f"{name}: expected cp/cu1 exact-mode rejection\n{failed.stderr}")
+    # granularity to lower exactly (see apply_controlled_phase's coeff-parity check) -- no longer
+    # a rejection now that exact mode retries at a wider modulus on an angle refusal.
+    run_boundary_case(exe, source_root, "qasm_phase_eighth", ["--input", "11", "--output", "11"])
+    # A 4-qubit QFT's cp(pi/2^k) chain (k up to 3 here) is the dynamic-modulus retry's marquee
+    # case: each controlled-phase needs one more halving than modulus 16 provides.
+    run_boundary_case(exe, source_root, "qasm_qft4", ["--input", "1011", "--output", "1010"])
+    run_boundary_case(exe, source_root, "qasm_rz_sixteenth", ["--output", "1"])
+    # A decimal literal close to pi/1024 (as Qiskit's float dumps produce), snapped by
+    # parse_numeric_pi_units's hybrid tolerance and then requiring the modulus retry to halve.
+    run_boundary_case(
+        exe, source_root, "qasm_cp_decimal_dyadic", ["--input", "11", "--output", "11"]
+    )
     run_cli_paths(exe, source_root)
     run_boundary_options(exe, source_root)
     run_decomposed_gates(exe, source_root)
