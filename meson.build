@@ -541,6 +541,17 @@ if python3.found()
     ],
   )
   test(
+    'bench common import classification smoke',
+    python3,
+    args: [
+      files('tests/test_bench_common.py'),
+      files('scripts/bench_common.py'),
+      files('scripts/build_external_qasm_manifest.py'),
+      qasm2sop.full_path(),
+    ],
+    depends: qasm2sop,
+  )
+  test(
     'branch policy smoke',
     python3,
     args: [

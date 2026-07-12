@@ -39,7 +39,6 @@ import csv
 import importlib.util
 import json
 import pathlib
-import resource
 import subprocess
 import sys
 import time
@@ -52,6 +51,7 @@ warnings.simplefilter("ignore")
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import build_external_qasm_manifest as manifest_tool  # noqa: E402
+import bench_common  # noqa: E402
 
 
 def _load_adapter():
@@ -65,52 +65,10 @@ def _load_adapter():
 
 adapter = _load_adapter()
 
-# Matches .gauntlet/adapter.py: the only thing --approx can rescue is an angle
-# outside qasm2sop's exact grid.
-APPROX_EPSILON = 1e-8
-
 # Same counters and shape keys bench_branch.py records, so the two tables line up
 # column-for-column and a qasm baseline can be diffed against a qpy one.
-STAT_KEYS = [
-    "solve_mode_kernel",
-    "search_nodes",
-    "cache_hits",
-    "cache_misses",
-    "cache_entries",
-    "cache_estimated_bytes",
-    "treewidth_delegations",
-    "rankwidth_delegations",
-    "branch_fallthroughs",
-    "branch_treewidth_skips",
-    "branch_rankwidth_skips",
-    "branch_propagations",
-    "branch_zero_prunes",
-    "branch_width_probes",
-    "branch_probe_skips",
-    "branch_cutset_size",
-    "max_residual_vars",
-    "max_residual_min_fill_width",
-    "max_residual_prefix_cut_rank",
-    "decomposition_width",
-    "rankwidth_cutrank_width",
-    "rankwidth_table_forecast",
-    "rankwidth_join_pair_forecast",
-    "table_entries",
-    "max_table_entries",
-    "join_pairs",
-    "simd_vectorized_ops",
-    "simd_scalar_fallback_ops",
-]
-
-SHAPE_KEYS = [
-    "modulus",
-    "variables",
-    "quadratic_terms",
-    "components",
-    "min_fill_width",
-    "min_fill_dp_work",
-    "prefix_cut_rank",
-]
+STAT_KEYS = bench_common.STAT_KEYS
+SHAPE_KEYS = bench_common.SHAPE_KEYS
 
 FIELDS = (
     ["suite", "instance", "qubits", "import_mode", "exact_error_class", "exact_error",
@@ -119,40 +77,8 @@ FIELDS = (
     + STAT_KEYS
 )
 
-
-def refusal_reason(stderr: str) -> str:
-    """A stable slug per refusal, so rows stay comparable across stages."""
-    table = [
-        ("fallback refused component", "max_fallback_vars"),
-        ("search-node cap exceeded", "max_search_nodes"),
-        ("recursion-depth cap", "max_recursion_depth"),
-        ("cutset budget", "cutset_budget"),
-        ("no delegate available", "no_delegate"),
-        ("exceeds", "root_sanity"),
-        ("pass a larger --max-vars", "max_vars"),
-        ("memory-skip", "memory_skip"),
-        ("out of memory", "oom"),
-    ]
-    for needle, slug in table:
-        if needle in stderr:
-            return slug
-    return "other"
-
-
-def run(cmd: list[str], *, stdin: str | None = None, timeout: float | None = None,
-        preexec_fn=None):
-    return subprocess.run(cmd, input=stdin, check=False, capture_output=True, text=True,
-                          timeout=timeout, preexec_fn=preexec_fn)
-
-
-def _address_space_limiter(limit_bytes: int):
-    if limit_bytes <= 0:
-        return None
-
-    def _apply():
-        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
-
-    return _apply
+refusal_reason = bench_common.refusal_reason
+run = bench_common.run
 
 
 class Bench:
@@ -178,25 +104,8 @@ class Bench:
 
     def import_qsop(self, qasm: str, zero: str,
                     exact_only: bool = False) -> tuple[str, str, str, str]:
-        exact = run([self.qasm2sop, "--input", zero, "--output", zero, "-"], stdin=qasm,
-                    timeout=self.timeout)
-        if exact.returncode == 0:
-            return exact.stdout, "exact", "", ""
-        if "angle" not in exact.stderr and "non-sign quadratic" not in exact.stderr:
-            raise RuntimeError(exact.stderr.strip())
-        diagnostic = manifest_tool.diagnostic_from_exception(RuntimeError(exact.stderr))
-        error_class = manifest_tool.classify_error(diagnostic)
-        # Import-only audits need the exact/approx classification, not the approximate SOP itself.
-        # Avoid materializing huge approximate QNN/QFT instances that will never be solved.
-        if exact_only:
-            return "", "approx", error_class, diagnostic
-        approx = run(
-            [self.qasm2sop, "--approx", repr(APPROX_EPSILON), "--input", zero, "--output", zero,
-             "-"],
-            stdin=qasm, timeout=self.timeout)
-        if approx.returncode != 0:
-            raise RuntimeError(approx.stderr.strip())
-        return approx.stdout, "approx", error_class, diagnostic
+        return bench_common.import_qsop(self.qasm2sop, qasm, zero, self.timeout, manifest_tool,
+                                        exact_only)
 
     def shape(self, qsop: str) -> dict:
         # The width diagnostic (min-fill / cut-rank) can itself blow past the timeout on a wide
@@ -215,7 +124,7 @@ class Bench:
 
     def solve(self, qsop: str) -> tuple[str, float, dict]:
         command = [self.sop_solve, "--format", "stats", "--include-result", *self.solve_args, "-"]
-        limiter = _address_space_limiter(self.mem_limit_bytes)
+        limiter = bench_common.address_space_limiter(self.mem_limit_bytes)
         started = time.monotonic()
         try:
             completed = run(command, stdin=qsop, timeout=self.timeout, preexec_fn=limiter)

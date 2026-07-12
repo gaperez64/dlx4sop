@@ -14,6 +14,11 @@ of a branch-backend change is judged against; keep the baseline around.
 
     scripts/bench_branch.py ../qccq-gauntlet/datasets/mqt-easy -o baseline.csv
     scripts/bench_branch.py --timeout 120 ../qccq-gauntlet/datasets/mqt2040
+
+The solve child is capped with RLIMIT_AS (default 12 GiB) so a runaway wide DP
+fails its own allocation -- recorded as a refusal/kill -- instead of inviting
+the kernel OOM killer on a shared machine. Keep --jobs 1 for anything you intend
+to publish: a wide DP holds gigabytes, so parallel cases contend and OOM.
 """
 
 from __future__ import annotations
@@ -31,112 +36,39 @@ import time
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import build_external_qasm_manifest as manifest_tool  # noqa: E402
-
-# Matches .gauntlet/adapter.py: the only thing --approx can rescue is an angle
-# outside qasm2sop's exact grid.
-APPROX_EPSILON = 1e-8
+import bench_common  # noqa: E402
 
 STRIP_RE = re.compile(r"^\s*(measure|creg|barrier)\b")
 
-# Counters worth a column. `search_nodes` and the cache pair say whether the
-# recursion was entered at all and whether the memo is working; the rest say
-# which sub-solver actually did the work.
-STAT_KEYS = [
-    "solve_mode_kernel",
-    "search_nodes",
-    "cache_hits",
-    "cache_misses",
-    "cache_entries",
-    "cache_estimated_bytes",
-    "treewidth_delegations",
-    "rankwidth_delegations",
-    "branch_fallthroughs",
-    "branch_treewidth_skips",
-    "branch_rankwidth_skips",
-    "branch_propagations",
-    "branch_zero_prunes",
-    "branch_width_probes",
-    "branch_probe_skips",
-    "branch_cutset_size",
-    "max_residual_vars",
-    "max_residual_min_fill_width",
-    "max_residual_prefix_cut_rank",
-    "decomposition_width",
-    "rankwidth_cutrank_width",
-    "rankwidth_table_forecast",
-    "rankwidth_join_pair_forecast",
-    "table_entries",
-    "max_table_entries",
-    "join_pairs",
-    "simd_vectorized_ops",
-    "simd_scalar_fallback_ops",
-]
-
-SHAPE_KEYS = [
-    "modulus",
-    "variables",
-    "quadratic_terms",
-    "components",
-    "min_fill_width",
-    "min_fill_dp_work",
-    "prefix_cut_rank",
-]
+# Same counters and shape keys bench_gauntlet.py records, so the two tables line up
+# column-for-column and a qasm baseline can be diffed against a qpy one.
+STAT_KEYS = bench_common.STAT_KEYS
+SHAPE_KEYS = bench_common.SHAPE_KEYS
 
 FIELDS = ["suite", "instance", "qubits", "import_mode", "outcome", "wall_s"] + SHAPE_KEYS + STAT_KEYS
+
+refusal_reason = bench_common.refusal_reason
+run = bench_common.run
 
 
 def strip_non_unitary(qasm: str) -> str:
     return "\n".join(line for line in qasm.splitlines() if not STRIP_RE.match(line)) + "\n"
 
 
-def refusal_reason(stderr: str) -> str:
-    """A stable slug per refusal, so rows stay comparable across stages."""
-    table = [
-        ("fallback refused component", "max_fallback_vars"),
-        ("search-node cap exceeded", "max_search_nodes"),
-        ("recursion-depth cap", "max_recursion_depth"),
-        ("cutset budget", "cutset_budget"),
-        ("no delegate available", "no_delegate"),
-        ("exceeds", "root_sanity"),
-        ("pass a larger --max-vars", "max_vars"),
-        ("memory-skip", "memory_skip"),
-        ("out of memory", "oom"),
-    ]
-    for needle, slug in table:
-        if needle in stderr:
-            return slug
-    return "other"
-
-
-def run(cmd: list[str], *, stdin: str | None = None, timeout: float | None = None):
-    return subprocess.run(
-        cmd, input=stdin, check=False, capture_output=True, text=True, timeout=timeout
-    )
-
-
 class Bench:
     def __init__(self, qasm2sop: pathlib.Path, sop_stats: pathlib.Path, sop_solve: pathlib.Path,
-                 timeout: float, solve_args: list[str]):
+                 timeout: float, solve_args: list[str], mem_limit_bytes: int = 0):
         self.qasm2sop = str(qasm2sop)
         self.sop_stats = str(sop_stats)
         self.sop_solve = str(sop_solve)
         self.timeout = timeout
         self.solve_args = solve_args
+        self.mem_limit_bytes = mem_limit_bytes
 
     def import_qsop(self, qasm: str, zero: str) -> tuple[str, str]:
-        exact = run([self.qasm2sop, "--input", zero, "--output", zero, "-"], stdin=qasm,
-                    timeout=self.timeout)
-        if exact.returncode == 0:
-            return exact.stdout, "exact"
-        if "angle" not in exact.stderr and "non-sign quadratic" not in exact.stderr:
-            raise RuntimeError(exact.stderr.strip())
-        approx = run(
-            [self.qasm2sop, "--approx", repr(APPROX_EPSILON), "--input", zero, "--output", zero,
-             "-"],
-            stdin=qasm, timeout=self.timeout)
-        if approx.returncode != 0:
-            raise RuntimeError(approx.stderr.strip())
-        return approx.stdout, "approx"
+        qsop, mode, _error_class, _diagnostic = bench_common.import_qsop(
+            self.qasm2sop, qasm, zero, self.timeout, manifest_tool)
+        return qsop, mode
 
     def shape(self, qsop: str) -> dict:
         completed = run([self.sop_stats, "--json", "-"], stdin=qsop, timeout=self.timeout)
@@ -147,15 +79,16 @@ class Bench:
 
     def solve(self, qsop: str) -> tuple[str, float, dict]:
         command = [self.sop_solve, "--format", "stats", "--include-result", *self.solve_args, "-"]
+        limiter = bench_common.address_space_limiter(self.mem_limit_bytes)
         started = time.monotonic()
         try:
-            completed = run(command, stdin=qsop, timeout=self.timeout)
+            completed = run(command, stdin=qsop, timeout=self.timeout, preexec_fn=limiter)
         except subprocess.TimeoutExpired:
             return "timeout", self.timeout, {}
         elapsed = time.monotonic() - started
         if completed.returncode < 0:
-            # Killed by a signal, with no diagnostic of its own. Almost always the OOM killer on a
-            # wide DP -- do not report it as a solver refusal.
+            # Killed by a signal, with no diagnostic of its own. Almost always the OOM killer or the
+            # RLIMIT_AS backstop on a wide DP -- do not report it as a solver refusal.
             return f"killed:sig{-completed.returncode}", elapsed, {}
         if completed.returncode != 0:
             return f"refused:{refusal_reason(completed.stderr)}", elapsed, {}
@@ -220,10 +153,15 @@ def main() -> int:
     parser.add_argument("--build", type=pathlib.Path, default=REPO_ROOT / "build")
     parser.add_argument("--solve-arg", action="append", default=[], dest="solve_args",
                         help="extra flag forwarded to sop-solve; repeatable")
+    parser.add_argument("--mem-max-gib", type=float, default=12.0,
+                        help="RLIMIT_AS cap on the solve child, in GiB (default 12; 0 disables). A "
+                             "runaway DP then fails its own allocation instead of OOM-killing the "
+                             "machine")
     args = parser.parse_args()
 
+    mem_limit_bytes = int(args.mem_max_gib * (1 << 30))
     bench = Bench(args.build / "qasm2sop", args.build / "sop-stats", args.build / "sop-solve",
-                  args.timeout, args.solve_args)
+                  args.timeout, args.solve_args, mem_limit_bytes)
     cases = collect(args.paths)
     if not cases:
         print("no .qasm found", file=sys.stderr)

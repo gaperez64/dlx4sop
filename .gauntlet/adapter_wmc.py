@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import cmath
-import json
 import pathlib
 import subprocess
 import sys
@@ -37,6 +36,7 @@ from adapter import (  # noqa: E402
     import_qsop,
     load_circuit,
     parse_norm_h,
+    run_frontend,
 )
 
 SOP2WMC = REPO_ROOT / "build" / "sop2wmc"
@@ -142,34 +142,7 @@ def main() -> int:
     if not GANAK.is_file():
         raise SystemExit(f"missing ganak binary: expected {GANAK} (did bootstrap run?)")
 
-    print(json.dumps({"schema": "gauntlet.ready.v1"}), flush=True)
-    request = json.load(sys.stdin)
-
-    circuit = load_circuit(request["payload"])
-    import qiskit.qasm2 as qasm2mod
-
-    qasm_text = qasm2mod.dumps(circuit)
-    qasm_text = manifest_tool.inline_simple_gates(qasm_text)
-    nqubits = manifest_tool.qasm_qubits(qasm_text)
-
-    value, metrics = solve(args, qasm_text, nqubits)
-    # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
-    # in the qasm2mod.dumps() round-trip above; sop2wmc/ganak then compute the
-    # right amplitude *relative to that dropped phase*. Reapply it here -- it's a
-    # property of the original circuit object, not something the qsop pipeline can
-    # recover from QASM text alone. See adapter.py's solve() for the same fix.
-    value *= cmath.exp(1j * float(circuit.global_phase))
-    print(
-        json.dumps(
-            {
-                "schema": "gauntlet.result.v1",
-                "value": {"re": value.real, "im": value.imag},
-                "metrics": metrics,
-            }
-        ),
-        flush=True,
-    )
-    return 0
+    return run_frontend(lambda qasm_text, nqubits: solve(args, qasm_text, nqubits))
 
 
 if __name__ == "__main__":

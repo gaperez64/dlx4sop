@@ -172,16 +172,11 @@ def solve(qasm_text: str, nqubits: int) -> tuple[complex, dict]:
     return complex(float(amp_re), float(amp_im)), metrics
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", default="branch", choices=["branch"], help=argparse.SUPPRESS)
-    parser.parse_args()
-
-    if not QASM2SOP.is_file() or not SOP_SOLVE.is_file():
-        raise SystemExit(
-            f"missing build output: expected {QASM2SOP} and {SOP_SOLVE} (did bootstrap run?)"
-        )
-
+def run_frontend(solve_fn) -> int:
+    """The ready/request/circuit/solve/result JSON protocol shared by adapter.py and
+    adapter_wmc.py: only the backend-specific `solve_fn(qasm_text, nqubits)` differs (argparse
+    and the build-output existence check happen in each adapter's own main() first, since their
+    CLI flags and required binaries differ)."""
     print(json.dumps({"schema": "gauntlet.ready.v1"}), flush=True)
     request = json.load(sys.stdin)
 
@@ -192,9 +187,9 @@ def main() -> int:
     qasm_text = manifest_tool.inline_simple_gates(qasm_text)
     nqubits = manifest_tool.qasm_qubits(qasm_text)
 
-    value, metrics = solve(qasm_text, nqubits)
+    value, metrics = solve_fn(qasm_text, nqubits)
     # OpenQASM 2 has no instruction for a circuit-level global phase, so it's lost
-    # in the qasm2mod.dumps() round-trip above; qasm2sop/sop-solve then compute the
+    # in the qasm2mod.dumps() round-trip above; the backend then computes the
     # right amplitude *relative to that dropped phase*. Reapply it here -- it's a
     # property of the original circuit object, not something the qsop pipeline can
     # recover from QASM text alone.
@@ -210,6 +205,19 @@ def main() -> int:
         flush=True,
     )
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", default="branch", choices=["branch"], help=argparse.SUPPRESS)
+    parser.parse_args()
+
+    if not QASM2SOP.is_file() or not SOP_SOLVE.is_file():
+        raise SystemExit(
+            f"missing build output: expected {QASM2SOP} and {SOP_SOLVE} (did bootstrap run?)"
+        )
+
+    return run_frontend(solve)
 
 
 if __name__ == "__main__":
