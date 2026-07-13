@@ -1,0 +1,9 @@
+c qasm2sop_approx epsilon 1e-08
+c qasm2sop_approx modulus 17643184342576
+c qasm2sop_approx rounded_phase_ops 116
+c qasm2sop_approx additive_amplitude_error_bound 1.0881773509618248e-11
+p qsop-sign 17643184342576 1 0
+n 62
+cst 0
+
+u 0 8821592171288
