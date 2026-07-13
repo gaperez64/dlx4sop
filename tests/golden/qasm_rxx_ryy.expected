@@ -1,11 +1,11 @@
 p qsop-sign 16 4 4
 n 6
-cst 9
+cst 1
 
-u 0 2
+u 0 10
 u 1 8
-u 2 4
-u 3 4
+u 2 12
+u 3 12
 
 e 0 1
 e 1 2

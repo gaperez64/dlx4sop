@@ -52,7 +52,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if version_result.returncode != 0 or version_result.stdout != "sop-stats 0.4\n":
+    if version_result.returncode != 0 or version_result.stdout != "sop-stats 0.6\n":
         raise AssertionError(
             f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
         )

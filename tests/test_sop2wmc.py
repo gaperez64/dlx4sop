@@ -628,7 +628,7 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
     version_result = run([str(sop2wmc), "--version"])
-    if version_result.returncode != 0 or version_result.stdout != "sop2wmc 0.4\n":
+    if version_result.returncode != 0 or version_result.stdout != "sop2wmc 0.6\n":
         raise AssertionError(
             f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
         )

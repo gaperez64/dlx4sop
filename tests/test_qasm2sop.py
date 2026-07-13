@@ -65,7 +65,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    if version_result.returncode != 0 or version_result.stdout != "qasm2sop 0.4\n":
+    if version_result.returncode != 0 or version_result.stdout != "qasm2sop 0.6\n":
         raise AssertionError(
             f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
         )
@@ -236,6 +236,71 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     ):
         raise AssertionError(
             f"unexpected approximate phase result:\n{approx_phase.stdout}\n{approx_phase.stderr}"
+        )
+
+    # AE/QPE circuits can contain decimal angles whose magnitude grew through an unrolled
+    # power. Reduce them to the unit circle before scaling by the approximation modulus: the
+    # old scale-first calculation lost the entire fractional residue for this input.
+    huge_angle = subprocess.run(
+        [str(exe), "--approx", "1e-8", "--input", "0", "--output", "0", "-"],
+        input="OPENQASM 2.0;\nqreg q[1];\nh q[0];\np(1e30) q[0];\nh q[0];\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    bound_line = next(
+        (
+            line
+            for line in huge_angle.stdout.splitlines()
+            if line.startswith("c qasm2sop_approx additive_amplitude_error_bound ")
+        ),
+        "",
+    )
+    if (
+        huge_angle.returncode != 0
+        or not bound_line
+        or float(bound_line.rsplit(" ", 1)[1]) > 1e-8
+    ):
+        raise AssertionError(
+            f"unexpected huge-angle approximation result:\n"
+            f"{huge_angle.stdout}\n{huge_angle.stderr}"
+        )
+
+    # A triangular CNOT network is an affine change of basis. With the optional graph
+    # simplifier disabled, tracking the XORs should still avoid the old two-Hadamard expansion
+    # per CNOT. This 12-wire case formerly emitted 144 variables and now needs only 34.
+    affine_size = 12
+    affine_lines = ["OPENQASM 2.0;", f"qreg q[{affine_size}];"]
+    for target in range(affine_size):
+        affine_lines.append(f"ry(0.37) q[{target}];")
+        affine_lines.extend(f"cx q[{control}],q[{target}];" for control in range(target))
+    affine_network = subprocess.run(
+        [
+            str(exe),
+            "--no-optimize",
+            "--approx",
+            "1e-6",
+            "--input",
+            "0" * affine_size,
+            "--output",
+            "0" * affine_size,
+            "-",
+        ],
+        input="\n".join(affine_lines) + "\n",
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    header = next(
+        (line.split() for line in affine_network.stdout.splitlines() if line.startswith("p qsop-sign ")),
+        [],
+    )
+    if affine_network.returncode != 0 or len(header) < 5 or int(header[3]) > 36:
+        raise AssertionError(
+            f"affine CNOT lowering did not keep the SOP compact:\n"
+            f"{affine_network.stdout}\n{affine_network.stderr}"
         )
 
     approx_gphase = subprocess.run(

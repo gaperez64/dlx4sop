@@ -918,6 +918,37 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
                 f"approx phase {input_bits}->{output_bits}: expected {expected!r}, got {actual!r}"
             )
 
+    # An arbitrary phase observes an affine parity, but does not change the computational-basis
+    # value on that wire. Keeping the underlying XOR after observation lets the second CNOT
+    # uncompute it, and consecutive diagonal phases can reuse the same observed value.
+    approx_affine_qasm = """OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[3];
+    h q;
+    cx q[0], q[1];
+    p(0.37) q[1];
+    p(0.19) q[1];
+    cx q[0], q[1];
+    cx q[1], q[2];
+    p(0.23) q[2];
+    cx q[1], q[2];
+    """
+    for input_bits, output_bits in [("000", "000"), ("000", "111"), ("101", "011")]:
+        expected = simulate_qasm(approx_affine_qasm, input_bits, output_bits)
+        actual = sop_amplitude(
+            qasm2sop,
+            sop_solve,
+            approx_affine_qasm,
+            input_bits,
+            output_bits,
+            ["--approx", "5e-2"],
+        )
+        if abs(expected - actual) > 5e-2 + 1e-9:
+            raise AssertionError(
+                f"approx affine parity {input_bits}->{output_bits}: "
+                f"expected {expected!r}, got {actual!r}"
+            )
+
     approx_cry_qasm = """OPENQASM 2.0;
     include "qelib1.inc";
     qreg q[2];
