@@ -74,6 +74,8 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--single-mode-precision auto|double|long-double",
       "--branch-single-fourier-fallback auto|delegate-only|always|never|off",
       "--branch-single-propagate auto|off",
+      "--branch-single-materialized-reduction",
+      "--branch-single-diagnose-conditioning",
       "--branch-single-kernel auto|scalar",
       "--rankwidth-single-kernel auto|streaming|materialized|dense",
       "--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference",
@@ -89,6 +91,11 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-single-max-search-nodes N",
       "--branch-single-cache-budget-mib N",
       "--branch-single-cache-min-vars N",
+      "--branch-single-cutset-depth N",
+      "--branch-single-lookahead-candidates N",
+      "--branch-single-max-conditioning-nodes N",
+      "--branch-single-delegate-reprobe-interval N",
+      "--branch-single-max-stagnant-levels N",
       "--rankwidth-memory-budget-mib N",
       "--rankwidth-memory-budget-bytes N",
       "--rankwidth-memory-policy skip|fallback|hard-error",
@@ -305,12 +312,20 @@ static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
 
 #define BRANCH_AUTO_SINGLE_FOURIER_MIN_VARS 16U
 #define BRANCH_AUTO_SINGLE_FOURIER_MAX_WIDTH 25U
+#define BRANCH_AUTO_COUNT_VECTOR_MAX_BYTES (UINT64_C(2) * 1024U * 1024U * 1024U)
 /* What makes a single-Fourier solve affordable is the *width*, not the variable count: the DP table
  * is 2^(width+1) and the elimination is linear in nvars. This used to be 4096, which refused
  * qccq-gauntlet's qwalk-noancilla_8 -- 6715 variables, min-fill width 14, half a second of work --
  * purely for being big. It is now only a sanity bound against a pathological input; the width caps
  * and the delegate cost model are what decide solvability. */
 #define BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS (1U << 24)
+
+static bool branch_auto_count_vector_too_large(const qsop_instance_t *qsop) {
+  /* Auto never exposes the residue vector, so avoid constructing a count table whose result
+   * vector alone is already multi-gigabyte.  The branch count solver also needs working/cache
+   * storage, making this a deliberately conservative preflight rather than a peak estimator. */
+  return qsop != NULL && qsop->r > BRANCH_AUTO_COUNT_VECTOR_MAX_BYTES / sizeof(uint64_t);
+}
 
 static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop, uint32_t max_vars,
                                                     bool max_vars_set) {
@@ -400,6 +415,149 @@ static void write_csv_trace_event(void *user, const qsop_solve_trace_event_t *ev
           event->items, event->elapsed_ns);
 }
 
+static const char *termination_reason_name(qsop_solve_termination_reason_t reason) {
+  switch (reason) {
+  case QSOP_SOLVE_TERMINATION_NONE:
+    return "none";
+  case QSOP_SOLVE_TERMINATION_MAX_FALLBACK_VARS:
+    return "max_fallback_vars";
+  case QSOP_SOLVE_TERMINATION_NO_DELEGATE:
+    return "no_delegate";
+  case QSOP_SOLVE_TERMINATION_CUTSET_BUDGET:
+    return "cutset_budget";
+  case QSOP_SOLVE_TERMINATION_MAX_SEARCH_NODES:
+    return "max_search_nodes";
+  case QSOP_SOLVE_TERMINATION_MAX_RECURSION_DEPTH:
+    return "max_recursion_depth";
+  case QSOP_SOLVE_TERMINATION_OTHER_ERROR:
+    return "other_error";
+  }
+  return "other_error";
+}
+
+static const char *run_summary_reason_name(bool solved, const qsop_solve_stats_t *stats,
+                                           const qsop_error_t *diagnostic) {
+  const char *reason = termination_reason_name(stats->termination_reason);
+  if (!solved &&
+      (stats->termination_reason == QSOP_SOLVE_TERMINATION_NONE ||
+       stats->termination_reason == QSOP_SOLVE_TERMINATION_OTHER_ERROR) &&
+      diagnostic != NULL &&
+      strstr(diagnostic->message, "pass a larger --max-vars") != NULL) {
+    return "max_vars";
+  }
+  return reason;
+}
+
+static void jsonl_write_string(FILE *file, const char *text) {
+  fputc('"', file);
+  if (text != NULL) {
+    for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
+      switch (*p) {
+      case '"':
+        fputs("\\\"", file);
+        break;
+      case '\\':
+        fputs("\\\\", file);
+        break;
+      case '\n':
+        fputs("\\n", file);
+        break;
+      case '\r':
+        fputs("\\r", file);
+        break;
+      case '\t':
+        fputs("\\t", file);
+        break;
+      default:
+        if (*p < 0x20U) {
+          fprintf(file, "\\u%04x", (unsigned)*p);
+        } else {
+          fputc((int)*p, file);
+        }
+        break;
+      }
+    }
+  }
+  fputc('"', file);
+}
+
+static void write_run_summary_jsonl(FILE *file, const char *instance, bool solved,
+                                    const qsop_solve_stats_t *stats,
+                                    const qsop_error_t *diagnostic) {
+  if (file == NULL || stats == NULL) {
+    return;
+  }
+  const char *reason = run_summary_reason_name(solved, stats, diagnostic);
+  const bool refused =
+      !solved && strcmp(reason, "none") != 0 && strcmp(reason, "other_error") != 0;
+  fputs("{\"schema\":\"sop_solve_run_stats_v1\",\"instance\":", file);
+  jsonl_write_string(file, instance);
+  fputs(",\"status\":", file);
+  jsonl_write_string(file, solved ? "solved" : (refused ? "refused" : "error"));
+  fputs(",\"reason\":", file);
+  jsonl_write_string(file, reason);
+  fprintf(file,
+          ",\"search_nodes\":%" PRIu64 ",\"leaf_assignments\":%" PRIu64
+          ",\"active_vars_at_failure\":%" PRIu32
+          ",\"active_edges_at_failure\":%" PRIu32
+          ",\"cache_hits\":%" PRIu64 ",\"cache_misses\":%" PRIu64
+          ",\"treewidth_delegations\":%" PRIu64
+          ",\"rankwidth_delegations\":%" PRIu64
+          ",\"branch_fallthroughs\":%" PRIu64
+          ",\"branch_propagations\":%" PRIu64 ",\"branch_zero_prunes\":%" PRIu64
+          ",\"branch_materialized_calls\":%" PRIu64
+          ",\"branch_materialized_eliminations\":%" PRIu64
+          ",\"branch_materialized_degree2_merges\":%" PRIu64
+          ",\"branch_materialized_reduction_ns\":%" PRIu64
+          ",\"branch_conditioning_nodes\":%" PRIu64
+          ",\"branch_conditioning_lookaheads\":%" PRIu64
+          ",\"branch_delegate_probes\":%" PRIu64
+          ",\"branch_delegate_probe_skips\":%" PRIu64
+          ",\"branch_cutset_size\":%" PRIu64
+          ",\"branch_max_cutset_depth\":%" PRIu32
+          ",\"branch_cutset_initial_vars\":%" PRIu32
+          ",\"branch_cutset_initial_edges\":%" PRIu32
+          ",\"branch_cutset_final_vars\":%" PRIu32
+          ",\"branch_cutset_final_edges\":%" PRIu32
+          ",\"branch_cutset_stagnant_levels\":%" PRIu32
+          ",\"branch_last_delegate_miss\":%" PRIu32
+          ",\"treewidth_factor_scope_tests\":%" PRIu64
+          ",\"treewidth_factor_bucket_visits\":%" PRIu64
+          ",\"treewidth_factor_multiplications\":%" PRIu64
+          ",\"treewidth_factor_allocations\":%" PRIu64
+          ",\"treewidth_factor_discovery_ns\":%" PRIu64
+          ",\"treewidth_numeric_join_ns\":%" PRIu64
+          ",\"treewidth_sum_out_ns\":%" PRIu64
+          ",\"treewidth_peak_live_bytes\":%" PRIu64
+          ",\"treewidth_pool_retained_bytes\":%" PRIu64
+          ",\"treewidth_largest_allocation_bytes\":%" PRIu64,
+          stats->search_nodes, stats->leaf_assignments, stats->failure_active_vars,
+          stats->failure_active_edges, stats->cache_hits, stats->cache_misses,
+          stats->treewidth_delegations, stats->rankwidth_delegations, stats->branch_fallthroughs,
+          stats->branch_propagations, stats->branch_zero_prunes,
+          stats->branch_materialized_calls, stats->branch_materialized_eliminations,
+          stats->branch_materialized_degree2_merges, stats->branch_materialized_reduction_ns,
+          stats->branch_conditioning_nodes, stats->branch_conditioning_lookaheads,
+          stats->branch_delegate_probes, stats->branch_delegate_probe_skips,
+          stats->branch_cutset_size, stats->branch_max_cutset_depth,
+          stats->branch_cutset_initial_vars, stats->branch_cutset_initial_edges,
+          stats->branch_cutset_final_vars, stats->branch_cutset_final_edges,
+          stats->branch_cutset_stagnant_levels, stats->branch_last_delegate_miss,
+          stats->treewidth_factor_scope_tests, stats->treewidth_factor_bucket_visits,
+          stats->treewidth_factor_multiplications, stats->treewidth_factor_allocations,
+          stats->treewidth_factor_discovery_ns, stats->treewidth_numeric_join_ns,
+          stats->treewidth_sum_out_ns, stats->treewidth_peak_live_bytes,
+          stats->treewidth_pool_retained_bytes, stats->treewidth_largest_allocation_bytes);
+  fputs(",\"diagnostic\":", file);
+  if (!solved && diagnostic != NULL && diagnostic->message[0] != '\0') {
+    jsonl_write_string(file, diagnostic->message);
+  } else {
+    fputs("null", file);
+  }
+  fputs("}\n", file);
+  (void)fflush(file);
+}
+
 static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_solve_stats_t *stats,
                                qsop_solve_mode_t solve_mode, bool solve_mode_set,
                                bool solve_mode_auto, qsop_rankwidth_solve_mode_t rankwidth_mode,
@@ -448,6 +606,25 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
   if (stats->simd_scalar_fallback_ops != 0 || stats->simd_vectorized_ops != 0) {
     fprintf(file, "simd_scalar_fallback_ops: %" PRIu64 "\n", stats->simd_scalar_fallback_ops);
   }
+  if (stats->treewidth_factor_allocations != 0U) {
+    fprintf(file, "treewidth_factor_scope_tests: %" PRIu64 "\n",
+            stats->treewidth_factor_scope_tests);
+    fprintf(file, "treewidth_factor_bucket_visits: %" PRIu64 "\n",
+            stats->treewidth_factor_bucket_visits);
+    fprintf(file, "treewidth_factor_multiplications: %" PRIu64 "\n",
+            stats->treewidth_factor_multiplications);
+    fprintf(file, "treewidth_factor_allocations: %" PRIu64 "\n",
+            stats->treewidth_factor_allocations);
+    fprintf(file, "treewidth_factor_discovery_ns: %" PRIu64 "\n",
+            stats->treewidth_factor_discovery_ns);
+    fprintf(file, "treewidth_numeric_join_ns: %" PRIu64 "\n", stats->treewidth_numeric_join_ns);
+    fprintf(file, "treewidth_sum_out_ns: %" PRIu64 "\n", stats->treewidth_sum_out_ns);
+    fprintf(file, "treewidth_peak_live_bytes: %" PRIu64 "\n", stats->treewidth_peak_live_bytes);
+    fprintf(file, "treewidth_pool_retained_bytes: %" PRIu64 "\n",
+            stats->treewidth_pool_retained_bytes);
+    fprintf(file, "treewidth_largest_allocation_bytes: %" PRIu64 "\n",
+            stats->treewidth_largest_allocation_bytes);
+  }
   if (backend == SOLVE_BACKEND_BRANCH) {
     fprintf(file, "search_nodes: %" PRIu64 "\n", stats->search_nodes);
     fprintf(file, "cache_hits: %" PRIu64 "\n", stats->cache_hits);
@@ -475,6 +652,25 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
       fprintf(file, "cache_estimated_bytes: %" PRIu64 "\n", stats->cache_estimated_bytes);
     }
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
+    if (stats->branch_materialized_calls != 0U || stats->branch_conditioning_nodes != 0U ||
+        stats->branch_delegate_probe_skips != 0U) {
+      fprintf(file, "branch_materialized_calls: %" PRIu64 "\n",
+              stats->branch_materialized_calls);
+      fprintf(file, "branch_materialized_eliminations: %" PRIu64 "\n",
+              stats->branch_materialized_eliminations);
+      fprintf(file, "branch_materialized_degree2_merges: %" PRIu64 "\n",
+              stats->branch_materialized_degree2_merges);
+      fprintf(file, "branch_materialized_reduction_ns: %" PRIu64 "\n",
+              stats->branch_materialized_reduction_ns);
+      fprintf(file, "branch_conditioning_nodes: %" PRIu64 "\n",
+              stats->branch_conditioning_nodes);
+      fprintf(file, "branch_conditioning_lookaheads: %" PRIu64 "\n",
+              stats->branch_conditioning_lookaheads);
+      fprintf(file, "branch_delegate_probes: %" PRIu64 "\n", stats->branch_delegate_probes);
+      fprintf(file, "branch_delegate_probe_skips: %" PRIu64 "\n",
+              stats->branch_delegate_probe_skips);
+      fprintf(file, "branch_max_cutset_depth: %" PRIu32 "\n", stats->branch_max_cutset_depth);
+    }
     if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0 ||
         stats->branch_fallthroughs != 0 || stats->branch_treewidth_skips != 0 ||
         stats->branch_rankwidth_skips != 0) {
@@ -956,6 +1152,13 @@ int main(int argc, char **argv) {
   uint64_t branch_single_max_dp_work = 0;
   uint64_t branch_single_cache_budget_mib = 0;
   uint32_t branch_single_cache_min_vars = 0;
+  bool branch_single_materialized_reduction = false;
+  bool branch_single_diagnose_conditioning = false;
+  uint32_t branch_single_cutset_depth = 0;
+  uint32_t branch_single_lookahead_candidates = 0;
+  uint64_t branch_single_max_conditioning_nodes = 0;
+  uint32_t branch_single_delegate_reprobe_interval = 0;
+  uint32_t branch_single_max_stagnant_levels = 0;
   bool branch_single_option_set = false;
   bool branch_single_fallback_set = false;
   bool branch_single_precision_set = false;
@@ -1284,6 +1487,71 @@ int main(int argc, char **argv) {
                 value);
         return 2;
       }
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-materialized-reduction") == 0) {
+      branch_single_materialized_reduction = true;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-diagnose-conditioning") == 0) {
+      branch_single_diagnose_conditioning = true;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-cutset-depth") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-cutset-depth requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-cutset-depth", argv[++i],
+                         &branch_single_cutset_depth))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-lookahead-candidates") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-lookahead-candidates requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-lookahead-candidates", argv[++i],
+                         &branch_single_lookahead_candidates))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-max-conditioning-nodes") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-max-conditioning-nodes requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--branch-single-max-conditioning-nodes", argv[++i],
+                         &branch_single_max_conditioning_nodes))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-delegate-reprobe-interval") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-delegate-reprobe-interval requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-delegate-reprobe-interval", argv[++i],
+                         &branch_single_delegate_reprobe_interval))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-max-stagnant-levels") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-max-stagnant-levels requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-max-stagnant-levels", argv[++i],
+                         &branch_single_max_stagnant_levels))
+        return 2;
       branch_single_option_set = true;
       continue;
     }
@@ -1616,6 +1884,10 @@ int main(int argc, char **argv) {
     fputs("error: --branch-calibrate-backends requires --stats-jsonl\n", stderr);
     return 2;
   }
+  if (branch_single_diagnose_conditioning && stats_jsonl_path == NULL) {
+    fputs("error: --branch-single-diagnose-conditioning requires --stats-jsonl\n", stderr);
+    return 2;
+  }
   if (backend != SOLVE_BACKEND_RANKWIDTH && rankwidth_decomposition_path != NULL) {
     fputs("error: --rankwidth-decomposition requires --backend rankwidth\n", stderr);
     return 2;
@@ -1844,13 +2116,23 @@ int main(int argc, char **argv) {
       return 2;
     }
     qsop_error_t count_error = {0};
-    if (sink_ptr == NULL && !branch_single_option_set &&
+    if (!calibrate_backends && !branch_single_option_set &&
         branch_auto_prepare_treewidth_single(qsop, max_vars, max_vars_set, branch_rw_source,
                                              &branch_policy, &auto_treewidth_order,
                                              &auto_treewidth_order_width)) {
       auto_fallback_single_fourier = true;
       auto_direct_treewidth_single = true;
-    } else if (sink_ptr == NULL &&
+    } else if (!calibrate_backends && branch_auto_count_vector_too_large(qsop)) {
+      /* This is a memory preflight, not a delegation judgment.  Preserve the ordinary AUTO
+       * residual fallback so opt-in cutset conditioning remains available on large-modulus hard
+       * graphs.  The pre-existing width probe still selects delegate-only for instances that
+       * AUTO would have routed directly to single-Fourier before the count attempt. */
+      auto_fallback_single_fourier = true;
+      if (!branch_single_fallback_set &&
+          branch_auto_should_start_single_fourier(qsop, max_vars, max_vars_set)) {
+        branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY;
+      }
+    } else if (!calibrate_backends &&
                branch_auto_should_start_single_fourier(qsop, max_vars, max_vars_set)) {
       auto_fallback_single_fourier = true;
       if (!branch_single_fallback_set) {
@@ -1871,6 +2153,10 @@ int main(int argc, char **argv) {
         result_ready = true;
         solve_mode = QSOP_SOLVE_MODE_COUNT_TABLE;
       } else if (!branch_auto_refusal_is_safe_fallback(&count_error)) {
+        if (solve_stats.termination_reason == QSOP_SOLVE_TERMINATION_NONE) {
+          solve_stats.termination_reason = QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+        }
+        write_run_summary_jsonl(jsonl_file, sink.instance, false, &solve_stats, &count_error);
         if (jsonl_file != NULL) {
           fclose(jsonl_file);
         }
@@ -1967,6 +2253,14 @@ int main(int argc, char **argv) {
           .treewidth_delegate_max_dp_work = branch_single_max_dp_work,
           .cache_budget_mib = branch_single_cache_budget_mib,
           .cache_min_vars = branch_single_cache_min_vars,
+          .materialized_reduction = branch_single_materialized_reduction,
+          .diagnose_conditioning = branch_single_diagnose_conditioning,
+          .max_cutset_depth = branch_single_cutset_depth,
+          .lookahead_candidates = branch_single_lookahead_candidates,
+          .max_conditioning_nodes = branch_single_max_conditioning_nodes,
+          .delegate_reprobe_interval = branch_single_delegate_reprobe_interval,
+          .max_stagnant_levels = branch_single_max_stagnant_levels,
+          .sink = sink_ptr,
           .trace = trace_ptr,
       };
       ok = qsop_solve_branch_single_mode(qsop, max_vars, fourier_target_mode,
@@ -1982,6 +2276,15 @@ int main(int argc, char **argv) {
     }
     free(auto_treewidth_order);
     auto_treewidth_order = NULL;
+    amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+    amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
+    if (single_mode_precision_set) {
+      amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
+    }
+    if (!ok && amp_stats.termination_reason == QSOP_SOLVE_TERMINATION_NONE) {
+      amp_stats.termination_reason = QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+    }
+    write_run_summary_jsonl(jsonl_file, sink.instance, ok, &amp_stats, &error);
     /* The amplitude is normalized against norm_h below, after the instance is gone. */
     const uint64_t amplitude_norm_h = qsop->norm_h;
     qsop_free(qsop);
@@ -1991,11 +2294,6 @@ int main(int argc, char **argv) {
     if (!ok) {
       print_error(&error, diagnostic_path);
       return 1;
-    }
-    amp_stats.simd_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-    amp_stats.bitset_kernel = (uint32_t)simd_kernel_from_vtable(simd);
-    if (single_mode_precision_set) {
-      amp_stats.single_mode_precision = (uint32_t)single_mode_precision;
     }
     if (format == SOLVE_FORMAT_STATS) {
       ok = write_amplitude_output(stdout, solve_mode_auto ? "auto" : "single-fourier",
@@ -2136,6 +2434,10 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (!ok && solve_stats.termination_reason == QSOP_SOLVE_TERMINATION_NONE) {
+    solve_stats.termination_reason = QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+  }
+  write_run_summary_jsonl(jsonl_file, sink.instance, ok, &solve_stats, &error);
   qsop_rankwidth_decomposition_free(rankwidth_decomposition);
   qsop_free(qsop);
   if (jsonl_file != NULL) {

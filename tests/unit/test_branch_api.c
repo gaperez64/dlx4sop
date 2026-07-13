@@ -305,6 +305,207 @@ static int test_rankwidth_preprobe_policy(void) {
   return failures;
 }
 
+static qsop_instance_t *make_complete(uint32_t n) {
+  qsop_instance_t *q = calloc(1, sizeof(*q));
+  const uint32_t m = n * (n - 1U) / 2U;
+  if (q == NULL) {
+    return NULL;
+  }
+  q->r = 8U;
+  q->nvars = n;
+  q->norm_h = 2U * n;
+  q->constant = 1U;
+  q->nedges = m;
+  q->unary = calloc(n, sizeof(*q->unary));
+  q->edge_u = malloc((m == 0U ? 1U : m) * sizeof(*q->edge_u));
+  q->edge_v = malloc((m == 0U ? 1U : m) * sizeof(*q->edge_v));
+  if (q->unary == NULL || q->edge_u == NULL || q->edge_v == NULL) {
+    qsop_free(q);
+    return NULL;
+  }
+  uint32_t e = 0;
+  for (uint32_t u = 0; u < n; u++) {
+    for (uint32_t v = u + 1U; v < n; v++) {
+      q->edge_u[e] = u;
+      q->edge_v[e] = v;
+      e++;
+    }
+  }
+  return q;
+}
+
+static bool solve_complete_single(const qsop_instance_t *q,
+                                  const qsop_branch_single_mode_options_t *options,
+                                  qsop_amplitude_t *amp, qsop_solve_stats_t *stats,
+                                  qsop_error_t *error) {
+  return qsop_solve_branch_single_mode(q, 64U, 1U, options, amp, stats, error);
+}
+
+static int test_materialized_cutset(void) {
+  int failures = 0;
+  qsop_instance_t *k4 = make_complete(4U);
+  if (k4 == NULL) {
+    return 1;
+  }
+  const qsop_branch_single_mode_options_t exhaustive_options = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 64U,
+      .treewidth_delegate_max_dp_work = 1U,
+  };
+  qsop_amplitude_t want = {0};
+  qsop_solve_stats_t want_stats = {0};
+  qsop_error_t error = {0};
+  if (!solve_complete_single(k4, &exhaustive_options, &want, &want_stats, &error)) {
+    fprintf(stderr, "FAIL materialized_cutset reference: %s\n", error.message);
+    qsop_free(k4);
+    return 1;
+  }
+
+  const qsop_branch_single_mode_options_t cutset_options = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 2U,
+      .treewidth_delegate_max_dp_work = 1U,
+      .materialized_reduction = true,
+      .max_cutset_depth = 1U,
+      .lookahead_candidates = 1U,
+  };
+  qsop_amplitude_t got = {0};
+  qsop_solve_stats_t got_stats = {0};
+  error = (qsop_error_t){0};
+  if (!solve_complete_single(k4, &cutset_options, &got, &got_stats, &error)) {
+    fprintf(stderr, "FAIL materialized_cutset solve: %s\n", error.message);
+    failures++;
+  } else {
+    const long double want_re = ldexpl(want.re, want.scale_exp2);
+    const long double want_im = ldexpl(want.im, want.scale_exp2);
+    const long double got_re = ldexpl(got.re, got.scale_exp2);
+    const long double got_im = ldexpl(got.im, got.scale_exp2);
+    if (fabsl(want_re - got_re) > 1e-9L || fabsl(want_im - got_im) > 1e-9L ||
+        got_stats.branch_conditioning_nodes != 1U ||
+        got_stats.branch_conditioning_lookaheads != 2U ||
+        got_stats.branch_materialized_degree2_merges == 0U ||
+        got_stats.branch_max_cutset_depth != 1U) {
+      fprintf(stderr,
+              "FAIL materialized_cutset result/counters: nodes=%" PRIu64
+              " lookaheads=%" PRIu64 " merges=%" PRIu64 " depth=%" PRIu32 "\n",
+              got_stats.branch_conditioning_nodes, got_stats.branch_conditioning_lookaheads,
+              got_stats.branch_materialized_degree2_merges,
+              got_stats.branch_max_cutset_depth);
+      failures++;
+    }
+  }
+
+  qsop_amplitude_t refused_amp = {0};
+  qsop_solve_stats_t refused_stats = {0};
+  error = (qsop_error_t){0};
+  const qsop_branch_single_mode_options_t depth0 = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 2U,
+      .treewidth_delegate_max_dp_work = 1U,
+  };
+  if (solve_complete_single(k4, &depth0, &refused_amp, &refused_stats, &error) ||
+      refused_stats.termination_reason != QSOP_SOLVE_TERMINATION_MAX_FALLBACK_VARS) {
+    fprintf(stderr, "FAIL materialized_cutset depth0 refusal\n");
+    failures++;
+  }
+  qsop_free(k4);
+
+  qsop_instance_t *k5 = make_complete(5U);
+  if (k5 == NULL) {
+    return failures + 1;
+  }
+  const qsop_branch_single_mode_options_t node_limited = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 2U,
+      .treewidth_delegate_max_dp_work = 1U,
+      .materialized_reduction = true,
+      .max_cutset_depth = 3U,
+      .lookahead_candidates = 1U,
+      .max_conditioning_nodes = 1U,
+  };
+  refused_stats = (qsop_solve_stats_t){0};
+  error = (qsop_error_t){0};
+  if (solve_complete_single(k5, &node_limited, &refused_amp, &refused_stats, &error) ||
+      refused_stats.termination_reason != QSOP_SOLVE_TERMINATION_CUTSET_BUDGET ||
+      refused_stats.branch_conditioning_nodes != 1U) {
+    fprintf(stderr, "FAIL materialized_cutset node budget\n");
+    failures++;
+  }
+  qsop_free(k5);
+  if (failures == 0) {
+    fprintf(stderr, "PASS materialized_cutset\n");
+  }
+  return failures;
+}
+
+static uint64_t cutset_xorshift(uint64_t *state) {
+  uint64_t x = *state;
+  x ^= x << 13;
+  x ^= x >> 7;
+  x ^= x << 17;
+  *state = x;
+  return x;
+}
+
+static int test_cutset_differential(void) {
+  uint64_t seed = UINT64_C(0x91e10da5c79e7b1d);
+  for (uint32_t trial = 0; trial < 100U; trial++) {
+    const uint32_t n = 3U + (uint32_t)(cutset_xorshift(&seed) % 4U);
+    qsop_instance_t *q = make_complete(n);
+    if (q == NULL) {
+      return 1;
+    }
+    q->constant = cutset_xorshift(&seed) % q->r;
+    for (uint32_t v = 0; v < n; v++) {
+      q->unary[v] = cutset_xorshift(&seed) % q->r;
+    }
+    const qsop_branch_single_mode_options_t reference_options = {
+        .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+        .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+        .max_fallback_vars = 64U,
+        .treewidth_delegate_max_dp_work = 1U,
+    };
+    const qsop_branch_single_mode_options_t cutset_options = {
+        .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+        .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+        .max_fallback_vars = 2U,
+        .treewidth_delegate_max_dp_work = 1U,
+        .materialized_reduction = true,
+        .max_cutset_depth = 8U,
+        .lookahead_candidates = 3U,
+        .max_conditioning_nodes = 4096U,
+        .max_stagnant_levels = 8U,
+    };
+    qsop_amplitude_t reference = {0}, cutset = {0};
+    qsop_solve_stats_t reference_stats = {0}, cutset_stats = {0};
+    qsop_error_t error = {0};
+    if (!solve_complete_single(q, &reference_options, &reference, &reference_stats, &error) ||
+        !solve_complete_single(q, &cutset_options, &cutset, &cutset_stats, &error)) {
+      fprintf(stderr, "FAIL cutset differential trial %" PRIu32 ": %s\n", trial, error.message);
+      qsop_free(q);
+      return 1;
+    }
+    const long double rr = ldexpl(reference.re, reference.scale_exp2);
+    const long double ri = ldexpl(reference.im, reference.scale_exp2);
+    const long double cr = ldexpl(cutset.re, cutset.scale_exp2);
+    const long double ci = ldexpl(cutset.im, cutset.scale_exp2);
+    if (fabsl(rr - cr) > 1e-8L || fabsl(ri - ci) > 1e-8L) {
+      fprintf(stderr,
+              "FAIL cutset differential trial %" PRIu32 ": (%Lg,%Lg) != (%Lg,%Lg)\n",
+              trial, rr, ri, cr, ci);
+      qsop_free(q);
+      return 1;
+    }
+    qsop_free(q);
+  }
+  fprintf(stderr, "PASS cutset_differential\n");
+  return 0;
+}
+
 int main(void) {
   int failures = 0;
   failures += test_null_options();
@@ -318,6 +519,8 @@ int main(void) {
   failures += test_unsupported_mode_rejected();
   failures += test_single_mode_dp_work_gate();
   failures += test_rankwidth_preprobe_policy();
+  failures += test_materialized_cutset();
+  failures += test_cutset_differential();
   if (failures > 0) {
     fprintf(stderr, "\n%d test(s) FAILED\n", failures);
     return 1;

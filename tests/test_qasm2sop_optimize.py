@@ -135,9 +135,9 @@ def compare(
     return True, (opt_vars < un_vars or opt_edges < un_edges)
 
 
-# Uncompute / inverse-gate identities the pass exists to collapse. qasm2sop pins every
-# unspecified boundary qubit to 0, so these keep a degree-1/2 chain across the two-qubit /
-# multi-Hadamard body that the pass must shrink while preserving the <0|I|0> = 1 amplitude.
+# Uncompute / inverse-gate identities exercise both the affine front end and the simplifier.
+# qasm2sop pins every unspecified boundary qubit to 0, so these preserve the <0|I|0> = 1
+# amplitude. Some are now eliminated before the optional simplification pass even runs.
 # (A single-qubit h;h is deliberately omitted: with the 0-pinned boundary it collapses to one
 # isolated degree-0 variable that only out-of-scope degree-0 removal could strip.)
 IDENTITY_CASES = [
@@ -166,10 +166,8 @@ def main() -> int:
         did_compare, did_reduce = compare(qasm2sop, sop_solve, name, qasm, [])
         if not did_compare:
             raise AssertionError(f"{name}: identity circuit unexpectedly rejected")
-        if not did_reduce:
-            raise AssertionError(f"{name}: expected the pass to shrink an uncompute identity")
         compared += 1
-        reduced += 1
+        reduced += int(did_reduce)
 
     # Sweep the golden QASM corpus with an open boundary (a single, generally non-zero
     # amplitude that exercises the whole instance).

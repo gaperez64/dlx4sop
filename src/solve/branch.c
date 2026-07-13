@@ -6,8 +6,10 @@
 #include "trace.h"
 #include "../core/qsop_internal.h"
 
+#include <assert.h>
 #include <float.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -37,6 +39,10 @@
 #define BRANCH_SINGLE_DEFAULT_CACHE_MIN_VARS 12U
 #define BRANCH_SINGLE_DEFAULT_PHASE_CACHE_LG_CAP 16U
 #define BRANCH_SINGLE_MAX_PHASE_CACHE_LG_CAP 30U
+#define BRANCH_SINGLE_DEFAULT_LOOKAHEAD_CANDIDATES 8U
+#define BRANCH_SINGLE_DEFAULT_MAX_CONDITIONING_NODES UINT64_C(4096)
+#define BRANCH_SINGLE_DEFAULT_DELEGATE_REPROBE_INTERVAL 2U
+#define BRANCH_SINGLE_DEFAULT_MAX_STAGNANT_LEVELS 1U
 /* Purely a defensive bound on the root-level component-split allocation's O(nvars) cost, not
  * a solvability gate -- that job belongs to a per-component --max-vars check instead (in
  * qsop_solve_branch_single_mode's case, the one inside branch_single_mode_delegate_component,
@@ -1109,6 +1115,87 @@ static bool build_active_residual_subinstance(const qsop_residual_t *residual, q
   const bool ok = build_residual_subinstance(residual, component, 0, sub, error);
   free(component);
   return ok;
+}
+
+typedef struct branch_materialized_reduction {
+  qsop_instance_t reduced;
+  uint32_t doublings;
+  uint32_t degree2_merges;
+  bool changed;
+  bool zero;
+} branch_materialized_reduction_t;
+
+/* Unlike build_active_residual_subinstance, this copy is an algebraic replacement for the
+ * residual rather than a delegate input: it therefore carries the residual constant.  norm_h is
+ * artificial bookkeeping used only to count how many raw-amplitude doublings the root
+ * simplifier performs. */
+static bool build_active_residual_for_simplify(const qsop_residual_t *residual,
+                                               qsop_instance_t *out, qsop_error_t *error) {
+  if (!build_active_residual_subinstance(residual, out, error)) {
+    return false;
+  }
+  out->constant = qsop_residual_constant(residual);
+  const uint64_t artificial_norm_h = qsop_saturating_mul_u64((uint64_t)out->nvars, 2U);
+  if (artificial_norm_h == UINT64_MAX) {
+    free_subinstance(out);
+    qsop_set_error(error, "active residual is too large for artificial Hadamard normalization");
+    return false;
+  }
+  out->norm_h = artificial_norm_h;
+  return true;
+}
+
+static bool branch_materialize_reduction(const qsop_residual_t *residual, bool simplify,
+                                         branch_materialized_reduction_t *out,
+                                         qsop_solve_stats_t *stats, qsop_error_t *error) {
+  *out = (branch_materialized_reduction_t){0};
+  if (!build_active_residual_for_simplify(residual, &out->reduced, error)) {
+    return false;
+  }
+  if (!simplify) {
+    return true;
+  }
+
+  const uint64_t start_norm_h = out->reduced.norm_h;
+  const uint64_t start_ns = qsop_trace_now_ns();
+  qsop_hadamard_simplify_stats_t simplify_stats = {0};
+  if (!qsop_simplify_hadamard_with_stats(&out->reduced, &simplify_stats)) {
+    free_subinstance(&out->reduced);
+    qsop_set_error(error, "out of memory during materialized Hadamard simplification");
+    return false;
+  }
+  const uint64_t elapsed_ns = qsop_trace_elapsed_ns(start_ns);
+  assert(start_norm_h >= out->reduced.norm_h);
+  assert(((start_norm_h - out->reduced.norm_h) & 1U) == 0U);
+  const uint64_t doublings = (start_norm_h - out->reduced.norm_h) / 2U;
+  if (doublings > UINT32_MAX) {
+    free_subinstance(&out->reduced);
+    qsop_set_error(error, "materialized Hadamard doubling count exceeds uint32 range");
+    return false;
+  }
+  out->doublings = (uint32_t)doublings;
+  out->degree2_merges = simplify_stats.degree2_eliminations;
+  out->zero = simplify_stats.zero_witness;
+  out->changed = doublings != 0U || out->zero;
+  assert(!out->changed || out->doublings > 0U || out->zero);
+#ifndef NDEBUG
+  if (out->zero) {
+    assert(out->reduced.r >= 2U && (out->reduced.r & 1U) == 0U);
+    assert(out->reduced.nvars == 1U && out->reduced.nedges == 0U);
+    assert(out->reduced.constant == 0U && out->reduced.unary[0] == out->reduced.r / 2U);
+  }
+#endif
+  if (stats != NULL) {
+    const uint64_t eliminations = (uint64_t)simplify_stats.degree0_eliminations +
+                                  simplify_stats.degree1_eliminations +
+                                  simplify_stats.degree2_eliminations;
+    stats->branch_materialized_calls++;
+    qsop_add_saturating_u64(&stats->branch_materialized_eliminations, eliminations);
+    qsop_add_saturating_u64(&stats->branch_materialized_degree2_merges,
+                            simplify_stats.degree2_eliminations);
+    qsop_add_saturating_u64(&stats->branch_materialized_reduction_ns, elapsed_ns);
+  }
+  return true;
 }
 
 static void merge_delegated_stats(branch_search_stats_t *stats, const qsop_solve_stats_t *delegated,
@@ -2678,6 +2765,11 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
    * max_fallback_vars-style cap of its own. */
   const uint64_t root_sanity_limit = (uint64_t)max_vars * BRANCH_ROOT_SANITY_MULTIPLIER;
   if ((uint64_t)qsop->nvars > root_sanity_limit) {
+    if (stats != NULL) {
+      stats->termination_reason = QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+      stats->failure_active_vars = qsop->nvars;
+      stats->failure_active_edges = qsop->nedges;
+    }
     qsop_set_error(error,
               "residual branch solver refuses %" PRIu32
               " variables outright (exceeds %ux --max-vars); pass a larger --max-vars or use a "
@@ -2859,6 +2951,23 @@ typedef struct branch_amp_cache {
   uint32_t min_vars;
 } branch_amp_cache_t;
 
+typedef enum branch_delegate_miss {
+  BRANCH_DELEGATE_MISS_NONE,
+  BRANCH_DELEGATE_MISS_TW_WIDTH,
+  BRANCH_DELEGATE_MISS_TW_WORK,
+  BRANCH_DELEGATE_MISS_RW_WIDTH,
+  BRANCH_DELEGATE_MISS_COST,
+  BRANCH_DELEGATE_MISS_MEMORY,
+} branch_delegate_miss_t;
+
+typedef struct branch_cutset_frame {
+  uint32_t depth;
+  uint32_t levels_since_delegate_probe;
+  uint32_t vars_at_last_delegate_probe;
+  uint32_t edges_at_last_delegate_probe;
+  uint32_t stagnant_levels;
+} branch_cutset_frame_t;
+
 typedef struct branch_single_mode_state {
   uint64_t r;
   uint32_t target_mode;
@@ -2876,6 +2985,14 @@ typedef struct branch_single_mode_state {
   uint32_t treewidth_delegate_max_width;
   uint32_t rankwidth_delegate_max_width;
   uint64_t treewidth_delegate_max_dp_work;
+  bool materialized_reduction;
+  bool hadamard_reduction_exact;
+  bool diagnose_conditioning;
+  uint32_t max_cutset_depth;
+  uint32_t lookahead_candidates;
+  uint64_t max_conditioning_nodes;
+  uint32_t delegate_reprobe_interval;
+  uint32_t max_stagnant_levels;
   /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
    * target mode (an even mode kills the sign edges outright and the rule changes shape). */
   bool propagate;
@@ -2892,12 +3009,339 @@ typedef struct branch_single_mode_state {
   uint64_t branch_fallthroughs;
   uint64_t propagations;
   uint64_t zero_prunes;
+  uint64_t conditioning_nodes;
   uint32_t depth;
+  branch_delegate_miss_t last_delegate_miss;
+  bool conditioning_diagnosed;
   long double numeric_error_bound;
 
   qsop_solve_stats_t *stats;
   qsop_solve_trace_t *trace;
+  qsop_backend_stats_sink_t *sink;
 } branch_single_mode_state_t;
+
+typedef struct branch_cutset_child {
+  qsop_instance_t reduced;
+  uint32_t doublings;
+  uint32_t degree2_merges;
+  uint32_t active_vars;
+  uint32_t active_edges;
+  uint32_t components;
+  uint32_t largest_component;
+  uint32_t extra_reductions;
+  bool zero;
+} branch_cutset_child_t;
+
+typedef struct branch_cutset_candidate {
+  uint32_t var;
+  uint32_t unlock3;
+  uint32_t unlock4;
+  uint32_t degree;
+  bool has_unary;
+  branch_cutset_child_t child[2];
+} branch_cutset_candidate_t;
+
+static void branch_cutset_child_free(branch_cutset_child_t *child) {
+  if (child == NULL) {
+    return;
+  }
+  free_subinstance(&child->reduced);
+  *child = (branch_cutset_child_t){0};
+}
+
+static void branch_cutset_candidate_free(branch_cutset_candidate_t *candidate) {
+  if (candidate == NULL) {
+    return;
+  }
+  branch_cutset_child_free(&candidate->child[0]);
+  branch_cutset_child_free(&candidate->child[1]);
+  *candidate = (branch_cutset_candidate_t){0};
+}
+
+static bool branch_shortlist_better(const branch_cutset_candidate_t *a,
+                                    const branch_cutset_candidate_t *b) {
+  if (a->unlock3 != b->unlock3) {
+    return a->unlock3 > b->unlock3;
+  }
+  if (a->unlock4 != b->unlock4) {
+    return a->unlock4 > b->unlock4;
+  }
+  if (a->degree != b->degree) {
+    return a->degree > b->degree;
+  }
+  if (a->has_unary != b->has_unary) {
+    return a->has_unary;
+  }
+  return a->var < b->var;
+}
+
+/* O(n+m): active degrees are maintained by the residual, and each active edge contributes at
+ * most one unlock count to each endpoint. */
+static bool branch_cutset_shortlist(const qsop_residual_t *residual, uint32_t limit,
+                                    branch_cutset_candidate_t **out, uint32_t *out_len,
+                                    qsop_error_t *error) {
+  *out = NULL;
+  *out_len = 0;
+  const uint32_t nvars = qsop_residual_nvars(residual);
+  if (limit == 0U || nvars == 0U) {
+    return true;
+  }
+  uint32_t *unlock3 = calloc(nvars, sizeof(*unlock3));
+  uint32_t *unlock4 = calloc(nvars, sizeof(*unlock4));
+  branch_cutset_candidate_t *top = calloc(limit, sizeof(*top));
+  if (unlock3 == NULL || unlock4 == NULL || top == NULL) {
+    free(unlock3);
+    free(unlock4);
+    free(top);
+    qsop_set_error(error, "out of memory while building cutset candidate shortlist");
+    return false;
+  }
+  const uint64_t r = qsop_residual_modulus(residual);
+  const uint64_t sign = (r & 1U) == 0U ? r / 2U : UINT64_MAX;
+  for (uint32_t e = 0; e < qsop_residual_nedges(residual); e++) {
+    if (!qsop_residual_edge_active(residual, e)) {
+      continue;
+    }
+    const uint32_t u = qsop_residual_edge_u(residual, e);
+    const uint32_t v = qsop_residual_edge_v(residual, e);
+    const uint64_t uu = qsop_residual_unary(residual, u) % r;
+    const uint64_t vu = qsop_residual_unary(residual, v) % r;
+    const uint32_t du = qsop_residual_active_degree(residual, u);
+    const uint32_t dv = qsop_residual_active_degree(residual, v);
+    if ((vu == 0U || vu == sign) && dv == 3U) {
+      unlock3[u]++;
+    }
+    if ((uu == 0U || uu == sign) && du == 3U) {
+      unlock3[v]++;
+    }
+    if ((vu == 0U || vu == sign) && dv == 4U) {
+      unlock4[u]++;
+    }
+    if ((uu == 0U || uu == sign) && du == 4U) {
+      unlock4[v]++;
+    }
+  }
+
+  uint32_t len = 0;
+  for (uint32_t v = 0; v < nvars; v++) {
+    if (!qsop_residual_var_active(residual, v) || qsop_residual_active_degree(residual, v) == 0U) {
+      continue;
+    }
+    const branch_cutset_candidate_t candidate = {
+        .var = v,
+        .unlock3 = unlock3[v],
+        .unlock4 = unlock4[v],
+        .degree = qsop_residual_active_degree(residual, v),
+        .has_unary = qsop_residual_unary(residual, v) != 0U,
+    };
+    uint32_t pos = len;
+    if (len < limit) {
+      len++;
+    } else if (!branch_shortlist_better(&candidate, &top[len - 1U])) {
+      continue;
+    } else {
+      pos = len - 1U;
+    }
+    top[pos] = candidate;
+    while (pos > 0U && branch_shortlist_better(&top[pos], &top[pos - 1U])) {
+      const branch_cutset_candidate_t tmp = top[pos - 1U];
+      top[pos - 1U] = top[pos];
+      top[pos] = tmp;
+      pos--;
+    }
+  }
+  free(unlock3);
+  free(unlock4);
+  if (len == 0U) {
+    free(top);
+    qsop_set_error(error, "residual active-var count disagrees with cutset shortlist");
+    return false;
+  }
+  *out = top;
+  *out_len = len;
+  return true;
+}
+
+static bool branch_measure_instance_shape(const qsop_instance_t *inst, uint32_t *components,
+                                          uint32_t *largest, qsop_error_t *error) {
+  *components = 0;
+  *largest = 0;
+  qsop_residual_t *residual = NULL;
+  if (!qsop_residual_create(inst, &residual, error)) {
+    return false;
+  }
+  uint32_t *labels = malloc((inst->nvars == 0U ? 1U : inst->nvars) * sizeof(*labels));
+  uint32_t *sizes = calloc(inst->nvars == 0U ? 1U : inst->nvars, sizeof(*sizes));
+  bool ok = labels != NULL && sizes != NULL;
+  if (!ok) {
+    qsop_set_error(error, "out of memory while measuring reduced cutset child");
+  } else {
+    ok = qsop_residual_active_components(residual, labels, components, error);
+  }
+  if (ok) {
+    for (uint32_t v = 0; v < inst->nvars; v++) {
+      if (labels[v] < *components) {
+        sizes[labels[v]]++;
+        if (sizes[labels[v]] > *largest) {
+          *largest = sizes[labels[v]];
+        }
+      }
+    }
+  }
+  free(labels);
+  free(sizes);
+  qsop_residual_free(residual);
+  return ok;
+}
+
+static bool branch_cutset_score_better(const branch_cutset_candidate_t *a,
+                                       const branch_cutset_candidate_t *b) {
+  const uint32_t a_zero = (uint32_t)a->child[0].zero + (uint32_t)a->child[1].zero;
+  const uint32_t b_zero = (uint32_t)b->child[0].zero + (uint32_t)b->child[1].zero;
+  if (a_zero != b_zero) {
+    return a_zero > b_zero;
+  }
+#define WORST(field, x) ((x)->child[0].field > (x)->child[1].field ? (x)->child[0].field          \
+                                                                    : (x)->child[1].field)
+  if (WORST(largest_component, a) != WORST(largest_component, b)) {
+    return WORST(largest_component, a) < WORST(largest_component, b);
+  }
+  if (WORST(active_vars, a) != WORST(active_vars, b)) {
+    return WORST(active_vars, a) < WORST(active_vars, b);
+  }
+  if (WORST(active_edges, a) != WORST(active_edges, b)) {
+    return WORST(active_edges, a) < WORST(active_edges, b);
+  }
+#undef WORST
+  const uint64_t a_extra = (uint64_t)a->child[0].extra_reductions + a->child[1].extra_reductions;
+  const uint64_t b_extra = (uint64_t)b->child[0].extra_reductions + b->child[1].extra_reductions;
+  if (a_extra != b_extra) {
+    return a_extra > b_extra;
+  }
+  return a->var < b->var;
+}
+
+static void branch_emit_conditioning_record(const branch_single_mode_state_t *state,
+                                            const branch_cutset_candidate_t *candidate,
+                                            uint8_t value, uint32_t before_vars) {
+  if (state->sink == NULL || state->sink->file == NULL) {
+    return;
+  }
+  FILE *f = state->sink->file;
+  const branch_cutset_child_t *child = &candidate->child[value];
+  fputs("{\"schema\":\"sop_solve_conditioning_v1\",\"instance\":", f);
+  branch_jsonl_write_string(f, state->sink->instance);
+  fprintf(f,
+          ",\"candidate_variable\":%" PRIu32 ",\"value\":%u"
+          ",\"active_vars_before\":%" PRIu32 ",\"active_vars_after\":%" PRIu32
+          ",\"active_edges_after\":%" PRIu32 ",\"component_count\":%" PRIu32
+          ",\"largest_component\":%" PRIu32 ",\"doublings\":%" PRIu32
+          ",\"degree2_merges\":%" PRIu32 ",\"exact_zero\":%s}\n",
+          candidate->var, (unsigned)value, before_vars, child->active_vars, child->active_edges,
+          child->components, child->largest_component, child->doublings, child->degree2_merges,
+          child->zero ? "true" : "false");
+  (void)fflush(f);
+}
+
+static bool branch_cutset_lookahead_child(qsop_residual_t *residual,
+                                         branch_single_mode_state_t *state, uint32_t parent_vars,
+                                         uint32_t var, uint8_t value, bool full_simplify,
+                                         branch_cutset_child_t *out, qsop_error_t *error) {
+  *out = (branch_cutset_child_t){0};
+  const size_t checkpoint = qsop_residual_checkpoint(residual);
+  bool ok = qsop_residual_branch(residual, var, value, error);
+  uint32_t propagated = 0;
+  bool propagated_zero = false;
+  if (ok && state->propagate) {
+    ok = qsop_residual_propagate(residual, &propagated, &propagated_zero, error);
+    if (ok) {
+      qsop_add_saturating_u64(&state->propagations, propagated);
+    }
+  }
+
+  branch_materialized_reduction_t materialized = {0};
+  if (ok) {
+    ok = branch_materialize_reduction(residual, full_simplify, &materialized, state->stats, error);
+  }
+  if (ok) {
+    const uint64_t doublings = (uint64_t)propagated + materialized.doublings;
+    if (doublings > UINT32_MAX) {
+      qsop_set_error(error, "cutset child doubling count exceeds uint32 range");
+      ok = false;
+    } else {
+      out->reduced = materialized.reduced;
+      materialized.reduced = (qsop_instance_t){0};
+      out->doublings = (uint32_t)doublings;
+      out->degree2_merges = materialized.degree2_merges;
+      out->zero = propagated_zero || materialized.zero;
+      out->active_vars = out->reduced.nvars;
+      out->active_edges = out->reduced.nedges;
+      out->extra_reductions = parent_vars > out->active_vars + 1U
+                                  ? parent_vars - 1U - out->active_vars
+                                  : 0U;
+      ok = branch_measure_instance_shape(&out->reduced, &out->components,
+                                         &out->largest_component, error);
+    }
+  }
+  free_subinstance(&materialized.reduced);
+  const bool undo_ok = qsop_residual_undo(residual, checkpoint, error);
+  if (!ok || !undo_ok) {
+    branch_cutset_child_free(out);
+    return false;
+  }
+  if (state->stats != NULL) {
+    state->stats->branch_conditioning_lookaheads++;
+  }
+  return true;
+}
+
+static bool branch_choose_cutset_candidate(qsop_residual_t *residual,
+                                           branch_single_mode_state_t *state,
+                                           bool diagnostic_full_simplify,
+                                           branch_cutset_candidate_t *out, qsop_error_t *error) {
+  *out = (branch_cutset_candidate_t){0};
+  branch_cutset_candidate_t *shortlist = NULL;
+  uint32_t shortlist_len = 0;
+  if (!branch_cutset_shortlist(residual, state->lookahead_candidates, &shortlist, &shortlist_len,
+                               error)) {
+    return false;
+  }
+  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+  bool have_best = false;
+  for (uint32_t i = 0; i < shortlist_len; i++) {
+    branch_cutset_candidate_t candidate = shortlist[i];
+    bool ok = true;
+    for (uint8_t value = 0; ok && value <= 1U; value++) {
+      ok = branch_cutset_lookahead_child(residual, state, parent_vars, candidate.var, value,
+                                         state->hadamard_reduction_exact &&
+                                             (diagnostic_full_simplify ||
+                                              state->materialized_reduction),
+                                         &candidate.child[value], error);
+      if (ok && state->diagnose_conditioning && !state->conditioning_diagnosed) {
+        branch_emit_conditioning_record(state, &candidate, value, parent_vars);
+      }
+    }
+    if (!ok) {
+      branch_cutset_candidate_free(&candidate);
+      free(shortlist);
+      branch_cutset_candidate_free(out);
+      return false;
+    }
+    if (!have_best || branch_cutset_score_better(&candidate, out)) {
+      branch_cutset_candidate_free(out);
+      *out = candidate;
+      candidate = (branch_cutset_candidate_t){0};
+      have_best = true;
+    }
+    branch_cutset_candidate_free(&candidate);
+  }
+  free(shortlist);
+  if (!have_best) {
+    qsop_set_error(error, "cutset lookahead found no active candidate");
+    return false;
+  }
+  return true;
+}
 
 static uint64_t branch_hash_u64(uint64_t x) {
   x += UINT64_C(0x9e3779b97f4a7c15);
@@ -3185,6 +3629,30 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats,
    * avx2` in --format stats reads like a claim the kernels ran when nothing was measured. */
   qsop_add_saturating_u64(&stats->simd_vectorized_ops, delegated->simd_vectorized_ops);
   qsop_add_saturating_u64(&stats->simd_scalar_fallback_ops, delegated->simd_scalar_fallback_ops);
+  qsop_add_saturating_u64(&stats->treewidth_factor_scope_tests,
+                          delegated->treewidth_factor_scope_tests);
+  qsop_add_saturating_u64(&stats->treewidth_factor_bucket_visits,
+                          delegated->treewidth_factor_bucket_visits);
+  qsop_add_saturating_u64(&stats->treewidth_factor_multiplications,
+                          delegated->treewidth_factor_multiplications);
+  qsop_add_saturating_u64(&stats->treewidth_factor_allocations,
+                          delegated->treewidth_factor_allocations);
+  qsop_add_saturating_u64(&stats->treewidth_factor_discovery_ns,
+                          delegated->treewidth_factor_discovery_ns);
+  qsop_add_saturating_u64(&stats->treewidth_numeric_join_ns,
+                          delegated->treewidth_numeric_join_ns);
+  qsop_add_saturating_u64(&stats->treewidth_sum_out_ns, delegated->treewidth_sum_out_ns);
+  if (delegated->treewidth_peak_live_bytes > stats->treewidth_peak_live_bytes) {
+    stats->treewidth_peak_live_bytes = delegated->treewidth_peak_live_bytes;
+  }
+  if (delegated->treewidth_pool_retained_bytes > stats->treewidth_pool_retained_bytes) {
+    stats->treewidth_pool_retained_bytes = delegated->treewidth_pool_retained_bytes;
+  }
+  if (delegated->treewidth_largest_allocation_bytes >
+      stats->treewidth_largest_allocation_bytes) {
+    stats->treewidth_largest_allocation_bytes =
+        delegated->treewidth_largest_allocation_bytes;
+  }
 }
 
 /* Per-component delegate-or-error decision. Duplicates (does not share) the veto/cost-model
@@ -3224,9 +3692,13 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
 static bool branch_single_mode_delegate_component(
     const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
     const qsop_branch_single_mode_options_t *options, bool fail_on_refusal, bool *out_delegated,
-    qsop_amplitude_t *out, qsop_solve_stats_t *io_stats, qsop_error_t *error) {
+    qsop_amplitude_t *out, qsop_solve_stats_t *io_stats, branch_delegate_miss_t *out_miss,
+    qsop_error_t *error) {
   if (out_delegated != NULL) {
     *out_delegated = false;
+  }
+  if (out_miss != NULL) {
+    *out_miss = BRANCH_DELEGATE_MISS_NONE;
   }
   *out = (qsop_amplitude_t){0};
 
@@ -3404,6 +3876,19 @@ static bool branch_single_mode_delegate_component(
     }
     delegated.rankwidth_delegations++;
   } else {
+    if (out_miss != NULL) {
+      if (!treewidth_available || treewidth_width > tw_cap) {
+        *out_miss = decomposition != NULL && cutrank_width > rw_cap
+                        ? BRANCH_DELEGATE_MISS_RW_WIDTH
+                        : BRANCH_DELEGATE_MISS_TW_WIDTH;
+      } else if (sub_stats.min_fill_dp_work > dp_work_budget) {
+        *out_miss = decomposition != NULL && cutrank_width > rw_cap
+                        ? BRANCH_DELEGATE_MISS_RW_WIDTH
+                        : BRANCH_DELEGATE_MISS_TW_WORK;
+      } else {
+        *out_miss = BRANCH_DELEGATE_MISS_COST;
+      }
+    }
     if (fail_on_refusal) {
       qsop_set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
@@ -3414,6 +3899,11 @@ static bool branch_single_mode_delegate_component(
                 sub->nvars, treewidth_width, sub_stats.min_fill_dp_work, dp_work_budget,
                 cutrank_width, tw_cap, rw_cap);
       ok = false;
+      if (io_stats != NULL) {
+        io_stats->termination_reason = QSOP_SOLVE_TERMINATION_NO_DELEGATE;
+        io_stats->failure_active_vars = sub->nvars;
+        io_stats->failure_active_edges = sub->nedges;
+      }
     } else {
       ok = true;
     }
@@ -3437,6 +3927,7 @@ static bool branch_single_mode_delegate_component(
 }
 
 static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_mode_state_t *state,
+                                       bool may_materialize, branch_cutset_frame_t frame,
                                        branch_c64_t *out, qsop_error_t *error);
 
 static uint64_t branch_cache_budget_bytes(uint64_t mib) {
@@ -3469,12 +3960,31 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .treewidth_delegate_max_width = o.treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
+      .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
+                                (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
+      .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
+                                  (target_mode % 2U) == 1U,
+      .diagnose_conditioning = o.diagnose_conditioning,
+      .max_cutset_depth = o.max_cutset_depth,
+      .lookahead_candidates = o.lookahead_candidates != 0
+                                  ? o.lookahead_candidates
+                                  : BRANCH_SINGLE_DEFAULT_LOOKAHEAD_CANDIDATES,
+      .max_conditioning_nodes = o.max_conditioning_nodes != 0
+                                    ? o.max_conditioning_nodes
+                                    : BRANCH_SINGLE_DEFAULT_MAX_CONDITIONING_NODES,
+      .delegate_reprobe_interval = o.delegate_reprobe_interval != 0
+                                       ? o.delegate_reprobe_interval
+                                       : BRANCH_SINGLE_DEFAULT_DELEGATE_REPROBE_INTERVAL,
+      .max_stagnant_levels = o.max_stagnant_levels != 0
+                                 ? o.max_stagnant_levels
+                                 : BRANCH_SINGLE_DEFAULT_MAX_STAGNANT_LEVELS,
       /* The rule rests on omega^(r/2) = -1 raised to an odd power; an even target mode turns
        * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
       .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
                    (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .stats = stats,
       .trace = o.trace,
+      .sink = o.sink,
   };
   const uint64_t cache_budget_mib =
       o.cache_budget_mib != 0 ? o.cache_budget_mib : BRANCH_SINGLE_DEFAULT_CACHE_BUDGET_MIB;
@@ -3513,6 +4023,7 @@ static void branch_single_mode_merge_final_stats(branch_single_mode_state_t *sta
   stats->branch_fallthroughs = state->branch_fallthroughs;
   stats->branch_propagations = state->propagations;
   stats->branch_zero_prunes = state->zero_prunes;
+  stats->branch_conditioning_nodes = state->conditioning_nodes;
 }
 
 static void branch_single_note_residual_shape(branch_single_mode_state_t *state,
@@ -3560,21 +4071,26 @@ static bool branch_edge_free_single_mode(const qsop_residual_t *residual,
 }
 
 static bool branch_solve_component_single_mode(const qsop_instance_t *sub,
-                                               branch_single_mode_state_t *state, branch_c64_t *out,
+                                               branch_single_mode_state_t *state,
+                                               branch_cutset_frame_t frame, branch_c64_t *out,
                                                qsop_error_t *error) {
   qsop_residual_t *component_residual = NULL;
   if (!qsop_residual_create(sub, &component_residual, error)) {
     return false;
   }
+  frame.levels_since_delegate_probe = 0U;
+  frame.vars_at_last_delegate_probe = 0U;
+  frame.edges_at_last_delegate_probe = 0U;
   state->depth++;
-  const bool ok = branch_sum_rec_single_mode(component_residual, state, out, error);
+  const bool ok = branch_sum_rec_single_mode(component_residual, state, false, frame, out, error);
   state->depth--;
   qsop_residual_free(component_residual);
   return ok;
 }
 
 static bool branch_sum_components_single_mode(qsop_residual_t *residual,
-                                              branch_single_mode_state_t *state, bool *out_split,
+                                              branch_single_mode_state_t *state,
+                                              branch_cutset_frame_t frame, bool *out_split,
                                               branch_c64_t *out, qsop_error_t *error) {
   *out_split = false;
   const uint32_t nvars = qsop_residual_nvars(residual);
@@ -3605,7 +4121,7 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
     qsop_instance_t sub = {0};
     branch_c64_t part = c64_zero();
     if (!build_residual_subinstance(residual, component, c, &sub, error) ||
-        !branch_solve_component_single_mode(&sub, state, &part, error)) {
+        !branch_solve_component_single_mode(&sub, state, frame, &part, error)) {
       free_subinstance(&sub);
       free(component);
       return false;
@@ -3649,10 +4165,17 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .treewidth_delegate_max_dp_work = state->treewidth_delegate_max_dp_work,
       .trace = state->trace,
   };
+  /* Diagnostic mode must inspect a legal delegate miss even under delegate-only policy.  The
+   * recursive caller emits the probe and then restores the ordinary NO_DELEGATE refusal. */
+  const bool fail_on_refusal =
+      state->fallback == QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY &&
+      !state->diagnose_conditioning;
   const bool ok = branch_single_mode_delegate_component(
-      &sub, state->max_vars, state->target_mode, &delegate_options,
-      state->fallback == QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY, out_delegated, &delegated_amp,
-      state->stats, error);
+      &sub, state->max_vars, state->target_mode, &delegate_options, fail_on_refusal, out_delegated,
+      &delegated_amp, state->stats, &state->last_delegate_miss, error);
+  if (state->stats != NULL) {
+    state->stats->branch_last_delegate_miss = (uint32_t)state->last_delegate_miss;
+  }
   free_subinstance(&sub);
   if (!ok || !*out_delegated) {
     return ok;
@@ -3670,7 +4193,8 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
 
 static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
                                             const qsop_residual_t *residual, branch_c64_t *out) {
-  if (qsop_residual_active_vars(residual) < state->amp_cache.min_vars) {
+  if (qsop_residual_active_vars(residual) > state->max_fallback_vars ||
+      qsop_residual_active_vars(residual) < state->amp_cache.min_vars) {
     return false;
   }
   const branch_amp_cache_entry_t *entry = NULL;
@@ -3692,10 +4216,165 @@ static bool branch_single_mode_cache_lookup(branch_single_mode_state_t *state,
   return true;
 }
 
+static void branch_single_mode_set_failure(branch_single_mode_state_t *state,
+                                           const qsop_residual_t *residual,
+                                           qsop_solve_termination_reason_t reason,
+                                           uint32_t stagnant_levels) {
+  if (state->stats == NULL) {
+    return;
+  }
+  state->stats->termination_reason = reason;
+  state->stats->failure_active_vars = qsop_residual_active_vars(residual);
+  state->stats->failure_active_edges = qsop_residual_active_edges(residual);
+  state->stats->branch_cutset_final_vars = state->stats->failure_active_vars;
+  state->stats->branch_cutset_final_edges = state->stats->failure_active_edges;
+  state->stats->branch_cutset_stagnant_levels = stagnant_levels;
+  state->stats->branch_last_delegate_miss = (uint32_t)state->last_delegate_miss;
+}
+
+static bool branch_delegate_probe_due(const qsop_residual_t *residual,
+                                      const branch_single_mode_state_t *state,
+                                      const branch_cutset_frame_t *frame) {
+  const uint32_t vars = qsop_residual_active_vars(residual);
+  const uint32_t edges = qsop_residual_active_edges(residual);
+  if (state->max_cutset_depth == 0U || vars <= state->max_fallback_vars ||
+      frame->vars_at_last_delegate_probe == 0U) {
+    return true;
+  }
+  if (vars <= 128U || frame->levels_since_delegate_probe >= state->delegate_reprobe_interval) {
+    return true;
+  }
+  if ((uint64_t)vars * 10U <= (uint64_t)frame->vars_at_last_delegate_probe * 9U ||
+      (uint64_t)edges * 10U <= (uint64_t)frame->edges_at_last_delegate_probe * 9U) {
+    return true;
+  }
+  return false;
+}
+
+static bool branch_cutset_level_productive(const branch_cutset_candidate_t *candidate,
+                                           uint32_t parent_vars, uint32_t parent_edges) {
+  const uint32_t worst_extra = candidate->child[0].extra_reductions <
+                                       candidate->child[1].extra_reductions
+                                   ? candidate->child[0].extra_reductions
+                                   : candidate->child[1].extra_reductions;
+  const uint32_t worst_largest = candidate->child[0].largest_component >
+                                         candidate->child[1].largest_component
+                                     ? candidate->child[0].largest_component
+                                     : candidate->child[1].largest_component;
+  const uint32_t worst_vars = candidate->child[0].active_vars > candidate->child[1].active_vars
+                                  ? candidate->child[0].active_vars
+                                  : candidate->child[1].active_vars;
+  const uint32_t worst_edges = candidate->child[0].active_edges > candidate->child[1].active_edges
+                                   ? candidate->child[0].active_edges
+                                   : candidate->child[1].active_edges;
+  const bool split = candidate->child[0].components > 1U || candidate->child[1].components > 1U;
+  const bool zero = candidate->child[0].zero || candidate->child[1].zero;
+  const bool substantial = (uint64_t)worst_vars * 10U <= (uint64_t)parent_vars * 9U ||
+                           (uint64_t)worst_edges * 10U <= (uint64_t)parent_edges * 9U;
+  return worst_extra > 0U || split || worst_largest + 1U < parent_vars || zero || substantial;
+}
+
+static bool branch_solve_cutset_node(qsop_residual_t *residual,
+                                     branch_single_mode_state_t *state,
+                                     branch_cutset_frame_t frame, branch_c64_t *out,
+                                     qsop_error_t *error) {
+  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+  const uint32_t parent_edges = qsop_residual_active_edges(residual);
+  if (state->stats != NULL) {
+    if (state->stats->branch_cutset_initial_vars == 0U) {
+      state->stats->branch_cutset_initial_vars = parent_vars;
+      state->stats->branch_cutset_initial_edges = parent_edges;
+    }
+    state->stats->branch_cutset_final_vars = parent_vars;
+    state->stats->branch_cutset_final_edges = parent_edges;
+  }
+  if (frame.depth >= state->max_cutset_depth ||
+      state->conditioning_nodes >= state->max_conditioning_nodes) {
+    branch_single_mode_set_failure(state, residual, QSOP_SOLVE_TERMINATION_CUTSET_BUDGET,
+                                   frame.stagnant_levels);
+    qsop_set_error(error,
+                   "branch single-Fourier cutset budget exhausted at depth %" PRIu32
+                   " after %" PRIu64 " conditioning nodes",
+                   frame.depth,
+                   state->conditioning_nodes);
+    return false;
+  }
+  state->conditioning_nodes++;
+  if (state->stats != NULL) {
+    state->stats->branch_conditioning_nodes = state->conditioning_nodes;
+    if (frame.depth > state->stats->branch_max_cutset_depth) {
+      state->stats->branch_max_cutset_depth = frame.depth;
+    }
+  }
+
+  branch_cutset_candidate_t candidate = {0};
+  const bool emit_diagnostic = state->diagnose_conditioning && !state->conditioning_diagnosed;
+  if (!branch_choose_cutset_candidate(residual, state, emit_diagnostic, &candidate, error)) {
+    return false;
+  }
+  if (emit_diagnostic) {
+    state->conditioning_diagnosed = true;
+  }
+  const bool productive = branch_cutset_level_productive(&candidate, parent_vars, parent_edges);
+  const uint32_t stagnant_levels = productive ? 0U : frame.stagnant_levels + 1U;
+  if (stagnant_levels > state->max_stagnant_levels) {
+    branch_cutset_candidate_free(&candidate);
+    branch_single_mode_set_failure(state, residual, QSOP_SOLVE_TERMINATION_CUTSET_BUDGET,
+                                   stagnant_levels);
+    qsop_set_error(error,
+                   "branch single-Fourier cutset budget exhausted after %" PRIu32
+                   " stagnant levels",
+                   stagnant_levels);
+    return false;
+  }
+
+  branch_c64_t child_amp[2] = {c64_zero(), c64_zero()};
+  bool ok = true;
+  for (uint8_t value = 0; ok && value <= 1U; value++) {
+    branch_cutset_child_t *child = &candidate.child[value];
+    if (child->zero) {
+      state->zero_prunes++;
+      continue;
+    }
+    qsop_residual_t *child_residual = NULL;
+    if (!qsop_residual_create(&child->reduced, &child_residual, error)) {
+      ok = false;
+      break;
+    }
+    branch_cutset_frame_t child_frame = frame;
+    child_frame.depth++;
+    child_frame.levels_since_delegate_probe++;
+    child_frame.stagnant_levels = stagnant_levels;
+    if (state->stats != NULL && child_frame.depth > state->stats->branch_max_cutset_depth) {
+      state->stats->branch_max_cutset_depth = child_frame.depth;
+    }
+    state->depth++;
+    ok = branch_sum_rec_single_mode(child_residual, state, false, child_frame, &child_amp[value],
+                                    error);
+    state->depth--;
+    qsop_residual_free(child_residual);
+    if (ok) {
+      if (child->doublings > INT_MAX) {
+        qsop_set_error(error, "cutset child amplitude exponent exceeds int range");
+        ok = false;
+      } else {
+        child_amp[value].exp += (int)child->doublings;
+      }
+    }
+  }
+  if (ok) {
+    *out = c64_add(child_amp[0], child_amp[1]);
+    c64_accum_error(1, &state->numeric_error_bound);
+  }
+  branch_cutset_candidate_free(&candidate);
+  return ok;
+}
+
 /* The amplitude of `residual` exactly as it stands: propagation, node and depth accounting all
  * belong to branch_sum_rec_single_mode below, which wraps this. */
 static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
-                                            branch_single_mode_state_t *state, branch_c64_t *out,
+                                            branch_single_mode_state_t *state,
+                                            branch_cutset_frame_t frame, branch_c64_t *out,
                                             qsop_error_t *error) {
   branch_single_note_residual_shape(state, residual);
 
@@ -3715,20 +4394,56 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
     ok = branch_edge_free_single_mode(residual, state, out, error);
   } else {
     bool did_split = false;
-    ok = branch_sum_components_single_mode(residual, state, &did_split, out, error);
+    ok = branch_sum_components_single_mode(residual, state, frame, &did_split, out, error);
     if (ok && !did_split) {
       bool delegated = false;
-      ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
+      if (branch_delegate_probe_due(residual, state, &frame)) {
+        if (state->stats != NULL) {
+          state->stats->branch_delegate_probes++;
+        }
+        ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
+        frame.levels_since_delegate_probe = 0U;
+        frame.vars_at_last_delegate_probe = qsop_residual_active_vars(residual);
+        frame.edges_at_last_delegate_probe = qsop_residual_active_edges(residual);
+      } else if (state->stats != NULL) {
+        state->stats->branch_delegate_probe_skips++;
+      }
       if (ok && !delegated) {
-        if (qsop_residual_active_vars(residual) > state->max_fallback_vars) {
+        const bool delegate_only =
+            state->fallback == QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY;
+        const bool too_large = qsop_residual_active_vars(residual) > state->max_fallback_vars;
+        if ((too_large || delegate_only) && state->diagnose_conditioning &&
+            !state->conditioning_diagnosed) {
+          branch_cutset_candidate_t diagnostic = {0};
+          ok = branch_choose_cutset_candidate(residual, state, true, &diagnostic, error);
+          branch_cutset_candidate_free(&diagnostic);
+          state->conditioning_diagnosed = ok;
+        }
+        if (ok && delegate_only) {
+          branch_single_mode_set_failure(state, residual, QSOP_SOLVE_TERMINATION_NO_DELEGATE,
+                                         frame.stagnant_levels);
           qsop_set_error(error,
-                    "branch single-Fourier fallback refused component with %" PRIu32
-                    " active vars: residual fallback cap %" PRIu32
-                    " exceeded; try --branch-single-max-fallback-vars=%" PRIu32
-                    " or --branch-single-fourier-fallback=delegate-only",
-                    qsop_residual_active_vars(residual), state->max_fallback_vars,
-                    qsop_residual_active_vars(residual));
+                         "branch single-fourier: connected component (%" PRIu32
+                         " vars) has no delegate available",
+                         qsop_residual_active_vars(residual));
           ok = false;
+        } else if (ok && too_large) {
+          if (state->max_cutset_depth != 0U) {
+            ok = branch_solve_cutset_node(residual, state, frame, out, error);
+          } else {
+            if (ok) {
+              branch_single_mode_set_failure(state, residual,
+                                             QSOP_SOLVE_TERMINATION_MAX_FALLBACK_VARS,
+                                             frame.stagnant_levels);
+              qsop_set_error(error,
+                             "branch single-Fourier fallback refused component with %" PRIu32
+                             " active vars: residual fallback cap %" PRIu32
+                             " exceeded; enable bounded cutset conditioning or use "
+                             "--branch-single-fourier-fallback=delegate-only",
+                             qsop_residual_active_vars(residual), state->max_fallback_vars);
+              ok = false;
+            }
+          }
         } else if (state->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
           qsop_set_error(error, "branch single-Fourier residual fallback does not implement "
                            "--branch-single-precision long-double yet");
@@ -3754,7 +4469,7 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
               }
               state->depth++;
               branch_c64_t branch_amp = c64_zero();
-              ok = branch_sum_rec_single_mode(residual, state, &branch_amp, error);
+              ok = branch_sum_rec_single_mode(residual, state, true, frame, &branch_amp, error);
               state->depth--;
               const bool undo_ok = qsop_residual_undo(residual, checkpoint, error);
               if (!ok || !undo_ok) {
@@ -3789,14 +4504,16 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
       *out, c64_conj(branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual))));
   long double cached_error = subtree_error;
   c64_accum_error(1, &cached_error);
-  if (!branch_amp_cache_store(&state->amp_cache, residual, cached, cached_error, subtree_nodes,
-                              error)) {
-    return false;
-  }
-  if (qsop_residual_active_vars(residual) >= state->amp_cache.min_vars) {
-    state->cache_stores++;
-    qsop_trace_emit(state->trace, "branch.single.cache_store", state->depth,
-                    (uint64_t)state->amp_cache.len, 0);
+  if (qsop_residual_active_vars(residual) <= state->max_fallback_vars) {
+    if (!branch_amp_cache_store(&state->amp_cache, residual, cached, cached_error, subtree_nodes,
+                                error)) {
+      return false;
+    }
+    if (qsop_residual_active_vars(residual) >= state->amp_cache.min_vars) {
+      state->cache_stores++;
+      qsop_trace_emit(state->trace, "branch.single.cache_store", state->depth,
+                      (uint64_t)state->amp_cache.len, 0);
+    }
   }
   return true;
 }
@@ -3813,13 +4530,19 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
  * and the cache both see. Undoing the checkpoint restores the caller's residual, so this composes
  * with the trail exactly like an ordinary branch. */
 static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_mode_state_t *state,
+                                       bool may_materialize, branch_cutset_frame_t frame,
                                        branch_c64_t *out, qsop_error_t *error) {
   if (state->max_recursion_depth != 0 && state->depth > state->max_recursion_depth) {
+    branch_single_mode_set_failure(state, residual,
+                                   QSOP_SOLVE_TERMINATION_MAX_RECURSION_DEPTH,
+                                   frame.stagnant_levels);
     qsop_set_error(error, "branch single-Fourier recursion-depth cap exceeded");
     return false;
   }
   state->nodes++;
   if (state->max_search_nodes != 0 && state->nodes > state->max_search_nodes) {
+    branch_single_mode_set_failure(state, residual, QSOP_SOLVE_TERMINATION_MAX_SEARCH_NODES,
+                                   frame.stagnant_levels);
     qsop_set_error(error,
               "branch single-Fourier search-node cap exceeded (%" PRIu64
               "); try --branch-single-max-search-nodes with a larger value",
@@ -3827,20 +4550,18 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_
     return false;
   }
 
-  if (!state->propagate) {
-    return branch_sum_rec_single_mode_node(residual, state, out, error);
-  }
-
   const size_t checkpoint = qsop_residual_checkpoint(residual);
   uint32_t doublings = 0;
   bool zero = false;
-  const uint64_t propagate_start = qsop_trace_begin(state->trace);
-  if (!qsop_residual_propagate(residual, &doublings, &zero, error)) {
-    return false;
+  if (state->propagate) {
+    const uint64_t propagate_start = qsop_trace_begin(state->trace);
+    if (!qsop_residual_propagate(residual, &doublings, &zero, error)) {
+      return false;
+    }
+    qsop_trace_emit_elapsed(state->trace, "branch.single.propagate", state->depth, doublings,
+                            propagate_start);
+    state->propagations += doublings;
   }
-  qsop_trace_emit_elapsed(state->trace, "branch.single.propagate", state->depth, doublings,
-                          propagate_start);
-  state->propagations += doublings;
 
   if (zero) {
     state->zero_prunes++;
@@ -3851,10 +4572,43 @@ static bool branch_sum_rec_single_mode(qsop_residual_t *residual, branch_single_
   }
 
   branch_c64_t amp = c64_zero();
-  if (!branch_sum_rec_single_mode_node(residual, state, &amp, error)) {
+  bool ok = true;
+  branch_materialized_reduction_t materialized = {0};
+  if (may_materialize && state->materialized_reduction) {
+    ok = branch_materialize_reduction(residual, true, &materialized, state->stats, error);
+    if (ok && materialized.zero) {
+      state->zero_prunes++;
+      amp = c64_zero();
+    } else if (ok && materialized.changed) {
+      qsop_residual_t *reduced_residual = NULL;
+      ok = qsop_residual_create(&materialized.reduced, &reduced_residual, error);
+      if (ok) {
+        ok = branch_sum_rec_single_mode(reduced_residual, state, false, frame, &amp, error);
+      }
+      qsop_residual_free(reduced_residual);
+      if (ok) {
+        if (materialized.doublings > INT_MAX) {
+          qsop_set_error(error, "materialized amplitude exponent exceeds int range");
+          ok = false;
+        } else {
+          amp.exp += (int)materialized.doublings;
+        }
+      }
+    } else if (ok) {
+      ok = branch_sum_rec_single_mode_node(residual, state, frame, &amp, error);
+    }
+    free_subinstance(&materialized.reduced);
+  } else {
+    ok = branch_sum_rec_single_mode_node(residual, state, frame, &amp, error);
+  }
+  if (!ok) {
     return false;
   }
   if (!qsop_residual_undo(residual, checkpoint, error)) {
+    return false;
+  }
+  if (doublings > INT_MAX) {
+    qsop_set_error(error, "propagated amplitude exponent exceeds int range");
     return false;
   }
   amp.exp += (int)doublings;
@@ -3877,14 +4631,17 @@ static bool branch_solve_single_mode_residual(const qsop_instance_t *qsop, uint3
   }
 
   branch_c64_t amp = c64_zero();
-  const bool ok = branch_sum_rec_single_mode(residual, &state, &amp, error);
+  const branch_cutset_frame_t root_frame = {0};
+  const bool ok = branch_sum_rec_single_mode(residual, &state, true, root_frame, &amp, error);
   if (ok) {
     out->re = amp.re;
     out->im = amp.im;
     out->scale_exp2 = amp.exp;
     out->numeric_error_bound = state.numeric_error_bound;
-    branch_single_mode_merge_final_stats(&state);
+  } else if (stats != NULL && stats->termination_reason == QSOP_SOLVE_TERMINATION_NONE) {
+    branch_single_mode_set_failure(&state, residual, QSOP_SOLVE_TERMINATION_OTHER_ERROR, 0U);
   }
+  branch_single_mode_merge_final_stats(&state);
   qsop_residual_free(residual);
   branch_single_mode_state_free(&state);
   return ok;
@@ -3932,5 +4689,12 @@ bool qsop_solve_branch_single_mode(const qsop_instance_t *qsop, uint32_t max_var
     return false;
   }
 
-  return branch_solve_single_mode_residual(qsop, max_vars, target_mode, &o, out, stats, error);
+  const bool ok =
+      branch_solve_single_mode_residual(qsop, max_vars, target_mode, &o, out, stats, error);
+  if (!ok && stats != NULL && stats->termination_reason == QSOP_SOLVE_TERMINATION_NONE) {
+    stats->termination_reason = QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+    stats->failure_active_vars = qsop->nvars;
+    stats->failure_active_edges = qsop->nedges;
+  }
+  return ok;
 }

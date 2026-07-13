@@ -1,10 +1,12 @@
 #define _GNU_SOURCE
 
+#include "dlx4sop/min_fill.h"
 #include "dlx4sop/qsop.h"
 #include "cli_common.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <float.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdarg.h>
@@ -15,7 +17,8 @@
 #include <string.h>
 
 #define QASM_PI 3.141592653589793238462643383279502884
-#define QASM_TWO_PI (2.0 * QASM_PI)
+#define QASM_PI_L 3.141592653589793238462643383279502884L
+#define QASM_TWO_PI_L (2.0L * QASM_PI_L)
 
 typedef struct qasm_reg {
   char *name;
@@ -33,6 +36,18 @@ typedef struct qasm_edge {
   uint32_t v;
   uint64_t q;
 } qasm_edge_t;
+
+/* The computational-basis value carried by a wire. CNOT networks transform basis values by
+ * affine GF(2) maps, so keeping the XOR explicitly avoids lowering every CNOT through H-CZ-H.
+ * `vars` is sorted and duplicate-free; `constant` is the affine offset. */
+typedef struct qasm_affine {
+  uint32_t *vars;
+  uint32_t len;
+  uint32_t cap;
+  bool constant;
+  bool has_observed_value;
+  uint32_t observed_value;
+} qasm_affine_t;
 
 typedef enum qasm_one_qubit_op {
   QASM_ONE_ID,
@@ -72,7 +87,7 @@ typedef struct qasm_importer {
   size_t regs_len;
   size_t regs_cap;
 
-  uint32_t *current;
+  qasm_affine_t *current;
   uint32_t nqubits;
   uint32_t qubits_cap;
 
@@ -107,6 +122,8 @@ typedef struct qasm_importer {
    * decide whether a bigger-modulus retry is worth attempting; a false positive here just costs
    * one wasted re-parse. */
   bool angle_refusal;
+  /* Build the former H-CZ-H/X-HZH graph as a comparison candidate. */
+  bool legacy_permutation_lowering;
 } qasm_importer_t;
 
 static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
@@ -287,6 +304,77 @@ static uint32_t boundary_bit(const char *bits, uint32_t index) {
   return bits == NULL ? 0U : (uint32_t)(bits[index] - '0');
 }
 
+static bool affine_reserve(qasm_importer_t *importer, qasm_affine_t *affine, uint32_t needed) {
+  if (needed <= affine->cap) {
+    return true;
+  }
+  uint32_t new_cap = affine->cap == 0U ? 4U : affine->cap;
+  while (new_cap < needed) {
+    if (new_cap > UINT32_MAX / 2U) {
+      set_error(importer, "affine wire expression is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  uint32_t *vars = realloc(affine->vars, (size_t)new_cap * sizeof(*vars));
+  if (vars == NULL) {
+    set_error(importer, "out of memory while storing affine wire expression");
+    return false;
+  }
+  affine->vars = vars;
+  affine->cap = new_cap;
+  return true;
+}
+
+static bool affine_set_singleton(qasm_importer_t *importer, qasm_affine_t *affine,
+                                 uint32_t var) {
+  if (!affine_reserve(importer, affine, 1U)) {
+    return false;
+  }
+  affine->vars[0] = var;
+  affine->len = 1U;
+  affine->constant = false;
+  affine->has_observed_value = false;
+  return true;
+}
+
+/* target ^= source, preserving sorted unique supports by symmetric difference. */
+static bool affine_xor(qasm_importer_t *importer, qasm_affine_t *target,
+                       const qasm_affine_t *source) {
+  if (UINT32_MAX - target->len < source->len) {
+    set_error(importer, "affine wire expression is too large");
+    return false;
+  }
+  const uint32_t cap = target->len + source->len;
+  uint32_t *merged = cap == 0U ? NULL : malloc((size_t)cap * sizeof(*merged));
+  if (cap != 0U && merged == NULL) {
+    set_error(importer, "out of memory while combining affine wire expressions");
+    return false;
+  }
+
+  uint32_t i = 0;
+  uint32_t j = 0;
+  uint32_t len = 0;
+  while (i < target->len || j < source->len) {
+    if (j == source->len || (i < target->len && target->vars[i] < source->vars[j])) {
+      merged[len++] = target->vars[i++];
+    } else if (i == target->len || source->vars[j] < target->vars[i]) {
+      merged[len++] = source->vars[j++];
+    } else {
+      i++;
+      j++;
+    }
+  }
+
+  free(target->vars);
+  target->vars = merged;
+  target->len = len;
+  target->cap = cap;
+  target->constant ^= source->constant;
+  target->has_observed_value = false;
+  return true;
+}
+
 static bool reserve_regs(qasm_importer_t *importer, size_t needed) {
   if (needed <= importer->regs_cap) {
     return true;
@@ -321,11 +409,13 @@ static bool reserve_current(qasm_importer_t *importer, uint32_t needed) {
     }
     new_cap *= 2U;
   }
-  uint32_t *current = realloc(importer->current, (size_t)new_cap * sizeof(*current));
+  const uint32_t old_cap = importer->qubits_cap;
+  qasm_affine_t *current = realloc(importer->current, (size_t)new_cap * sizeof(*current));
   if (current == NULL) {
     set_error(importer, "out of memory while storing qubits");
     return false;
   }
+  memset(current + old_cap, 0, (size_t)(new_cap - old_cap) * sizeof(*current));
   importer->current = current;
   importer->qubits_cap = new_cap;
   return true;
@@ -449,7 +539,9 @@ static bool add_qreg(qasm_importer_t *importer, const char *name, uint32_t size)
       .offset = offset,
   };
   for (uint32_t i = 0; i < size; i++) {
-    importer->current[offset + i] = importer->nvars++;
+    if (!affine_set_singleton(importer, &importer->current[offset + i], importer->nvars++)) {
+      return false;
+    }
   }
   importer->nqubits += size;
   return true;
@@ -1139,11 +1231,105 @@ static bool add_constant(qasm_importer_t *importer, uint64_t coeff) {
   return true;
 }
 
-static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint64_t coeff) {
-  if (coeff % importer->modulus == 0) {
+/* Materialize y = constant XOR vars as a sign-only equality gadget:
+ *
+ *   delta(y = p) = 1/2 Sum_z (-1)^(z(y + p)).
+ *
+ * The factor 1/2 is represented by two normalization half-powers. This is needed only when a
+ * non-Clifford phase observes a multi-variable parity; CNOT and Hadamard themselves stay affine. */
+static bool affine_materialize(qasm_importer_t *importer, qasm_affine_t *affine,
+                               uint32_t *out_value) {
+  if (affine->has_observed_value) {
+    *out_value = affine->observed_value;
     return true;
   }
-  return add_unary(importer, importer->current[qubit], coeff);
+  if (affine->len <= 1U) {
+    set_error(importer, "internal error: tried to materialize a scalar affine wire");
+    return false;
+  }
+  if (importer->nvars > UINT32_MAX - 2U || importer->norm_h > UINT64_MAX - 2U) {
+    set_error(importer, "too many variables while materializing affine wire expression");
+    return false;
+  }
+
+  const uint32_t value = importer->nvars++;
+  const uint32_t check = importer->nvars++;
+  const uint64_t sign = sign_coeff(importer);
+  if (!add_edge(importer, check, value, sign)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < affine->len; i++) {
+    if (!add_edge(importer, check, affine->vars[i], sign)) {
+      return false;
+    }
+  }
+  if (affine->constant && !add_unary(importer, check, sign)) {
+    return false;
+  }
+  importer->norm_h += 2U;
+  affine->has_observed_value = true;
+  affine->observed_value = value;
+  *out_value = value;
+  return true;
+}
+
+/* For q a multiple of r/4, q*(x0 XOR ... XOR xn) has no degree >= 3 terms modulo r:
+ * q*parity = q*Sum(xi) - 2q*Sum(xi*xj). This keeps Clifford parity phases in qsop-sign without
+ * introducing an equality gadget. */
+static bool apply_clifford_phase_affine(qasm_importer_t *importer, const qasm_affine_t *affine,
+                                        uint64_t coeff) {
+  uint64_t effective = coeff % importer->modulus;
+  if (affine->constant) {
+    if (!add_constant(importer, effective)) {
+      return false;
+    }
+    effective = effective == 0U ? 0U : importer->modulus - effective;
+  }
+  for (uint32_t i = 0; i < affine->len; i++) {
+    if (effective != 0U && !add_unary(importer, affine->vars[i], effective)) {
+      return false;
+    }
+  }
+  const uint64_t pair_coeff =
+      mod_i64((qasm_int128_t)-2 * (qasm_int128_t)effective, importer->modulus);
+  if (pair_coeff == 0U) {
+    return true;
+  }
+  if (pair_coeff != sign_coeff(importer)) {
+    set_error(importer, "internal error: Clifford parity phase produced a non-sign edge");
+    return false;
+  }
+  for (uint32_t i = 0; i < affine->len; i++) {
+    for (uint32_t j = i + 1U; j < affine->len; j++) {
+      if (!add_edge(importer, affine->vars[i], affine->vars[j], pair_coeff)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool apply_phase(qasm_importer_t *importer, uint32_t qubit, uint64_t coeff) {
+  coeff %= importer->modulus;
+  if (coeff == 0U) {
+    return true;
+  }
+  qasm_affine_t *affine = &importer->current[qubit];
+  if (affine->len == 0U) {
+    return !affine->constant || add_constant(importer, coeff);
+  }
+  if (importer->modulus % 4U == 0U && coeff % (importer->modulus / 4U) == 0U) {
+    return apply_clifford_phase_affine(importer, affine, coeff);
+  }
+  if (affine->len == 1U) {
+    if (!affine->constant) {
+      return add_unary(importer, affine->vars[0], coeff);
+    }
+    return add_constant(importer, coeff) &&
+           add_unary(importer, affine->vars[0], importer->modulus - coeff);
+  }
+  uint32_t value = 0;
+  return affine_materialize(importer, affine, &value) && add_unary(importer, value, coeff);
 }
 
 static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
@@ -1152,17 +1338,53 @@ static bool apply_h(qasm_importer_t *importer, uint32_t qubit) {
     return false;
   }
   const uint32_t next_var = importer->nvars++;
-  if (!add_edge(importer, importer->current[qubit], next_var, sign_coeff(importer))) {
+  qasm_affine_t *affine = &importer->current[qubit];
+  const uint64_t sign = sign_coeff(importer);
+  for (uint32_t i = 0; i < affine->len; i++) {
+    if (!add_edge(importer, affine->vars[i], next_var, sign)) {
+      return false;
+    }
+  }
+  if (affine->constant && !add_unary(importer, next_var, sign)) {
     return false;
   }
-  importer->current[qubit] = next_var;
   importer->norm_h++;
-  return true;
+  return affine_set_singleton(importer, affine, next_var);
 }
 
 static bool apply_cz(qasm_importer_t *importer, uint32_t left, uint32_t right) {
-  return add_edge(importer, importer->current[left], importer->current[right],
-                  sign_coeff(importer));
+  const qasm_affine_t *a = &importer->current[left];
+  const qasm_affine_t *b = &importer->current[right];
+  const uint64_t sign = sign_coeff(importer);
+  if (a->constant && b->constant && !add_constant(importer, sign)) {
+    return false;
+  }
+  if (b->constant) {
+    for (uint32_t i = 0; i < a->len; i++) {
+      if (!add_unary(importer, a->vars[i], sign)) {
+        return false;
+      }
+    }
+  }
+  if (a->constant) {
+    for (uint32_t j = 0; j < b->len; j++) {
+      if (!add_unary(importer, b->vars[j], sign)) {
+        return false;
+      }
+    }
+  }
+  for (uint32_t i = 0; i < a->len; i++) {
+    for (uint32_t j = 0; j < b->len; j++) {
+      if (a->vars[i] == b->vars[j]) {
+        if (!add_unary(importer, a->vars[i], sign)) {
+          return false;
+        }
+      } else if (!add_edge(importer, a->vars[i], b->vars[j], sign)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /* apply_cx_decomposition is defined further below (it needs apply_h/apply_cz, defined in
@@ -1209,7 +1431,7 @@ static bool apply_controlled_phase(qasm_importer_t *importer, uint32_t left, uin
     return true;
   }
   if (coeff == sign_coeff(importer)) {
-    return add_edge(importer, importer->current[left], importer->current[right], coeff);
+    return apply_cz(importer, left, right);
   }
   if (coeff % 2 != 0) {
     importer->angle_refusal = true;
@@ -1300,9 +1522,14 @@ static bool apply_ryy(qasm_importer_t *importer, uint32_t left, uint32_t right, 
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  return apply_h(importer, qubit) &&
-         apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 8)) &&
-         apply_h(importer, qubit);
+  if (importer->legacy_permutation_lowering) {
+    return apply_h(importer, qubit) &&
+           apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 8)) &&
+           apply_h(importer, qubit);
+  }
+  importer->current[qubit].constant = !importer->current[qubit].constant;
+  importer->current[qubit].has_observed_value = false;
+  return true;
 }
 
 static bool apply_y_decomposition(qasm_importer_t *importer, uint32_t qubit) {
@@ -1354,8 +1581,11 @@ static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_unit
 }
 
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
-  return apply_h(importer, target) && apply_cz(importer, control, target) &&
-         apply_h(importer, target);
+  if (importer->legacy_permutation_lowering) {
+    return apply_h(importer, target) && apply_cz(importer, control, target) &&
+           apply_h(importer, target);
+  }
+  return affine_xor(importer, &importer->current[target], &importer->current[control]);
 }
 
 /* CU(theta,phi,lambda,gamma): the standard 2-CNOT Barenco/ABC decomposition (same one
@@ -1393,24 +1623,34 @@ static bool apply_cu(qasm_importer_t *importer, uint32_t control, uint32_t targe
 }
 
 static uint64_t rounded_coeff_for_angle(qasm_importer_t *importer, double angle) {
+  /* Scale only after reducing to the unit circle. Multiplying an AE/QPE-scale angle (which can
+   * be around 2^100 after an unrolled power) by a roughly 2^59 approximation modulus first loses
+   * every fractional tick even in long double. libm's sin/cos perform the required wide argument
+   * reduction; atan2 then gives a small principal angle that can be scaled without cancellation. */
+  const double actual_re = cos(angle);
+  const double actual_im = sin(angle);
+  const long double principal = atan2l((long double)actual_im, (long double)actual_re);
   const long double scaled =
-      (long double)angle * (long double)importer->modulus / (long double)QASM_TWO_PI;
+      principal * (long double)importer->modulus / QASM_TWO_PI_L;
   const long double nearest = nearbyintl(scaled);
   long double residue = fmodl(nearest, (long double)importer->modulus);
   if (residue < 0.0L) {
     residue += (long double)importer->modulus;
   }
 
-  const long double rounded_angle =
-      nearest * (long double)QASM_TWO_PI / (long double)importer->modulus;
-  long double delta = remainderl((long double)angle - rounded_angle, (long double)QASM_TWO_PI);
-  if (delta < 0.0L) {
-    delta = -delta;
+  const long double rounded_angle = nearest * QASM_TWO_PI_L / (long double)importer->modulus;
+  const long double rounded_re = cosl(rounded_angle);
+  const long double rounded_im = sinl(rounded_angle);
+  long double chord = hypotl((long double)actual_re - rounded_re,
+                             (long double)actual_im - rounded_im);
+  /* Account conservatively for the stored double unit-circle value and the long-double root.
+   * This is tiny compared with the requested budgets but prevents the certificate from claiming
+   * literal zero error merely because two rounded transcendental results happened to coincide. */
+  chord += 8.0L * (long double)DBL_EPSILON + 16.0L * LDBL_EPSILON;
+  if (chord > 2.0L) {
+    chord = 2.0L;
   }
-  if (delta < 1e-15L) {
-    delta = 0.0L;
-  }
-  importer->approx_delta += (double)(2.0L * sinl(delta / 2.0L));
+  importer->approx_delta += (double)chord;
   importer->approx_phase_count++;
 
   return (uint64_t)residue;
@@ -1587,7 +1827,7 @@ static bool apply_iswap_decomposition(qasm_importer_t *importer, uint32_t left, 
     return false;
   }
 
-  const uint32_t tmp = importer->current[left];
+  const qasm_affine_t tmp = importer->current[left];
   importer->current[left] = importer->current[right];
   importer->current[right] = tmp;
   return apply_phase(importer, left, coeff_from_pi_over_eight_units(importer, 4)) &&
@@ -1676,8 +1916,7 @@ static bool apply_reset(qasm_importer_t *importer, uint32_t qubit) {
   if (!record_zero_pin(importer, fresh)) {
     return false;
   }
-  importer->current[qubit] = fresh;
-  return true;
+  return affine_set_singleton(importer, &importer->current[qubit], fresh);
 }
 
 static bool apply_reset_operand(qasm_importer_t *importer, char *rest) {
@@ -1967,7 +2206,7 @@ static bool apply_two_qubit_op_values(qasm_importer_t *importer, uint32_t left, 
     return apply_csx_decomposition(importer, left, right,
                                    coeff_from_pi_over_eight_units(importer, 12));
   case QASM_TWO_SWAP: {
-    const uint32_t tmp = importer->current[left];
+    const qasm_affine_t tmp = importer->current[left];
     importer->current[left] = importer->current[right];
     importer->current[right] = tmp;
     return true;
@@ -2836,6 +3075,9 @@ static void free_importer(qasm_importer_t *importer) {
     free(importer->regs[i].name);
   }
   free(importer->regs);
+  for (uint32_t q = 0; q < importer->qubits_cap; q++) {
+    free(importer->current[q].vars);
+  }
   free(importer->current);
   free(importer->unary);
   free(importer->edges);
@@ -2903,7 +3145,19 @@ static bool collect_boundary_pins(const qasm_importer_t *importer, int8_t **out_
   }
   for (uint32_t q = 0; q < importer->nqubits && !conflict; q++) {
     const uint32_t value = boundary_bit(importer->output_bits, q);
-    pin_boundary_variable(pins, importer->current[q], value, &conflict);
+    const qasm_affine_t *affine = &importer->current[q];
+    if (affine->len == 0U) {
+      if ((uint32_t)affine->constant != value) {
+        conflict = true;
+      }
+    } else {
+      /* write_raw_qsop materializes multi-variable output parities before allocating pins. */
+      if (affine->len != 1U) {
+        free(pins);
+        return false;
+      }
+      pin_boundary_variable(pins, affine->vars[0], value ^ (uint32_t)affine->constant, &conflict);
+    }
   }
   /* Mid-circuit reset pins: each fresh post-reset variable is |0>. A conflict here (e.g. an
    * --output that demands 1 on a wire whose final op was a reset to 0) correctly yields amplitude
@@ -2953,6 +3207,18 @@ static uint64_t output_coeff(const qasm_importer_t *importer, uint64_t coeff, ui
 }
 
 static bool write_raw_qsop(FILE *file, qasm_importer_t *importer) {
+  /* A fixed output bit is a projector on the final affine wire value. Materializing only the
+   * multi-variable expressions here lets the ordinary pin reducer eliminate the value side of
+   * each equality gadget again, leaving one sign-check variable in canonical output. */
+  for (uint32_t q = 0; q < importer->nqubits; q++) {
+    if (importer->current[q].len > 1U) {
+      uint32_t value = 0;
+      if (!affine_materialize(importer, &importer->current[q], &value) ||
+          !affine_set_singleton(importer, &importer->current[q], value)) {
+        return false;
+      }
+    }
+  }
   int8_t *pins = NULL;
   bool boundary_conflict = false;
   if (!collect_boundary_pins(importer, &pins, &boundary_conflict)) {
@@ -3012,8 +3278,9 @@ static void write_approx_certificate(FILE *file, const qasm_importer_t *importer
           importer->approx_delta);
 }
 
-static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *error,
-                                   bool optimize) {
+static bool canonicalize_importer(qasm_importer_t *importer, qsop_error_t *error, bool optimize,
+                                  qsop_instance_t **out_qsop) {
+  *out_qsop = NULL;
   char *raw = NULL;
   size_t raw_len = 0;
   FILE *raw_file = open_memstream(&raw, &raw_len);
@@ -3056,10 +3323,40 @@ static bool canonicalize_to_stdout(qasm_importer_t *importer, qsop_error_t *erro
     return false;
   }
 
-  write_approx_certificate(stdout, importer);
-  ok = qsop_write_file(stdout, qsop, error);
-  qsop_free(qsop);
-  return ok;
+  *out_qsop = qsop;
+  return true;
+}
+
+static bool prefer_legacy_candidate(const qsop_instance_t *affine,
+                                    const qsop_instance_t *legacy) {
+  /* First preserve both basic size measures monotonically. */
+  if (affine->nvars > legacy->nvars || affine->nedges > legacy->nedges) {
+    return true;
+  }
+  if ((affine->nvars == legacy->nvars && affine->nedges == legacy->nedges) ||
+      affine->nvars > 1000U || legacy->nvars > 1000U || affine->nedges > 5000U ||
+      legacy->nedges > 5000U) {
+    return false;
+  }
+
+  /* A smaller graph can still have a worse elimination topology. On instances where the
+   * diagnostic itself is cheap, require the affine candidate to preserve both greedy width and
+   * its more timing-relevant DP-work estimate. Giant QFT/qwalk graphs stay on the O(1) size guard
+   * above; running min-fill inside an importer must not turn those imports into minute-long jobs. */
+  uint32_t affine_width = 0;
+  uint32_t legacy_width = 0;
+  uint64_t affine_work = 0;
+  uint64_t legacy_work = 0;
+  qsop_error_t error = {0};
+  if (!qsop_min_fill_eliminate(affine->nvars, affine->edge_u, affine->edge_v, affine->nedges,
+                               QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, NULL, &affine_width,
+                               NULL, &affine_work, NULL, &error) ||
+      !qsop_min_fill_eliminate(legacy->nvars, legacy->edge_u, legacy->edge_v, legacy->nedges,
+                               QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, NULL, &legacy_width,
+                               NULL, &legacy_work, NULL, &error)) {
+    return false;
+  }
+  return affine_width > legacy_width || affine_work > legacy_work;
 }
 
 static void print_qsop_error(const qsop_error_t *error) {
@@ -3493,8 +3790,53 @@ int main(int argc, char **argv) {
     return 2;
   }
 
+  /* The affine representation is usually much smaller, but a few circuits happen to expose
+   * more degree-2 eliminations in the former H-CZ-H topology. Build that candidate at the final
+   * modulus too, then retain it whenever the affine result regresses canonical size or (for
+   * bounded graphs) min-fill cost. This makes the optimization monotone relative to the old
+   * importer without running expensive diagnostics on giant instances. */
+  qasm_importer_t legacy = {
+      .input_bits = input_bits,
+      .output_bits = output_bits,
+      .modulus = importer.modulus,
+      .approx_enabled = importer.approx_enabled,
+      .approx_epsilon = importer.approx_epsilon,
+      .legacy_permutation_lowering = true,
+  };
+  bool have_legacy = false;
+  FILE *legacy_input = fmemopen(source, source_len, "rb");
+  if (legacy_input != NULL) {
+    have_legacy = parse_qasm(legacy_input, diagnostic_path, &legacy);
+    fclose(legacy_input);
+    if (have_legacy && legacy.nqubits != importer.nqubits) {
+      have_legacy = false;
+    }
+  }
+
   qsop_error_t error = {0};
-  ok = canonicalize_to_stdout(&importer, &error, optimize);
+  qsop_instance_t *affine_qsop = NULL;
+  qsop_instance_t *legacy_qsop = NULL;
+  ok = canonicalize_importer(&importer, &error, optimize, &affine_qsop);
+  if (ok && have_legacy) {
+    qsop_error_t legacy_error = {0};
+    if (!canonicalize_importer(&legacy, &legacy_error, optimize, &legacy_qsop)) {
+      qsop_free(legacy_qsop);
+      legacy_qsop = NULL;
+    }
+  }
+
+  if (ok) {
+    const bool use_legacy =
+        legacy_qsop != NULL && prefer_legacy_candidate(affine_qsop, legacy_qsop);
+    const qasm_importer_t *certificate = use_legacy ? &legacy : &importer;
+    const qsop_instance_t *chosen = use_legacy ? legacy_qsop : affine_qsop;
+    write_approx_certificate(stdout, certificate);
+    ok = qsop_write_file(stdout, chosen, &error);
+  }
+
+  qsop_free(affine_qsop);
+  qsop_free(legacy_qsop);
+  free_importer(&legacy);
   free_importer(&importer);
   free(source);
   if (!ok) {

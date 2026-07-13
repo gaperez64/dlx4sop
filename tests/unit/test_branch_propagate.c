@@ -89,13 +89,15 @@ static qsop_instance_t *random_instance(uint64_t *seed, uint64_t r, uint32_t n) 
 }
 
 static bool solve(const qsop_instance_t *q, uint32_t target_mode,
-                  qsop_branch_single_propagate_t propagate, qsop_amplitude_t *amp,
+                  qsop_branch_single_propagate_t propagate, bool materialized,
+                  qsop_amplitude_t *amp,
                   qsop_solve_stats_t *stats) {
   const qsop_branch_single_mode_options_t options = {
       .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
       .propagate = propagate,
       .max_fallback_vars = 64,
       .cache_min_vars = 2,
+      .materialized_reduction = materialized,
   };
   qsop_error_t error = {0};
   if (!qsop_solve_branch_single_mode(q, 64U, target_mode, &options, amp, stats, &error)) {
@@ -111,6 +113,7 @@ int main(void) {
   uint64_t seed = UINT64_C(0xC0FFEE123456789);
   uint64_t propagations = 0;
   uint64_t zero_prunes = 0;
+  uint64_t materialized_merges = 0;
   uint32_t nonzero_cases = 0;
 
   for (uint32_t trial = 0; trial < 1500U; trial++) {
@@ -130,15 +133,17 @@ int main(void) {
     double want_re = 0.0, want_im = 0.0;
     exhaustive_amplitude(q, target_mode, &want_re, &want_im);
 
-    qsop_amplitude_t on = {0}, off = {0};
-    qsop_solve_stats_t on_stats = {0}, off_stats = {0};
-    if (!solve(q, target_mode, QSOP_BRANCH_SINGLE_PROPAGATE_AUTO, &on, &on_stats) ||
-        !solve(q, target_mode, QSOP_BRANCH_SINGLE_PROPAGATE_OFF, &off, &off_stats)) {
+    qsop_amplitude_t on = {0}, off = {0}, mat = {0};
+    qsop_solve_stats_t on_stats = {0}, off_stats = {0}, mat_stats = {0};
+    if (!solve(q, target_mode, QSOP_BRANCH_SINGLE_PROPAGATE_AUTO, false, &on, &on_stats) ||
+        !solve(q, target_mode, QSOP_BRANCH_SINGLE_PROPAGATE_OFF, false, &off, &off_stats) ||
+        !solve(q, target_mode, QSOP_BRANCH_SINGLE_PROPAGATE_AUTO, true, &mat, &mat_stats)) {
       qsop_free(q);
       return 1;
     }
     propagations += on_stats.branch_propagations;
     zero_prunes += on_stats.branch_zero_prunes;
+    materialized_merges += mat_stats.branch_materialized_degree2_merges;
     if (fabs(want_re) > 1e-6 || fabs(want_im) > 1e-6) {
       nonzero_cases++;
     }
@@ -149,6 +154,8 @@ int main(void) {
     const double on_im = (double)ldexpl(on.im, on.scale_exp2);
     const double off_re = (double)ldexpl(off.re, off.scale_exp2);
     const double off_im = (double)ldexpl(off.im, off.scale_exp2);
+    const double mat_re = (double)ldexpl(mat.re, mat.scale_exp2);
+    const double mat_im = (double)ldexpl(mat.im, mat.scale_exp2);
 
     const double tol = 1e-6 * (1.0 + fabs(want_re) + fabs(want_im));
     if (fabs(on_re - want_re) > tol || fabs(on_im - want_im) > tol) {
@@ -166,6 +173,13 @@ int main(void) {
       qsop_free(q);
       return 1;
     }
+    if (fabs(mat_re - want_re) > tol || fabs(mat_im - want_im) > tol) {
+      fprintf(stderr,
+              "trial %" PRIu32 ": materialized gave (%.9g,%.9g), exhaustive says (%.9g,%.9g)\n",
+              trial, mat_re, mat_im, want_re, want_im);
+      qsop_free(q);
+      return 1;
+    }
 
     /* Even target modes must not propagate: the rule is unsound there. */
     if (target_mode % 2U == 0U && on_stats.branch_propagations != 0) {
@@ -174,15 +188,22 @@ int main(void) {
       qsop_free(q);
       return 1;
     }
+    if (target_mode % 2U == 0U && mat_stats.branch_materialized_calls != 0U) {
+      fprintf(stderr, "trial %" PRIu32 ": materialized on even target mode %" PRIu32 "\n", trial,
+              target_mode);
+      qsop_free(q);
+      return 1;
+    }
     qsop_free(q);
   }
 
   /* A generator that never fires the rules would pass the checks above vacuously. */
-  if (propagations < 500U || zero_prunes < 20U || nonzero_cases < 100U) {
+  if (propagations < 500U || zero_prunes < 20U || materialized_merges < 50U ||
+      nonzero_cases < 100U) {
     fprintf(stderr,
-            "generator too tame: %" PRIu64 " propagations, %" PRIu64 " zero prunes, %" PRIu32
-            " non-zero amplitudes\n",
-            propagations, zero_prunes, nonzero_cases);
+            "generator too tame: %" PRIu64 " propagations, %" PRIu64 " zero prunes, %" PRIu64
+            " degree-2 merges, %" PRIu32 " non-zero amplitudes\n",
+            propagations, zero_prunes, materialized_merges, nonzero_cases);
     return 1;
   }
 
