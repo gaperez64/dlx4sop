@@ -39,6 +39,16 @@ typedef struct qsop_amplitude {
   int32_t scale_exp2;
 } qsop_amplitude_t;
 
+typedef enum qsop_solve_termination_reason {
+  QSOP_SOLVE_TERMINATION_NONE,
+  QSOP_SOLVE_TERMINATION_MAX_FALLBACK_VARS,
+  QSOP_SOLVE_TERMINATION_NO_DELEGATE,
+  QSOP_SOLVE_TERMINATION_CUTSET_BUDGET,
+  QSOP_SOLVE_TERMINATION_MAX_SEARCH_NODES,
+  QSOP_SOLVE_TERMINATION_MAX_RECURSION_DEPTH,
+  QSOP_SOLVE_TERMINATION_OTHER_ERROR,
+} qsop_solve_termination_reason_t;
+
 /* Pull the binary exponent out of re/im so that max(|re|,|im|) lands in [1,2). A zero amplitude is
  * left alone. Scaling by a power of two is exact, so no mantissa bit is lost. */
 void qsop_amplitude_renormalize(qsop_amplitude_t *amp);
@@ -53,6 +63,11 @@ bool qsop_amplitude_normalized(const qsop_amplitude_t *amp, uint64_t norm_h, lon
                                long double *out_im);
 
 typedef struct qsop_solve_stats {
+  /* Final status.  NONE means success unless the caller has not finished the solve yet. */
+  qsop_solve_termination_reason_t termination_reason;
+  uint32_t failure_active_vars;
+  uint32_t failure_active_edges;
+
   /* Branch residual search */
   uint64_t search_nodes;
   uint64_t leaf_assignments;
@@ -114,6 +129,35 @@ typedef struct qsop_solve_stats {
   /* Size of the w-cutset the CUTSET heuristic conditioned on, summed over the components that
    * needed one; 0 when no component fell through to conditioning. */
   uint64_t branch_cutset_size;
+
+  /* Opt-in materialized kernelization and bounded cutset conditioning. */
+  uint64_t branch_materialized_calls;
+  uint64_t branch_materialized_eliminations;
+  uint64_t branch_materialized_degree2_merges;
+  uint64_t branch_materialized_reduction_ns;
+  uint64_t branch_conditioning_nodes;
+  uint64_t branch_conditioning_lookaheads;
+  uint64_t branch_delegate_probes;
+  uint64_t branch_delegate_probe_skips;
+  uint32_t branch_max_cutset_depth;
+  uint32_t branch_cutset_initial_vars;
+  uint32_t branch_cutset_initial_edges;
+  uint32_t branch_cutset_final_vars;
+  uint32_t branch_cutset_final_edges;
+  uint32_t branch_cutset_stagnant_levels;
+  uint32_t branch_last_delegate_miss;
+
+  /* f64 single-Fourier treewidth diagnostics. */
+  uint64_t treewidth_factor_scope_tests;
+  uint64_t treewidth_factor_bucket_visits;
+  uint64_t treewidth_factor_multiplications;
+  uint64_t treewidth_factor_allocations;
+  uint64_t treewidth_factor_discovery_ns;
+  uint64_t treewidth_numeric_join_ns;
+  uint64_t treewidth_sum_out_ns;
+  uint64_t treewidth_peak_live_bytes;
+  uint64_t treewidth_pool_retained_bytes;
+  uint64_t treewidth_largest_allocation_bytes;
 
   /* Branch residual sizing */
   uint32_t max_residual_vars;
@@ -495,6 +539,16 @@ typedef struct qsop_branch_single_mode_options {
   uint64_t cache_budget_mib;
   uint32_t cache_min_vars;
   uint32_t phase_cache_lg_cap;
+
+  /* Advanced, opt-in search-time kernelization/conditioning.  Defaults keep the historical
+   * behavior: materialized reduction off and max_cutset_depth == 0. */
+  bool materialized_reduction;
+  bool diagnose_conditioning;
+  uint32_t max_cutset_depth;
+  uint32_t lookahead_candidates;      /* 0 = 8 */
+  uint64_t max_conditioning_nodes;    /* 0 = 4096 */
+  uint32_t delegate_reprobe_interval; /* 0 = 2 */
+  uint32_t max_stagnant_levels;       /* 0 = 1 */
 
   /* Widths at or below which a connected component is handed to the treewidth / rankwidth DP
    * instead of being branched on. Zero selects the built-in caps; any other value is used

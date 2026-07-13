@@ -115,6 +115,21 @@ def test_non_branch_backend_rejects_rw_source(sop_solve, tmp):
         raise AssertionError("expected error when --branch-rw-source used with non-branch backend")
 
 
+def test_auto_large_residue_vector_uses_single_fourier(sop_solve, tmp):
+    """A scalar with huge R must not allocate the count-table result vector."""
+    qsop = tmp / "large-residue.qsop"
+    qsop.write_text("p qsop-sign 536870912 0 0\nn 28\ncst 0\n")
+    result = subprocess.run(
+        [str(sop_solve), "--backend", "branch", "--solve-mode", "auto",
+         "--format", "stats", str(qsop)],
+        capture_output=True, text=True, timeout=10.0,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"large-residue auto solve failed: {result.stderr}")
+    if "solve_mode_kernel: single-fourier" not in result.stdout:
+        raise AssertionError(f"auto did not preflight the count vector:\n{result.stdout}")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: test_branch_policy.py <sop-solve>", file=sys.stderr)
@@ -128,6 +143,8 @@ def main() -> int:
         ("branch_no_rankwidth_completes", test_branch_no_rankwidth_completes),
         ("new_policy_options_parse", test_new_policy_options_parse),
         ("non_branch_backend_rejects_rw_source", test_non_branch_backend_rejects_rw_source),
+        ("auto_large_residue_vector_uses_single_fourier",
+         test_auto_large_residue_vector_uses_single_fourier),
     ]
     failed = []
     with tempfile.TemporaryDirectory() as td:

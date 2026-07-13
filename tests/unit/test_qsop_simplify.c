@@ -334,6 +334,41 @@ int main(void) {
                      0, 2);
   }
 
+  /* The statistics-bearing API reports the same eliminations used to derive the artificial
+   * norm_h doubling count, including degree-2 merges and an exact zero witness. */
+  {
+    const uint64_t unary[] = {0, 0, 2};
+    const uint32_t eu[] = {0, 1, 0};
+    const uint32_t ev[] = {1, 2, 2};
+    qsop_instance_t *q = make_instance(8, 3, 6, 0, unary, 3, eu, ev);
+    qsop_hadamard_simplify_stats_t stats = {0};
+    const uint64_t before_norm_h = q != NULL ? q->norm_h : 0U;
+    if (q == NULL || !qsop_simplify_hadamard_with_stats(q, &stats)) {
+      fprintf(stderr, "simplify_stats: unexpected failure\n");
+      rc = 1;
+    } else {
+      const uint64_t eliminations = (uint64_t)stats.degree0_eliminations +
+                                    stats.degree1_eliminations + stats.degree2_eliminations;
+      if (stats.degree2_eliminations == 0U ||
+          before_norm_h - q->norm_h != 2U * eliminations || stats.zero_witness) {
+        fprintf(stderr, "simplify_stats: inconsistent elimination counters\n");
+        rc = 1;
+      }
+    }
+    qsop_free(q);
+  }
+  {
+    const uint64_t unary[] = {4};
+    qsop_instance_t *q = make_instance(8, 1, 2, 3, unary, 0, NULL, NULL);
+    qsop_hadamard_simplify_stats_t stats = {0};
+    if (q == NULL || !qsop_simplify_hadamard_with_stats(q, &stats) || !stats.zero_witness ||
+        q->nvars != 1U || q->constant != 0U || q->unary[0] != 4U) {
+      fprintf(stderr, "simplify_stats_zero: witness was not reported canonically\n");
+      rc = 1;
+    }
+    qsop_free(q);
+  }
+
   rc |= check_random();
 
   /* norm_h < 2 guard: an eligible variable exists but cannot be removed without underflowing

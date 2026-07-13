@@ -424,8 +424,10 @@ bool qsop_residual_create(const qsop_instance_t *qsop, qsop_residual_t **out, qs
   for (uint32_t v = 0; v < qsop->nvars; v++) {
     residual->unary[v] = qsop->unary[v];
   }
-  memcpy(residual->edge_u, qsop->edge_u, (size_t)qsop->nedges * sizeof(*residual->edge_u));
-  memcpy(residual->edge_v, qsop->edge_v, (size_t)qsop->nedges * sizeof(*residual->edge_v));
+  if (qsop->nedges != 0U) {
+    memcpy(residual->edge_u, qsop->edge_u, (size_t)qsop->nedges * sizeof(*residual->edge_u));
+    memcpy(residual->edge_v, qsop->edge_v, (size_t)qsop->nedges * sizeof(*residual->edge_v));
+  }
   memset(residual->active_var, 1, (size_t)qsop->nvars * sizeof(*residual->active_var));
   memset(residual->active_edge, 1, (size_t)qsop->nedges * sizeof(*residual->active_edge));
   if (!build_incidence(residual, error)) {

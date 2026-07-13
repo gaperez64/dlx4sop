@@ -47,6 +47,18 @@ bool qsop_write_file(FILE *file, const qsop_instance_t *qsop, qsop_error_t *erro
  * Cost is O(eliminations * (nvars + nedges)): one full rebuild per eliminated variable. That is
  * fine for circuit-derived instances (~2s on a 15k-variable qwalk import) but is worth replacing
  * with an incremental worklist if a corpus ever makes it the bottleneck. */
+typedef struct qsop_hadamard_simplify_stats {
+  uint32_t degree0_eliminations;
+  uint32_t degree1_eliminations;
+  uint32_t degree2_eliminations;
+  bool zero_witness;
+} qsop_hadamard_simplify_stats_t;
+
+/* Statistics-bearing twin used by search-time kernelization.  Passing NULL for stats is
+ * supported.  qsop_simplify_hadamard remains the source-compatible convenience wrapper. */
+bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
+                                       qsop_hadamard_simplify_stats_t *stats);
+
 bool qsop_simplify_hadamard(qsop_instance_t *inst);
 
 #endif

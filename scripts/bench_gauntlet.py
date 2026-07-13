@@ -41,6 +41,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 
@@ -123,27 +124,46 @@ class Bench:
         return {key: parsed.get(key, "") for key in SHAPE_KEYS}
 
     def solve(self, qsop: str) -> tuple[str, float, dict]:
-        command = [self.sop_solve, "--format", "stats", "--include-result", *self.solve_args, "-"]
         limiter = bench_common.address_space_limiter(self.mem_limit_bytes)
         started = time.monotonic()
-        try:
-            completed = run(command, stdin=qsop, timeout=self.timeout, preexec_fn=limiter)
-        except subprocess.TimeoutExpired:
-            return "timeout", self.timeout, {}
+        with tempfile.TemporaryDirectory(prefix="dlx4sop-gauntlet-") as tmp:
+            jsonl_path = pathlib.Path(tmp) / "run.jsonl"
+            command = [self.sop_solve, "--format", "stats", "--include-result",
+                       "--stats-jsonl", str(jsonl_path), *self.solve_args, "-"]
+            try:
+                completed = run(command, stdin=qsop, timeout=self.timeout, preexec_fn=limiter)
+            except subprocess.TimeoutExpired:
+                return "timeout", self.timeout, {}
+            final = {}
+            if jsonl_path.exists():
+                for line in jsonl_path.read_text().splitlines():
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if record.get("schema") == "sop_solve_run_stats_v1":
+                        final = record
         elapsed = time.monotonic() - started
+        partial = {key: final.get(key, "") for key in STAT_KEYS} if final else {}
         if completed.returncode < 0:
             # Killed by a signal, with no diagnostic of its own. Almost always the OOM killer or the
             # RLIMIT_AS backstop on a wide DP -- do not report it as a solver refusal.
-            return f"killed:sig{-completed.returncode}", elapsed, {}
+            return f"killed:sig{-completed.returncode}", elapsed, partial
         if completed.returncode != 0:
-            return f"refused:{refusal_reason(completed.stderr)}", elapsed, {}
+            if final:
+                status = final.get("status", "error")
+                reason = final.get("reason", "other_error")
+                return f"{status}:{reason}", elapsed, partial
+            return f"refused:{refusal_reason(completed.stderr)}", elapsed, partial
 
         values: dict[str, str] = {}
         for line in completed.stdout.splitlines():
             key, sep, value = line.partition(":")
             if sep:
                 values[key.strip()] = value.strip()
-        return "solved", elapsed, {key: values.get(key, "") for key in STAT_KEYS}
+        parsed = {key: values.get(key, "") for key in STAT_KEYS}
+        parsed.update({key: value for key, value in partial.items() if value != ""})
+        return "solved", elapsed, parsed
 
     def _case(self, path: pathlib.Path) -> dict:
         row = {field: "" for field in FIELDS}
