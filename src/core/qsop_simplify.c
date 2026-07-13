@@ -406,7 +406,11 @@ static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, b
  * very end. The amplitude doubling per elimination is compensated by norm_h -= 2, which keeps both
  * probability |amp|^2 * 2^-norm_h and the normalized amplitude amp * 2^(-norm_h/2) exact; the
  * guard norm_h >= 2 prevents underflow. */
-bool qsop_simplify_hadamard(qsop_instance_t *inst) {
+bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
+                                       qsop_hadamard_simplify_stats_t *stats) {
+  if (stats != NULL) {
+    *stats = (qsop_hadamard_simplify_stats_t){0};
+  }
   if (inst == NULL) {
     return true;
   }
@@ -455,6 +459,21 @@ bool qsop_simplify_hadamard(qsop_instance_t *inst) {
     if (!eligible_ordinary(inst, adj, removed, sign_coeff, v)) {
       continue; /* stale: already removed, or degree/unary moved since it was queued */
     }
+    if (stats != NULL) {
+      switch (adj[v].len) {
+      case 0:
+        stats->degree0_eliminations++;
+        break;
+      case 1:
+        stats->degree1_eliminations++;
+        break;
+      case 2:
+        stats->degree2_eliminations++;
+        break;
+      default:
+        break;
+      }
+    }
     ok = eliminate_variable(inst, adj, removed, sign_coeff, v, &heap, &scratch, &scratch_cap,
                             &witness_found);
   }
@@ -470,6 +489,9 @@ bool qsop_simplify_hadamard(qsop_instance_t *inst) {
     }
   }
 
+  if (ok && witness_found && stats != NULL) {
+    stats->zero_witness = true;
+  }
   if (ok && witness_found && !(live_count == 1U && inst->constant == 0U)) {
     ok = collapse_to_zero(inst, sign_coeff);
   } else if (ok) {
@@ -555,4 +577,8 @@ bool qsop_simplify_hadamard(qsop_instance_t *inst) {
   free(adj);
   free(removed);
   return ok;
+}
+
+bool qsop_simplify_hadamard(qsop_instance_t *inst) {
+  return qsop_simplify_hadamard_with_stats(inst, NULL);
 }

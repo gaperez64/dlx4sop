@@ -4,6 +4,7 @@
 Usage: python3 tests/test_branch_policy.py <sop-solve>
 """
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -115,6 +116,44 @@ def test_non_branch_backend_rejects_rw_source(sop_solve, tmp):
         raise AssertionError("expected error when --branch-rw-source used with non-branch backend")
 
 
+def test_auto_large_residue_vector_uses_single_fourier(sop_solve, tmp):
+    """A scalar with huge R must not allocate the count-table result vector."""
+    qsop = tmp / "large-residue.qsop"
+    qsop.write_text("p qsop-sign 536870912 0 0\nn 28\ncst 0\n")
+    result = subprocess.run(
+        [str(sop_solve), "--backend", "branch", "--solve-mode", "auto",
+         "--format", "stats", str(qsop)],
+        capture_output=True, text=True, timeout=10.0,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"large-residue auto solve failed: {result.stderr}")
+    if "solve_mode_kernel: single-fourier" not in result.stdout:
+        raise AssertionError(f"auto did not preflight the count vector:\n{result.stdout}")
+
+
+def test_auto_large_residue_preserves_fallback_policy(sop_solve, tmp):
+    """Memory preflight must not make every large-modulus graph delegate-only."""
+    corpus = pathlib.Path(__file__).resolve().parents[1] / "benchmarks" / "hard-qsop" / "inputs"
+    cases = {
+        "mqt2040__realamprandom_indep_qiskit_25.qsop": "no_delegate",
+        "mqt2040__qnn_indep_qiskit_25.qsop": "max_fallback_vars",
+    }
+    for filename, expected in cases.items():
+        jsonl = tmp / f"{filename}.jsonl"
+        result = subprocess.run(
+            [str(sop_solve), "--backend", "branch", "--solve-mode", "auto",
+             "--format", "stats", "--stats-jsonl", str(jsonl), str(corpus / filename)],
+            capture_output=True, text=True, timeout=10.0,
+        )
+        if result.returncode == 0:
+            raise AssertionError(f"{filename} unexpectedly solved")
+        records = [json.loads(line) for line in jsonl.read_text().splitlines()]
+        final = [record for record in records
+                 if record.get("schema") == "sop_solve_run_stats_v1"]
+        if len(final) != 1 or final[0].get("reason") != expected:
+            raise AssertionError(f"{filename}: expected {expected}, got {final}")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: test_branch_policy.py <sop-solve>", file=sys.stderr)
@@ -128,6 +167,10 @@ def main() -> int:
         ("branch_no_rankwidth_completes", test_branch_no_rankwidth_completes),
         ("new_policy_options_parse", test_new_policy_options_parse),
         ("non_branch_backend_rejects_rw_source", test_non_branch_backend_rejects_rw_source),
+        ("auto_large_residue_vector_uses_single_fourier",
+         test_auto_large_residue_vector_uses_single_fourier),
+        ("auto_large_residue_preserves_fallback_policy",
+         test_auto_large_residue_preserves_fallback_policy),
     ]
     failed = []
     with tempfile.TemporaryDirectory() as td:
