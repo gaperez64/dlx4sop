@@ -16,10 +16,11 @@ component (from first check to last):
 3. **Treewidth / rankwidth delegation** — a cost model (below) picks between the
    two DP backends when the component's treewidth or cut-rank is within the
    delegation caps.
-4. **Per-component refusal** — a non-delegatable component larger than
-   `--max-vars` is refused (rather than branched into an exponential recursion).
-5. **Branching fallback** — otherwise pick a branch variable and recurse on
-   `0`/`1`.
+4. **Small fallback or bounded cutset** — components at or below the 64-variable
+   single-Fourier fallback cap use the existing exhaustive recursion. Larger
+   components are refused unless the opt-in bounded cutset layer is enabled.
+5. **Branching fallback** — pick a branch variable and recurse on `0`/`1`, with
+   explicit node, depth, and stagnation limits in the cutset phase.
 
 **Delegation caps** (hard memory-safety limits, since each backend's DP table is `2^width`-sized, so
 a component over its cap is not handed to that backend): treewidth ≤ 14 (count-table); the
@@ -116,6 +117,48 @@ node the solver sums out every variable with `unary ∈ {0, r/2}` and active deg
 pruned. It is amplitude-exact (odd Fourier modes only), so it is confined to the
 single-Fourier path and disabled automatically for an even `--fourier-target-mode`.
 
+AUTO also preflights the count-table result vector. If that vector alone would
+exceed 2 GiB, it routes the scalar request to single-Fourier before allocating
+the vector. This is a memory check, not a delegation decision: the original
+delegate-only width policy is retained for width-eligible graphs, while larger
+QNN-style graphs keep the normal residual fallback and its stable refusal.
+
+### Opt-in conditioning and materialized reduction
+
+The advanced options below are deliberately disabled by default:
+
+```text
+--branch-single-materialized-reduction
+--branch-single-diagnose-conditioning
+--branch-single-cutset-depth N
+--branch-single-lookahead-candidates N          (pilot default 8)
+--branch-single-max-conditioning-nodes N        (pilot default 4096)
+--branch-single-delegate-reprobe-interval N     (pilot default 2)
+--branch-single-max-stagnant-levels N           (pilot default 1)
+```
+
+Materialized reduction rebuilds the active residual with its constant and an
+artificial `norm_h = 2 * active_vars`, then calls the root Hadamard simplifier.
+The artificial normalization is used only to count eliminated Hadamards; each
+child's raw amplitude is multiplied by the corresponding power of two. It runs
+at the root and after a dirty branch/pin, only for odd Fourier target modes.
+Large residuals are never inserted into the amplitude cache; caching resumes
+once a component reaches the ordinary 64-variable fallback.
+
+The cutset layer makes an O(n+m) deterministic shortlist, performs exact
+two-sided materialized lookahead, retains the two already-reduced children of
+the best candidate, and scores the worst child lexicographically. Delegate
+probes are repeated after a split, 10% shrinkage, the configured interval, or
+when a component reaches 128/64 variables; skipped and performed probes are
+counted separately. Exhausting the depth, node, or stagnation budget produces
+`refused:cutset_budget`, never an unbounded search.
+
+The July 2026 hard-corpus ablation left both features off by default. Depth-4
+cutset conditioning solved only one of 64 policy refusals, below the five-case
+enablement gate, and materialized conditioning introduced one 120-second
+timeout. Materialized rebuilding consumed far below 20% of the newly solved
+case, so rollback edge rewiring was not implemented.
+
 Rankwidth backend: `--rankwidth-generate`, `--rankwidth-mode`,
 `--rankwidth-memory-budget-mib`, `--rankwidth-memory-policy`,
 `--rankwidth-join-strategy`, `--rankwidth-single-kernel`,
@@ -157,3 +200,60 @@ accuracy). `--trace csv` writes a `phase,depth,items,elapsed_ns` row per phase
 to stderr (e.g. `branch.width_probe`, `branch.treewidth_delegate`,
 `rankwidth.width_probe`) to localize time. Per-decision `veto_reason` strings
 are only emitted via `--stats-jsonl`.
+
+Every solve with `--stats-jsonl` ends with exactly one
+`sop_solve_run_stats_v1` record on success or failure. Its stable `status` and
+`reason` fields distinguish `max_fallback_vars`, `no_delegate`,
+`cutset_budget`, search/depth budgets, and generic `other_error`; it also
+preserves failure residual sizes and all partial counters. Human-readable
+diagnostics remain supplemental and are not parsed to classify policy exits.
+`--branch-single-diagnose-conditioning` additionally emits
+`sop_solve_conditioning_v1` records for both values of every shortlisted
+candidate without recursively solving them.
+
+## f64 single-Fourier treewidth storage
+
+The f64 path stores each factor in the elimination bucket of its largest scope
+variable. Reverse-elimination relabeling guarantees that the next eliminated
+variable is that largest ID, so a step visits only its bucket rather than
+scanning the global factor list. Factors are still combined by the existing
+pairwise numeric kernel and in insertion order, preserving floating-point
+behavior.
+
+Summing out the last scope bit is in place: the upper half is accumulated into
+the lower half and the factor shrinks logically. `allocation_arity` retains the
+original buffer size for pooling. The pool retains at most 512 MiB in total and
+rejects any single buffer larger than 256 MiB; active and retained bytes are
+transferred rather than double-counted. JSONL exposes bucket visits,
+multiplications, allocations, discovery/join/sum-out time, peak live bytes,
+peak retained bytes, and largest allocation.
+
+The qwalk-10/11 factor-scope scan fell from 518 million/2.11 billion tests to
+zero. qwalk-12/13 still exceed 120 seconds; a focused trace attributes the
+remaining time to min-fill order generation rather than factor discovery or
+numeric joins.
+
+## Reproducing the hard-instance measurements
+
+The checked-in corpus and manifest live in `benchmarks/hard-qsop`. Recreate it
+through the same QPY-to-QASM-to-QSOP route as the gauntlet adapter:
+
+```sh
+python3 scripts/freeze_gauntlet_qsop.py \
+  benchmarks/hard-qsop/selection.tsv \
+  --gauntlet-root ../qccq-gauntlet \
+  --out benchmarks/hard-qsop --build build-rel --timeout 120
+```
+
+Run solver-only comparisons with fixed inputs, a 120-second timeout, and the
+12 GiB address-space limit:
+
+```sh
+python3 scripts/bench_frozen_qsop.py benchmarks/hard-qsop/inputs \
+  --build build-rel --timeout 120 --mem-max-gib 12 \
+  -o hard-instances.csv
+```
+
+The archived commands, environment, acceptance-gate calculations, and CSV
+index are in
+`benchmarks/results/hard-instances-2026-07-13/REPORT.md`.

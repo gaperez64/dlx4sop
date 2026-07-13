@@ -49,8 +49,8 @@ def read_selection(path: pathlib.Path) -> list[dict[str, str]]:
         raise ValueError("selection must contain category, dataset, and instance columns")
     expanded: dict[tuple[str, str], dict[str, str]] = {}
     for row in rows:
-        start = row.get("start", "").strip()
-        end = row.get("end", "").strip()
+        start = (row.get("start") or "").strip()
+        end = (row.get("end") or "").strip()
         sizes: list[int | None]
         if start or end:
             if not start or not end or "{size}" not in row["instance"]:

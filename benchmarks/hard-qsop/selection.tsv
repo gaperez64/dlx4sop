@@ -3,9 +3,9 @@ refused:max_fallback_vars	mqt2040	qnn_indep_qiskit_{size}	25	40
 refused:max_fallback_vars	mqt2040	realamprandom_indep_qiskit_{size}	26	40
 refused:max_fallback_vars	mqt2040	su2random_indep_qiskit_{size}	26	40
 refused:max_fallback_vars	mqt2040	twolocalrandom_indep_qiskit_{size}	26	40
-refused:no_delegate	mqt2040	realamprandom_indep_qiskit_25		
-refused:no_delegate	mqt2040	su2random_indep_qiskit_25		
-refused:no_delegate	mqt2040	twolocalrandom_indep_qiskit_25		
+refused:no_delegate	mqt2040	realamprandom_indep_qiskit_25
+refused:no_delegate	mqt2040	su2random_indep_qiskit_25
+refused:no_delegate	mqt2040	twolocalrandom_indep_qiskit_25
 initial_oom	mqt2040	qft_indep_qiskit_{size}	27	30
 initial_oom	mqt2040	qftentangled_indep_qiskit_{size}	27	30
 initial_oom	mqt2040	qpeexact_indep_qiskit_{size}	28	31
@@ -17,27 +17,27 @@ qnn_boundary	mqt2040	qnn_indep_qiskit_{size}	23	26
 random_boundary	mqt2040	realamprandom_indep_qiskit_{size}	20	26
 random_boundary	mqt2040	su2random_indep_qiskit_{size}	20	26
 random_boundary	mqt2040	twolocalrandom_indep_qiskit_{size}	20	26
-solved_control	mqt2040	ae_indep_qiskit_20		
-solved_control	mqt2040	ae_indep_qiskit_25		
-solved_control	mqt2040	ae_indep_qiskit_30		
-solved_control	mqt2040	ae_indep_qiskit_35		
-solved_control	mqt2040	ae_indep_qiskit_40		
-solved_control	mqt2040	dj_indep_qiskit_20		
-solved_control	mqt2040	dj_indep_qiskit_30		
-solved_control	mqt2040	dj_indep_qiskit_40		
-solved_control	mqt2040	graphstate_indep_qiskit_20		
-solved_control	mqt2040	graphstate_indep_qiskit_30		
-solved_control	mqt2040	graphstate_indep_qiskit_40		
-solved_control	mqt2040	qpeexact_indep_qiskit_20		
-solved_control	mqt2040	qpeexact_indep_qiskit_24		
-solved_control	mqt2040	qpeexact_indep_qiskit_27		
-solved_control	mqt2040	qpeinexact_indep_qiskit_20		
-solved_control	mqt2040	qpeinexact_indep_qiskit_24		
-solved_control	mqt2040	qpeinexact_indep_qiskit_27		
-solved_control	mqt2040	qwalk-v-chain_indep_qiskit_21		
-solved_control	mqt2040	qwalk-v-chain_indep_qiskit_25		
-solved_control	mqt2040	qwalk-v-chain_indep_qiskit_31		
-solved_control	mqt2040	wstate_indep_qiskit_20		
-solved_control	mqt2040	wstate_indep_qiskit_30		
-solved_control	mqt2040	wstate_indep_qiskit_40		
-solved_control	mqt2040	qft_indep_qiskit_20		
+solved_control	mqt2040	ae_indep_qiskit_20
+solved_control	mqt2040	ae_indep_qiskit_25
+solved_control	mqt2040	ae_indep_qiskit_30
+solved_control	mqt2040	ae_indep_qiskit_35
+solved_control	mqt2040	ae_indep_qiskit_40
+solved_control	mqt2040	dj_indep_qiskit_20
+solved_control	mqt2040	dj_indep_qiskit_30
+solved_control	mqt2040	dj_indep_qiskit_40
+solved_control	mqt2040	graphstate_indep_qiskit_20
+solved_control	mqt2040	graphstate_indep_qiskit_30
+solved_control	mqt2040	graphstate_indep_qiskit_40
+solved_control	mqt2040	qpeexact_indep_qiskit_20
+solved_control	mqt2040	qpeexact_indep_qiskit_24
+solved_control	mqt2040	qpeexact_indep_qiskit_27
+solved_control	mqt2040	qpeinexact_indep_qiskit_20
+solved_control	mqt2040	qpeinexact_indep_qiskit_24
+solved_control	mqt2040	qpeinexact_indep_qiskit_27
+solved_control	mqt2040	qwalk-v-chain_indep_qiskit_21
+solved_control	mqt2040	qwalk-v-chain_indep_qiskit_25
+solved_control	mqt2040	qwalk-v-chain_indep_qiskit_31
+solved_control	mqt2040	wstate_indep_qiskit_20
+solved_control	mqt2040	wstate_indep_qiskit_30
+solved_control	mqt2040	wstate_indep_qiskit_40
+solved_control	mqt2040	qft_indep_qiskit_20
