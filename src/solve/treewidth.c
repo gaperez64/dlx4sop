@@ -6,6 +6,7 @@
 #include "trace.h"
 #include "../core/qsop_internal.h"
 
+#include <assert.h>
 #include <float.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -60,14 +61,19 @@ typedef struct tw_factor_complex {
  * projection-map code used, so the maps' 16 bytes per output entry come back as headroom. */
 #define TW_POOL_BUCKETS 64U
 #define TW_POOL_DEPTH 2U
+#define TW_POOL_BUDGET_BYTES (UINT64_C(512) * UINT64_C(1024) * UINT64_C(1024))
 
 typedef struct tw_pool {
   double *slots[TW_POOL_BUCKETS][TW_POOL_DEPTH];
   uint32_t counts[TW_POOL_BUCKETS];
+  uint64_t active_bytes;
+  uint64_t retained_bytes;
+  qsop_solve_stats_t *stats;
 } tw_pool_t;
 
 typedef struct tw_factor_complex64 {
   uint32_t arity;
+  uint32_t allocation_arity;
   uint32_t *vars;
   size_t assignments;
   double *re;
@@ -555,7 +561,7 @@ static bool factor_multiply_fourier(const tw_factor_t *left, const tw_factor_t *
     return false;
   }
 
-  const uint64_t start = qsop_trace_begin(ctx->trace);
+  const uint64_t start = qsop_trace_now_ns();
   bool ok = factor_alloc_scope(vars, arity, ctx->r, out, error);
   free(vars);
   if (!ok) {
@@ -1489,18 +1495,37 @@ static bool multiply_remaining_factors_complex(tw_factor_complex_list_t *list,
 }
 
 static double *tw_pool_take(tw_pool_t *pool, uint32_t arity, size_t assignments) {
+  const uint64_t bytes = qsop_saturating_mul_u64((uint64_t)assignments, sizeof(double));
   if (pool != NULL && arity < TW_POOL_BUCKETS && pool->counts[arity] != 0) {
-    return pool->slots[arity][--pool->counts[arity]];
+    double *buffer = pool->slots[arity][--pool->counts[arity]];
+    pool->retained_bytes -= bytes;
+    qsop_add_saturating_u64(&pool->active_bytes, bytes);
+    return buffer;
   }
-  return malloc(assignments * sizeof(double));
+  double *buffer = malloc(assignments * sizeof(double));
+  if (buffer != NULL && pool != NULL) {
+    qsop_add_saturating_u64(&pool->active_bytes, bytes);
+  }
+  return buffer;
 }
 
 static void tw_pool_give(tw_pool_t *pool, uint32_t arity, double *buffer) {
   if (buffer == NULL) {
     return;
   }
-  if (pool != NULL && arity < TW_POOL_BUCKETS && pool->counts[arity] < TW_POOL_DEPTH) {
+  const uint64_t bytes = arity < 64U ? ((UINT64_C(1) << arity) * sizeof(double)) : UINT64_MAX;
+  if (pool != NULL) {
+    assert(pool->active_bytes >= bytes);
+    pool->active_bytes -= bytes;
+  }
+  if (pool != NULL && arity < TW_POOL_BUCKETS && pool->counts[arity] < TW_POOL_DEPTH &&
+      bytes <= TW_POOL_BUDGET_BYTES / 2U &&
+      pool->retained_bytes <= TW_POOL_BUDGET_BYTES - bytes) {
     pool->slots[arity][pool->counts[arity]++] = buffer;
+    qsop_add_saturating_u64(&pool->retained_bytes, bytes);
+    if (pool->stats != NULL && pool->retained_bytes > pool->stats->treewidth_pool_retained_bytes) {
+      pool->stats->treewidth_pool_retained_bytes = pool->retained_bytes;
+    }
     return;
   }
   free(buffer);
@@ -1510,8 +1535,11 @@ static void tw_pool_drain(tw_pool_t *pool) {
   for (uint32_t bucket = 0; bucket < TW_POOL_BUCKETS; bucket++) {
     while (pool->counts[bucket] != 0) {
       free(pool->slots[bucket][--pool->counts[bucket]]);
+      pool->retained_bytes -= (UINT64_C(1) << bucket) * sizeof(double);
     }
   }
+  assert(pool->active_bytes == 0U);
+  assert(pool->retained_bytes == 0U);
 }
 
 static void factor_complex64_free(tw_factor_complex64_t *factor) {
@@ -1519,8 +1547,8 @@ static void factor_complex64_free(tw_factor_complex64_t *factor) {
     return;
   }
   free(factor->vars);
-  tw_pool_give(factor->pool, factor->arity, factor->re);
-  tw_pool_give(factor->pool, factor->arity, factor->im);
+  tw_pool_give(factor->pool, factor->allocation_arity, factor->re);
+  tw_pool_give(factor->pool, factor->allocation_arity, factor->im);
   *factor = (tw_factor_complex64_t){0};
 }
 
@@ -1569,6 +1597,14 @@ static bool factor_complex64_alloc_scope(tw_pool_t *pool, const uint32_t *vars, 
     return false;
   }
 
+  const uint64_t buffer_bytes = qsop_saturating_mul_u64((uint64_t)assignments, sizeof(double));
+  if (pool != NULL && pool->stats != NULL) {
+    pool->stats->treewidth_factor_allocations++;
+    if (buffer_bytes > pool->stats->treewidth_largest_allocation_bytes) {
+      pool->stats->treewidth_largest_allocation_bytes = buffer_bytes;
+    }
+  }
+
   uint32_t *scope = malloc((arity == 0 ? 1U : (size_t)arity) * sizeof(*scope));
   double *re = tw_pool_take(pool, arity, assignments);
   double *im = tw_pool_take(pool, arity, assignments);
@@ -1585,12 +1621,19 @@ static bool factor_complex64_alloc_scope(tw_pool_t *pool, const uint32_t *vars, 
 
   *out = (tw_factor_complex64_t){
       .arity = arity,
+      .allocation_arity = arity,
       .vars = scope,
       .assignments = assignments,
       .re = re,
       .im = im,
       .pool = pool,
   };
+  if (pool != NULL && pool->stats != NULL) {
+    const uint64_t live = pool->active_bytes + pool->retained_bytes;
+    if (live > pool->stats->treewidth_peak_live_bytes) {
+      pool->stats->treewidth_peak_live_bytes = live;
+    }
+  }
   return true;
 }
 
@@ -1793,7 +1836,7 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
     return false;
   }
 
-  const uint64_t start = qsop_trace_begin(ctx->trace);
+  const uint64_t start = qsop_trace_now_ns();
   bool ok = factor_complex64_alloc_scope(&ctx->pool, vars, arity, out, error);
   free(vars);
   if (!ok) {
@@ -1811,73 +1854,53 @@ static bool factor_multiply_complex64(const tw_factor_complex64_t *left,
   free(left_positions);
   free(right_positions);
   if (ctx->stats != NULL) {
+    ctx->stats->treewidth_factor_multiplications++;
+    qsop_add_saturating_u64(&ctx->stats->treewidth_numeric_join_ns,
+                            qsop_trace_elapsed_ns(start));
     qsop_add_saturating_u64(&ctx->stats->simd_vectorized_ops, vectorized);
     qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, scalar);
     qsop_add_saturating_u64(&ctx->stats->join_pairs, (uint64_t)out->assignments);
   }
   note_complex64_factor_table(ctx, out);
-  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_multiply_f64", arity, out->assignments,
-                          start);
+  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_multiply_f64", arity,
+                          out->assignments, start);
   return true;
 }
 
-static bool factor_sum_out_complex64(const tw_factor_complex64_t *input, uint32_t var,
-                                     tw_complex64_context_t *ctx, tw_factor_complex64_t *out,
-                                     qsop_error_t *error) {
-  const uint32_t pos = scope_var_pos(input->vars, input->arity, var);
+static bool factor_sum_out_complex64(tw_factor_complex64_t *factor, uint32_t var,
+                                     tw_complex64_context_t *ctx, qsop_error_t *error) {
+  const uint32_t pos = scope_var_pos(factor->vars, factor->arity, var);
   if (pos == UINT32_MAX) {
     qsop_set_error(error, "internal error: treewidth factor does not contain eliminated variable");
     return false;
   }
-
-  uint32_t *vars = malloc((input->arity == 0 ? 1U : (size_t)input->arity) * sizeof(*vars));
-  if (vars == NULL) {
-    qsop_set_error(error, "out of memory while projecting treewidth double single-mode factor");
-    return false;
-  }
-  uint32_t arity = 0;
-  for (uint32_t i = 0; i < input->arity; i++) {
-    if (i != pos) {
-      vars[arity++] = input->vars[i];
-    }
-  }
-
-  const uint64_t start = qsop_trace_begin(ctx->trace);
-  bool ok = factor_complex64_alloc_scope(&ctx->pool, vars, arity, out, error);
-  free(vars);
-  if (!ok) {
+  if (pos + 1U != factor->arity || factor->assignments < 2U) {
+    qsop_set_error(error,
+                   "internal error: treewidth bucket eliminated variable is not the last scope "
+                   "bit");
     return false;
   }
 
-  const size_t stride = (size_t)1U << pos;
-  const size_t block = stride << 1U;
-  for (size_t base = 0; base < input->assignments; base += block) {
-    const size_t out_base = base >> 1U;
-    if (ctx->simd != NULL && ctx->simd->complex_sum_out_pairs_f64 != NULL &&
-        stride >= ctx->simd->min_lanes) {
-      ctx->simd->complex_sum_out_pairs_f64(out->re + out_base, out->im + out_base, input->re + base,
-                                           input->im + base, stride);
-      if (ctx->stats != NULL && strcmp(qsop_simd_kernel_name(ctx->simd), "scalar") != 0) {
-        qsop_add_saturating_u64(&ctx->stats->simd_vectorized_ops, (uint64_t)stride);
-      }
-    } else {
-      for (size_t off = 0; off < stride; off++) {
-        const size_t lower = base + off;
-        const size_t upper = lower + stride;
-        const size_t projected = out_base + off;
-        out->re[projected] = input->re[lower] + input->re[upper];
-        out->im[projected] = input->im[lower] + input->im[upper];
-      }
-      if (ctx->stats != NULL) {
-        qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)stride);
-      }
-    }
-    qsop_add_saturating_u64(&ctx->complex_ops, (uint64_t)(2U * stride));
+  const uint64_t start = qsop_trace_now_ns();
+  const size_t half = factor->assignments / 2U;
+  for (size_t i = 0; i < half; i++) {
+    factor->re[i] += factor->re[i + half];
+    factor->im[i] += factor->im[i + half];
   }
+  qsop_add_saturating_u64(&ctx->complex_ops, (uint64_t)(2U * half));
+  if (ctx->stats != NULL) {
+    qsop_add_saturating_u64(&ctx->stats->simd_scalar_fallback_ops, (uint64_t)half);
+  }
+  factor->arity--;
+  factor->assignments = half;
 
-  note_complex64_factor_table(ctx, out);
-  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_sum_out_f64", arity, out->assignments,
-                          start);
+  note_complex64_factor_table(ctx, factor);
+  if (ctx->stats != NULL) {
+    qsop_add_saturating_u64(&ctx->stats->treewidth_sum_out_ns,
+                            qsop_trace_elapsed_ns(start));
+  }
+  qsop_trace_emit_elapsed(ctx->trace, "treewidth.single_mode_sum_out_f64", factor->arity,
+                          factor->assignments, start);
   return true;
 }
 
@@ -1951,10 +1974,11 @@ static void factor_complex64_list_free(tw_factor_complex64_list_t *list) {
 
 static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t var,
                                           const uint32_t *relabel, uint32_t target_mode,
-                                          tw_factor_complex64_list_t *list, qsop_error_t *error) {
+                                          tw_pool_t *pool, tw_factor_complex64_list_t *list,
+                                          qsop_error_t *error) {
   tw_factor_complex64_t factor = {0};
   const uint32_t scope_var = relabel[var];
-  if (!factor_complex64_alloc_scope(NULL, &scope_var, 1, &factor, error)) {
+  if (!factor_complex64_alloc_scope(pool, &scope_var, 1, &factor, error)) {
     return false;
   }
   factor.re[0] = 1.0;
@@ -1970,7 +1994,8 @@ static bool append_unary_factor_complex64(const qsop_instance_t *qsop, uint32_t 
 
 static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t edge,
                                          const uint32_t *relabel, uint32_t target_mode,
-                                         tw_factor_complex64_list_t *list, qsop_error_t *error) {
+                                         tw_pool_t *pool, tw_factor_complex64_list_t *list,
+                                         qsop_error_t *error) {
   uint32_t vars[2] = {relabel[qsop->edge_u[edge]], relabel[qsop->edge_v[edge]]};
   if (vars[0] > vars[1]) {
     const uint32_t tmp = vars[0];
@@ -1979,7 +2004,7 @@ static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t e
   }
 
   tw_factor_complex64_t factor = {0};
-  if (!factor_complex64_alloc_scope(NULL, vars, 2, &factor, error)) {
+  if (!factor_complex64_alloc_scope(pool, vars, 2, &factor, error)) {
     return false;
   }
   const double sign_re = (target_mode % 2U == 0U) ? 1.0 : -1.0;
@@ -2004,70 +2029,129 @@ static bool append_edge_factor_complex64(const qsop_instance_t *qsop, uint32_t e
  * numbering, and it was deciding whether the SIMD kernel ran at all: measured 4-15% of complex ops
  * vectorized before this. */
 static bool build_initial_factors_complex64(const qsop_instance_t *qsop, const uint32_t *relabel,
-                                            uint32_t target_mode, tw_factor_complex64_list_t *list,
+                                            uint32_t target_mode, tw_pool_t *pool,
+                                            tw_factor_complex64_list_t *list,
                                             qsop_error_t *error) {
   for (uint32_t v = 0; v < qsop->nvars; v++) {
-    if (!append_unary_factor_complex64(qsop, v, relabel, target_mode, list, error)) {
+    if (!append_unary_factor_complex64(qsop, v, relabel, target_mode, pool, list, error)) {
       return false;
     }
   }
   for (uint32_t e = 0; e < qsop->nedges; e++) {
-    if (!append_edge_factor_complex64(qsop, e, relabel, target_mode, list, error)) {
+    if (!append_edge_factor_complex64(qsop, e, relabel, target_mode, pool, list, error)) {
       return false;
     }
   }
   return true;
 }
 
-static bool eliminate_variable_complex64(tw_factor_complex64_list_t *list, uint32_t var,
-                                         tw_complex64_context_t *ctx, qsop_error_t *error) {
+static void factor_complex64_bucket_array_free(tw_factor_complex64_list_t *buckets,
+                                               uint32_t nbuckets) {
+  if (buckets == NULL) {
+    return;
+  }
+  for (uint32_t v = 0; v < nbuckets; v++) {
+    factor_complex64_list_free(&buckets[v]);
+  }
+  free(buckets);
+}
+
+static bool schedule_initial_factors_complex64(tw_factor_complex64_list_t *initial,
+                                               tw_factor_complex64_list_t *buckets,
+                                               uint32_t nbuckets, qsop_error_t *error) {
+  /* Preserve the flat implementation's multiplication order: original factors are consumed in
+   * insertion order and messages produced by earlier eliminations are appended after them.  The
+   * order is numerically associative but materially changes intermediate table widths. */
+  for (size_t i = 0; i < initial->len; i++) {
+    tw_factor_complex64_t factor = initial->items[i];
+    initial->items[i] = (tw_factor_complex64_t){0};
+    if (factor.arity == 0U) {
+      factor_complex64_free(&factor);
+      qsop_set_error(error, "internal error: scalar treewidth factor in initial bucket schedule");
+      return false;
+    }
+    const uint32_t bucket = factor.vars[factor.arity - 1U];
+    if (bucket >= nbuckets || !factor_complex64_list_push_take(&buckets[bucket], &factor, error)) {
+      factor_complex64_free(&factor);
+      if (bucket >= nbuckets) {
+        qsop_set_error(error, "internal error: treewidth factor bucket is out of range");
+      }
+      return false;
+    }
+  }
+  initial->len = 0U;
+  return true;
+}
+
+static bool eliminate_variable_bucket_complex64(tw_factor_complex64_list_t *buckets,
+                                                tw_factor_complex64_list_t *scalars,
+                                                uint32_t var, tw_complex64_context_t *ctx,
+                                                qsop_error_t *error) {
+  tw_factor_complex64_list_t *bucket = &buckets[var];
+  const uint64_t elimination_start = ctx->stats != NULL ? qsop_trace_now_ns() : 0U;
+  const uint64_t joins_before =
+      ctx->stats != NULL ? ctx->stats->treewidth_numeric_join_ns : 0U;
+  const uint64_t sum_out_before = ctx->stats != NULL ? ctx->stats->treewidth_sum_out_ns : 0U;
+  if (ctx->stats != NULL) {
+    qsop_add_saturating_u64(&ctx->stats->treewidth_factor_bucket_visits, (uint64_t)bucket->len);
+  }
   tw_factor_complex64_t combined = {0};
-  bool collected = false;
-  for (size_t i = 0; i < list->len;) {
-    if (!scope_contains_var(list->items[i].vars, list->items[i].arity, var)) {
-      i++;
-      continue;
-    }
-
-    if (!collected) {
-      combined = factor_complex64_list_take_at(list, i);
-      collected = true;
-      continue;
-    }
-
+  if (bucket->len != 0U) {
+    combined = bucket->items[0];
+    bucket->items[0] = (tw_factor_complex64_t){0};
+  }
+  for (size_t i = 1; i < bucket->len; i++) {
+    tw_factor_complex64_t factor = bucket->items[i];
+    bucket->items[i] = (tw_factor_complex64_t){0};
     tw_factor_complex64_t next = {0};
-    if (!factor_multiply_complex64(&combined, &list->items[i], ctx, &next, error)) {
+    if (!factor_multiply_complex64(&combined, &factor, ctx, &next, error)) {
       factor_complex64_free(&combined);
+      factor_complex64_free(&factor);
       return false;
     }
     factor_complex64_free(&combined);
+    factor_complex64_free(&factor);
     combined = next;
     /* Renormalize every pairwise product, not just the finished message: a variable can be in
      * arbitrarily many factors (a 2000-leaf star leaves 2000 messages on its centre), and each
      * factor being under 2 only bounds their product by 2^k. */
     factor_complex64_renormalize(&combined, ctx);
-    factor_complex64_list_remove_at(list, i);
-    collected = true;
   }
+  bucket->len = 0U;
 
-  if (!collected) {
+  if (combined.re == NULL) {
     qsop_set_error(error, "internal error: treewidth elimination found no factor for variable");
     return false;
   }
+#ifndef NDEBUG
+  assert(combined.arity != 0U);
+  assert(combined.vars[combined.arity - 1U] == var);
+#endif
 
-  tw_factor_complex64_t reduced = {0};
-  if (!factor_sum_out_complex64(&combined, var, ctx, &reduced, error)) {
+  if (!factor_sum_out_complex64(&combined, var, ctx, error)) {
     factor_complex64_free(&combined);
     return false;
   }
-  factor_complex64_free(&combined);
   /* Every message leaves this function with a peak in [1,2), so the product formed above can only
    * reach 2^(bag size) before the next renormalization -- comfortably inside double's range
    * whatever the instance size. */
-  factor_complex64_renormalize(&reduced, ctx);
-  if (!factor_complex64_list_push_take(list, &reduced, error)) {
-    factor_complex64_free(&reduced);
+  factor_complex64_renormalize(&combined, ctx);
+  tw_factor_complex64_list_t *destination = scalars;
+  if (combined.arity != 0U) {
+    const uint32_t next_bucket = combined.vars[combined.arity - 1U];
+    assert(next_bucket < var);
+    destination = &buckets[next_bucket];
+  }
+  if (!factor_complex64_list_push_take(destination, &combined, error)) {
+    factor_complex64_free(&combined);
     return false;
+  }
+  if (ctx->stats != NULL) {
+    const uint64_t total = qsop_trace_elapsed_ns(elimination_start);
+    const uint64_t joins = ctx->stats->treewidth_numeric_join_ns - joins_before;
+    const uint64_t sum_out = ctx->stats->treewidth_sum_out_ns - sum_out_before;
+    qsop_add_saturating_u64(&ctx->stats->treewidth_factor_discovery_ns,
+                            total > joins + sum_out ? total - joins - sum_out : 0U);
   }
   return true;
 }
@@ -2522,6 +2606,7 @@ static bool solve_treewidth_single_mode_once_f64(
       .simd = simd,
       .stats = stats,
       .trace = trace,
+      .pool = {.stats = stats},
   };
 
   if (stats != NULL) {
@@ -2542,34 +2627,51 @@ static bool solve_treewidth_single_mode_once_f64(
     relabel[order[t]] = qsop->nvars - 1U - t;
   }
 
-  tw_factor_complex64_list_t factors = {0};
-  const uint64_t factors_start = qsop_trace_begin(trace);
-  if (!build_initial_factors_complex64(qsop, relabel, target_mode, &factors, error)) {
+  tw_factor_complex64_list_t initial = {0};
+  tw_factor_complex64_list_t scalars = {0};
+  tw_factor_complex64_list_t *buckets =
+      calloc(qsop->nvars == 0U ? 1U : qsop->nvars, sizeof(*buckets));
+  if (buckets == NULL) {
     free(relabel);
-    factor_complex64_list_free(&factors);
+    qsop_set_error(error, "out of memory while allocating treewidth elimination buckets");
+    return false;
+  }
+  const uint64_t factors_start = qsop_trace_begin(trace);
+  if (!build_initial_factors_complex64(qsop, relabel, target_mode, &ctx.pool, &initial, error) ||
+      !schedule_initial_factors_complex64(&initial, buckets, qsop->nvars, error)) {
+    free(relabel);
+    factor_complex64_list_free(&initial);
+    factor_complex64_bucket_array_free(buckets, qsop->nvars);
+    factor_complex64_list_free(&scalars);
     tw_pool_drain(&ctx.pool);
     return false;
   }
   free(relabel);
-  qsop_trace_emit_elapsed(trace, "treewidth.single_mode_initial_factors_f64", 0, factors.len,
+  factor_complex64_list_free(&initial);
+  qsop_trace_emit_elapsed(trace, "treewidth.single_mode_initial_factors_f64", 0,
+                          (uint64_t)qsop->nvars + qsop->nedges,
                           factors_start);
 
   for (uint32_t pos = 0; pos < qsop->nvars; pos++) {
-    if (!eliminate_variable_complex64(&factors, qsop->nvars - 1U - pos, &ctx, error)) {
-      factor_complex64_list_free(&factors);
+    if (!eliminate_variable_bucket_complex64(buckets, &scalars, qsop->nvars - 1U - pos, &ctx,
+                                             error)) {
+      factor_complex64_bucket_array_free(buckets, qsop->nvars);
+      factor_complex64_list_free(&scalars);
       tw_pool_drain(&ctx.pool);
       return false;
     }
   }
 
   tw_factor_complex64_t final = {0};
-  if (!multiply_remaining_factors_complex64(&factors, &ctx, &final, error)) {
-    factor_complex64_list_free(&factors);
+  if (!multiply_remaining_factors_complex64(&scalars, &ctx, &final, error)) {
+    factor_complex64_bucket_array_free(buckets, qsop->nvars);
+    factor_complex64_list_free(&scalars);
     tw_pool_drain(&ctx.pool);
     return false;
   }
   if (final.arity != 0) {
-    factor_complex64_list_free(&factors);
+    factor_complex64_bucket_array_free(buckets, qsop->nvars);
+    factor_complex64_list_free(&scalars);
     factor_complex64_free(&final);
     tw_pool_drain(&ctx.pool);
     qsop_set_error(error,
@@ -2584,7 +2686,8 @@ static bool solve_treewidth_single_mode_once_f64(
   const double mantissa_im = final.re[0] * c_im + final.im[0] * c_re;
   const int scale_exp2 = ctx.scale_exp2;
 
-  factor_complex64_list_free(&factors);
+  factor_complex64_bucket_array_free(buckets, qsop->nvars);
+  factor_complex64_list_free(&scalars);
   factor_complex64_free(&final);
   tw_pool_drain(&ctx.pool);
 

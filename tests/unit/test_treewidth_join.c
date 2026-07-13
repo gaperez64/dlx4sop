@@ -159,6 +159,22 @@ int main(void) {
     if (stats.max_table_entries > widest_bag) {
       widest_bag = stats.max_table_entries;
     }
+    if (stats.treewidth_factor_scope_tests != 0U ||
+        stats.treewidth_factor_bucket_visits < q->nvars ||
+        stats.treewidth_factor_allocations == 0U ||
+        stats.treewidth_pool_retained_bytes > UINT64_C(512) * UINT64_C(1024) * UINT64_C(1024) ||
+        stats.treewidth_peak_live_bytes < 2U * stats.treewidth_largest_allocation_bytes) {
+      fprintf(stderr,
+              "trial %" PRIu32 ": invalid bucket/accounting stats scope=%" PRIu64
+              " visits=%" PRIu64 " allocs=%" PRIu64 " peak=%" PRIu64 " retained=%" PRIu64
+              " largest=%" PRIu64 "\n",
+              trial, stats.treewidth_factor_scope_tests, stats.treewidth_factor_bucket_visits,
+              stats.treewidth_factor_allocations, stats.treewidth_peak_live_bytes,
+              stats.treewidth_pool_retained_bytes,
+              stats.treewidth_largest_allocation_bytes);
+      qsop_free(q);
+      return 1;
+    }
 
     const struct {
       const char *label;
