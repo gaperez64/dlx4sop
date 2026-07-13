@@ -166,6 +166,28 @@ def test_jsonl_policy_refusal_summary(exe: pathlib.Path, tmpdir: pathlib.Path) -
     assert summary["active_vars_at_failure"] == 4, summary
 
 
+def test_jsonl_max_vars_refusal_summary(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
+    """A max-vars refusal keeps its stable pre-JSONL outcome classification."""
+    jsonl_path = str(tmpdir / "max-vars.jsonl")
+    lines = ["p qsop-sign 8 4 6", "n 0", "cst 0"]
+    for u in range(4):
+        for v in range(u + 1, 4):
+            lines.append(f"e {u} {v}")
+    result = run_branch_jsonl(
+        exe, "\n".join(lines) + "\n", jsonl_path,
+        ["--solve-mode", "single-fourier", "--max-vars", "2"],
+    )
+    assert result.returncode != 0, "forced max-vars refusal unexpectedly solved"
+    records = [json.loads(line) for line in pathlib.Path(jsonl_path).read_text().splitlines()
+               if line.strip()]
+    summaries = [r for r in records if r.get("schema") == "sop_solve_run_stats_v1"]
+    assert len(summaries) == 1, records
+    summary = summaries[0]
+    assert summary["status"] == "refused", summary
+    assert summary["reason"] == "max_vars", summary
+    assert "pass a larger --max-vars" in summary["diagnostic"], summary
+
+
 def test_conditioning_diagnostic_and_cutset(exe: pathlib.Path, tmpdir: pathlib.Path) -> None:
     """The deterministic shortlist starts at var 0, and depth-one cutset consumes two children."""
     lines = ["p qsop-sign 8 4 6", "n 8", "cst 1"]
@@ -298,6 +320,7 @@ def main(argv: list[str]) -> None:
         test_jsonl_veto_reasons_present(exe, tmpdir)
         test_jsonl_small_instance_no_delegation(exe, tmpdir)
         test_jsonl_policy_refusal_summary(exe, tmpdir)
+        test_jsonl_max_vars_refusal_summary(exe, tmpdir)
         test_conditioning_diagnostic_and_cutset(exe, tmpdir)
         test_jsonl_calibrate_output_unchanged(exe, tmpdir)
         test_jsonl_calibrate_rankwidth_timing(exe, tmpdir)

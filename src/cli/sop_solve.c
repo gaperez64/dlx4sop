@@ -435,6 +435,19 @@ static const char *termination_reason_name(qsop_solve_termination_reason_t reaso
   return "other_error";
 }
 
+static const char *run_summary_reason_name(bool solved, const qsop_solve_stats_t *stats,
+                                           const qsop_error_t *diagnostic) {
+  const char *reason = termination_reason_name(stats->termination_reason);
+  if (!solved &&
+      (stats->termination_reason == QSOP_SOLVE_TERMINATION_NONE ||
+       stats->termination_reason == QSOP_SOLVE_TERMINATION_OTHER_ERROR) &&
+      diagnostic != NULL &&
+      strstr(diagnostic->message, "pass a larger --max-vars") != NULL) {
+    return "max_vars";
+  }
+  return reason;
+}
+
 static void jsonl_write_string(FILE *file, const char *text) {
   fputc('"', file);
   if (text != NULL) {
@@ -474,15 +487,15 @@ static void write_run_summary_jsonl(FILE *file, const char *instance, bool solve
   if (file == NULL || stats == NULL) {
     return;
   }
-  const bool refused = !solved &&
-                       stats->termination_reason != QSOP_SOLVE_TERMINATION_NONE &&
-                       stats->termination_reason != QSOP_SOLVE_TERMINATION_OTHER_ERROR;
+  const char *reason = run_summary_reason_name(solved, stats, diagnostic);
+  const bool refused =
+      !solved && strcmp(reason, "none") != 0 && strcmp(reason, "other_error") != 0;
   fputs("{\"schema\":\"sop_solve_run_stats_v1\",\"instance\":", file);
   jsonl_write_string(file, instance);
   fputs(",\"status\":", file);
   jsonl_write_string(file, solved ? "solved" : (refused ? "refused" : "error"));
   fputs(",\"reason\":", file);
-  jsonl_write_string(file, termination_reason_name(stats->termination_reason));
+  jsonl_write_string(file, reason);
   fprintf(file,
           ",\"search_nodes\":%" PRIu64 ",\"leaf_assignments\":%" PRIu64
           ",\"active_vars_at_failure\":%" PRIu32
