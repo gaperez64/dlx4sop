@@ -22,14 +22,14 @@
 #include <string.h>
 
 typedef struct rw_transition16 {
-  uint16_t right_signature;
-  uint16_t parent_signature;
+  uint16_t right_rep;
+  uint16_t parent_rep;
   uint16_t residue_shift;
   uint16_t flags; /* reserved, keeps 8-byte alignment */
 } rw_transition16_t;
 typedef struct rw_transition32 {
-  uint32_t right_signature;
-  uint32_t parent_signature;
+  uint32_t right_rep;
+  uint32_t parent_rep;
   uint32_t residue_shift;
   uint32_t flags;
 } rw_transition32_t;
@@ -39,10 +39,9 @@ typedef enum rw_transition_layout_kind {
 } rw_transition_layout_kind_t;
 typedef struct rw_transition_csr {
   rw_transition_layout_kind_t kind;
-  uint32_t left_sig_count;   /* number of unique left signatures */
+  uint32_t left_rep_count;   /* one CSR row per left representative */
   uint64_t transition_count; /* total number of valid transitions */
-  uint32_t *left_signatures; /* [left_sig_count]: left sig id for each CSR row */
-  uint32_t *offsets;         /* [left_sig_count + 1]: offset into items */
+  uint32_t *offsets;         /* [left_rep_count + 1]: offset into items */
   union {
     rw_transition16_t *t16;
     rw_transition32_t *t32;
@@ -53,14 +52,21 @@ static uint32_t fourier_odd_mode_count(uint32_t r) {
   return r / 2U;
 }
 typedef struct rw_join_workspace {
-  uint64_t *acc;          /* [cap_entries] — zeroed by caller before each join */
-  uint32_t *sig_map_idx;  /* [cap_sigs]    — 0xFF-filled by caller before each join */
-  uint32_t *left_starts;  /* [cap_sigs] */
-  uint32_t *left_ends;    /* [cap_sigs] */
-  uint32_t *right_starts; /* [cap_sigs] */
-  uint32_t *right_ends;   /* [cap_sigs] */
-  size_t cap_entries;     /* capacity of acc in uint64_t elements (= cap_sigs * r) */
-  size_t cap_sigs;        /* max signatures per node */
+  /* Lazily initialized dense value space. `occupied` distinguishes an untouched cell from a
+   * modular sum that happens to be zero; `touched` makes reset and flush O(number of touched
+   * cells), not O(signature_count * r). Values are indexed by node-local representative row. */
+  uint64_t *values;
+  uint64_t *occupied;
+  size_t *touched;
+  size_t touched_len;
+  size_t touched_cap;
+  size_t cap_entries;
+  /* Compact entry ranges indexed by a table's local representative row. */
+  uint32_t *left_starts;
+  uint32_t *left_ends;
+  uint32_t *right_starts;
+  uint32_t *right_ends;
+  size_t range_cap;
 } rw_join_workspace_t;
 typedef struct rw_linear_table {
   uint32_t *signatures;
@@ -70,42 +76,206 @@ typedef struct rw_linear_table {
   size_t cap;
   size_t slots_mask;
 } rw_linear_table_t;
-static bool join_workspace_alloc(size_t cap_sigs, uint32_t r, rw_join_workspace_t *ws,
-                                 qsop_error_t *error) {
-  const size_t cap_entries = cap_sigs * (size_t)r;
-  ws->cap_sigs = cap_sigs;
-  ws->cap_entries = cap_entries;
-  ws->acc = calloc(cap_entries == 0 ? 1U : cap_entries, sizeof(*ws->acc));
-  ws->sig_map_idx = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->sig_map_idx));
-  ws->left_starts = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->left_starts));
-  ws->left_ends = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->left_ends));
-  ws->right_starts = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->right_starts));
-  ws->right_ends = malloc((cap_sigs == 0 ? 1U : cap_sigs) * sizeof(*ws->right_ends));
-  if (ws->acc == NULL || ws->sig_map_idx == NULL || ws->left_starts == NULL ||
-      ws->left_ends == NULL || ws->right_starts == NULL || ws->right_ends == NULL) {
-    free(ws->acc);
-    free(ws->sig_map_idx);
-    free(ws->left_starts);
-    free(ws->left_ends);
-    free(ws->right_starts);
-    free(ws->right_ends);
-    *ws = (rw_join_workspace_t){0};
-    qsop_set_error(error, "out of memory allocating join workspace");
-    return false;
+static void join_workspace_reset(rw_join_workspace_t *ws) {
+  for (size_t i = 0; i < ws->touched_len; i++) {
+    const size_t index = ws->touched[i];
+    ws->occupied[index / 64U] &= ~(UINT64_C(1) << (index % 64U));
   }
-  return true;
+  ws->touched_len = 0;
 }
 static void join_workspace_free(rw_join_workspace_t *ws) {
   if (ws == NULL) {
     return;
   }
-  free(ws->acc);
-  free(ws->sig_map_idx);
+  free(ws->values);
+  free(ws->occupied);
+  free(ws->touched);
   free(ws->left_starts);
   free(ws->left_ends);
   free(ws->right_starts);
   free(ws->right_ends);
   *ws = (rw_join_workspace_t){0};
+}
+static bool join_workspace_reserve_touched(rw_join_workspace_t *ws, size_t needed,
+                                           qsop_error_t *error) {
+  if (needed <= ws->touched_cap) {
+    return true;
+  }
+  size_t new_cap = ws->touched_cap == 0 ? 64U : ws->touched_cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      qsop_set_error(error, "rankwidth touched-cell list is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  if (new_cap > SIZE_MAX / sizeof(*ws->touched)) {
+    qsop_set_error(error, "rankwidth touched-cell list is too large");
+    return false;
+  }
+  size_t *touched = realloc(ws->touched, new_cap * sizeof(*touched));
+  if (touched == NULL) {
+    qsop_set_error(error, "out of memory growing rankwidth touched-cell list");
+    return false;
+  }
+  ws->touched = touched;
+  ws->touched_cap = new_cap;
+  return true;
+}
+static bool join_workspace_reserve_values(rw_join_workspace_t *ws, size_t needed,
+                                          qsop_error_t *error) {
+  if (needed <= ws->cap_entries) {
+    return true;
+  }
+  size_t new_cap = ws->cap_entries == 0 ? 64U : ws->cap_entries;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      qsop_set_error(error, "rankwidth join accumulator is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  if (new_cap > SIZE_MAX / sizeof(*ws->values) || new_cap > SIZE_MAX - 63U) {
+    qsop_set_error(error, "rankwidth join accumulator is too large");
+    return false;
+  }
+  const size_t occupied_words = (new_cap + 63U) / 64U;
+  uint64_t *values = malloc(new_cap * sizeof(*values));
+  uint64_t *occupied = calloc(occupied_words, sizeof(*occupied));
+  if (values == NULL || occupied == NULL) {
+    free(values);
+    free(occupied);
+    qsop_set_error(error, "out of memory growing rankwidth join accumulator");
+    return false;
+  }
+  for (size_t i = 0; i < ws->touched_len; i++) {
+    const size_t index = ws->touched[i];
+    values[index] = ws->values[index];
+    occupied[index / 64U] |= UINT64_C(1) << (index % 64U);
+  }
+  free(ws->values);
+  free(ws->occupied);
+  ws->values = values;
+  ws->occupied = occupied;
+  ws->cap_entries = new_cap;
+  return true;
+}
+static bool join_workspace_reserve_ranges(rw_join_workspace_t *ws, size_t needed,
+                                          qsop_error_t *error) {
+  if (needed <= ws->range_cap) {
+    return true;
+  }
+  size_t new_cap = ws->range_cap == 0 ? 16U : ws->range_cap;
+  while (new_cap < needed) {
+    if (new_cap > SIZE_MAX / 2U) {
+      qsop_set_error(error, "rankwidth compact range index is too large");
+      return false;
+    }
+    new_cap *= 2U;
+  }
+  if (new_cap > SIZE_MAX / sizeof(uint32_t)) {
+    qsop_set_error(error, "rankwidth compact range index is too large");
+    return false;
+  }
+  uint32_t *left_starts = malloc(new_cap * sizeof(*left_starts));
+  uint32_t *left_ends = malloc(new_cap * sizeof(*left_ends));
+  uint32_t *right_starts = malloc(new_cap * sizeof(*right_starts));
+  uint32_t *right_ends = malloc(new_cap * sizeof(*right_ends));
+  if (left_starts == NULL || left_ends == NULL || right_starts == NULL || right_ends == NULL) {
+    free(left_starts);
+    free(left_ends);
+    free(right_starts);
+    free(right_ends);
+    qsop_set_error(error, "out of memory growing rankwidth compact range index");
+    return false;
+  }
+  free(ws->left_starts);
+  free(ws->left_ends);
+  free(ws->right_starts);
+  free(ws->right_ends);
+  ws->left_starts = left_starts;
+  ws->left_ends = left_ends;
+  ws->right_starts = right_starts;
+  ws->right_ends = right_ends;
+  ws->range_cap = new_cap;
+  return true;
+}
+static bool build_compact_rep_ranges(const rw_table_t *table, uint32_t *starts, uint32_t *ends,
+                                     qsop_error_t *error) {
+  memset(starts, 0xFF, table->reps_len * sizeof(*starts));
+  for (size_t i = 0; i < table->len; i++) {
+    uint32_t rep = 0;
+    if (!rw_table_find_rep_index(table, table->entries[i].signature, &rep)) {
+      qsop_set_error(error, "internal error: rankwidth table entry has no representative");
+      return false;
+    }
+    if (starts[rep] == UINT32_MAX) {
+      starts[rep] = (uint32_t)i;
+    }
+    ends[rep] = (uint32_t)(i + 1U);
+  }
+  return true;
+}
+static bool join_workspace_prepare_ranges(rw_join_workspace_t *ws, const rw_table_t *left,
+                                          const rw_table_t *right, qsop_error_t *error) {
+  const size_t needed = left->reps_len > right->reps_len ? left->reps_len : right->reps_len;
+  return join_workspace_reserve_ranges(ws, needed, error) &&
+         build_compact_rep_ranges(left, ws->left_starts, ws->left_ends, error) &&
+         build_compact_rep_ranges(right, ws->right_starts, ws->right_ends, error);
+}
+static bool join_workspace_add(rw_join_workspace_t *ws, size_t index, uint64_t value,
+                               uint64_t modulus, qsop_error_t *error) {
+  if (value == 0) {
+    return true;
+  }
+  if (index >= ws->cap_entries) {
+    qsop_set_error(error, "internal error: rankwidth accumulator index exceeds capacity");
+    return false;
+  }
+  const uint64_t bit = UINT64_C(1) << (index % 64U);
+  uint64_t *word = &ws->occupied[index / 64U];
+  if ((*word & bit) == 0) {
+    if (!join_workspace_reserve_touched(ws, ws->touched_len + 1U, error)) {
+      return false;
+    }
+    *word |= bit;
+    ws->values[index] = 0;
+    ws->touched[ws->touched_len++] = index;
+  }
+  if (modulus != 0) {
+    ws->values[index] = qsop_mod_add_u64(ws->values[index], value, modulus);
+    return true;
+  }
+  return qsop_count_add(&ws->values[index], value, error);
+}
+static bool join_workspace_flush(rw_join_workspace_t *ws, rw_table_t *out, uint32_t r,
+                                 qsop_error_t *error) {
+  size_t nonzero = 0;
+  for (size_t i = 0; i < ws->touched_len; i++) {
+    nonzero += ws->values[ws->touched[i]] != 0;
+  }
+  if (!rw_reserve_entries(out, out->len + nonzero, error)) {
+    return false;
+  }
+  for (size_t i = 0; i < ws->touched_len; i++) {
+    const size_t index = ws->touched[i];
+    const uint64_t count = ws->values[index];
+    if (count == 0) {
+      continue;
+    }
+    const size_t rep = index / r;
+    if (rep >= out->reps_len) {
+      qsop_set_error(error, "internal error: rankwidth accumulator row exceeds representatives");
+      return false;
+    }
+    out->entries[out->len++] = (rw_entry_t){
+        .signature = out->reps[rep].signature,
+        .residue = (uint32_t)(index % r),
+        .count = count,
+    };
+  }
+  join_workspace_reset(ws);
+  return true;
 }
 static void linear_table_free(rw_linear_table_t *table) {
   if (table == NULL) {
@@ -249,18 +419,17 @@ static void rw_transition_csr_free(rw_transition_csr_t *csr) {
   if (csr == NULL) {
     return;
   }
-  free(csr->left_signatures);
   free(csr->offsets);
   free(csr->items.raw);
   *csr = (rw_transition_csr_t){0};
 }
 static uint64_t rw_transition_csr_bytes(const rw_transition_csr_t *csr) {
-  if (csr == NULL || csr->left_sig_count == 0) {
+  if (csr == NULL || csr->left_rep_count == 0) {
     return 0;
   }
   const uint64_t item_size = (csr->kind == RW_TRANSITION_LAYOUT_U16) ? sizeof(rw_transition16_t)
                                                                      : sizeof(rw_transition32_t);
-  return (uint64_t)(csr->left_sig_count + 1U) * sizeof(uint32_t) * 2U +
+  return (uint64_t)(csr->left_rep_count + 1U) * sizeof(uint32_t) +
          csr->transition_count * item_size;
 }
 static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
@@ -588,8 +757,10 @@ static bool rw_transition_csr_build_sign(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
     uint32_t node_id __attribute__((unused)), const uint64_t *adj, rw_signature_pool_t *pool,
     const rw_table_t *left, const rw_table_t *right, const uint64_t *outside, uint64_t *scratch_sig,
-    rw_transition_csr_t *out, uint64_t *u16_events, uint64_t *u32_events, qsop_error_t *error) {
+    rw_table_t *parent, rw_transition_csr_t *out, uint64_t *u16_events, uint64_t *u32_events,
+    qsop_error_t *error) {
   const size_t words = decomposition->words;
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t r = (uint32_t)qsop->r;
@@ -599,14 +770,13 @@ static bool rw_transition_csr_build_sign(
     return true;
   }
 
-  /* Pass 1: count transitions per left rep and track max parent sig id. */
+  /* Pass 1: count transitions and assign compact, node-local rows to parent signatures. */
   uint64_t *counts = calloc(lreps, sizeof(*counts));
   if (counts == NULL) {
     qsop_set_error(error, "out of memory building CSR transition counts");
     return false;
   }
-  uint32_t max_rsig = 0;
-  uint32_t max_psig = 0;
+  uint32_t max_parent_rep = 0;
   uint64_t total = 0;
   for (uint32_t i = 0; i < (uint32_t)lreps; i++) {
     const uint64_t *lrep = rw_table_assignment(left, i, words);
@@ -622,19 +792,25 @@ static bool rw_transition_csr_build_sign(
       }
       if (!eval.valid)
         continue;
+      qsop_bitset_copy(scratch_sig, lrep, words);
+      qsop_bitset_or_simd(scratch_sig, rrep, words, simd);
+      uint32_t parent_rep = 0;
+      if (!rw_table_rep_index(parent, eval.parent_signature, scratch_sig, words, &parent_rep,
+                              error)) {
+        free(counts);
+        return false;
+      }
       counts[i]++;
       total++;
-      if (right->reps[j].signature > max_rsig)
-        max_rsig = right->reps[j].signature;
-      if (eval.parent_signature > max_psig)
-        max_psig = eval.parent_signature;
+      if (parent_rep > max_parent_rep)
+        max_parent_rep = parent_rep;
     }
   }
 
   /* Determine layout. */
-  const uint32_t left_sig_count = (uint32_t)lreps;
+  const uint32_t left_rep_count = (uint32_t)lreps;
   rw_transition_layout_kind_t kind;
-  if (left_sig_count <= UINT16_MAX && max_rsig <= UINT16_MAX && max_psig <= UINT16_MAX &&
+  if (left_rep_count <= UINT16_MAX && rreps <= UINT16_MAX && max_parent_rep <= UINT16_MAX &&
       r <= UINT16_MAX) {
     kind = RW_TRANSITION_LAYOUT_U16;
     if (u16_events != NULL)
@@ -646,20 +822,14 @@ static bool rw_transition_csr_build_sign(
   }
 
   /* Build offsets from counts. */
-  uint32_t *left_signatures = malloc(left_sig_count * sizeof(*left_signatures));
-  uint32_t *offsets = malloc((left_sig_count + 1U) * sizeof(*offsets));
-  if (left_signatures == NULL || offsets == NULL) {
+  uint32_t *offsets = malloc((left_rep_count + 1U) * sizeof(*offsets));
+  if (offsets == NULL) {
     free(counts);
-    free(left_signatures);
-    free(offsets);
     qsop_set_error(error, "out of memory building CSR offsets");
     return false;
   }
-  for (uint32_t i = 0; i < left_sig_count; i++) {
-    left_signatures[i] = left->reps[i].signature;
-  }
   offsets[0] = 0;
-  for (uint32_t i = 0; i < left_sig_count; i++) {
+  for (uint32_t i = 0; i < left_rep_count; i++) {
     offsets[i + 1U] = offsets[i] + (uint32_t)counts[i];
   }
   free(counts);
@@ -673,7 +843,6 @@ static bool rw_transition_csr_build_sign(
       items = calloc(total, sizeof(rw_transition32_t));
     }
     if (items == NULL) {
-      free(left_signatures);
       free(offsets);
       qsop_set_error(error, "out of memory building CSR transition items");
       return false;
@@ -681,15 +850,14 @@ static bool rw_transition_csr_build_sign(
   }
 
   /* Pass 2: fill items using cursor array. */
-  uint32_t *cursors = malloc(left_sig_count * sizeof(*cursors));
+  uint32_t *cursors = malloc(left_rep_count * sizeof(*cursors));
   if (cursors == NULL) {
-    free(left_signatures);
     free(offsets);
     free(items);
     qsop_set_error(error, "out of memory building CSR cursors");
     return false;
   }
-  memcpy(cursors, offsets, left_sig_count * sizeof(*cursors));
+  memcpy(cursors, offsets, left_rep_count * sizeof(*cursors));
 
   for (uint32_t i = 0; i < (uint32_t)lreps; i++) {
     const uint64_t *lrep = rw_table_assignment(left, i, words);
@@ -700,7 +868,6 @@ static bool rw_transition_csr_build_sign(
                                            left->reps[i].signature, lrep, left->rep_weights[i],
                                            right->reps[j].signature, rrep, right->rep_weights[j],
                                            scratch_sig, &eval, error)) {
-        free(left_signatures);
         free(offsets);
         free(items);
         free(cursors);
@@ -708,17 +875,25 @@ static bool rw_transition_csr_build_sign(
       }
       if (!eval.valid)
         continue;
+      uint32_t parent_rep = 0;
+      if (!rw_table_find_rep_index(parent, eval.parent_signature, &parent_rep)) {
+        free(offsets);
+        free(items);
+        free(cursors);
+        qsop_set_error(error, "internal error: missing compact rankwidth parent row");
+        return false;
+      }
       const uint32_t pos = cursors[i]++;
       if (kind == RW_TRANSITION_LAYOUT_U16) {
         rw_transition16_t *t = (rw_transition16_t *)items + pos;
-        t->right_signature = (uint16_t)eval.right_signature;
-        t->parent_signature = (uint16_t)eval.parent_signature;
+        t->right_rep = (uint16_t)j;
+        t->parent_rep = (uint16_t)parent_rep;
         t->residue_shift = (uint16_t)eval.residue_shift;
         t->flags = 0;
       } else {
         rw_transition32_t *t = (rw_transition32_t *)items + pos;
-        t->right_signature = eval.right_signature;
-        t->parent_signature = eval.parent_signature;
+        t->right_rep = j;
+        t->parent_rep = parent_rep;
         t->residue_shift = eval.residue_shift;
         t->flags = 0;
       }
@@ -728,9 +903,8 @@ static bool rw_transition_csr_build_sign(
 
   *out = (rw_transition_csr_t){
       .kind = kind,
-      .left_sig_count = left_sig_count,
+      .left_rep_count = left_rep_count,
       .transition_count = total,
-      .left_signatures = left_signatures,
       .offsets = offsets,
       .items = {.raw = items},
   };
@@ -738,169 +912,57 @@ static bool rw_transition_csr_build_sign(
 }
 static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_transition_csr_t *csr,
                                      const rw_table_t *left, const rw_table_t *right,
-                                     rw_table_t *out, size_t words, uint64_t *join_pairs_out,
+                                     rw_table_t *out, uint64_t *join_pairs_out,
                                      rw_join_workspace_t *ws, qsop_error_t *error) {
   if (csr->transition_count == 0) {
     return true;
   }
-  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
-
-  /* Find max parent sig across all items. */
-  uint32_t max_psig = 0;
-  uint32_t max_lsig = 0;
-  uint32_t max_rsig = 0;
-  if (csr->kind == RW_TRANSITION_LAYOUT_U16) {
-    for (uint64_t p = 0; p < csr->transition_count; p++) {
-      const rw_transition16_t *t = csr->items.t16 + p;
-      if (t->parent_signature > max_psig)
-        max_psig = t->parent_signature;
-      if (t->right_signature > max_rsig)
-        max_rsig = t->right_signature;
-    }
-  } else {
-    for (uint64_t p = 0; p < csr->transition_count; p++) {
-      const rw_transition32_t *t = csr->items.t32 + p;
-      if (t->parent_signature > max_psig)
-        max_psig = t->parent_signature;
-      if (t->right_signature > max_rsig)
-        max_rsig = t->right_signature;
-    }
-  }
-  for (uint32_t i = 0; i < csr->left_sig_count; i++) {
-    if (csr->left_signatures[i] > max_lsig)
-      max_lsig = csr->left_signatures[i];
-  }
-
-  const size_t n_psigs = (size_t)max_psig + 1U;
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t r = (uint32_t)qsop->r;
   const uint32_t r_mask = r - 1U;
   const bool r_pow2 = (r & r_mask) == 0;
-
-  /* Allocate or reuse workspace. */
-  const bool use_ws = ws != NULL && n_psigs <= ws->cap_sigs && (size_t)max_lsig < ws->cap_sigs &&
-                      (size_t)max_rsig < ws->cap_sigs;
-  uint64_t *acc;
-  uint32_t *sig_map_left;  /* parent_sig -> left_rep_index for witness */
-  uint32_t *sig_map_right; /* parent_sig -> right_rep_index for witness */
-  uint32_t *left_starts, *left_ends, *right_starts, *right_ends;
-  if (use_ws) {
-    acc = ws->acc;
-    left_starts = ws->left_starts;
-    left_ends = ws->left_ends;
-    right_starts = ws->right_starts;
-    right_ends = ws->right_ends;
-    memset(acc, 0, n_psigs * r * sizeof(*acc));
-    rw_build_sig_range_index_into(left, max_lsig, left_starts, left_ends);
-    rw_build_sig_range_index_into(right, max_rsig, right_starts, right_ends);
-  } else {
-    acc = calloc(n_psigs * r, sizeof(*acc));
-    left_starts = right_starts = left_ends = right_ends = NULL;
-    if (acc == NULL || !rw_build_sig_range_index(left, max_lsig, &left_starts, &left_ends, error) ||
-        !rw_build_sig_range_index(right, max_rsig, &right_starts, &right_ends, error)) {
-      free(acc);
-      free(left_starts);
-      free(left_ends);
-      free(right_starts);
-      free(right_ends);
-      if (acc == NULL)
-        qsop_set_error(error, "out of memory in CSR join accumulator");
-      return false;
-    }
-  }
-  /* Per-parent-sig witness: store (left_rep_idx, right_rep_idx) for table_add_rep. */
-  sig_map_left = malloc(n_psigs * sizeof(*sig_map_left));
-  sig_map_right = malloc(n_psigs * sizeof(*sig_map_right));
-  if (sig_map_left == NULL || sig_map_right == NULL) {
-    if (!use_ws) {
-      free(acc);
-      free(left_starts);
-      free(left_ends);
-      free(right_starts);
-      free(right_ends);
-    }
-    free(sig_map_left);
-    free(sig_map_right);
-    qsop_set_error(error, "out of memory in CSR join witness map");
+  if (out->reps_len > SIZE_MAX / r) {
+    qsop_set_error(error, "rankwidth compact join accumulator is too large");
     return false;
   }
-  memset(sig_map_left, 0xFF, n_psigs * sizeof(*sig_map_left));
-  memset(sig_map_right, 0xFF, n_psigs * sizeof(*sig_map_right));
-
-  /* Build rep-index lookup: sig -> rep index in left/right tables (one per sig). */
-  uint32_t *left_rep_idx = malloc(((size_t)max_lsig + 1U) * sizeof(*left_rep_idx));
-  uint32_t *right_rep_idx = malloc(((size_t)max_rsig + 1U) * sizeof(*right_rep_idx));
-  if (left_rep_idx == NULL || right_rep_idx == NULL) {
-    if (!use_ws) {
-      free(acc);
-      free(left_starts);
-      free(left_ends);
-      free(right_starts);
-      free(right_ends);
-    }
-    free(sig_map_left);
-    free(sig_map_right);
-    free(left_rep_idx);
-    free(right_rep_idx);
-    qsop_set_error(error, "out of memory building rep index for CSR join");
+  join_workspace_reset(ws);
+  if (!join_workspace_reserve_values(ws, out->reps_len * (size_t)r, error) ||
+      !join_workspace_prepare_ranges(ws, left, right, error)) {
     return false;
   }
-  memset(left_rep_idx, 0xFF, ((size_t)max_lsig + 1U) * sizeof(*left_rep_idx));
-  memset(right_rep_idx, 0xFF, ((size_t)max_rsig + 1U) * sizeof(*right_rep_idx));
-  for (size_t k = 0; k < left->reps_len; k++) {
-    left_rep_idx[left->reps[k].signature] = (uint32_t)k;
-  }
-  for (size_t k = 0; k < right->reps_len; k++) {
-    right_rep_idx[right->reps[k].signature] = (uint32_t)k;
-  }
-
-#define CSR_JOIN_CLEANUP()                                                                         \
-  do {                                                                                             \
-    if (!use_ws) {                                                                                 \
-      free(acc);                                                                                   \
-      free(left_starts);                                                                           \
-      free(left_ends);                                                                             \
-      free(right_starts);                                                                          \
-      free(right_ends);                                                                            \
-    }                                                                                              \
-    free(sig_map_left);                                                                            \
-    free(sig_map_right);                                                                           \
-    free(left_rep_idx);                                                                            \
-    free(right_rep_idx);                                                                           \
-  } while (0)
 
   /* Main accumulation loop over CSR rows (left signatures). */
   uint64_t join_pairs = 0;
-  for (uint32_t ci = 0; ci < csr->left_sig_count; ci++) {
-    const uint32_t lsig = csr->left_signatures[ci];
-    const uint32_t l_ri = left_rep_idx[lsig]; /* rep index in left table */
-    if (l_ri == UINT32_MAX)
-      continue;
-    const size_t l_start = (left_starts[lsig] != UINT32_MAX) ? left_starts[lsig] : 0;
-    const size_t l_end = (left_starts[lsig] != UINT32_MAX) ? left_ends[lsig] : 0;
+  for (uint32_t ci = 0; ci < csr->left_rep_count; ci++) {
+    const size_t l_start = ws->left_starts[ci] != UINT32_MAX ? ws->left_starts[ci] : 0;
+    const size_t l_end = ws->left_starts[ci] != UINT32_MAX ? ws->left_ends[ci] : 0;
     const uint32_t begin = csr->offsets[ci];
     const uint32_t end = csr->offsets[ci + 1U];
 
     for (uint32_t p = begin; p < end; p++) {
-      uint32_t rsig, psig, shift;
+      uint32_t right_rep, parent_rep, shift;
       if (csr->kind == RW_TRANSITION_LAYOUT_U16) {
         const rw_transition16_t *t = csr->items.t16 + p;
-        rsig = t->right_signature;
-        psig = t->parent_signature;
+        right_rep = t->right_rep;
+        parent_rep = t->parent_rep;
         shift = t->residue_shift;
       } else {
         const rw_transition32_t *t = csr->items.t32 + p;
-        rsig = t->right_signature;
-        psig = t->parent_signature;
+        right_rep = t->right_rep;
+        parent_rep = t->parent_rep;
         shift = t->residue_shift;
       }
-      if (sig_map_left[psig] == UINT32_MAX) {
-        sig_map_left[psig] = l_ri;
-        sig_map_right[psig] = (rsig <= max_rsig) ? right_rep_idx[rsig] : UINT32_MAX;
+      if (right_rep >= right->reps_len || parent_rep >= out->reps_len) {
+        qsop_set_error(error, "internal error: compact rankwidth transition row is invalid");
+        return false;
       }
-      const size_t r_start = (right_starts[rsig] != UINT32_MAX) ? right_starts[rsig] : 0;
-      const size_t r_end = (right_starts[rsig] != UINT32_MAX) ? right_ends[rsig] : 0;
+      const size_t r_start = ws->right_starts[right_rep] != UINT32_MAX
+                                 ? ws->right_starts[right_rep]
+                                 : 0;
+      const size_t r_end = ws->right_starts[right_rep] != UINT32_MAX
+                               ? ws->right_ends[right_rep]
+                               : 0;
 
       for (size_t i = l_start; i < l_end; i++) {
         const uint32_t l_res = left->entries[i].residue;
@@ -910,8 +972,7 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
           const uint32_t res = r_pow2 ? (uint32_t)(rsum & r_mask) : (uint32_t)(rsum % r);
           uint64_t product = 0;
           if (!qsop_count_mul(l_cnt, right->entries[j].count, &product, error) ||
-              !qsop_count_add(&acc[(size_t)psig * r + res], product, error)) {
-            CSR_JOIN_CLEANUP();
+              !join_workspace_add(ws, (size_t)parent_rep * r + res, product, 0, error)) {
             return false;
           }
           join_pairs++;
@@ -920,64 +981,9 @@ static bool rw_execute_csr_join_sign(const qsop_instance_t *qsop, const rw_trans
     }
   }
 
-  /* Flush accumulator to output table. */
-  size_t nonzero_count = 0;
-  for (size_t i = 0; i < n_psigs * r; i++) {
-    if (acc[i] != 0)
-      nonzero_count++;
-  }
-  if (!rw_reserve_entries(out, out->len + nonzero_count, error)) {
-    CSR_JOIN_CLEANUP();
+  if (!join_workspace_flush(ws, out, r, error)) {
     return false;
   }
-
-  /* Temp buffer for parent rep (left_rep | right_rep). D3.1: reconstructed, not stored. */
-  const size_t w = words == 0 ? 1U : words;
-  uint64_t *parent_rep = calloc(w, sizeof(*parent_rep));
-  if (parent_rep == NULL) {
-    CSR_JOIN_CLEANUP();
-    qsop_set_error(error, "out of memory for CSR join parent rep");
-    return false;
-  }
-
-  for (uint32_t s = 0; s < (uint32_t)n_psigs; s++) {
-    if (sig_map_left[s] == UINT32_MAX)
-      continue;
-    const uint32_t li = sig_map_left[s];
-    const uint32_t ri = sig_map_right[s];
-    /* Reconstruct parent representative: left_rep | right_rep. */
-    if (li != UINT32_MAX && ri != UINT32_MAX) {
-      qsop_bitset_copy(parent_rep, rw_table_assignment(left, li, words), words);
-      qsop_bitset_or_simd(parent_rep, rw_table_assignment(right, ri, words), words, simd);
-    } else {
-      memset(parent_rep, 0, w * sizeof(*parent_rep));
-    }
-    if (!rw_table_add_rep(out, s, parent_rep, words, error)) {
-      free(parent_rep);
-      CSR_JOIN_CLEANUP();
-      return false;
-    }
-    for (uint32_t res = 0; res < r; res++) {
-      const uint64_t cnt = acc[(size_t)s * r + res];
-      if (cnt == 0)
-        continue;
-      out->entries[out->len++] = (rw_entry_t){.signature = s, .residue = res, .count = cnt};
-    }
-  }
-  free(parent_rep);
-#undef CSR_JOIN_CLEANUP
-
-  if (!use_ws) {
-    free(acc);
-    free(left_starts);
-    free(left_ends);
-    free(right_starts);
-    free(right_ends);
-  }
-  free(sig_map_left);
-  free(sig_map_right);
-  free(left_rep_idx);
-  free(right_rep_idx);
 
   if (join_pairs_out != NULL)
     *join_pairs_out += join_pairs;
@@ -989,7 +995,7 @@ static bool rw_join_count_table_streaming_sign(
     uint32_t node_id __attribute__((unused)), const uint64_t *adj, rw_signature_pool_t *pool,
     const rw_table_t *left, const rw_table_t *right, rw_table_t *out, const uint64_t *outside,
     uint64_t *scratch_sig, size_t words, uint64_t *candidate_pairs_out, uint64_t *emitted_pairs_out,
-    qsop_error_t *error) {
+    rw_join_workspace_t *ws, qsop_error_t *error) {
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t r = (uint32_t)qsop->r;
@@ -1001,40 +1007,19 @@ static bool rw_join_count_table_streaming_sign(
     return true;
   }
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
-
-  uint32_t max_lsig = 0, max_rsig = 0;
-  for (size_t i = 0; i < lreps; i++) {
-    if (left->reps[i].signature > max_lsig)
-      max_lsig = left->reps[i].signature;
-  }
-  for (size_t j = 0; j < rreps; j++) {
-    if (right->reps[j].signature > max_rsig)
-      max_rsig = right->reps[j].signature;
-  }
-
-  uint32_t *left_starts = NULL, *left_ends = NULL;
-  uint32_t *right_starts = NULL, *right_ends = NULL;
-  if (!rw_build_sig_range_index(left, max_lsig, &left_starts, &left_ends, error) ||
-      !rw_build_sig_range_index(right, max_rsig, &right_starts, &right_ends, error)) {
-    free(left_starts);
-    free(left_ends);
-    free(right_starts);
-    free(right_ends);
+  join_workspace_reset(ws);
+  if (!join_workspace_prepare_ranges(ws, left, right, error)) {
     return false;
   }
 
   uint64_t candidate_pairs = 0;
   uint64_t emitted_pairs = 0;
 
-  /* We need a dynamic accumulator (parent_sig may grow during iteration). */
-  /* Use a simple per-(sig,res) accumulator map built on-the-fly. */
-  /* For correctness we accumulate into the output table directly using table_add_entry.
-   * This is less efficient than the CSR path but avoids pre-knowing max_psig. */
   for (size_t i = 0; i < lreps; i++) {
     const uint64_t *lrep = rw_table_assignment(left, i, words);
     const uint32_t lsig = left->reps[i].signature;
-    const size_t l_start = (left_starts[lsig] != UINT32_MAX) ? left_starts[lsig] : 0;
-    const size_t l_end = (left_starts[lsig] != UINT32_MAX) ? left_ends[lsig] : 0;
+    const size_t l_start = ws->left_starts[i] != UINT32_MAX ? ws->left_starts[i] : 0;
+    const size_t l_end = ws->left_starts[i] != UINT32_MAX ? ws->left_ends[i] : 0;
 
     for (size_t j = 0; j < rreps; j++) {
       const uint64_t *rrep = rw_table_assignment(right, j, words);
@@ -1043,39 +1028,29 @@ static bool rw_join_count_table_streaming_sign(
       if (!rw_compute_join_transition_sign(qsop->nvars, adj, pool, outside, words, r, lsig, lrep,
                                            left->rep_weights[i], right->reps[j].signature, rrep,
                                            right->rep_weights[j], scratch_sig, &eval, error)) {
-        free(left_starts);
-        free(left_ends);
-        free(right_starts);
-        free(right_ends);
         return false;
       }
       if (!eval.valid)
         continue;
       emitted_pairs++;
 
-      const uint32_t rsig = eval.right_signature;
-      const uint32_t psig = eval.parent_signature;
       const uint32_t shift = eval.residue_shift;
-
-      /* Add representative for parent signature (once per unique psig). */
-      {
-        uint64_t *parent_rep = scratch_sig; /* reuse scratch after transition is computed */
-        const size_t w = words == 0 ? 1U : words;
-        qsop_bitset_copy(parent_rep, lrep, words);
-        qsop_bitset_or_simd(parent_rep, rrep, words, simd);
-        if (!rw_table_add_rep(out, psig, parent_rep, words, error)) {
-          free(left_starts);
-          free(left_ends);
-          free(right_starts);
-          free(right_ends);
-          return false;
+      qsop_bitset_copy(scratch_sig, lrep, words);
+      qsop_bitset_or_simd(scratch_sig, rrep, words, simd);
+      uint32_t parent_rep = 0;
+      if (!rw_table_rep_index(out, eval.parent_signature, scratch_sig, words, &parent_rep, error)) {
+        return false;
+      }
+      if (out->reps_len > SIZE_MAX / r ||
+          !join_workspace_reserve_values(ws, out->reps_len * (size_t)r, error)) {
+        if (out->reps_len > SIZE_MAX / r) {
+          qsop_set_error(error, "rankwidth compact streaming accumulator is too large");
         }
-        /* scratch_sig is now clobbered — restore clean zeroes for next transition call */
-        memset(scratch_sig, 0, w * sizeof(*scratch_sig));
+        return false;
       }
 
-      const size_t r_start = (right_starts[rsig] != UINT32_MAX) ? right_starts[rsig] : 0;
-      const size_t r_end = (right_starts[rsig] != UINT32_MAX) ? right_ends[rsig] : 0;
+      const size_t r_start = ws->right_starts[j] != UINT32_MAX ? ws->right_starts[j] : 0;
+      const size_t r_end = ws->right_starts[j] != UINT32_MAX ? ws->right_ends[j] : 0;
 
       for (size_t li = l_start; li < l_end; li++) {
         const uint32_t l_res = left->entries[li].residue;
@@ -1085,11 +1060,7 @@ static bool rw_join_count_table_streaming_sign(
           const uint32_t res = r_pow2 ? (uint32_t)(rsum & r_mask) : (uint32_t)(rsum % r);
           uint64_t product = 0;
           if (!qsop_count_mul(l_cnt, right->entries[rj].count, &product, error) ||
-              !rw_table_add_entry(out, psig, res, product, error)) {
-            free(left_starts);
-            free(left_ends);
-            free(right_starts);
-            free(right_ends);
+              !join_workspace_add(ws, (size_t)parent_rep * r + res, product, 0, error)) {
             return false;
           }
         }
@@ -1097,10 +1068,9 @@ static bool rw_join_count_table_streaming_sign(
     }
   }
 
-  free(left_starts);
-  free(left_ends);
-  free(right_starts);
-  free(right_ends);
+  if (!join_workspace_flush(ws, out, r, error)) {
+    return false;
+  }
   if (candidate_pairs_out != NULL)
     *candidate_pairs_out += candidate_pairs;
   if (emitted_pairs_out != NULL)
@@ -1166,7 +1136,7 @@ static bool build_join_map(const qsop_instance_t *qsop,
   }
   free(outside);
   free(signature);
-  return rw_join_map_build_sorted_idx(map, error);
+  return true;
 }
 static bool build_join_map_arena(const qsop_instance_t *qsop,
                                  const qsop_rankwidth_decomposition_t *decomposition,
@@ -1221,37 +1191,6 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
   }
   return true;
 }
-static const rw_join_map_entry_t *join_map_get(const rw_join_map_t *map, uint32_t left_signature,
-                                               uint32_t right_signature, size_t *index_out) {
-  if (map->sorted_keys != NULL) {
-    const uint64_t target = ((uint64_t)left_signature << 32) | right_signature;
-    size_t lo = 0, hi = map->len;
-    while (lo < hi) {
-      const size_t mid = lo + (hi - lo) / 2;
-      if (map->sorted_keys[mid] < target) {
-        lo = mid + 1;
-      } else if (map->sorted_keys[mid] > target) {
-        hi = mid;
-      } else {
-        if (index_out != NULL) {
-          *index_out = map->sorted_idx[mid];
-        }
-        return &map->entries[map->sorted_idx[mid]];
-      }
-    }
-    return NULL;
-  }
-  for (size_t i = 0; i < map->len; i++) {
-    if (map->entries[i].left_signature == left_signature &&
-        map->entries[i].right_signature == right_signature) {
-      if (index_out != NULL) {
-        *index_out = i;
-      }
-      return &map->entries[i];
-    }
-  }
-  return NULL;
-}
 static bool solve_leaf_arena(const qsop_instance_t *qsop, const uint64_t *adj,
                              const rw_node_t *node, size_t words, rw_signature_pool_t *pool,
                              rw_table_t *table, uint64_t *scratch, qsop_error_t *error) {
@@ -1305,100 +1244,50 @@ static bool solve_leaf_mod(const qsop_instance_t *qsop, const uint64_t *adj, con
   free(signature);
   return ok;
 }
-static bool solve_join_mod(const qsop_instance_t *qsop, const rw_join_map_t *map,
-                           const rw_table_t *left, const rw_table_t *right, uint64_t modulus,
-                           rw_table_t *out, size_t words, uint64_t *join_pairs,
-                           qsop_error_t *error) {
-  for (size_t i = 0; i < left->len; i++) {
-    for (size_t j = 0; j < right->len; j++) {
-      size_t map_index = 0;
-      const rw_join_map_entry_t *mapped =
-          join_map_get(map, left->entries[i].signature, right->entries[j].signature, &map_index);
-      if (mapped == NULL) {
-        qsop_set_error(error, "internal error: missing modular rankwidth join-map entry");
-        return false;
-      }
-      const uint32_t residue = (uint32_t)(((uint64_t)left->entries[i].residue +
-                                           right->entries[j].residue + mapped->residue_shift) %
-                                          qsop->r);
-      const uint64_t product =
-          qsop_mod_mul_u64(left->entries[i].count, right->entries[j].count, modulus);
-      if (!rw_table_add_rep(out, mapped->parent_signature,
-                            rw_join_map_assignment(map, map_index, words), words, error) ||
-          !rw_table_add_entry_mod(out, mapped->parent_signature, residue, product, modulus,
-                                  error)) {
-        return false;
-      }
-      (*join_pairs)++;
-    }
-  }
-  return true;
-}
 static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t *map,
                                const rw_table_t *left, const rw_table_t *right, uint64_t modulus,
                                rw_table_t *out, size_t words, uint64_t *join_pairs,
-                               qsop_error_t *error) {
+                               rw_join_workspace_t *ws, qsop_error_t *error) {
   if (map->len == 0) {
     return true;
   }
-
-  uint32_t max_parent_sig = 0, max_left_sig = 0, max_right_sig = 0;
-  for (size_t m = 0; m < map->len; m++) {
-    const rw_join_map_entry_t *me = &map->entries[m];
-    if (me->parent_signature > max_parent_sig)
-      max_parent_sig = me->parent_signature;
-    if (me->left_signature > max_left_sig)
-      max_left_sig = me->left_signature;
-    if (me->right_signature > max_right_sig)
-      max_right_sig = me->right_signature;
-  }
-  const size_t n_sigs = (size_t)max_parent_sig + 1U;
   /* Gated by qsop_solve_rankwidth_options_mode_trace_stats above to qsop->r <= UINT32_MAX
    * before reaching this count-table path, which allocates O(r) structures below. */
   const uint32_t r = (uint32_t)qsop->r;
-
-  uint64_t *acc = calloc(n_sigs * r, sizeof(*acc));
-  uint32_t *sig_map_idx = malloc(n_sigs * sizeof(*sig_map_idx));
-  uint32_t *left_starts = NULL;
-  uint32_t *left_ends = NULL;
-  uint32_t *right_starts = NULL;
-  uint32_t *right_ends = NULL;
-  if (acc == NULL || sig_map_idx == NULL ||
-      !rw_build_sig_range_index(left, max_left_sig, &left_starts, &left_ends, error) ||
-      !rw_build_sig_range_index(right, max_right_sig, &right_starts, &right_ends, error)) {
-    free(acc);
-    free(sig_map_idx);
-    free(left_starts);
-    free(left_ends);
-    free(right_starts);
-    free(right_ends);
-    if (acc == NULL || sig_map_idx == NULL) {
-      qsop_set_error(error, "out of memory while allocating rankwidth join accumulator");
-    }
+  join_workspace_reset(ws);
+  if (!join_workspace_prepare_ranges(ws, left, right, error)) {
     return false;
   }
-  memset(sig_map_idx, 0xFF, n_sigs * sizeof(*sig_map_idx));
 
   for (size_t m = 0; m < map->len; m++) {
     const rw_join_map_entry_t *me = &map->entries[m];
-    const uint32_t lsig = me->left_signature;
-    const uint32_t rsig = me->right_signature;
-    const uint32_t ps = me->parent_signature;
-    size_t l_start = 0;
-    size_t l_end = 0;
-    if (left_starts[lsig] != UINT32_MAX) {
-      l_start = left_starts[lsig];
-      l_end = left_ends[lsig];
+    uint32_t left_rep = 0;
+    uint32_t right_rep = 0;
+    uint32_t parent_rep = 0;
+    if (!rw_table_find_rep_index(left, me->left_signature, &left_rep) ||
+        !rw_table_find_rep_index(right, me->right_signature, &right_rep)) {
+      qsop_set_error(error, "internal error: modular join map references missing representative");
+      return false;
     }
-    size_t r_start = 0;
-    size_t r_end = 0;
-    if (right_starts[rsig] != UINT32_MAX) {
-      r_start = right_starts[rsig];
-      r_end = right_ends[rsig];
+    if (!rw_table_rep_index(out, me->parent_signature, rw_join_map_assignment(map, m, words), words,
+                            &parent_rep, error)) {
+      return false;
     }
-    if (sig_map_idx[ps] == UINT32_MAX) {
-      sig_map_idx[ps] = (uint32_t)m;
+    if (out->reps_len > SIZE_MAX / r ||
+        !join_workspace_reserve_values(ws, out->reps_len * (size_t)r, error)) {
+      if (out->reps_len > SIZE_MAX / r) {
+        qsop_set_error(error, "rankwidth compact modular accumulator is too large");
+      }
+      return false;
     }
+    const size_t l_start = ws->left_starts[left_rep] != UINT32_MAX
+                               ? ws->left_starts[left_rep]
+                               : 0;
+    const size_t l_end = ws->left_starts[left_rep] != UINT32_MAX ? ws->left_ends[left_rep] : 0;
+    const size_t r_start = ws->right_starts[right_rep] != UINT32_MAX
+                               ? ws->right_starts[right_rep]
+                               : 0;
+    const size_t r_end = ws->right_starts[right_rep] != UINT32_MAX ? ws->right_ends[right_rep] : 0;
     for (size_t i = l_start; i < l_end; i++) {
       const uint32_t l_res = left->entries[i].residue;
       const uint64_t l_cnt = left->entries[i].count;
@@ -1406,57 +1295,14 @@ static bool solve_join_acc_mod(const qsop_instance_t *qsop, const rw_join_map_t 
         const uint32_t res =
             (uint32_t)(((uint64_t)l_res + right->entries[j].residue + me->residue_shift) % r);
         const uint64_t product = qsop_mod_mul_u64(l_cnt, right->entries[j].count, modulus);
-        acc[(size_t)ps * r + res] = qsop_mod_add_u64(acc[(size_t)ps * r + res], product, modulus);
+        if (!join_workspace_add(ws, (size_t)parent_rep * r + res, product, modulus, error)) {
+          return false;
+        }
         (*join_pairs)++;
       }
     }
   }
-
-  size_t nonzero_count = 0;
-  for (size_t i = 0; i < n_sigs * r; i++) {
-    if (acc[i] != 0) {
-      nonzero_count++;
-    }
-  }
-  if (!rw_reserve_entries(out, out->len + nonzero_count, error)) {
-    free(acc);
-    free(sig_map_idx);
-    free(left_starts);
-    free(left_ends);
-    free(right_starts);
-    free(right_ends);
-    return false;
-  }
-  for (uint32_t s = 0; s < (uint32_t)n_sigs; s++) {
-    if (sig_map_idx[s] == UINT32_MAX) {
-      continue;
-    }
-    const size_t m = sig_map_idx[s];
-    if (!rw_table_add_rep(out, s, rw_join_map_assignment(map, m, words), words, error)) {
-      free(acc);
-      free(sig_map_idx);
-      free(left_starts);
-      free(left_ends);
-      free(right_starts);
-      free(right_ends);
-      return false;
-    }
-    for (uint32_t res = 0; res < r; res++) {
-      const uint64_t cnt = acc[(size_t)s * r + res];
-      if (cnt == 0) {
-        continue;
-      }
-      out->entries[out->len++] = (rw_entry_t){.signature = s, .residue = res, .count = cnt};
-    }
-  }
-
-  free(acc);
-  free(sig_map_idx);
-  free(left_starts);
-  free(left_ends);
-  free(right_starts);
-  free(right_ends);
-  return true;
+  return join_workspace_flush(ws, out, r, error);
 }
 static bool fourier_table_signature_index(rw_fourier_table_t *table, uint32_t signature,
                                           const uint64_t *assignment, uint32_t value_slots,
@@ -1877,6 +1723,7 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
   uint64_t signature_entries = 0;
   uint64_t max_table_entries = 0;
   uint64_t max_signature_entries = 0;
+  rw_join_workspace_t join_ws = {0};
   for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
     const uint32_t node_id = decomposition->postorder[i];
     const rw_node_t *node = &decomposition->nodes[node_id];
@@ -1894,8 +1741,9 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
         join_signature_pairs += map.len;
         qsop_trace_emit_elapsed(trace, "rankwidth.crt_join_map", 0, map.len, start);
         const uint64_t join_start = qsop_trace_begin(trace);
-        ok = solve_join_mod(qsop, &map, &tables[node->left], &tables[node->right], modulus,
-                            &tables[node_id], decomposition->words, &join_pairs, error);
+        ok = solve_join_acc_mod(qsop, &map, &tables[node->left], &tables[node->right], modulus,
+                                &tables[node_id], decomposition->words, &join_pairs, &join_ws,
+                                error);
         qsop_trace_emit_elapsed(trace, "rankwidth.crt_join", 0, tables[node_id].len, join_start);
       }
       rw_join_map_free(&map);
@@ -1906,8 +1754,10 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
       }
       free(tables);
       rw_signature_pool_free(&pool);
+      join_workspace_free(&join_ws);
       return false;
     }
+    rw_table_sort(&tables[node_id]);
     table_entries += tables[node_id].len;
     signature_entries += tables[node_id].reps_len;
     if (tables[node_id].len > max_table_entries) {
@@ -1915,6 +1765,12 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
     }
     if (tables[node_id].reps_len > max_signature_entries) {
       max_signature_entries = tables[node_id].reps_len;
+    }
+    if (node->kind == RW_NODE_JOIN) {
+      rw_table_free(&tables[node->left]);
+      if (node->right != node->left) {
+        rw_table_free(&tables[node->right]);
+      }
     }
   }
 
@@ -1941,6 +1797,7 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
       }
       free(tables);
       rw_signature_pool_free(&pool);
+      join_workspace_free(&join_ws);
       return false;
     }
   }
@@ -1950,6 +1807,7 @@ bool rw_solve_count_table_mod_once(const qsop_instance_t *qsop,
   }
   free(tables);
   rw_signature_pool_free(&pool);
+  join_workspace_free(&join_ws);
   return true;
 }
 static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
@@ -1967,6 +1825,7 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
   uint64_t join_pairs = 0, join_signature_pairs = 0;
   uint64_t table_entries = 0, signature_entries = 0;
   uint64_t max_table_entries = 0, max_signature_entries = 0;
+  rw_join_workspace_t join_ws = {0};
   for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
     const uint32_t node_id = decomposition->postorder[i];
     const rw_node_t *node = &decomposition->nodes[node_id];
@@ -1986,7 +1845,8 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
         const uint64_t join_start = qsop_trace_begin(trace);
         ok =
             solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
-                               modulus, &tables[node_id], decomposition->words, &join_pairs, error);
+                               modulus, &tables[node_id], decomposition->words, &join_pairs,
+                               &join_ws, error);
         qsop_trace_emit_elapsed(trace, "rankwidth.crt_join", 0, tables[node_id].len, join_start);
       }
     }
@@ -1995,8 +1855,10 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
         rw_table_free(&tables[t]);
       }
       free(tables);
+      join_workspace_free(&join_ws);
       return false;
     }
+    rw_table_sort(&tables[node_id]);
     table_entries += tables[node_id].len;
     signature_entries += tables[node_id].reps_len;
     if (tables[node_id].len > max_table_entries) {
@@ -2004,6 +1866,12 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
     }
     if (tables[node_id].reps_len > max_signature_entries) {
       max_signature_entries = tables[node_id].reps_len;
+    }
+    if (node->kind == RW_NODE_JOIN) {
+      rw_table_free(&tables[node->left]);
+      if (node->right != node->left) {
+        rw_table_free(&tables[node->right]);
+      }
     }
   }
   const rw_table_t *root = &tables[decomposition->root];
@@ -2027,6 +1895,7 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
         rw_table_free(&tables[t]);
       }
       free(tables);
+      join_workspace_free(&join_ws);
       return false;
     }
   }
@@ -2034,6 +1903,7 @@ static bool solve_sign_edge_crt_build_maps(const qsop_instance_t *qsop,
     rw_table_free(&tables[t]);
   }
   free(tables);
+  join_workspace_free(&join_ws);
   return true;
 }
 static bool solve_sign_edge_crt_use_maps(const qsop_instance_t *qsop,
@@ -2048,6 +1918,7 @@ static bool solve_sign_edge_crt_use_maps(const qsop_instance_t *qsop,
     return false;
   }
   uint64_t join_pairs = 0;
+  rw_join_workspace_t join_ws = {0};
   for (uint32_t i = 0; i < decomposition->postorder_len; i++) {
     const uint32_t node_id = decomposition->postorder[i];
     const rw_node_t *node = &decomposition->nodes[node_id];
@@ -2057,14 +1928,23 @@ static bool solve_sign_edge_crt_use_maps(const qsop_instance_t *qsop,
                           error);
     } else {
       ok = solve_join_acc_mod(qsop, &maps[node_id], &tables[node->left], &tables[node->right],
-                              modulus, &tables[node_id], decomposition->words, &join_pairs, error);
+                              modulus, &tables[node_id], decomposition->words, &join_pairs,
+                              &join_ws, error);
     }
     if (!ok) {
       for (uint32_t t = 0; t < nnodes; t++) {
         rw_table_free(&tables[t]);
       }
       free(tables);
+      join_workspace_free(&join_ws);
       return false;
+    }
+    rw_table_sort(&tables[node_id]);
+    if (node->kind == RW_NODE_JOIN) {
+      rw_table_free(&tables[node->left]);
+      if (node->right != node->left) {
+        rw_table_free(&tables[node->right]);
+      }
     }
   }
   const rw_table_t *root = &tables[decomposition->root];
@@ -2079,6 +1959,7 @@ static bool solve_sign_edge_crt_use_maps(const qsop_instance_t *qsop,
     rw_table_free(&tables[t]);
   }
   free(tables);
+  join_workspace_free(&join_ws);
   return true;
 }
 static bool solve_rankwidth_count_table_crt(const qsop_instance_t *qsop,
@@ -2457,20 +2338,9 @@ bool rw_solve_count_table(const qsop_instance_t *qsop,
   /* Precompute per-node outside bitsets and scratch_sig buffer (reuse scratch[2w]). */
   uint64_t *scratch_sig = scratch + 2U * w; /* scratch[2w..3w-1]: sig temp for transitions */
 
-  /* Pre-allocate join workspace for CSR path (amortizes malloc over all join nodes). */
-  const size_t ws_cap_sigs = decomposition->score_cached && decomposition->cached_table_forecast > 0
-                                 ? (size_t)(decomposition->cached_table_forecast / r32) + 1U
-                                 : 0U;
+  /* Shared join workspace grows only when a join actually needs it. Its value cells use compact
+   * node-local representative rows, so global signature-pool IDs cannot create holes. */
   rw_join_workspace_t join_ws = {0};
-  if (ws_cap_sigs > 0 && !join_workspace_alloc(ws_cap_sigs, r32, &join_ws, error)) {
-    free(scratch);
-    for (uint32_t t = 0; t < decomposition->nnodes; t++)
-      rw_table_free(&tables[t]);
-    free(tables);
-    rw_signature_pool_free(&pool);
-    qsop_result_free(result);
-    return false;
-  }
 
   /* Outside bitset per join node (scratch[0..w-1] reused as temp; allocated per node). */
   uint64_t *outside = calloc(w, sizeof(*outside));
@@ -2537,7 +2407,8 @@ bool rw_solve_count_table(const qsop_instance_t *qsop,
         uint64_t cand = 0, emit = 0;
         ok = rw_join_count_table_streaming_sign(
             qsop, decomposition, node_id, adj, &pool, &tables[node->left], &tables[node->right],
-            &tables[node_id], outside, scratch_sig, decomposition->words, &cand, &emit, error);
+            &tables[node_id], outside, scratch_sig, decomposition->words, &cand, &emit, &join_ws,
+            error);
         streaming_candidate_pairs += cand;
         streaming_emitted_pairs += emit;
         join_pairs += emit;
@@ -2549,17 +2420,16 @@ bool rw_solve_count_table(const qsop_instance_t *qsop,
         memset(scratch_sig, 0, w * sizeof(*scratch_sig));
         ok = rw_transition_csr_build_sign(qsop, decomposition, node_id, adj, &pool,
                                           &tables[node->left], &tables[node->right], outside,
-                                          scratch_sig, &csr, &u16_events, &u32_events, error);
+                                          scratch_sig, &tables[node_id], &csr, &u16_events,
+                                          &u32_events, error);
         if (ok) {
           join_signature_pairs += csr.transition_count;
           transition_bytes += rw_transition_csr_bytes(&csr);
           materialized_join_events++;
           qsop_trace_emit_elapsed(trace, "rankwidth.join_map", 0, csr.transition_count, start);
           const uint64_t join_start = qsop_trace_begin(trace);
-          memset(scratch_sig, 0, w * sizeof(*scratch_sig));
           ok = rw_execute_csr_join_sign(qsop, &csr, &tables[node->left], &tables[node->right],
-                                        &tables[node_id], decomposition->words, &join_pairs,
-                                        join_ws.acc ? &join_ws : NULL, error);
+                                        &tables[node_id], &join_pairs, &join_ws, error);
           qsop_trace_emit_elapsed(trace, "rankwidth.join", 0, tables[node_id].len, join_start);
         }
         rw_transition_csr_free(&csr);
@@ -2583,6 +2453,12 @@ bool rw_solve_count_table(const qsop_instance_t *qsop,
       max_table_entries = tables[node_id].len;
     if (tables[node_id].reps_len > max_signature_entries)
       max_signature_entries = tables[node_id].reps_len;
+    if (node->kind == RW_NODE_JOIN) {
+      rw_table_free(&tables[node->left]);
+      if (node->right != node->left) {
+        rw_table_free(&tables[node->right]);
+      }
+    }
   }
 
   join_workspace_free(&join_ws);
@@ -2843,6 +2719,12 @@ static bool solve_rankwidth_fourier_mod_once(const qsop_instance_t *qsop,
     }
     if (tables[node_id].len > max_signature_entries) {
       max_signature_entries = tables[node_id].len;
+    }
+    if (node->kind == RW_NODE_JOIN) {
+      rw_fourier_table_free(&tables[node->left]);
+      if (node->right != node->left) {
+        rw_fourier_table_free(&tables[node->right]);
+      }
     }
   }
 
