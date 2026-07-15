@@ -528,9 +528,22 @@ typedef enum qsop_branch_single_propagate {
   QSOP_BRANCH_SINGLE_PROPAGATE_OFF,
 } qsop_branch_single_propagate_t;
 
+/* Shadow-graph shortlisting for cutset-candidate selection (branch_shadow.c): a cheap auxiliary
+ * unlabelled graph on the same variable IDs, reduced by exhaustive degree-<=2 elimination, used
+ * only to narrow which *real* residual variables get the existing expensive lookahead treatment.
+ * OFF (the default) is exactly today's behavior with zero extra allocation. AUTO engages once the
+ * residual crosses a size trigger; ON always attempts it (subject to its own hard budgets). Either
+ * way the shadow graph never reaches a treewidth/rankwidth delegate and a shortlisted candidate is
+ * always evaluated -- and the final choice always made -- on the real residual, unchanged. */
+typedef enum qsop_branch_shadow_mode {
+  QSOP_BRANCH_SHADOW_OFF = 0,
+  QSOP_BRANCH_SHADOW_AUTO,
+  QSOP_BRANCH_SHADOW_ON,
+} qsop_branch_shadow_mode_t;
+
 /* Per-solve options for qsop_solve_branch_single_mode. Zero-initialize for defaults:
  * rw_source=none, heuristic=delegation-depth, fallback=auto, precision/kernel=auto,
- * and zero numeric caps selecting built-in limits. */
+ * shadow_mode=off, and zero numeric caps selecting built-in limits. */
 typedef struct qsop_branch_single_mode_options {
   qsop_branch_rw_source_t rw_source;
   qsop_branch_policy_t policy;
@@ -539,6 +552,7 @@ typedef struct qsop_branch_single_mode_options {
   qsop_branch_single_precision_t precision;
   qsop_branch_single_kernel_t kernel;
   qsop_branch_single_propagate_t propagate;
+  qsop_branch_shadow_mode_t shadow_mode;
   const qsop_simd_vtable_t *simd;
 
   uint64_t max_search_nodes;

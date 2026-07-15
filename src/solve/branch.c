@@ -1,3 +1,4 @@
+#include "branch_shadow.h"
 #include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/qsop_stats.h"
@@ -43,6 +44,9 @@
 #define BRANCH_SINGLE_DEFAULT_MAX_CONDITIONING_NODES UINT64_C(4096)
 #define BRANCH_SINGLE_DEFAULT_DELEGATE_REPROBE_INTERVAL 2U
 #define BRANCH_SINGLE_DEFAULT_MAX_STAGNANT_LEVELS 1U
+/* AUTO shadow-shortlisting trigger: below this the plain unlock3/unlock4 heuristic is already
+ * cheap and effective, so building a shadow graph is not worth its own O(nvars+nedges) scan. */
+#define BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS 128U
 /* Purely a defensive bound on the root-level component-split allocation's O(nvars) cost, not
  * a solvability gate -- that job belongs to a per-component --max-vars check instead (in
  * qsop_solve_branch_single_mode's case, the one inside branch_single_mode_delegate_component,
@@ -2999,6 +3003,7 @@ typedef struct branch_single_mode_state {
   /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
    * target mode (an even mode kills the sign edges outright and the rule changes shape). */
   bool propagate;
+  qsop_branch_shadow_mode_t shadow_mode;
 
   branch_phase_cache_t phase_cache;
   branch_amp_cache_t amp_cache;
@@ -3298,34 +3303,118 @@ static bool branch_cutset_lookahead_child(qsop_residual_t *residual,
   return true;
 }
 
+/* Evaluates one candidate variable's two real children (branch, propagate, materialized
+ * reduction, shape measurement -- exactly today's per-candidate treatment, unchanged) and fills
+ * *out. Shared by both the shadow-shortlist-driven and the legacy unlock3/unlock4-shortlist-
+ * driven candidate loops in branch_choose_cutset_candidate below, so the shadow graph can only
+ * ever change *which* variables get this expensive real-residual lookahead, never how a
+ * candidate is scored once evaluated. */
+static bool branch_evaluate_cutset_candidate_real(qsop_residual_t *residual,
+                                                   branch_single_mode_state_t *state,
+                                                   bool diagnostic_full_simplify,
+                                                   uint32_t parent_vars, uint32_t var,
+                                                   branch_cutset_candidate_t *out,
+                                                   qsop_error_t *error) {
+  *out = (branch_cutset_candidate_t){.var = var};
+  for (uint8_t value = 0; value <= 1U; value++) {
+    if (!branch_cutset_lookahead_child(residual, state, parent_vars, var, value,
+                                       state->hadamard_reduction_exact &&
+                                           (diagnostic_full_simplify || state->materialized_reduction),
+                                       &out->child[value], error)) {
+      branch_cutset_candidate_free(out);
+      return false;
+    }
+    if (state->diagnose_conditioning && !state->conditioning_diagnosed) {
+      branch_emit_conditioning_record(state, out, value, parent_vars);
+    }
+  }
+  return true;
+}
+
+/* Picks the best candidate to condition on from `vars[0..nvars)`, evaluating each with
+ * branch_evaluate_cutset_candidate_real and keeping the winner by branch_cutset_score_better.
+ * Returns true with have_best unset (out left zeroed) if `vars` is empty; a real evaluation
+ * error still propagates as false. */
+static bool branch_choose_cutset_candidate_from(qsop_residual_t *residual,
+                                                branch_single_mode_state_t *state,
+                                                bool diagnostic_full_simplify,
+                                                const uint32_t *vars, uint32_t nvars,
+                                                uint32_t parent_vars,
+                                                branch_cutset_candidate_t *out, bool *have_best,
+                                                qsop_error_t *error) {
+  *out = (branch_cutset_candidate_t){0};
+  *have_best = false;
+  for (uint32_t i = 0; i < nvars; i++) {
+    branch_cutset_candidate_t candidate = {0};
+    if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
+                                               parent_vars, vars[i], &candidate, error)) {
+      branch_cutset_candidate_free(out);
+      return false;
+    }
+    if (!*have_best || branch_cutset_score_better(&candidate, out)) {
+      branch_cutset_candidate_free(out);
+      *out = candidate;
+      candidate = (branch_cutset_candidate_t){0};
+      *have_best = true;
+    }
+    branch_cutset_candidate_free(&candidate);
+  }
+  return true;
+}
+
 static bool branch_choose_cutset_candidate(qsop_residual_t *residual,
                                            branch_single_mode_state_t *state,
                                            bool diagnostic_full_simplify,
                                            branch_cutset_candidate_t *out, qsop_error_t *error) {
-  *out = (branch_cutset_candidate_t){0};
+  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+
+  bool try_shadow = state->shadow_mode == QSOP_BRANCH_SHADOW_ON;
+  if (state->shadow_mode == QSOP_BRANCH_SHADOW_AUTO) {
+    const uint32_t active_edges = qsop_residual_active_edges(residual);
+    try_shadow = parent_vars >= BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS &&
+                active_edges >= 2U * parent_vars;
+  }
+  if (try_shadow) {
+    uint32_t *shadow_vars = NULL;
+    uint32_t shadow_len = 0;
+    if (!branch_shadow_shortlist(residual, state->lookahead_candidates, &shadow_vars, &shadow_len,
+                                 state->stats, error)) {
+      return false; /* allocation failure only -- budget/empty-core skips return true, len 0 */
+    }
+    if (shadow_len > 0U) {
+      bool have_best = false;
+      const bool ok = branch_choose_cutset_candidate_from(
+          residual, state, diagnostic_full_simplify, shadow_vars, shadow_len, parent_vars, out,
+          &have_best, error);
+      free(shadow_vars);
+      if (!ok) {
+        return false;
+      }
+      if (have_best) {
+        if (state->stats != NULL) {
+          state->stats->branch_shadow_selected++;
+        }
+        return true;
+      }
+      /* Defensively fall through to the legacy shortlist below (should not happen: every
+       * shadow candidate is a real, active residual variable). */
+    } else {
+      free(shadow_vars);
+    }
+  }
+
   branch_cutset_candidate_t *shortlist = NULL;
   uint32_t shortlist_len = 0;
   if (!branch_cutset_shortlist(residual, state->lookahead_candidates, &shortlist, &shortlist_len,
                                error)) {
     return false;
   }
-  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+  *out = (branch_cutset_candidate_t){0};
   bool have_best = false;
   for (uint32_t i = 0; i < shortlist_len; i++) {
-    branch_cutset_candidate_t candidate = shortlist[i];
-    bool ok = true;
-    for (uint8_t value = 0; ok && value <= 1U; value++) {
-      ok = branch_cutset_lookahead_child(residual, state, parent_vars, candidate.var, value,
-                                         state->hadamard_reduction_exact &&
-                                             (diagnostic_full_simplify ||
-                                              state->materialized_reduction),
-                                         &candidate.child[value], error);
-      if (ok && state->diagnose_conditioning && !state->conditioning_diagnosed) {
-        branch_emit_conditioning_record(state, &candidate, value, parent_vars);
-      }
-    }
-    if (!ok) {
-      branch_cutset_candidate_free(&candidate);
+    branch_cutset_candidate_t candidate = {0};
+    if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
+                                               parent_vars, shortlist[i].var, &candidate, error)) {
       free(shortlist);
       branch_cutset_candidate_free(out);
       return false;
@@ -3992,6 +4081,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
        * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
       .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
                    (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
+      .shadow_mode = o.shadow_mode,
       .stats = stats,
       .trace = o.trace,
       .sink = o.sink,
