@@ -325,17 +325,21 @@ int main(void) {
   }
 
   /* Self-loops and parity-cancelling duplicate edges are folded away before any degree is read;
-   * the two (0,1) edges cancel, leaving variable 0 isolated with unary 2 + r/2 == 6 != r/2. */
+   * the two (0,1) edges cancel, leaving variable 0 isolated with unary 2 + r/2 == 6 == 3r/4. That
+   * quarter turn is then removed by the [omega] rule (a global +7r/8 phase, norm_h -= 1), and the
+   * degree-0 variable 1 (unary 0) folds away as a factor of two -- so the instance empties out. */
   {
     const uint64_t unary[] = {2, 0};
     const uint32_t eu[] = {0, 0, 1};
     const uint32_t ev[] = {0, 1, 0};
-    rc |= check_case("canonicalize_before_degrees", make_instance(8, 2, 4, 0, unary, 3, eu, ev), 1,
-                     0, 2);
+    rc |= check_case("canonicalize_before_degrees", make_instance(8, 2, 4, 0, unary, 3, eu, ev), 0,
+                     0, 1);
   }
 
-  /* The statistics-bearing API reports the same eliminations used to derive the artificial
-   * norm_h doubling count, including degree-2 merges and an exact zero witness. */
+  /* The statistics-bearing API reports the eliminations used to derive the artificial norm_h
+   * doubling count: each degree-0/1/2 [HH] elimination spends two doublings, each [omega]
+   * elimination spends one. Here var 0 is a degree-2 merge (folding var 2's r/4 unary and the
+   * chord into var 1, which becomes an isolated 3r/4), and var 1 is then an [omega] elimination. */
   {
     const uint64_t unary[] = {0, 0, 2};
     const uint32_t eu[] = {0, 1, 0};
@@ -347,10 +351,10 @@ int main(void) {
       fprintf(stderr, "simplify_stats: unexpected failure\n");
       rc = 1;
     } else {
-      const uint64_t eliminations = (uint64_t)stats.degree0_eliminations +
-                                    stats.degree1_eliminations + stats.degree2_eliminations;
-      if (stats.degree2_eliminations == 0U ||
-          before_norm_h - q->norm_h != 2U * eliminations || stats.zero_witness) {
+      const uint64_t hh = (uint64_t)stats.degree0_eliminations + stats.degree1_eliminations +
+                          stats.degree2_eliminations;
+      if (stats.degree2_eliminations == 0U || stats.omega_eliminations == 0U ||
+          before_norm_h - q->norm_h != 2U * hh + stats.omega_eliminations || stats.zero_witness) {
         fprintf(stderr, "simplify_stats: inconsistent elimination counters\n");
         rc = 1;
       }
@@ -367,6 +371,123 @@ int main(void) {
       rc = 1;
     }
     qsop_free(q);
+  }
+
+  /* [omega], degree 0: an isolated variable with unary r/4 folds to a global +r/8 phase with
+   * norm_h -= 1 (sum_{x} omega^{(r/4)x} = 1 + i = sqrt(2)*omega^{r/8}). */
+  {
+    const uint64_t unary[] = {2};
+    rc |= check_case("omega_deg0", make_instance(8, 1, 2, 0, unary, 0, NULL, NULL), 0, 0, 1);
+  }
+
+  /* [omega], degree 1: var 0 (unary r/4) turns its single neighbour by -r/4 (== 3r/4) and drops
+   * out with norm_h -= 1. Neighbour keeps a non-quarter unary so the cascade stops there. */
+  {
+    const uint64_t unary[] = {2, 1};
+    const uint32_t eu[] = {0};
+    const uint32_t ev[] = {1};
+    rc |= check_case("omega_deg1", make_instance(8, 2, 2, 0, unary, 1, eu, ev), 1, 0, 1);
+  }
+
+  /* [omega], degree 2: var 0 (unary r/4) turns both neighbours by -r/4 and toggles the sign edge
+   * between them (here creating a fresh 1-2 chord), dropping out with norm_h -= 1. */
+  {
+    const uint64_t unary[] = {2, 1, 1};
+    const uint32_t eu[] = {0, 0};
+    const uint32_t ev[] = {1, 2};
+    rc |= check_case("omega_deg2", make_instance(8, 3, 2, 0, unary, 2, eu, ev), 2, 1, 1);
+  }
+
+  /* [omega], 3r/4 mirror: a global +7r/8 phase and a +r/4 turn on the neighbour. */
+  {
+    const uint64_t unary[] = {6, 1};
+    const uint32_t eu[] = {0};
+    const uint32_t ev[] = {1};
+    rc |= check_case("omega_conj_deg1", make_instance(8, 2, 2, 0, unary, 1, eu, ev), 1, 0, 1);
+  }
+
+  /* [omega] requires 8 | r so the r/8 phase and r/4 turns are representable; at r=4 a quarter-turn
+   * unary (r/4 == 1) is left untouched (and is not an [HH] candidate either): the pass is a no-op. */
+  {
+    const uint64_t unary[] = {1, 1};
+    const uint32_t eu[] = {0};
+    const uint32_t ev[] = {1};
+    rc |= check_case("omega_r4_skip", make_instance(4, 2, 2, 0, unary, 1, eu, ev), 2, 1, 2);
+  }
+
+  /* qsop_reduce_modulus: all-even coefficients halve the modulus (16 -> 8, floored there) with the
+   * normalized amplitude unchanged; the implicit sign edge stays r/2. */
+  {
+    const uint64_t unary[] = {8, 4}; /* r=16: r/2 and r/4 */
+    const uint32_t eu[] = {0};
+    const uint32_t ev[] = {1};
+    qsop_instance_t *q = make_instance(16, 2, 4, 2, unary, 1, eu, ev);
+    double re0 = 0.0, im0 = 0.0;
+    if (q == NULL) {
+      fprintf(stderr, "reduce_modulus: alloc\n");
+      rc = 1;
+    } else {
+      normalized_amplitude(q, &re0, &im0);
+      double re1 = 0.0, im1 = 0.0;
+      if (!qsop_reduce_modulus(q)) {
+        fprintf(stderr, "reduce_modulus: reported failure\n");
+        rc = 1;
+      } else {
+        normalized_amplitude(q, &re1, &im1);
+        if (q->r != 8U || q->unary[0] != 4U || q->unary[1] != 2U || q->constant != 1U ||
+            fabs(re0 - re1) > 1e-9 || fabs(im0 - im1) > 1e-9) {
+          fprintf(stderr, "reduce_modulus: r=%" PRIu64 " u=%" PRIu64 ",%" PRIu64 " cst=%" PRIu64
+                          " amp (%.9g,%.9g)->(%.9g,%.9g)\n",
+                  q->r, q->unary[0], q->unary[1], q->constant, re0, im0, re1, im1);
+          rc = 1;
+        }
+      }
+      qsop_free(q);
+    }
+  }
+
+  /* qsop_reduce_modulus is a no-op when any coefficient is odd (an [omega]-folded r/8 constant is
+   * the canonical case), and never drops below the floor of 8. */
+  {
+    const uint64_t unary[] = {2};
+    qsop_instance_t *q = make_instance(8, 1, 2, 1, unary, 0, NULL, NULL);
+    if (q == NULL || !qsop_reduce_modulus(q) || q->r != 8U || q->constant != 1U ||
+        q->unary[0] != 2U) {
+      fprintf(stderr, "reduce_modulus_noop: instance changed\n");
+      rc = 1;
+    }
+    qsop_free(q);
+  }
+
+  /* qsop_simplify umbrella: run [HH]+[omega] then minimize the modulus, preserving the normalized
+   * amplitude. Here the two Hadamard variables (unary 0) at r=16 collapse the sign edge and the
+   * surviving constant/vars are all even, so the modulus then halves to 8. */
+  {
+    const uint64_t unary[] = {0, 0};
+    const uint32_t eu[] = {0};
+    const uint32_t ev[] = {1};
+    qsop_instance_t *q = make_instance(16, 2, 4, 4, unary, 1, eu, ev);
+    double re0 = 0.0, im0 = 0.0;
+    if (q == NULL) {
+      fprintf(stderr, "qsop_simplify: alloc\n");
+      rc = 1;
+    } else {
+      normalized_amplitude(q, &re0, &im0);
+      qsop_hadamard_simplify_stats_t st = {0};
+      double re1 = 0.0, im1 = 0.0;
+      if (!qsop_simplify(q, &st)) {
+        fprintf(stderr, "qsop_simplify: reported failure\n");
+        rc = 1;
+      } else {
+        normalized_amplitude(q, &re1, &im1);
+        if (q->r != 8U || fabs(re0 - re1) > 1e-9 || fabs(im0 - im1) > 1e-9) {
+          fprintf(stderr, "qsop_simplify: r=%" PRIu64 " amp (%.9g,%.9g)->(%.9g,%.9g)\n", q->r, re0,
+                  im0, re1, im1);
+          rc = 1;
+        }
+      }
+      qsop_free(q);
+    }
   }
 
   rc |= check_random();
