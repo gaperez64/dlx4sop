@@ -177,24 +177,37 @@ static bool ref_simplify_round(qsop_instance_t *inst, uint64_t sign_coeff, bool 
     }
   }
 
-  if (inst->norm_h < 2U) {
-    free(degree);
-    return true;
-  }
-
+  /* Pick the lowest-index electable candidate across both families, matching the live impl's
+   * lowest-index-first heap: an [HH] variable (unary a multiple of r/2, degree <= 2) is electable
+   * when norm_h >= 2; an [omega] variable (unary a quarter turn r/4 or 3r/4, degree <= 2, 8 | r) is
+   * electable when norm_h >= 1. A lower-index [HH] candidate at norm_h < 2 is skipped, exactly as
+   * the live impl pops and discards it. */
+  const bool omega_ok = (inst->r % 8U) == 0U;
+  const uint64_t quarter = inst->r / 4U;
   uint32_t v = UINT32_MAX;
+  bool v_is_omega = false;
   for (uint32_t x = 0; x < n; x++) {
-    if (inst->unary[x] % sign_coeff == 0U && degree[x] <= 2U) {
+    if (degree[x] > 2U) {
+      continue;
+    }
+    if (inst->norm_h >= 2U && inst->unary[x] % sign_coeff == 0U) {
       v = x;
+      v_is_omega = false;
+      break;
+    }
+    if (omega_ok && inst->norm_h >= 1U &&
+        (inst->unary[x] == quarter || inst->unary[x] == inst->r - quarter)) {
+      v = x;
+      v_is_omega = true;
       break;
     }
   }
   if (v == UINT32_MAX) {
     free(degree);
-    return true; /* nothing eligible: *changed stays false, fixpoint reached */
+    return true; /* nothing electable: *changed stays false, fixpoint reached */
   }
   const uint32_t vdeg = degree[v];
-  /* s == 1 exactly when unary[v] == r/2; the eligibility test above admits only 0 and r/2. */
+  /* s == 1 exactly when unary[v] == r/2; the [HH] eligibility test admits only 0 and r/2. */
   const bool negate = inst->unary[v] == sign_coeff;
   free(degree);
 
@@ -210,18 +223,43 @@ static bool ref_simplify_round(qsop_instance_t *inst, uint64_t sign_coeff, bool 
     }
   }
 
+  /* [omega]: sum_{x_v} omega^{(r/4)x_v + (r/2)x_v*S} = sqrt(2)*omega^{r/8 - (r/4)Sbar}. Fold the
+   * r/8 phase, the -r/4 (or +r/4 for 3r/4) turn on each neighbour, and -- at degree 2 -- a toggled
+   * sign edge between the two neighbours, then drop only v with norm_h -= 1. Rebuilt below via the
+   * removed[]/newid[] machinery with drop left unset and an optional extra chord appended. */
+  bool omega_add_chord = false;
+  uint32_t omega_a = UINT32_MAX;
+  uint32_t omega_b = UINT32_MAX;
+  if (v_is_omega) {
+    const bool conj = inst->unary[v] == inst->r - quarter;
+    const uint64_t eighth = inst->r / 8U;
+    inst->constant =
+        ref_add_mod_u64(inst->constant, conj ? inst->r - eighth : eighth, inst->r);
+    const uint64_t neigh_turn = conj ? quarter : inst->r - quarter;
+    for (uint32_t i = 0; i < vdeg; i++) {
+      inst->unary[nbr[i]] = ref_add_mod_u64(inst->unary[nbr[i]], neigh_turn, inst->r);
+    }
+    if (vdeg == 2U) {
+      omega_add_chord = true;
+      omega_a = nbr[0];
+      omega_b = nbr[1];
+    }
+  }
+
   bool merge_mode = false; /* true: degree-2 substitution (drop := keep XOR s). */
   uint32_t keep = UINT32_MAX;
   uint32_t drop = UINT32_MAX;
-  if (vdeg == 2U) {
-    keep = nbr[0] < nbr[1] ? nbr[0] : nbr[1];
-    drop = nbr[0] < nbr[1] ? nbr[1] : nbr[0];
-    merge_mode = true;
-    if (keep == drop) {
-      return true; /* defensive: canonical form should never yield parallel edges */
+  if (!v_is_omega) {
+    if (vdeg == 2U) {
+      keep = nbr[0] < nbr[1] ? nbr[0] : nbr[1];
+      drop = nbr[0] < nbr[1] ? nbr[1] : nbr[0];
+      merge_mode = true;
+      if (keep == drop) {
+        return true; /* defensive: canonical form should never yield parallel edges */
+      }
+    } else if (vdeg == 1U) {
+      drop = nbr[0]; /* degree-1 pin: drop := s */
     }
-  } else if (vdeg == 1U) {
-    drop = nbr[0]; /* degree-1 pin: drop := s */
   }
 
   /* Apply the substitution's linear-phase effects in place; the rebuild below only has to
@@ -291,7 +329,8 @@ static bool ref_simplify_round(qsop_instance_t *inst, uint64_t sign_coeff, bool 
   }
 
   uint64_t *new_unary = calloc(k == 0U ? 1U : k, sizeof(*new_unary));
-  ref_simplify_edge_t *edges = malloc((inst->nedges == 0U ? 1U : inst->nedges) * sizeof(*edges));
+  /* +1 slot: an [omega] degree-2 elimination appends one toggled chord below. */
+  ref_simplify_edge_t *edges = malloc((inst->nedges + 1U) * sizeof(*edges));
   if (new_unary == NULL || edges == NULL) {
     free(removed);
     free(newid);
@@ -334,12 +373,22 @@ static bool ref_simplify_round(qsop_instance_t *inst, uint64_t sign_coeff, bool 
     medges++;
   }
 
-  /* Only a merge can create edges, and hence duplicates or a broken (u,v) order. A pin or a
-   * degree-0 removal merely deletes edges, and newid is strictly monotone, so the surviving list
-   * is still sorted and parity-deduped -- re-sorting every round would make the fixpoint
-   * O(eliminations * m log m) for no reason. */
+  /* An [omega] degree-2 elimination toggles the chord between v's two (surviving) neighbours; add
+   * it here and let the parity dedup below cancel it against an existing copy or keep it fresh. */
+  if (omega_add_chord) {
+    const uint32_t nu = newid[omega_a];
+    const uint32_t nw = newid[omega_b];
+    edges[medges].u = nu < nw ? nu : nw;
+    edges[medges].v = nu < nw ? nw : nu;
+    medges++;
+  }
+
+  /* Only a merge or an [omega] chord toggle can create edges, and hence duplicates or a broken
+   * (u,v) order. A pin or a degree-0 removal merely deletes edges, and newid is strictly monotone,
+   * so the surviving list is still sorted and parity-deduped -- re-sorting every round would make
+   * the fixpoint O(eliminations * m log m) for no reason. */
   uint32_t kept_edges = medges;
-  if (merge_mode) {
+  if (merge_mode || omega_add_chord) {
     if (medges > 1U) {
       qsort(edges, medges, sizeof(*edges), ref_compare_simplify_edges);
     }
@@ -385,7 +434,7 @@ static bool ref_simplify_round(qsop_instance_t *inst, uint64_t sign_coeff, bool 
   inst->edge_v = new_edge_v;
   inst->nvars = k;
   inst->nedges = kept_edges;
-  inst->norm_h -= 2U;
+  inst->norm_h -= v_is_omega ? 1U : 2U; /* [omega] spends one doubling, [HH] two */
   *changed = true;
   return true;
 }

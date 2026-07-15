@@ -323,8 +323,11 @@ static bool branch_auto_refusal_is_safe_fallback(const qsop_error_t *error) {
 static bool branch_auto_count_vector_too_large(const qsop_instance_t *qsop) {
   /* Auto never exposes the residue vector, so avoid constructing a count table whose result
    * vector alone is already multi-gigabyte.  The branch count solver also needs working/cache
-   * storage, making this a deliberately conservative preflight rather than a peak estimator. */
-  return qsop != NULL && qsop->r > BRANCH_AUTO_COUNT_VECTOR_MAX_BYTES / sizeof(uint64_t);
+   * storage, so the measured peak is roughly twice this vector -- hence >= at the budget, not >:
+   * a variable-free QFT at 27 qubits (r == 2^28, count vector == exactly 2 GiB, ~4 GiB resident)
+   * collapses to a trivial constant-phase amplitude that single-Fourier returns in O(1) with
+   * kilobytes, so there is never a reason to let the count table hit the budget on the nose. */
+  return qsop != NULL && qsop->r >= BRANCH_AUTO_COUNT_VECTOR_MAX_BYTES / sizeof(uint64_t);
 }
 
 static bool branch_auto_should_start_single_fourier(const qsop_instance_t *qsop, uint32_t max_vars,
