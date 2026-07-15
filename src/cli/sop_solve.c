@@ -96,6 +96,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-single-max-conditioning-nodes N",
       "--branch-single-delegate-reprobe-interval N",
       "--branch-single-max-stagnant-levels N",
+      "--branch-shadow off|auto|on",
       "--rankwidth-memory-budget-mib N",
       "--rankwidth-memory-budget-bytes N",
       "--rankwidth-memory-policy skip|fallback|hard-error",
@@ -524,6 +525,12 @@ static void write_run_summary_jsonl(FILE *file, const char *instance, bool solve
           ",\"branch_cutset_final_edges\":%" PRIu32
           ",\"branch_cutset_stagnant_levels\":%" PRIu32
           ",\"branch_last_delegate_miss\":%" PRIu32
+          ",\"branch_shadow_builds\":%" PRIu64
+          ",\"branch_shadow_skips\":%" PRIu64
+          ",\"branch_shadow_selected\":%" PRIu64
+          ",\"branch_shadow_max_source_vars\":%" PRIu32
+          ",\"branch_shadow_max_core_vars\":%" PRIu32
+          ",\"branch_shadow_build_ns\":%" PRIu64
           ",\"treewidth_factor_scope_tests\":%" PRIu64
           ",\"treewidth_factor_bucket_visits\":%" PRIu64
           ",\"treewidth_factor_multiplications\":%" PRIu64
@@ -546,6 +553,9 @@ static void write_run_summary_jsonl(FILE *file, const char *instance, bool solve
           stats->branch_cutset_initial_vars, stats->branch_cutset_initial_edges,
           stats->branch_cutset_final_vars, stats->branch_cutset_final_edges,
           stats->branch_cutset_stagnant_levels, stats->branch_last_delegate_miss,
+          stats->branch_shadow_builds, stats->branch_shadow_skips, stats->branch_shadow_selected,
+          stats->branch_shadow_max_source_vars, stats->branch_shadow_max_core_vars,
+          stats->branch_shadow_build_ns,
           stats->treewidth_factor_scope_tests, stats->treewidth_factor_bucket_visits,
           stats->treewidth_factor_multiplications, stats->treewidth_factor_allocations,
           stats->treewidth_factor_discovery_ns, stats->treewidth_numeric_join_ns,
@@ -673,6 +683,16 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
       fprintf(file, "branch_delegate_probe_skips: %" PRIu64 "\n",
               stats->branch_delegate_probe_skips);
       fprintf(file, "branch_max_cutset_depth: %" PRIu32 "\n", stats->branch_max_cutset_depth);
+      if (stats->branch_shadow_builds != 0 || stats->branch_shadow_skips != 0) {
+        fprintf(file, "branch_shadow_builds: %" PRIu64 "\n", stats->branch_shadow_builds);
+        fprintf(file, "branch_shadow_skips: %" PRIu64 "\n", stats->branch_shadow_skips);
+        fprintf(file, "branch_shadow_selected: %" PRIu64 "\n", stats->branch_shadow_selected);
+        fprintf(file, "branch_shadow_max_source_vars: %" PRIu32 "\n",
+                stats->branch_shadow_max_source_vars);
+        fprintf(file, "branch_shadow_max_core_vars: %" PRIu32 "\n",
+                stats->branch_shadow_max_core_vars);
+        fprintf(file, "branch_shadow_build_ns: %" PRIu64 "\n", stats->branch_shadow_build_ns);
+      }
     }
     if (stats->treewidth_delegations != 0 || stats->rankwidth_delegations != 0 ||
         stats->branch_fallthroughs != 0 || stats->branch_treewidth_skips != 0 ||
@@ -1148,6 +1168,7 @@ int main(int argc, char **argv) {
   qsop_branch_policy_t branch_policy = {0}; /* zeros → defaults applied in branch.c */
   qsop_branch_single_fallback_t branch_single_fallback = QSOP_BRANCH_SINGLE_FALLBACK_AUTO;
   qsop_branch_single_propagate_t branch_single_propagate = QSOP_BRANCH_SINGLE_PROPAGATE_AUTO;
+  qsop_branch_shadow_mode_t branch_shadow_mode = QSOP_BRANCH_SHADOW_OFF;
   qsop_branch_single_precision_t branch_single_precision = QSOP_BRANCH_SINGLE_PRECISION_AUTO;
   qsop_branch_single_kernel_t branch_single_kernel = QSOP_BRANCH_SINGLE_KERNEL_AUTO;
   uint64_t branch_single_max_search_nodes = 0;
@@ -1488,6 +1509,25 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "error: unsupported --branch-single-propagate '%s' (expected auto|off)\n",
                 value);
+        return 2;
+      }
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-shadow") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-shadow requires a value\n", stderr);
+        return 2;
+      }
+      const char *value = argv[++i];
+      if (strcmp(value, "off") == 0) {
+        branch_shadow_mode = QSOP_BRANCH_SHADOW_OFF;
+      } else if (strcmp(value, "auto") == 0) {
+        branch_shadow_mode = QSOP_BRANCH_SHADOW_AUTO;
+      } else if (strcmp(value, "on") == 0) {
+        branch_shadow_mode = QSOP_BRANCH_SHADOW_ON;
+      } else {
+        fprintf(stderr, "error: unsupported --branch-shadow '%s' (expected off|auto|on)\n", value);
         return 2;
       }
       branch_single_option_set = true;
@@ -2251,6 +2291,7 @@ int main(int argc, char **argv) {
           .precision = branch_single_precision,
           .kernel = branch_single_kernel,
           .propagate = branch_single_propagate,
+          .shadow_mode = branch_shadow_mode,
           .simd = simd,
           .max_search_nodes = branch_single_max_search_nodes,
           .max_fallback_vars = branch_single_max_fallback_vars,
