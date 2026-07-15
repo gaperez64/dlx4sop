@@ -3331,77 +3331,69 @@ static bool branch_evaluate_cutset_candidate_real(qsop_residual_t *residual,
   return true;
 }
 
-/* Picks the best candidate to condition on from `vars[0..nvars)`, evaluating each with
- * branch_evaluate_cutset_candidate_real and keeping the winner by branch_cutset_score_better.
- * Returns true with have_best unset (out left zeroed) if `vars` is empty; a real evaluation
- * error still propagates as false. */
-static bool branch_choose_cutset_candidate_from(qsop_residual_t *residual,
-                                                branch_single_mode_state_t *state,
-                                                bool diagnostic_full_simplify,
-                                                const uint32_t *vars, uint32_t nvars,
-                                                uint32_t parent_vars,
-                                                branch_cutset_candidate_t *out, bool *have_best,
-                                                qsop_error_t *error) {
-  *out = (branch_cutset_candidate_t){0};
-  *have_best = false;
-  for (uint32_t i = 0; i < nvars; i++) {
-    branch_cutset_candidate_t candidate = {0};
-    if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
-                                               parent_vars, vars[i], &candidate, error)) {
-      branch_cutset_candidate_free(out);
-      return false;
-    }
-    if (!*have_best || branch_cutset_score_better(&candidate, out)) {
-      branch_cutset_candidate_free(out);
-      *out = candidate;
-      candidate = (branch_cutset_candidate_t){0};
-      *have_best = true;
-    }
-    branch_cutset_candidate_free(&candidate);
+/* Evaluates `var` (unless already present in `seen[0..nseen)`, in which case it's a no-op) and,
+ * if it scores better than the current *out, replaces it. `*winner_is_shadow` is only ever set
+ * to `shadow`, never cleared, and only meaningful once `*have_best` is true. */
+static bool branch_cutset_consider_candidate(qsop_residual_t *residual,
+                                             branch_single_mode_state_t *state,
+                                             bool diagnostic_full_simplify, uint32_t parent_vars,
+                                             uint32_t var, bool shadow,
+                                             branch_cutset_candidate_t *out, bool *have_best,
+                                             bool *winner_is_shadow, qsop_error_t *error) {
+  branch_cutset_candidate_t candidate = {0};
+  if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
+                                             parent_vars, var, &candidate, error)) {
+    branch_cutset_candidate_free(out);
+    return false;
   }
+  if (!*have_best || branch_cutset_score_better(&candidate, out)) {
+    branch_cutset_candidate_free(out);
+    *out = candidate;
+    candidate = (branch_cutset_candidate_t){0};
+    *have_best = true;
+    *winner_is_shadow = shadow;
+  }
+  branch_cutset_candidate_free(&candidate);
   return true;
 }
 
+/* Picks the best variable to condition on.
+ *
+ * branch_cutset_score_better is a one-step-greedy comparator: it scores a candidate by the
+ * shape of its own two children, with no visibility into what a candidate sets up two or three
+ * branches later. unlock3/unlock4 (legacy's shortlist heuristic) is tuned to exploit exactly
+ * that: a nonzero count means some neighbour is one pin away from qualifying for the exact [HH]
+ * materialized-reduction cascade, the dominant source of real one-step progress in this
+ * recursion, so whenever that signal exists a legacy candidate reliably outscores a shadow
+ * candidate chosen for its multi-step structural payoff -- shadow doesn't see coefficients at
+ * all, by design. Two designs were tried and rejected empirically before this one:
+ *
+ *   - Shadow *replacing* the shortlist unconditionally regressed a real mqt2040
+ *     qnn_indep_qiskit fixture (1430-variable component): legacy alone solved it in 3
+ *     conditioning nodes, shadow-only stalled into the stagnant-level budget.
+ *   - Shadow candidates *merged* into the same real-child comparison alongside legacy's, always,
+ *     neutralized shadow's own benefit on a synthetic gadget-chain fixture built with no unary
+ *     value in {0, r/2} anywhere (so [HH] can fire nowhere): a degree-2 gadget "orphan" and a
+ *     genuine structural hub look locally identical to a one-step-greedy comparator once neither
+ *     can trigger an exact elimination, so legacy's generic degree/ID fallback tiebreak won the
+ *     comparison as often as shadow's structurally-informed pick did, at double the per-node
+ *     evaluation cost for no gain.
+ *
+ * The distinguishing case is exactly "does legacy's shortlist have any unlock signal at all" --
+ * sorted unlock3 desc, unlock4 desc, so entry 0 carries the strongest signal in the list. When it
+ * does (real circuits, empirically, almost always), trust it alone, unchanged from before this
+ * feature existed. When it doesn't (a gadget-chain-heavy component whose coefficients don't
+ * align with any exact rule -- what this feature targets), let shadow's own remove-and-rereduce
+ * scoring pick the shortlist instead, competing only against itself, so its multi-step judgement
+ * isn't drowned out by a legacy fallback pick the one-step comparator can't fairly rank against
+ * it either. Either way, the actual winner is still chosen by the same real branch + materialized
+ * reduction + branch_cutset_score_better used throughout this file -- shadow only ever changes
+ * which variables are worth that treatment, never the treatment itself. */
 static bool branch_choose_cutset_candidate(qsop_residual_t *residual,
                                            branch_single_mode_state_t *state,
                                            bool diagnostic_full_simplify,
                                            branch_cutset_candidate_t *out, qsop_error_t *error) {
   const uint32_t parent_vars = qsop_residual_active_vars(residual);
-
-  bool try_shadow = state->shadow_mode == QSOP_BRANCH_SHADOW_ON;
-  if (state->shadow_mode == QSOP_BRANCH_SHADOW_AUTO) {
-    const uint32_t active_edges = qsop_residual_active_edges(residual);
-    try_shadow = parent_vars >= BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS &&
-                active_edges >= 2U * parent_vars;
-  }
-  if (try_shadow) {
-    uint32_t *shadow_vars = NULL;
-    uint32_t shadow_len = 0;
-    if (!branch_shadow_shortlist(residual, state->lookahead_candidates, &shadow_vars, &shadow_len,
-                                 state->stats, error)) {
-      return false; /* allocation failure only -- budget/empty-core skips return true, len 0 */
-    }
-    if (shadow_len > 0U) {
-      bool have_best = false;
-      const bool ok = branch_choose_cutset_candidate_from(
-          residual, state, diagnostic_full_simplify, shadow_vars, shadow_len, parent_vars, out,
-          &have_best, error);
-      free(shadow_vars);
-      if (!ok) {
-        return false;
-      }
-      if (have_best) {
-        if (state->stats != NULL) {
-          state->stats->branch_shadow_selected++;
-        }
-        return true;
-      }
-      /* Defensively fall through to the legacy shortlist below (should not happen: every
-       * shadow candidate is a real, active residual variable). */
-    } else {
-      free(shadow_vars);
-    }
-  }
 
   branch_cutset_candidate_t *shortlist = NULL;
   uint32_t shortlist_len = 0;
@@ -3409,28 +3401,54 @@ static bool branch_choose_cutset_candidate(qsop_residual_t *residual,
                                error)) {
     return false;
   }
+  const bool legacy_has_unlock_signal =
+      shortlist_len > 0U && (shortlist[0].unlock3 > 0U || shortlist[0].unlock4 > 0U);
+
+  bool try_shadow = !legacy_has_unlock_signal && state->shadow_mode == QSOP_BRANCH_SHADOW_ON;
+  if (!legacy_has_unlock_signal && state->shadow_mode == QSOP_BRANCH_SHADOW_AUTO) {
+    const uint32_t active_edges = qsop_residual_active_edges(residual);
+    try_shadow = parent_vars >= BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS &&
+                active_edges >= 2U * parent_vars;
+  }
+
   *out = (branch_cutset_candidate_t){0};
   bool have_best = false;
-  for (uint32_t i = 0; i < shortlist_len; i++) {
-    branch_cutset_candidate_t candidate = {0};
-    if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
-                                               parent_vars, shortlist[i].var, &candidate, error)) {
-      free(shortlist);
-      branch_cutset_candidate_free(out);
-      return false;
+  bool winner_is_shadow = false;
+  bool ok = true;
+
+  if (try_shadow) {
+    uint32_t *shadow_vars = NULL;
+    uint32_t shadow_len = 0;
+    ok = branch_shadow_shortlist(residual, state->lookahead_candidates, &shadow_vars, &shadow_len,
+                                 state->stats, error);
+    for (uint32_t i = 0; ok && i < shadow_len; i++) {
+      ok = branch_cutset_consider_candidate(residual, state, diagnostic_full_simplify, parent_vars,
+                                            shadow_vars[i], true, out, &have_best, &winner_is_shadow,
+                                            error);
     }
-    if (!have_best || branch_cutset_score_better(&candidate, out)) {
-      branch_cutset_candidate_free(out);
-      *out = candidate;
-      candidate = (branch_cutset_candidate_t){0};
-      have_best = true;
-    }
-    branch_cutset_candidate_free(&candidate);
+    free(shadow_vars);
+  }
+
+  /* Shadow disabled/not triggered, budget-skipped, empty reduced core, or (defensively) no
+   * shadow candidate evaluated cleanly: fall back to legacy's shortlist, exactly as before this
+   * feature existed. */
+  for (uint32_t i = 0; ok && !have_best && i < shortlist_len; i++) {
+    ok = branch_cutset_consider_candidate(residual, state, diagnostic_full_simplify, parent_vars,
+                                          shortlist[i].var, false, out, &have_best,
+                                          &winner_is_shadow, error);
   }
   free(shortlist);
+
+  if (!ok) {
+    branch_cutset_candidate_free(out);
+    return false;
+  }
   if (!have_best) {
     qsop_set_error(error, "cutset lookahead found no active candidate");
     return false;
+  }
+  if (winner_is_shadow && state->stats != NULL) {
+    state->stats->branch_shadow_selected++;
   }
   return true;
 }
