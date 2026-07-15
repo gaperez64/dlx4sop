@@ -455,6 +455,54 @@ static int test_shortlist_prefers_collapsing_candidate(void) {
   return rc;
 }
 
+static int test_shortlist_large_pool_prefilter(void) {
+  /* Two K35s {0..34} and {35..69} joined only through a hub vertex 70, which connects to every
+   * member of both cliques (degree 70 -- far above any clique member's degree of 35). The
+   * reduced shadow's surviving pool (71 vertices) exceeds BRANCH_SHADOW_MAX_CANDIDATE_EVALS
+   * (64), so branch_shadow_shortlist must pre-filter by degree before scoring -- this is the
+   * only case in this file that exercises that pre-filter at all. The hub is both the highest-
+   * degree survivor (so it must not be dropped by the pre-filter) and the best-scoring one
+   * (removing it splits the graph into two disconnected K35s, largest_component=35, vs. leaving
+   * everything at largest_component=70 for any clique member), so it must still win. */
+  enum { hub = 70, n = 71 };
+  uint32_t eu[35 * 34 / 2 * 2 + 70], ev[35 * 34 / 2 * 2 + 70];
+  uint32_t ne = 0;
+  for (uint32_t base = 0; base < 70U; base += 35U) {
+    for (uint32_t i = 0; i < 35U; i++) {
+      for (uint32_t j = i + 1U; j < 35U; j++) {
+        eu[ne] = base + i;
+        ev[ne] = base + j;
+        ne++;
+      }
+    }
+  }
+  for (uint32_t v = 0; v < 70U; v++) {
+    eu[ne] = v;
+    ev[ne] = hub;
+    ne++;
+  }
+
+  qsop_residual_t *residual = make_residual(n, eu, ev, ne);
+  if (residual == NULL) {
+    return 1;
+  }
+  uint32_t *vars = NULL;
+  uint32_t len = 0;
+  qsop_error_t err = {0};
+  int rc = 0;
+  if (!branch_shadow_shortlist(residual, 1U, &vars, &len, NULL, &err)) {
+    fprintf(stderr, "shortlist_large_pool_prefilter: shortlist failed: %s\n", err.message);
+    rc = 1;
+  } else if (len != 1U || vars[0] != (uint32_t)hub) {
+    fprintf(stderr, "shortlist_large_pool_prefilter: expected {hub=%u}, got len=%u\n",
+            (uint32_t)hub, len);
+    rc = 1;
+  }
+  free(vars);
+  qsop_residual_free(residual);
+  return rc;
+}
+
 static int test_shortlist_off_by_zero_limit(void) {
   qsop_residual_t *residual = make_residual(0, NULL, NULL, 0);
   if (residual == NULL) {
@@ -490,6 +538,7 @@ int main(void) {
   rc |= test_shortlist_empty_core();
   rc |= test_shortlist_active_and_limit();
   rc |= test_shortlist_prefers_collapsing_candidate();
+  rc |= test_shortlist_large_pool_prefilter();
   rc |= test_shortlist_off_by_zero_limit();
 
   if (rc == 0) {

@@ -588,6 +588,16 @@ if python3.found()
     timeout: 90,
   )
   test(
+    'branch shadow regression guard smoke',
+    python3,
+    args: [
+      files('tests/test_branch_shadow_regression_guard.py'),
+      sop_solve.full_path(),
+    ],
+    depends: sop_solve,
+    timeout: 90,
+  )
+  test(
     'branch InferQ delegation regression',
     python3,
     args: [
