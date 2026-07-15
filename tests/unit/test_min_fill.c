@@ -326,6 +326,37 @@ int main(void) {
   rc |= check_random("rand_big_128", 128, 256);
   rc |= check_random("rand_multi_20", 20, 300); /* forces duplicate-edge dedup */
 
+  /* Larger / denser cases that stress the incremental fill maintenance: heavy fill-in creates
+   * many common-neighbour deltas and clique recomputes per step (the grid_12 below is what first
+   * exposed a heap-consistency bug in the incremental path). */
+  rc |= check_random("rand_dense_120", 120, 900);
+  rc |= check_random("rand_dense_200", 200, 1500);
+  rc |= check_random("rand_mid_256", 256, 1200);
+  for (uint32_t g = 10; g <= 14; g += 2) {
+    const uint32_t n = g * g;
+    uint32_t *eu = malloc((size_t)2 * n * sizeof(uint32_t));
+    uint32_t *ev = malloc((size_t)2 * n * sizeof(uint32_t));
+    uint32_t ne = 0;
+    for (uint32_t y = 0; y < g; y++) {
+      for (uint32_t x = 0; x < g; x++) {
+        const uint32_t v = y * g + x;
+        if (x + 1U < g) {
+          eu[ne] = v;
+          ev[ne] = v + 1U;
+          ne++;
+        }
+        if (y + 1U < g) {
+          eu[ne] = v;
+          ev[ne] = v + g;
+          ne++;
+        }
+      }
+    }
+    rc |= check("grid_big", n, eu, ev, ne);
+    free(eu);
+    free(ev);
+  }
+
   /* Early-abort: a path has width 1, so a threshold of 1 must not cap, but 0 must. */
   {
     uint32_t eu[9], ev[9];

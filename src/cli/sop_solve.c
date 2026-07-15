@@ -1990,14 +1990,15 @@ int main(int argc, char **argv) {
   /* --max-vars's default (24) is a count-table safety valve, since nvars directly
    * drives exact residual search cost there. single-fourier mode has no such blowup -- table
    * size is O(2^bagwidth), independent of nvars -- so raise the default when it applies and the
-   * caller hasn't overridden it. 4096 is an empirically-tested ceiling, not a guess: real
-   * qasm2sop --approx gauntlet circuits up to ~2300 variables were confirmed to complete their
-   * width/cutrank diagnostic in well under a minute; circuits in the several-thousand range
-   * (e.g. ~6600 variables) did not complete within 60s, so this stays comfortably below that
-   * cliff rather than trading "clean refusal" for "slow hang" on the largest real circuits.
-   * Callers needing more can still pass --max-vars explicitly. */
+   * caller hasn't overridden it. The former ceiling here was 4096, chosen only because the
+   * width/cutrank diagnostic (min-fill) did not complete within 60s past a few thousand variables;
+   * that diagnostic is now near-linear (incremental-fill min-fill, O(nvars*width^3)), so deep
+   * low-width circuits like qwalk-noancilla_13 (~163k variables, treewidth 26) diagnose in seconds
+   * and delegate to the treewidth DP. Align with the AUTO single-fourier ceiling so both entry
+   * paths admit the same instances; a component the width-bounded delegate cannot take still gets
+   * a clean no-delegate refusal. Callers can still pass --max-vars explicitly. */
   if (single_fourier_mode && !max_vars_set) {
-    max_vars = 4096;
+    max_vars = BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
   }
 
   if (single_mode_precision_set && !single_fourier_mode && !solve_mode_auto && !print_kernels) {
@@ -2176,7 +2177,7 @@ int main(int argc, char **argv) {
     if (auto_fallback_single_fourier) {
       single_fourier_mode = true;
       if (!max_vars_set) {
-        max_vars = 4096;
+        max_vars = BRANCH_AUTO_SINGLE_FOURIER_DEFAULT_MAX_VARS;
       }
     }
   }
