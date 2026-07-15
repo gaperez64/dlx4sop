@@ -44,6 +44,7 @@ dlx4sop_core_sources = files(
     'src/core/qsop_wmc.c',
     'src/core/qsop_write.c',
     'src/solve/branch.c',
+    'src/solve/branch_shadow.c',
     'src/solve/component_key.c',
     'src/solve/rankwidth_tables.c',
     'src/solve/rankwidth_decomp.c',
@@ -317,6 +318,14 @@ test_branch_api = executable(
 )
 
 test('branch api unit', test_branch_api, suite: 'unit')
+
+test_branch_shadow = executable(
+  'test-branch-shadow',
+  'tests/unit/test_branch_shadow.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('branch shadow unit', test_branch_shadow, suite: 'unit')
 
 test_branch_propagate = executable(
   'test-branch-propagate',

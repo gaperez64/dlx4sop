@@ -147,6 +147,14 @@ typedef struct qsop_solve_stats {
   uint32_t branch_cutset_stagnant_levels;
   uint32_t branch_last_delegate_miss;
 
+  /* Shadow-graph cutset-candidate shortlisting (branch_shadow.c; opt-in via --branch-shadow). */
+  uint64_t branch_shadow_builds;
+  uint64_t branch_shadow_skips;
+  uint64_t branch_shadow_selected;
+  uint32_t branch_shadow_max_source_vars;
+  uint32_t branch_shadow_max_core_vars;
+  uint64_t branch_shadow_build_ns;
+
   /* f64 single-Fourier treewidth diagnostics. */
   uint64_t treewidth_factor_scope_tests;
   uint64_t treewidth_factor_bucket_visits;
