@@ -369,8 +369,26 @@ bool rw_complex64_slots_rehash(rw_complex64_table_t *table, qsop_error_t *error)
   table->signature_slots_mask = mask;
   return true;
 }
-bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
-                      size_t words, qsop_error_t *error) {
+bool rw_table_find_rep_index(const rw_table_t *table, uint32_t signature, uint32_t *index_out) {
+  if (table->rep_slots == NULL || table->rep_slots_mask == 0) {
+    return false;
+  }
+  const size_t mask = table->rep_slots_mask;
+  size_t slot = rw_rep_hash(signature) & mask;
+  while (table->rep_slots[slot] != UINT32_MAX) {
+    const uint32_t index = table->rep_slots[slot];
+    if (table->reps[index].signature == signature) {
+      if (index_out != NULL) {
+        *index_out = index;
+      }
+      return true;
+    }
+    slot = (slot + 1U) & mask;
+  }
+  return false;
+}
+bool rw_table_rep_index(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
+                        size_t words, uint32_t *index_out, qsop_error_t *error) {
   if (table->rep_slots == NULL || (table->reps_len + 1U) * 2U > (table->rep_slots_mask + 1U)) {
     if (!rw_rep_slots_rehash(table, error)) {
       return false;
@@ -380,6 +398,9 @@ bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *ass
   size_t s = rw_rep_hash(signature) & mask;
   while (table->rep_slots[s] != UINT32_MAX) {
     if (table->reps[table->rep_slots[s]].signature == signature) {
+      if (index_out != NULL) {
+        *index_out = table->rep_slots[s];
+      }
       return true; /* signature already has a representative */
     }
     s = (s + 1U) & mask;
@@ -393,8 +414,15 @@ bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *ass
   qsop_bitset_copy(rw_table_assignment(table, table->reps_len, words), assignment, words);
   table->rep_weights[table->reps_len] = qsop_bitset_popcount(assignment, words);
   table->rep_slots[s] = (uint32_t)table->reps_len;
+  if (index_out != NULL) {
+    *index_out = (uint32_t)table->reps_len;
+  }
   table->reps_len++;
   return true;
+}
+bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
+                      size_t words, qsop_error_t *error) {
+  return rw_table_rep_index(table, signature, assignment, words, NULL, error);
 }
 bool rw_table_add_entry(rw_table_t *table, uint32_t signature, uint32_t residue, uint64_t count,
                         qsop_error_t *error) {
@@ -548,50 +576,7 @@ void rw_join_map_free(rw_join_map_t *map) {
   }
   free(map->entries);
   free(map->assignments);
-  free(map->sorted_keys);
-  free(map->sorted_idx);
   *map = (rw_join_map_t){0};
-}
-typedef struct {
-  uint64_t key;
-  uint32_t idx;
-} rw_join_sort_entry_t;
-static int compare_join_sort_entries(const void *a, const void *b) {
-  const rw_join_sort_entry_t *sa = (const rw_join_sort_entry_t *)a;
-  const rw_join_sort_entry_t *sb = (const rw_join_sort_entry_t *)b;
-  if (sa->key < sb->key)
-    return -1;
-  if (sa->key > sb->key)
-    return 1;
-  return 0;
-}
-bool rw_join_map_build_sorted_idx(rw_join_map_t *map, qsop_error_t *error) {
-  if (map->len == 0) {
-    return true;
-  }
-  rw_join_sort_entry_t *tmp = malloc(map->len * sizeof(*tmp));
-  uint32_t *sorted_idx = malloc(map->len * sizeof(*sorted_idx));
-  uint64_t *sorted_keys = malloc(map->len * sizeof(*sorted_keys));
-  if (tmp == NULL || sorted_idx == NULL || sorted_keys == NULL) {
-    free(tmp);
-    free(sorted_idx);
-    free(sorted_keys);
-    qsop_set_error(error, "out of memory while building rankwidth join map index");
-    return false;
-  }
-  for (size_t i = 0; i < map->len; i++) {
-    tmp[i].key = ((uint64_t)map->entries[i].left_signature << 32) | map->entries[i].right_signature;
-    tmp[i].idx = (uint32_t)i;
-  }
-  qsort(tmp, map->len, sizeof(*tmp), compare_join_sort_entries);
-  for (size_t i = 0; i < map->len; i++) {
-    sorted_keys[i] = tmp[i].key;
-    sorted_idx[i] = tmp[i].idx;
-  }
-  free(tmp);
-  map->sorted_keys = sorted_keys;
-  map->sorted_idx = sorted_idx;
-  return true;
 }
 bool rw_reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t value_slots,
                               size_t words, qsop_error_t *error) {

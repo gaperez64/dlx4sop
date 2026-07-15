@@ -89,8 +89,6 @@ typedef struct rw_join_map_entry {
 typedef struct rw_join_map {
   rw_join_map_entry_t *entries;
   uint64_t *assignments;
-  uint64_t *sorted_keys; /* packed (left_sig << 32 | right_sig) in sorted order */
-  uint32_t *sorted_idx;  /* original entry index in sorted key order */
   size_t len;
   size_t cap;
 } rw_join_map_t;
@@ -267,8 +265,6 @@ void rw_fourier_table_free(rw_fourier_table_t *table);
 
 uint64_t *rw_join_map_assignment(const rw_join_map_t *map, size_t index, size_t words);
 
-bool rw_join_map_build_sorted_idx(rw_join_map_t *map, qsop_error_t *error);
-
 void rw_join_map_free(rw_join_map_t *map);
 
 bool rw_record_decomposition_diagnostics(const qsop_instance_t *qsop,
@@ -374,6 +370,11 @@ bool rw_table_add_entry_mod(rw_table_t *table, uint32_t signature, uint32_t resi
 
 bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
                       size_t words, qsop_error_t *error);
+
+bool rw_table_rep_index(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
+                        size_t words, uint32_t *index_out, qsop_error_t *error);
+
+bool rw_table_find_rep_index(const rw_table_t *table, uint32_t signature, uint32_t *index_out);
 
 uint64_t *rw_table_assignment(const rw_table_t *table, size_t index, size_t words);
 
