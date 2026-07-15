@@ -241,12 +241,44 @@ static bool eligible_ordinary(const qsop_instance_t *inst, const hadamard_adjlis
   return !is_witness(inst, adj, sign_coeff, x);
 }
 
+/* Eligible for the [omega] rule: degree <= 2 and unary a quarter turn (r/4 or 3r/4), when 8 | r
+ * (needed so the r/8 global phase and r/4 neighbour turns are representable) and the rule is
+ * enabled. Disjoint from eligible_ordinary, whose unary is a multiple of r/2.
+ *
+ * enable_omega is off for the per-component materialized reduction, which runs inside the
+ * single-Fourier recursion at an arbitrary odd target mode k: [HH] is mode-covariant (a polynomial
+ * substitution valid for every odd k), but [omega]'s explicit r/8 phase is i^k-dependent -- the
+ * fold for k == 3 (mod 4) is the conjugate of the k == 1 fold -- so a mode-agnostic [omega] is only
+ * sound at the whole-amplitude (mode-1) call sites: qasm2sop import and the solver root. */
+static bool omega_eligible(const qsop_instance_t *inst, const hadamard_adjlist_t *adj,
+                           const bool *removed, uint32_t x, bool enable_omega) {
+  if (!enable_omega || removed[x]) {
+    return false;
+  }
+  if ((inst->r % 8U) != 0U) {
+    return false;
+  }
+  if (adj[x].len > 2U) {
+    return false;
+  }
+  const uint64_t quarter = inst->r / 4U;
+  return inst->unary[x] == quarter || inst->unary[x] == inst->r - quarter;
+}
+
+/* Union of the two elimination families; drives worklist queueing and pop-time revalidation. */
+static bool eligible_any(const qsop_instance_t *inst, const hadamard_adjlist_t *adj,
+                         const bool *removed, uint64_t sign_coeff, uint32_t x, bool enable_omega) {
+  return eligible_ordinary(inst, adj, removed, sign_coeff, x) ||
+         omega_eligible(inst, adj, removed, x, enable_omega);
+}
+
 /* Called whenever x's degree or unary just changed: notes the zero-witness condition (which
  * takes over immediately, so it is never queued as an ordinary elimination) or queues x for
  * ordinary elimination if it newly qualifies. */
 static bool note_variable_changed(uint32_heap_t *heap, const qsop_instance_t *inst,
                                   const hadamard_adjlist_t *adj, const bool *removed,
-                                  uint64_t sign_coeff, uint32_t x, bool *witness_found) {
+                                  uint64_t sign_coeff, uint32_t x, bool *witness_found,
+                                  bool enable_omega) {
   if (removed[x]) {
     return true;
   }
@@ -254,7 +286,7 @@ static bool note_variable_changed(uint32_heap_t *heap, const qsop_instance_t *in
     *witness_found = true;
     return true;
   }
-  if (!eligible_ordinary(inst, adj, removed, sign_coeff, x)) {
+  if (!eligible_any(inst, adj, removed, sign_coeff, x, enable_omega)) {
     return true;
   }
   return heap_push(heap, x);
@@ -269,7 +301,8 @@ static bool note_variable_changed(uint32_heap_t *heap, const qsop_instance_t *in
  * sized to at least the largest degree seen. */
 static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, bool *removed,
                                uint64_t sign_coeff, uint32_t v, uint32_heap_t *heap,
-                               uint32_t **scratch, uint32_t *scratch_cap, bool *witness_found) {
+                               uint32_t **scratch, uint32_t *scratch_cap, bool *witness_found,
+                               bool enable_omega) {
   const uint32_t vdeg = adj[v].len;
   const bool negate = inst->unary[v] == sign_coeff;
 
@@ -336,7 +369,8 @@ static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, b
         if (!negate) {
           inst->unary[keep] = add_mod_u64(inst->unary[keep], sign_coeff, inst->r);
         }
-        if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, keep, witness_found)) {
+        if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, keep, witness_found,
+                                   enable_omega)) {
           return false;
         }
         continue;
@@ -356,7 +390,8 @@ static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, b
           }
         }
       }
-      if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, w, witness_found)) {
+      if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, w, witness_found,
+                                 enable_omega)) {
         return false;
       }
     }
@@ -371,7 +406,66 @@ static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, b
   removed[v] = true;
   inst->norm_h -= 2U;
   if (merge_mode) {
-    if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, keep, witness_found)) {
+    if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, keep, witness_found,
+                               enable_omega)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* Eliminate one degree<=2 variable `v` carrying a quarter-turn unary via the [omega] rule (see the
+ * header comment in qsop.h): fold the r/8 global phase, the -r/4 (or +r/4, for 3r/4) turns on v's
+ * neighbours, and -- at degree 2 -- the toggled sign edge between them, all in place; then drop v
+ * with norm_h -= 1. Pushes every neighbour whose unary/degree changed onto `heap`. Requires 8 | r,
+ * guaranteed by omega_eligible. */
+static bool eliminate_omega_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, bool *removed,
+                                     uint64_t sign_coeff, uint32_t v, uint32_heap_t *heap,
+                                     bool *witness_found, bool enable_omega) {
+  const uint64_t r = inst->r;
+  const uint64_t quarter = r / 4U;
+  const uint64_t eighth = r / 8U;
+  const bool conj = inst->unary[v] == r - quarter; /* 3r/4 mirror of the r/4 rule */
+
+  /* Global phase: +r/8 for r/4, +7r/8 (= -r/8) for 3r/4. */
+  inst->constant = add_mod_u64(inst->constant, conj ? r - eighth : eighth, r);
+  /* Per-neighbour quarter turn: -r/4 (= 3r/4) for r/4, +r/4 for 3r/4. */
+  const uint64_t neigh_turn = conj ? quarter : r - quarter;
+
+  const uint32_t vdeg = adj[v].len;
+  uint32_t nb[2] = {0U, 0U};
+  for (uint32_t i = 0; i < vdeg; i++) {
+    nb[i] = adj[v].data[i];
+  }
+  for (uint32_t i = 0; i < vdeg; i++) {
+    hadamard_adjlist_remove(&adj[nb[i]], v);
+  }
+  adj[v].len = 0U;
+
+  for (uint32_t i = 0; i < vdeg; i++) {
+    inst->unary[nb[i]] = add_mod_u64(inst->unary[nb[i]], neigh_turn, r);
+  }
+
+  if (vdeg == 2U) {
+    const uint32_t a = nb[0];
+    const uint32_t b = nb[1];
+    /* Toggle the sign edge (a,b): +r/2 on an existing chord cancels it (2*(r/2) == 0 mod r),
+     * matching canonicalize_edges' parity dedup; otherwise it creates the chord. a != b because v's
+     * two neighbours are distinct in canonical form. */
+    if (hadamard_adjlist_contains(&adj[a], b)) {
+      hadamard_adjlist_remove(&adj[a], b);
+      hadamard_adjlist_remove(&adj[b], a);
+    } else if (!hadamard_adjlist_push(&adj[a], b) || !hadamard_adjlist_push(&adj[b], a)) {
+      return false;
+    }
+  }
+
+  removed[v] = true;
+  inst->norm_h -= 1U;
+
+  for (uint32_t i = 0; i < vdeg; i++) {
+    if (!note_variable_changed(heap, inst, adj, removed, sign_coeff, nb[i], witness_found,
+                               enable_omega)) {
       return false;
     }
   }
@@ -406,8 +500,8 @@ static bool eliminate_variable(qsop_instance_t *inst, hadamard_adjlist_t *adj, b
  * very end. The amplitude doubling per elimination is compensated by norm_h -= 2, which keeps both
  * probability |amp|^2 * 2^-norm_h and the normalized amplitude amp * 2^(-norm_h/2) exact; the
  * guard norm_h >= 2 prevents underflow. */
-bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
-                                       qsop_hadamard_simplify_stats_t *stats) {
+static bool simplify_hadamard_impl(qsop_instance_t *inst, qsop_hadamard_simplify_stats_t *stats,
+                                   bool enable_omega) {
   if (stats != NULL) {
     *stats = (qsop_hadamard_simplify_stats_t){0};
   }
@@ -445,19 +539,32 @@ bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
   bool witness_found = false;
   if (ok) {
     for (uint32_t x = 0; x < n && ok; x++) {
-      ok = note_variable_changed(&heap, inst, adj, removed, sign_coeff, x, &witness_found);
+      ok = note_variable_changed(&heap, inst, adj, removed, sign_coeff, x, &witness_found,
+                                 enable_omega);
     }
   }
 
   uint32_t *scratch = NULL;
   uint32_t scratch_cap = 0;
-  while (ok && !witness_found && inst->norm_h >= 2U) {
+  /* norm_h >= 1 admits an [omega] step (spends one doubling); an [HH] step needs >= 2 and is
+   * guarded below. */
+  while (ok && !witness_found && inst->norm_h >= 1U) {
     uint32_t v;
     if (!heap_pop(&heap, &v)) {
       break;
     }
-    if (!eligible_ordinary(inst, adj, removed, sign_coeff, v)) {
-      continue; /* stale: already removed, or degree/unary moved since it was queued */
+    /* Dispatch by which family v currently belongs to (its unary can have moved between being
+     * queued and popped, so re-test both). [omega] is checked first; it and [HH] are disjoint. */
+    if (omega_eligible(inst, adj, removed, v, enable_omega)) {
+      if (stats != NULL) {
+        stats->omega_eliminations++;
+      }
+      ok = eliminate_omega_variable(inst, adj, removed, sign_coeff, v, &heap, &witness_found,
+                                    enable_omega);
+      continue;
+    }
+    if (inst->norm_h < 2U || !eligible_ordinary(inst, adj, removed, sign_coeff, v)) {
+      continue; /* stale, or an [HH] candidate but norm_h too low to spend its two doublings */
     }
     if (stats != NULL) {
       switch (adj[v].len) {
@@ -475,7 +582,7 @@ bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
       }
     }
     ok = eliminate_variable(inst, adj, removed, sign_coeff, v, &heap, &scratch, &scratch_cap,
-                            &witness_found);
+                            &witness_found, enable_omega);
   }
   free(scratch);
   free(heap.data);
@@ -579,6 +686,65 @@ bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
   return ok;
 }
 
+bool qsop_simplify_hadamard_with_stats(qsop_instance_t *inst,
+                                       qsop_hadamard_simplify_stats_t *stats) {
+  return simplify_hadamard_impl(inst, stats, true);
+}
+
 bool qsop_simplify_hadamard(qsop_instance_t *inst) {
-  return qsop_simplify_hadamard_with_stats(inst, NULL);
+  return simplify_hadamard_impl(inst, NULL, true);
+}
+
+/* [HH]-only variant for the per-component materialized reduction, which runs at an arbitrary odd
+ * target mode where [omega]'s i^k-dependent phase fold is unsound (see omega_eligible). */
+bool qsop_simplify_hadamard_hh_only_with_stats(qsop_instance_t *inst,
+                                               qsop_hadamard_simplify_stats_t *stats) {
+  return simplify_hadamard_impl(inst, stats, false);
+}
+
+/* Reduce the modulus to the coarsest power-of-two divisor of r (floored at 8) that still represents
+ * every coefficient exactly: repeatedly halve r while the constant and every unary are even. Edges
+ * are implicitly the sign r/2 and always halve to the new r/2, so they never block a halving. This
+ * is qasm2sop's emit-time angle reduction (output_modulus/output_coeff) lifted to a built instance,
+ * so the solver root or any qsop consumer can re-minimize a modulus. Amplitude-preserving: dividing
+ * both r and every coefficient by the same factor leaves every omega_r^coeff unchanged. Floors at 8
+ * to match the importer convention (and because an [omega]-folded r/8 constant is odd at r == 8,
+ * which naturally stops the reduction there). */
+bool qsop_reduce_modulus(qsop_instance_t *inst) {
+  if (inst == NULL || inst->r < 2U || (inst->r % 2U) != 0U) {
+    return true;
+  }
+  uint64_t r = inst->r;
+  for (;;) {
+    if (r <= 8U || (r % 2U) != 0U) {
+      break;
+    }
+    if ((inst->constant % 2U) != 0U) {
+      break;
+    }
+    bool all_even = true;
+    for (uint32_t i = 0; i < inst->nvars && all_even; i++) {
+      all_even = (inst->unary[i] % 2U) == 0U;
+    }
+    if (!all_even) {
+      break;
+    }
+    inst->constant /= 2U;
+    for (uint32_t i = 0; i < inst->nvars; i++) {
+      inst->unary[i] /= 2U;
+    }
+    r /= 2U;
+  }
+  inst->r = r;
+  return true;
+}
+
+/* The path-sum simplification umbrella for whole-amplitude (mode-1) call sites: run the [HH] +
+ * [omega] elimination fixpoint, then minimize the modulus. Both steps preserve the normalized
+ * amplitude exactly. This is the single reusable entry the importer and the solver root share. */
+bool qsop_simplify(qsop_instance_t *inst, qsop_hadamard_simplify_stats_t *stats) {
+  if (!qsop_simplify_hadamard_with_stats(inst, stats)) {
+    return false;
+  }
+  return qsop_reduce_modulus(inst);
 }

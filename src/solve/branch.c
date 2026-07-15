@@ -1159,7 +1159,10 @@ static bool branch_materialize_reduction(const qsop_residual_t *residual, bool s
   const uint64_t start_norm_h = out->reduced.norm_h;
   const uint64_t start_ns = qsop_trace_now_ns();
   qsop_hadamard_simplify_stats_t simplify_stats = {0};
-  if (!qsop_simplify_hadamard_with_stats(&out->reduced, &simplify_stats)) {
+  /* [HH]-only: this runs inside the single-Fourier recursion at an arbitrary odd target mode, where
+   * the [omega] rule's phase fold is unsound (see omega_eligible), so every elimination spends an
+   * even two doublings and norm_h_delta stays even. */
+  if (!qsop_simplify_hadamard_hh_only_with_stats(&out->reduced, &simplify_stats)) {
     free_subinstance(&out->reduced);
     qsop_set_error(error, "out of memory during materialized Hadamard simplification");
     return false;
