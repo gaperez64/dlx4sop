@@ -63,6 +63,16 @@ they enter the inequality as an infinite estimate — a backend over its cap sim
 cannot run — so the single comparison stays the whole decision. (In `--branch-calibrate-backends`
 mode the inequality is bypassed so both backends are timed, but the hard caps still apply.)
 
+Single-Fourier's pre-probe treewidth width comes from a cheap plain min-fill pass
+(`qsop_compute_stats_with_order`); the order treewidth actually solves with
+(`MIN_FILL_MAX_DEGREE`, resolved lazily in `branch_single_mode_delegate_component` only once
+a delegate is chosen) can tiebreak to a different width on components over 63 variables. When
+that makes treewidth's real order too wide after the fact, the delegate uses an
+already-generated, in-cap rankwidth decomposition rather than refuse a component solely
+because the cheap pre-probe estimate looked favorable to a backend that turns out not to fit.
+(The DP-work side of that same pre-probe estimate has the identical estimate-vs-actual-order
+gap and is not re-verified once the real order is known — a narrower, still-open case.)
+
 Two things make that work.
 
 `tw_dp_work` is the **real** DP work — the sum over elimination steps of `2^(bag size)`,

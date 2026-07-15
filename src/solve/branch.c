@@ -3867,8 +3867,15 @@ static bool branch_single_mode_delegate_component(
     }
     delegated.treewidth_delegations++;
   } else if (decomposition != NULL && cutrank_width <= rw_cap) {
-    /* Treewidth unavailable/too wide, but rankwidth is viable even though the cost model
-     * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
+    /* order_width (resolved lazily by branch_single_mode_ensure_order, using
+     * QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE) can come out wider than treewidth_width -- the
+     * cheap pre-probe estimate from qsop_compute_stats_with_order's plain MIN_FILL pass -- for
+     * nvars > 63 components, where the two elimination orders tiebreak differently.
+     * treewidth_usable above was computed from the stale estimate, so the earlier cost-model
+     * evaluation may have judged rankwidth not worth attempting against a treewidth cost that
+     * turns out unachievable. Having already generated and paid for a valid rankwidth
+     * decomposition, use it rather than refuse. (The DP-work side of the estimate has the same
+     * estimate-vs-actual-order gap and is not re-verified here.) */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
                                             &delegated, options->trace, error);
