@@ -375,11 +375,26 @@ typedef struct branch_search_stats {
  * real DP cost rather than the width alone, which is a poor proxy: qnn_24 (width 26) solves in
  * ~22 s while realamprandom_25 (width 25) times out. Calibrated on the gauntlet corpus so the
  * slowest solved case (grover-v-chain_15, ~2.85e9 work, 62 s) stays admitted while the dense
- * width-26 realamprandom_26 (~7.1e9) is refused; qnn_24 (~1.09e9) newly clears it and solves in
- * ~22 s. The budget sits above grover-v-chain_15 and below realamprandom_26, and the width-26
- * ceiling above keeps out the qnn_25 (width 27) family the budget would otherwise admit. */
-#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK UINT64_C(3200000000)
+ * width-26 realamprandom_26 (~7.1e9) is refused. The budget sits above grover-v-chain_15 and
+ * below realamprandom_26; the width and memory ceilings below keep out the wider qnn the budget
+ * would otherwise admit.
+ *
+ * Raised 3.2e9 -> 4.0e9 to newly admit qnn_26 (width 26, ~3.76e9 work, ~53 s, ~7.5 GiB peak --
+ * memory-safe under the 12 GiB budget below), while still refusing realamprandom_26 (~7.1e9,
+ * times out). The gap [3.76e9, 7.1e9] is the calibration window. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK UINT64_C(4000000000)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
+/* Memory-safety budget for the treewidth delegate, in MiB. The DP's *peak* live memory is
+ * dominated by join intermediates, not the final 2^width table: a width-26 qnn component whose
+ * final long-double-complex table is ~2 GiB was measured to peak at ~7.5 GiB (~3.6x). Forecast
+ * it conservatively as 2^width * PEAK_BYTES_PER_ENTRY (128 B/entry reproduces the measured peak
+ * with headroom: width 26 -> ~8.6 GiB admitted under 12 GiB, width 27 -> ~17 GiB refused) and
+ * reject over-budget components *gracefully* as BRANCH_DELEGATE_MISS_MEMORY, rather than letting
+ * the DP fail its own allocation mid-run (an error, not a refusal -- observed when the width cap
+ * was raised without this guard). Default 12 GiB matches the gauntlet's per-solve RLIMIT_AS;
+ * lower --branch-single-delegate-max-memory-mib to match a tighter process limit. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_PEAK_BYTES_PER_ENTRY UINT64_C(128)
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB UINT64_C(12288)
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 #define BRANCH_DELEGATION_DEPTH_TOP_K 6U
 
@@ -2993,6 +3008,7 @@ typedef struct branch_single_mode_state {
   uint32_t rankwidth_delegate_max_width;
   uint64_t treewidth_delegate_max_dp_work;
   uint64_t cutset_treewidth_delegate_max_dp_work; /* 0 = reuse treewidth_delegate_max_dp_work */
+  uint64_t treewidth_delegate_max_memory_mib;     /* 0 = built-in 12 GiB budget */
   bool materialized_reduction;
   bool hadamard_reduction_exact;
   bool diagnose_conditioning;
@@ -3800,6 +3816,16 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
   return true;
 }
 
+/* Conservative forecast of the treewidth DP's peak live memory for a component of this width (see
+ * BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB). Saturates to UINT64_MAX once 2^width * 128 B
+ * would overflow, so an absurd width always exceeds any finite budget. */
+static uint64_t branch_treewidth_delegate_peak_bytes(uint32_t width) {
+  if (width >= 57U) { /* 2^57 * 128 = 2^64 overflows uint64_t */
+    return UINT64_MAX;
+  }
+  return (UINT64_C(1) << width) * BRANCH_SINGLE_TREEWIDTH_DELEGATE_PEAK_BYTES_PER_ENTRY;
+}
+
 static bool branch_single_mode_delegate_component(
     const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
     const qsop_branch_single_mode_options_t *options, bool fail_on_refusal, bool *out_delegated,
@@ -3843,6 +3869,11 @@ static bool branch_single_mode_delegate_component(
   const uint64_t dp_work_budget = options->treewidth_delegate_max_dp_work != 0
                                       ? options->treewidth_delegate_max_dp_work
                                       : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK;
+  const uint64_t mem_budget_mib = options->treewidth_delegate_max_memory_mib != 0
+                                      ? options->treewidth_delegate_max_memory_mib
+                                      : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB;
+  const uint64_t mem_budget_bytes =
+      qsop_saturating_mul_u64(mem_budget_mib, UINT64_C(1024) * UINT64_C(1024));
 
   /* qsop_compute_stats_with_order only populates `order` for nvars <= 63 -- its width-
    * diagnostics path for larger instances (compute_large_width_diagnostics) computes
@@ -3878,11 +3909,14 @@ static bool branch_single_mode_delegate_component(
   bool setup_ok = true;
 
   /* Admit the treewidth DP on cost, not raw width: the min-fill DP work must be within budget
-   * (a dense width-25 component like realamprandom_25 blows past it and would time out) and the
-   * width within the memory-safety ceiling. Single-Fourier tables carry no residue axis, so the
+   * (a dense width-25 component like realamprandom_25 blows past it and would time out), the
+   * width within the memory-safety ceiling, and the forecast peak memory within budget so the DP
+   * cannot fail its own allocation mid-run. Single-Fourier tables carry no residue axis, so the
    * r factor is 1. */
+  const uint64_t treewidth_peak_bytes = branch_treewidth_delegate_peak_bytes(treewidth_width);
+  const bool treewidth_mem_ok = treewidth_peak_bytes <= mem_budget_bytes;
   const bool treewidth_usable = treewidth_available && treewidth_width <= tw_cap &&
-                                sub_stats.min_fill_dp_work <= dp_work_budget;
+                                sub_stats.min_fill_dp_work <= dp_work_budget && treewidth_mem_ok;
   const uint64_t tw_est =
       branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
 
@@ -3963,7 +3997,12 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_usable && order_width <= tw_cap) {
+  } else if (treewidth_usable && order_width <= tw_cap &&
+             branch_treewidth_delegate_peak_bytes(order_width) <= mem_budget_bytes) {
+    /* Re-check memory against the *resolved* order width: branch_single_mode_ensure_order can
+     * return an order wider than the pre-probe estimate treewidth_usable was computed from, and a
+     * wider order means a larger peak. Falling through here refuses (or uses rankwidth) gracefully
+     * rather than letting the DP OOM. */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
           sub, tw_cap + 1U, order, order_width, target_mode, out, &delegated, options->trace,
@@ -4003,11 +4042,17 @@ static bool branch_single_mode_delegate_component(
         *out_miss = decomposition != NULL && cutrank_width > rw_cap
                         ? BRANCH_DELEGATE_MISS_RW_WIDTH
                         : BRANCH_DELEGATE_MISS_TW_WORK;
+      } else if (!treewidth_mem_ok) {
+        *out_miss = decomposition != NULL && cutrank_width > rw_cap ? BRANCH_DELEGATE_MISS_RW_WIDTH
+                                                                    : BRANCH_DELEGATE_MISS_MEMORY;
       } else {
         *out_miss = BRANCH_DELEGATE_MISS_COST;
       }
     }
     if (fail_on_refusal) {
+      /* Keep this concise: qsop_error_t.message is a 256-byte buffer, and the "no delegate
+       * available" suffix is asserted by tests/test_differential_backends.py. The memory-forecast
+       * detail lives in the BRANCH_DELEGATE_MISS_MEMORY stat, not here. */
       qsop_set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " (DP work %" PRIu64 ", budget %" PRIu64
@@ -4079,6 +4124,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
       .cutset_treewidth_delegate_max_dp_work = o.cutset_treewidth_delegate_max_dp_work,
+      .treewidth_delegate_max_memory_mib = o.treewidth_delegate_max_memory_mib,
       .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
                                 (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
@@ -4295,6 +4341,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .treewidth_delegate_max_width = state->treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = dp_work_budget,
+      .treewidth_delegate_max_memory_mib = state->treewidth_delegate_max_memory_mib,
       .trace = state->trace,
   };
   /* Diagnostic mode must inspect a legal delegate miss even under delegate-only policy.  The

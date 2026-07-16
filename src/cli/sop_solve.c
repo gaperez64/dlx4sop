@@ -89,6 +89,8 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-single-max-fallback-vars N",
       "--branch-single-delegate-max-dp-work N",
       "--branch-single-cutset-delegate-max-dp-work N",
+      "--branch-single-delegate-max-width N",
+      "--branch-single-delegate-max-memory-mib N",
       "--branch-single-max-search-nodes N",
       "--branch-single-cache-budget-mib N",
       "--branch-single-cache-min-vars N",
@@ -1176,15 +1178,26 @@ int main(int argc, char **argv) {
   uint32_t branch_single_max_fallback_vars = 0;
   uint64_t branch_single_max_dp_work = 0;
   uint64_t branch_single_cutset_max_dp_work = 0;
+  uint32_t branch_single_delegate_max_width = 0;
+  uint64_t branch_single_delegate_max_memory_mib = 0;
   uint64_t branch_single_cache_budget_mib = 0;
   uint32_t branch_single_cache_min_vars = 0;
   bool branch_single_materialized_reduction = false;
   bool branch_single_diagnose_conditioning = false;
-  uint32_t branch_single_cutset_depth = 0;
+  /* Cutset conditioning is on by default (the library API keeps 0 = off; the CLI enables it so
+   * `sop-solve` tries harder before refusing a wide, non-delegable component). It only ever
+   * engages on a component too wide to delegate and larger than the fallback cap -- exactly the
+   * cases that would otherwise refuse -- so it cannot regress an instance that already solves. The
+   * width-reducing conditioning tree hands its narrowed leaves to the (memory-safe, post-5a)
+   * treewidth delegate; an intractable core exhausts the node/stagnant budget and refuses quickly
+   * (measured: qnn_28 solves, qnn_36 refuses in ~5 s). Pass --branch-single-cutset-depth 0 to
+   * disable. max_stagnant_levels is 30 (not the library's 1) because a clique core shrinks by one
+   * variable per level -- progress the productivity heuristic scores as "stagnant". */
+  uint32_t branch_single_cutset_depth = 16;
   uint32_t branch_single_lookahead_candidates = 0;
   uint64_t branch_single_max_conditioning_nodes = 0;
   uint32_t branch_single_delegate_reprobe_interval = 0;
-  uint32_t branch_single_max_stagnant_levels = 0;
+  uint32_t branch_single_max_stagnant_levels = 30;
   bool branch_single_option_set = false;
   bool branch_single_fallback_set = false;
   bool branch_single_precision_set = false;
@@ -1653,6 +1666,28 @@ int main(int argc, char **argv) {
       }
       if (!parse_u64_arg("--branch-single-cutset-delegate-max-dp-work", argv[++i],
                          &branch_single_cutset_max_dp_work))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-delegate-max-width") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-delegate-max-width requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u32_arg("--branch-single-delegate-max-width", argv[++i],
+                         &branch_single_delegate_max_width))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-delegate-max-memory-mib") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-delegate-max-memory-mib requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--branch-single-delegate-max-memory-mib", argv[++i],
+                         &branch_single_delegate_max_memory_mib))
         return 2;
       branch_single_option_set = true;
       continue;
@@ -2310,6 +2345,8 @@ int main(int argc, char **argv) {
           .max_fallback_vars = branch_single_max_fallback_vars,
           .treewidth_delegate_max_dp_work = branch_single_max_dp_work,
           .cutset_treewidth_delegate_max_dp_work = branch_single_cutset_max_dp_work,
+          .treewidth_delegate_max_width = branch_single_delegate_max_width,
+          .treewidth_delegate_max_memory_mib = branch_single_delegate_max_memory_mib,
           .cache_budget_mib = branch_single_cache_budget_mib,
           .cache_min_vars = branch_single_cache_min_vars,
           .materialized_reduction = branch_single_materialized_reduction,

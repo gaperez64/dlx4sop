@@ -596,6 +596,13 @@ typedef struct qsop_branch_single_mode_options {
    * separate budget -- unchanged from before this option existed. */
   uint64_t cutset_treewidth_delegate_max_dp_work;
 
+  /* Memory-safety budget for the treewidth delegate, in MiB. A component is refused (gracefully,
+   * as a delegate miss) when its forecast peak DP memory -- dominated by join intermediates, ~4x
+   * the final 2^width table -- would exceed this, so the DP cannot fail its own allocation
+   * mid-run. Zero selects the built-in budget (12 GiB, matching the gauntlet's per-solve
+   * RLIMIT_AS); set it to match a tighter process memory limit. */
+  uint64_t treewidth_delegate_max_memory_mib;
+
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;
 } qsop_branch_single_mode_options_t;
