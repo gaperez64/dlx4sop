@@ -4,11 +4,26 @@
 powers (QSOPs). The project goal is a competitive exact strong simulator using
 QSOPs with fixed-boundary circuit amplitudes.
 
-
 **Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
 the `sop2wmc` + Ganak weighted-model-counting pipeline (all described below)
 are ranked on the
 public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
+
+```mermaid
+flowchart LR
+    QASM[OpenQASM 2.0] -->|qasm2sop| SOP[(QSOP IR)]
+    SOP -->|sop2wmc| CNF[CNF / WPCNF] --> WMC[external model counter]
+    SOP -->|sop-solve| BR[branch orchestrator]
+    BR -->|cost model| TW[treewidth DP]
+    BR -->|cost model| RW[rankwidth DP]
+    BR -->|no affordable delegate| RS[residual branching / conditioning]
+    SOP -. explicit backend .-> TW
+    SOP -. explicit backend .-> RW
+```
+
+QSOP is the shared intermediate representation. The WMC export is a separate,
+explicit path; inside `sop-solve`, the recommended branch backend selects
+treewidth or rankwidth DP independently for each connected residual component.
 
 ## Tools
 
@@ -19,9 +34,10 @@ from source:
 - `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
 - `sop-stats`: print structural statistics, with opt-in exact small-width
   support-graph diagnostics.
-- `sop-solve`: solve exact residue-count histograms; stats mode can include
-  the count vector used to reconstruct amplitudes and a convenience probability
-  estimate via `--include-probability`.
+- `sop-solve`: compute normalized amplitudes or exact residue-count histograms.
+  Single-Fourier mode reports a certified floating-point error bound; stats mode
+  can include the exact count vector and a convenience probability estimate via
+  `--include-probability`.
 - `qasm2sop`: import the supported OpenQASM 2.0 subset into QSOP,
   including common Clifford/T gates, supported phase rotations, `u/u2/u3`,
   controlled phase/H/SX gates, `dcx`, `rxx/ryy/rzz`, `ccz/ccx/rccx/cswap`,
@@ -32,27 +48,28 @@ from source:
   recycled ancillas, stabilizer syndromes — the alg85 regime, cross-checked against
   qiskit-aer); data-dependent `if` is still rejected.
 - `sop2wmc`: export a QSOP to DIMACS CNF / WPCNF for external model counting.
-  Five encodings are available via `--encoding <name>`:
-  - `residue-accumulator` (alias `residue`, default): one DIMACS CNF per
+  The CLI defaults to `--encoding auto`, which uses `peel1` preprocessing unless
+  overridden and chooses between `amp-soft` and `amp-block` using structural
+  coverage and estimated output size. Five concrete encodings are also available:
+  - `residue-accumulator` (alias `residue`): one DIMACS CNF per
     residue 0..r−1; plain #SAT each. Works with any integer counter (Ganak
     `--mode 0`, d4, sharpSAT). Requires r calls per instance.
-  - `amp-and` (alias `amplitude`): single WPCNF with Tseitin AND auxiliaries
-    carrying hard complex weights ω^b. All auxiliaries are circuit-determined;
-    use `ganak --mode 6 --verb 0`. Multiply the raw WMC result by
-    ω^constant (from the `c amplitude_factor` metadata line) to get the full
-    amplitude.
+  - `amp-and` (alias `amplitude`): single WPCNF with hard Tseitin AND
+    constraints and auxiliary weights ω^b. All auxiliaries are circuit-determined;
+    use `ganak --mode 6 --verb 0`. Multiply the raw WMC result by the complex
+    value in the `c amplitude_factor` metadata line to get the full amplitude.
   - `amp-soft`: single WPCNF with implication-only auxiliaries and soft weights
     ω^b − 1. Produces fewer clauses per edge than amp-and; Ganak integrates
     over underdetermined variables.
   - `residue-fourier`: r WPCNF blocks (one per Fourier exponent t) followed by
     an outer iDFT. Inner encoding selectable via
     `--wmc-fourier-inner (amp-and|amp-soft)`.
-  - `amp-block`: single WPCNF; detects a uniform complete bipartite subgraph
-    A×B in the edge set and encodes it with a mod-r adder counter per side plus
-    Tseitin selector variables with hard weights ω^(c·a·b mod r). Non-block
-    edges use amp-and. Block triggers when savings ≥ `--wmc-block-min-savings`
-    and both sides ≥ `--wmc-block-min-side` (defaults 0 and 4); falls back to
-    amp-soft output when no profitable block is found.
+  - `amp-block`: single WPCNF; detects complete bipartite blocks of sign edges,
+    computes the parity of each shore, and represents the block interaction with
+    one soft weighted auxiliary. Uncovered edges use the `amp-soft` encoding.
+    A block qualifies when its estimated savings are at least
+    `--wmc-block-min-savings` and both shores have at least
+    `--wmc-block-min-side` vertices (defaults 0 and 4).
 - `scripts/build_external_qasm_manifest.py` / `scripts/bench_wmc_ganak.py`:
   shared OpenQASM-munging and Ganak-output-parsing helpers imported directly
   by the `.gauntlet/` adapters that back the qccq-gauntlet registration; not
@@ -63,13 +80,15 @@ External frameworks stay at corpus import and validation boundaries.
 
 ## Solver Guide
 
-- `branch --solve-mode auto`: default recommended solver. It tries exact
-  residue counting first and falls back to single-Fourier amplitude evaluation
-  on safe exact-count refusals.
-- `treewidth --treewidth-order min-fill-max-degree`: direct DP baseline for
-  developer/profiling runs.
-- `rankwidth`: decomposition-DP backend with cut-rank diagnostics and
-  count-table/Fourier modes; useful for comparison and targeted low-rank cases.
+- `sop-solve --backend branch --solve-mode auto`: recommended and the default
+  for amplitude output. It prefers exact residue counting when practical, but
+  may route directly to single-Fourier evaluation after width or count-vector
+  preflight; safe count-mode refusals also fall back to single-Fourier.
+- `sop-solve --backend treewidth --treewidth-order min-fill-max-degree`: direct
+  DP baseline for developer and profiling runs.
+- `sop-solve --backend rankwidth`: decomposition-DP backend with cut-rank
+  diagnostics and count-table/Fourier modes; useful for comparison and targeted
+  low-rank cases.
 
 ## QSOP Format
 
@@ -119,10 +138,14 @@ build/qasm2sop --approx 1e-6 --input 0 --output 0 circuit.qasm
 Approximate output includes comment lines recording the chosen modulus, rounded
 phase count, and certified additive amplitude error bound.
 
-The WMC export reconstructs `raw_amplitude = sum_k counts[k] * exp(2*pi*i*k/r)` and
-`probability = |raw_amplitude|^2 * 2^(-norm_h)` (the same convention as
-`sop-solve --include-probability`) outside the counter; the metadata header in
-each CNF block documents the variable map and the final accumulator bits.
+### WMC result reconstruction
+
+For residue encodings, combine the counter results as
+`raw_amplitude = sum_k counts[k] * exp(2*pi*i*k/r)`. Amplitude encodings instead
+produce a complex WMC that is multiplied by the emitted `amplitude_factor`.
+In either case, `probability = |raw_amplitude|^2 * 2^(-norm_h)`, matching
+`sop-solve --include-probability`. Metadata comments document the applicable
+reconstruction and variable map.
 
 ## Amplitudes are normalized
 
@@ -130,13 +153,13 @@ each CNF block documents the variable map and the final accumulator bits.
 `raw_amplitude * 2^(-norm_h/2)`: the physical `<y|C|x>`, whose modulus is at most 1,
 alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
 amplitude grows like `2^nvars` so no fixed-exponent floating type can hold it, and
-a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`. 
+a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`.
 
-Internally the solvers
-carry a mantissa and a separate binary exponent (`qsop_amplitude_t.scale_exp2`), which
-also lets the branch backend multiply per-component amplitudes without any of them
-overflowing on its own. Scaling by a power of two is exact, so nothing is lost.
-
+Internally the single-Fourier solvers carry a mantissa and a separate binary
+exponent (`qsop_amplitude_t.scale_exp2`). This also lets the branch backend
+multiply component amplitudes without overflowing intermediate values. Moving a
+power of two into the exponent is exact and adds no rounding error; the reported
+`numeric_error_bound` accounts for the floating-point DP operations.
 
 ## Build
 
@@ -172,4 +195,4 @@ from `scripts/` for OpenQASM munging and Ganak-output parsing.
 The branch backend delegates connected components to treewidth or rankwidth DP
 according to a cost model. See [Solver internals](docs/solver-internals.md) for
 the decision process, runtime tuning, calibration, and observability details;
-`sop-solve --help-advanced` lists every advanced flag.
+`sop-solve --help-advanced` summarizes the main advanced flags.
