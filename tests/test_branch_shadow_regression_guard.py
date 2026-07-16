@@ -3,7 +3,7 @@
 numeric error bound each side reports) on a corpus of gadget-heavy fixtures shaped like the QNN
 motif the shadow-graph heuristic targets (a small, densely-connected "logical" variable core with
 many degree-1/2 check/value gadget chains hanging off it), and shadow mode must not regress search
-effort by more than a generous multiple of the legacy heuristic's.
+effort by more than a generous multiple of the Hadamard-unlock heuristic's.
 
 Usage: python3 tests/test_branch_shadow_regression_guard.py <sop-solve>
 """
@@ -64,7 +64,7 @@ def _gadget_qsop(rng: random.Random, n_logical: int, gadgets_per_edge: int, r: i
     # Unary values deliberately avoid {0, r/2}: those trigger the *exact* [HH] Hadamard-collapse
     # rule (qsop_residual_propagate / materialized reduction), which would eliminate every
     # degree-<=2 gadget vertex outright and leave nothing for the branching heuristic -- shadow
-    # or legacy -- to ever choose between.
+    # or Hadamard-unlock -- to ever choose between.
     off_limits = {0, r // 2}
     choices = [v for v in range(r) if v not in off_limits]
     unary = [rng.choice(choices) for _ in range(nvars)]

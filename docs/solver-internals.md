@@ -131,11 +131,13 @@ lookahead — branch, propagate, materialize, then measure the child's shape —
 with `branch_cutset_score_better` (more exact-zero children first, then smaller worst-child
 largest-component / active vars / active edges). The shortlist itself comes from one of two sources:
 
-- **Legacy shortlist** — variables ranked by *unlock* counts: neighbours one pin away from qualifying
-  for the exact `[HH]` materialized reduction (a coefficient-aware, one-step-progress signal), then
-  degree. `O(n + m)`.
+- **Hadamard-unlock shortlist** — variables ranked by *unlock* counts: neighbours one pin away from
+  qualifying for the exact `[HH]` Hadamard materialized reduction (a coefficient-aware,
+  one-step-progress signal), then degree. `O(n + m)`. (Named `unlock3`/`unlock4` in the code — a
+  degree-3 or degree-4 neighbour with a pinnable unary `∈ {0, r/2}` that this variable's removal drops
+  to a Hadamard-eliminable degree.)
 - **Shadow-graph shortlist** (`--branch-shadow off|auto|on`, default `off`) — a coefficient-blind
-  structural fallback for when the legacy signal is absent. It builds an unlabelled simple graph on
+  structural fallback for when the Hadamard-unlock signal is absent. It builds an unlabelled simple graph on
   the active variables (phases and coefficients dropped), exhaustively **series-reduces** every
   degree-≤2 vertex (a pendant is dropped; a degree-2 vertex is dropped with a fill edge between its
   two neighbours), which collapses gadget chains — e.g. the qnn `x, y → check → value` motif — down to
@@ -144,12 +146,12 @@ largest-component / active vars / active edges). The shortlist itself comes from
   The shadow shortlist only narrows *which* variables get the expensive real lookahead above; it never
   scores the final winner and is never itself handed to a DP.
 
-  Shadow is **gated to fire only when the legacy shortlist has no usable unlock signal** (and, under
+  Shadow is **gated to fire only when the Hadamard-unlock shortlist has no signal** (and, under
   `auto`, only on a large, dense residual). On real circuits the coefficient-aware unlock signal is
   present, so the gate keeps shadow out of the way there — it makes no observable difference — while
   still catching the synthetic gadget-chain motifs the unlock signal misses. Both "unconditionally
-  replace" and "unconditionally merge with legacy" were tried and regressed real (`qnn_indep_qiskit`)
-  and synthetic fixtures before this no-signal gate was chosen.
+  replace" and "unconditionally merge with the Hadamard-unlock shortlist" were tried and regressed
+  real (`qnn_indep_qiskit`) and synthetic fixtures before this no-signal gate was chosen.
 
 **Reach and cost.** The reduced leaves delegate to the treewidth DP under the memory-safe admission
 above, so a leaf that would OOM refuses gracefully instead of aborting the whole solve. On mqt2040's
