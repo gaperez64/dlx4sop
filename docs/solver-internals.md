@@ -4,6 +4,34 @@ This developer guide describes `sop-solve` dispatch, with emphasis on the
 `branch` backend and its treewidth-versus-rankwidth cost model. See the
 [README](../README.md) for installation, the QSOP format, and normal CLI usage.
 
+## Implementation and references
+
+The decomposition generators are implemented in this repository rather than
+provided by external solver packages:
+
+- Treewidth orders come from the in-tree
+  [min-fill implementation](../src/core/min_fill.c), including its min-degree
+  and max-degree tie-break variants. For the min-fill family of treewidth
+  upper-bound heuristics, see Bodlaender and Koster,
+  [*Treewidth computations I. Upper bounds*](https://doi.org/10.1016/j.ic.2009.03.008),
+  *Information and Computation* 208(3), 2010.
+- Rank decompositions come from the in-tree
+  [rank-decomposition generators](../src/solve/rankwidth_decomp.c). The
+  `from-treewidth`, `min-fill-cut`, adjacent-swap search, and best-of-candidates
+  builders are project-specific heuristics; they use the cut-rank and
+  rank-decomposition framework introduced by Oum and Seymour,
+  [*Approximating clique-width and branch-width*](https://doi.org/10.1016/j.jctb.2005.10.006),
+  *Journal of Combinatorial Theory, Series B* 96(4), 2006.
+
+The whole-amplitude simplifier implements the path-sum `[HH]` rule and the
+`[omega]` rule (`[ω]` in the paper) in
+[`qsop_simplify.c`](../src/core/qsop_simplify.c). For the rules and the
+hybrid pattern of reducing a path sum before handing its residue to a complete
+solver, see Huang et al. (including Jingyi Mei),
+[*Equivalence Checking of Quantum Circuits via Path-Sum and Weighted Model
+Counting*](https://doi.org/10.1007/978-3-032-22749-2_21), TACAS 2026, pp.
+419--439.
+
 ## Architecture at a glance
 
 The branch backend is an orchestrator, not a fourth dynamic-programming
@@ -14,8 +42,8 @@ available.
 ```mermaid
 flowchart TD
     A[residual QSOP] --> B[cache lookup and exact reductions]
-    B --> C{base case?}
-    C -->|yes| D[constant or edge-free closed form]
+    B --> C{no active variables or edges?}
+    C -->|yes| D[direct terminal evaluation]
     C -->|no| E{disconnected?}
     E -->|yes| F[solve components and combine]
     E -->|no| G[width probe and two-stage cost model]
@@ -26,6 +54,29 @@ flowchart TD
     H -->|large single-Fourier residual| CS[bounded cutset conditioning]
     H -->|budget or policy stop| X[graceful refusal]
 ```
+
+Here, *no active variables* and *no active edges* are two distinct terminal
+cases. Let the residual phase be
+
+```text
+P(x) = c + sum_v a_v x_v + (r/2) sum_{uv in E} x_u x_v  (mod r).
+```
+
+- If no active variables remain, all earlier branch assignments have already
+  been absorbed into `c`. There is exactly one remaining assignment: the count
+  histogram has value 1 in residue bucket `c` and 0 elsewhere, while Fourier
+  mode `t` is `omega^(t*c)`, for `omega = exp(2*pi*i/r)`.
+- If active variables remain but `E` is empty, the variables no longer
+  interact. Each variable independently contributes either residue 0 (when
+  `x_v = 0`) or `a_v` (when `x_v = 1`). The count path starts with a unit mass
+  at `c` and cyclically convolves it with `(delta_0 + delta_a_v)` for each
+  variable. The single-Fourier path evaluates the equivalent product
+  `omega^(t*c) * product_v (1 + omega^(t*a_v))`.
+
+Thus "edge-free" does not mean that the result is a single constant: unary
+phases and the multiplicity of all remaining assignments still matter. It
+means only that the quadratic interactions are gone, so neither graph DP nor
+branching is needed.
 
 The details differ between the two result shapes:
 
@@ -47,7 +98,8 @@ For a connected residual, the effective order is:
 
 1. Consult the residual cache. In single-Fourier mode, first run the enabled
    exact propagation/materialization steps, then cache the reduced residual.
-2. Solve the constant and edge-free base cases in closed form.
+2. Evaluate residuals with no active variables or no active quadratic edges
+   directly, as described above.
 3. Split disconnected support graphs, solve each component recursively, and
    convolve count histograms or multiply component amplitudes.
 4. Probe decomposition widths and try DP delegation. Count mode skips this
