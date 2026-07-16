@@ -75,9 +75,6 @@ from source:
   by the `.gauntlet/` adapters that back the qccq-gauntlet registration; not
   standalone CLIs.
 
-The C core has no runtime dependency on Qiskit, PyZX, MQT, or FeynmanDD.
-External frameworks stay at corpus import and validation boundaries.
-
 ## Solver Guide
 
 - `sop-solve --backend branch --solve-mode auto`: recommended and the default
