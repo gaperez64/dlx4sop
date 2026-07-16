@@ -88,6 +88,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-rw-memory-penalty-ns N",
       "--branch-single-max-fallback-vars N",
       "--branch-single-delegate-max-dp-work N",
+      "--branch-single-cutset-delegate-max-dp-work N",
       "--branch-single-max-search-nodes N",
       "--branch-single-cache-budget-mib N",
       "--branch-single-cache-min-vars N",
@@ -1174,6 +1175,7 @@ int main(int argc, char **argv) {
   uint64_t branch_single_max_search_nodes = 0;
   uint32_t branch_single_max_fallback_vars = 0;
   uint64_t branch_single_max_dp_work = 0;
+  uint64_t branch_single_cutset_max_dp_work = 0;
   uint64_t branch_single_cache_budget_mib = 0;
   uint32_t branch_single_cache_min_vars = 0;
   bool branch_single_materialized_reduction = false;
@@ -1640,6 +1642,17 @@ int main(int argc, char **argv) {
       }
       if (!parse_u64_arg("--branch-single-delegate-max-dp-work", argv[++i],
                          &branch_single_max_dp_work))
+        return 2;
+      branch_single_option_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-single-cutset-delegate-max-dp-work") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --branch-single-cutset-delegate-max-dp-work requires a value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--branch-single-cutset-delegate-max-dp-work", argv[++i],
+                         &branch_single_cutset_max_dp_work))
         return 2;
       branch_single_option_set = true;
       continue;
@@ -2296,6 +2309,7 @@ int main(int argc, char **argv) {
           .max_search_nodes = branch_single_max_search_nodes,
           .max_fallback_vars = branch_single_max_fallback_vars,
           .treewidth_delegate_max_dp_work = branch_single_max_dp_work,
+          .cutset_treewidth_delegate_max_dp_work = branch_single_cutset_max_dp_work,
           .cache_budget_mib = branch_single_cache_budget_mib,
           .cache_min_vars = branch_single_cache_min_vars,
           .materialized_reduction = branch_single_materialized_reduction,

@@ -2992,6 +2992,7 @@ typedef struct branch_single_mode_state {
   uint32_t treewidth_delegate_max_width;
   uint32_t rankwidth_delegate_max_width;
   uint64_t treewidth_delegate_max_dp_work;
+  uint64_t cutset_treewidth_delegate_max_dp_work; /* 0 = reuse treewidth_delegate_max_dp_work */
   bool materialized_reduction;
   bool hadamard_reduction_exact;
   bool diagnose_conditioning;
@@ -4077,6 +4078,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .treewidth_delegate_max_width = o.treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
+      .cutset_treewidth_delegate_max_dp_work = o.cutset_treewidth_delegate_max_dp_work,
       .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
                                 (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
@@ -4261,15 +4263,27 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   return true;
 }
 
+/* inside_cutset: true for a delegate probe reached from within cutset conditioning's own
+ * recursion (frame.depth > 0 at the call site), as opposed to the root-level probe or one from
+ * the ordinary (non-cutset) branching fallback. Selects
+ * state->cutset_treewidth_delegate_max_dp_work when set, instead of the root-level
+ * state->treewidth_delegate_max_dp_work -- see the option's doc comment in qsop_solve.h for why
+ * these need to differ: a DP-work budget calibrated for the one root-level attempt is far too
+ * permissive once cutset conditioning re-attempts delegation on dozens of sub-residuals. */
 static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
-                                            branch_single_mode_state_t *state, bool *out_delegated,
-                                            branch_c64_t *out, qsop_error_t *error) {
+                                            branch_single_mode_state_t *state, bool inside_cutset,
+                                            bool *out_delegated, branch_c64_t *out,
+                                            qsop_error_t *error) {
   *out_delegated = false;
   qsop_instance_t sub = {0};
   qsop_amplitude_t delegated_amp = {0};
   if (!build_active_residual_subinstance(residual, &sub, error)) {
     return false;
   }
+  const uint64_t dp_work_budget =
+      (inside_cutset && state->cutset_treewidth_delegate_max_dp_work != 0)
+          ? state->cutset_treewidth_delegate_max_dp_work
+          : state->treewidth_delegate_max_dp_work;
   const qsop_branch_single_mode_options_t delegate_options = {
       .rw_source = state->rw_source,
       .policy = state->policy,
@@ -4280,7 +4294,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .simd = state->simd,
       .treewidth_delegate_max_width = state->treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
-      .treewidth_delegate_max_dp_work = state->treewidth_delegate_max_dp_work,
+      .treewidth_delegate_max_dp_work = dp_work_budget,
       .trace = state->trace,
   };
   /* Diagnostic mode must inspect a legal delegate miss even under delegate-only policy.  The
@@ -4519,7 +4533,8 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
         if (state->stats != NULL) {
           state->stats->branch_delegate_probes++;
         }
-        ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
+        ok = branch_try_single_mode_delegate(residual, state, frame.depth > 0U, &delegated, out,
+                                             error);
         frame.levels_since_delegate_probe = 0U;
         frame.vars_at_last_delegate_probe = qsop_residual_active_vars(residual);
         frame.edges_at_last_delegate_probe = qsop_residual_active_edges(residual);

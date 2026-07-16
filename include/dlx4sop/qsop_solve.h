@@ -585,6 +585,17 @@ typedef struct qsop_branch_single_mode_options {
    * rather than raw width. Zero selects the built-in budget. */
   uint64_t treewidth_delegate_max_dp_work;
 
+  /* Separate, tighter DP-work budget applied only to delegate probes reached from *inside*
+   * cutset conditioning (frame.depth > 0), leaving treewidth_delegate_max_dp_work as the budget
+   * for the one root-level probe. A component whose predicted DP work is high enough to be worth
+   * the *one* root-level attempt (which treewidth_delegate_max_dp_work is calibrated for) is not
+   * automatically worth re-attempting at the same cost on every one of the many sub-residuals a
+   * deep cutset search reaches -- each admitted-but-marginal attempt near the width ceiling
+   * costs real wall-clock seconds, and cutset conditioning may probe dozens of them. Zero (the
+   * default) reuses treewidth_delegate_max_dp_work for cutset-triggered probes too, i.e. no
+   * separate budget -- unchanged from before this option existed. */
+  uint64_t cutset_treewidth_delegate_max_dp_work;
+
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;
 } qsop_branch_single_mode_options_t;
