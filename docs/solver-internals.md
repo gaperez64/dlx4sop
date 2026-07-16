@@ -16,17 +16,23 @@ component (from first check to last):
 3. **Treewidth / rankwidth delegation** — a cost model (below) picks between the
    two DP backends when the component's treewidth or cut-rank is within the
    delegation caps.
-4. **Per-component refusal** — a non-delegatable component larger than
-   `--max-vars` is refused (rather than branched into an exponential recursion).
-5. **Branching fallback** — otherwise pick a branch variable and recurse on
-   `0`/`1`.
+4. **Cutset conditioning** (single-Fourier, on by default) — a component too wide to
+   delegate and larger than `--branch-single-max-fallback-vars` is *conditioned*: branch on a
+   chosen variable, reduce each child, and re-probe delegation as the width falls until the
+   child is narrow enough to hand off. See [Cutset conditioning](#cutset-conditioning-and-the-shadow-graph-shortlist-single-fourier).
+5. **Per-component refusal** — a component still non-delegatable after conditioning (or over
+   `--max-vars`) is refused, rather than branched into an exponential recursion.
+6. **Branching fallback** — otherwise pick a branch variable and recurse on `0`/`1`.
 
 **Delegation caps** (hard memory-safety limits, since each backend's DP table is `2^width`-sized, so
 a component over its cap is not handed to that backend): treewidth ≤ 14 (count-table); the
-single-Fourier treewidth delegate is admitted by *DP work* — min-fill `Σ 2^bag ≤ 3.2e9` — under a
-width ≤ 26 table-memory ceiling; a single-component root up to width 18 for ≤ 2500 variables;
-rankwidth cut-rank ≤ 12. These caps are part of the cost model below, not separate vetoes layered
-on top of it.
+single-Fourier treewidth delegate is admitted by *DP work* — min-fill `Σ 2^bag ≤ 4.0e9` — under a
+width ≤ 26 ceiling **and** a forecast-peak-memory budget (`--branch-single-delegate-max-memory-mib`,
+default 12 GiB). The memory forecast is `2^width · 128 B`, not the naive `2^width` table: the DP's
+join intermediates make its measured peak ~4× the final table (a width-26 component peaks ~7.5 GiB),
+so an over-budget component refuses *gracefully* rather than failing its own allocation mid-DP. Also:
+a single-component root up to width 18 for ≤ 2500 variables; rankwidth cut-rank ≤ 12. These caps are
+part of the cost model below, not separate vetoes layered on top of it.
 
 **Rankwidth is on by default** (`--branch-rw-source auto`): the branch backend
 competes rankwidth against treewidth per component via the cost model below, and
@@ -63,6 +69,16 @@ they enter the inequality as an infinite estimate — a backend over its cap sim
 cannot run — so the single comparison stays the whole decision. (In `--branch-calibrate-backends`
 mode the inequality is bypassed so both backends are timed, but the hard caps still apply.)
 
+Single-Fourier's pre-probe treewidth width comes from a cheap plain min-fill pass
+(`qsop_compute_stats_with_order`); the order treewidth actually solves with
+(`MIN_FILL_MAX_DEGREE`, resolved lazily in `branch_single_mode_delegate_component` only once
+a delegate is chosen) can tiebreak to a different width on components over 63 variables. When
+that makes treewidth's real order too wide after the fact, the delegate uses an
+already-generated, in-cap rankwidth decomposition rather than refuse a component solely
+because the cheap pre-probe estimate looked favorable to a backend that turns out not to fit.
+(The DP-work side of that same pre-probe estimate has the identical estimate-vs-actual-order
+gap and is not re-verified once the real order is known — a narrower, still-open case.)
+
 Two things make that work.
 
 `tw_dp_work` is the **real** DP work — the sum over elimination steps of `2^(bag size)`,
@@ -83,6 +99,67 @@ This subsumed four hand-tuned pre-probe vetoes (`--branch-rw-min-treewidth-width
 `--branch-rw-low-rank-bypass`), which have been **removed**: a treewidth estimate too
 small to be worth probing against, and a cut rank small enough that rankwidth obviously
 wins, both fall out of the inequality.
+
+### Cutset conditioning and the shadow-graph shortlist (single-Fourier)
+
+When a single-Fourier component is too wide for the treewidth delegate (treewidth > 26) and larger
+than `--branch-single-max-fallback-vars`, the solver does not refuse it outright — it **conditions**.
+At a conditioning node it picks one variable, branches it to `0` and `1`, reduces each child
+(Hadamard propagation + the materialized `[HH]` reduction), and recurses. Each peeled variable lowers
+the residual's **treewidth**, so after a few levels a child's treewidth drops under the delegate cap
+and the reduced leaf is handed to the treewidth DP. Conditioning is therefore **treewidth-directed**:
+it exists to bring a component's treewidth down to the treewidth delegate's reach. It is *not*
+targeting rankwidth — on the dense cores that need conditioning (e.g. the all-to-all qnn family)
+cut-rank ≈ treewidth + 1 sits far above the rankwidth cap of 12 and never becomes the winning
+delegate, though rankwidth is still probed per the cost model. (The candidate *scorer* itself is
+width-agnostic — it minimizes exact-zero children then worst-child largest-component / active
+vars / edges — but for a clique-like core that size reduction *is* treewidth reduction, and treewidth
+is the only width with a reachable cap here.)
+
+Conditioning is **on by default** in `sop-solve` (`--branch-single-cutset-depth 16`,
+`--branch-single-max-stagnant-levels 30`); the library API keeps `max_cutset_depth = 0` (off). It
+only ever engages on a component that would otherwise refuse, so it cannot slow down a component that
+already delegates or branches to a solution. Pass `--branch-single-cutset-depth 0` to disable.
+`max_stagnant_levels` is deliberately loose (30, not the library's 1): the productivity heuristic
+scores a single-variable clique-peel — the very progress that lowers treewidth — as "stagnant", so a
+tight stagnation guard abandons the search before it reaches a delegable leaf. A component whose
+treewidth never falls under the cap within the depth / conditioning-node / stagnant budgets refuses,
+rather than branching into an exponential recursion.
+
+**Candidate selection.** Each conditioning node scores a shortlist of candidate variables by a real
+lookahead — branch, propagate, materialize, then measure the child's shape — and picks the winner
+with `branch_cutset_score_better` (more exact-zero children first, then smaller worst-child
+largest-component / active vars / active edges). The shortlist itself comes from one of two sources:
+
+- **Hadamard-unlock shortlist** — variables ranked by *unlock* counts: neighbours one pin away from
+  qualifying for the exact `[HH]` Hadamard materialized reduction (a coefficient-aware,
+  one-step-progress signal), then degree. `O(n + m)`. (Named `unlock3`/`unlock4` in the code — a
+  degree-3 or degree-4 neighbour with a pinnable unary `∈ {0, r/2}` that this variable's removal drops
+  to a Hadamard-eliminable degree.)
+- **Shadow-graph shortlist** (`--branch-shadow off|auto|on`, default `off`) — a coefficient-blind
+  structural fallback for when the Hadamard-unlock signal is absent. It builds an unlabelled simple graph on
+  the active variables (phases and coefficients dropped), exhaustively **series-reduces** every
+  degree-≤2 vertex (a pendant is dropped; a degree-2 vertex is dropped with a fill edge between its
+  two neighbours), which collapses gadget chains — e.g. the qnn `x, y → check → value` motif — down to
+  their surviving hub variables *without* increasing width. It then ranks the survivors by a
+  remove-and-re-reduce lookahead (which vertex, once removed, leaves the smallest re-reduced graph).
+  The shadow shortlist only narrows *which* variables get the expensive real lookahead above; it never
+  scores the final winner and is never itself handed to a DP.
+
+  Shadow is **gated to fire only when the Hadamard-unlock shortlist has no signal** (and, under
+  `auto`, only on a large, dense residual). On real circuits the coefficient-aware unlock signal is
+  present, so the gate keeps shadow out of the way there — it makes no observable difference — while
+  still catching the synthetic gadget-chain motifs the unlock signal misses. Both "unconditionally
+  replace" and "unconditionally merge with the Hadamard-unlock shortlist" were tried and regressed
+  real (`qnn_indep_qiskit`) and synthetic fixtures before this no-signal gate was chosen.
+
+**Reach and cost.** The reduced leaves delegate to the treewidth DP under the memory-safe admission
+above, so a leaf that would OOM refuses gracefully instead of aborting the whole solve. On mqt2040's
+qnn family (treewidth ≈ qubit count) this solves qnn up to ~28–30. Wider qnn are intrinsically out —
+their `2^(width−26)` delegable leaves explode past any timeout — and a band just past the frontier
+(≈ qnn_31–34 at `--branch-single-cutset-depth 16`) spends its whole conditioning budget before
+giving up, the accepted cost of trying rather than refusing outright. A tighter depth cap trades those
+borderline gains for faster refusals; see `src/solve/branch.c` for the calibrated defaults.
 
 ### Runtime tuning (`--help-advanced` lists all flags)
 
@@ -108,6 +185,17 @@ Single-Fourier fallback: `--branch-single-fourier-fallback`,
 `--branch-single-max-fallback-vars`, `--branch-single-max-search-nodes`,
 `--branch-single-cache-budget-mib`, `--branch-single-precision`,
 `--single-mode-precision`, `--branch-single-propagate auto|off`.
+
+Single-Fourier delegate admission:
+`--branch-single-delegate-max-dp-work` (default 4.0e9),
+`--branch-single-delegate-max-width` (default 26, the memory-safety ceiling),
+`--branch-single-delegate-max-memory-mib` (default 12288 = 12 GiB, the forecast-peak budget),
+`--branch-single-cutset-delegate-max-dp-work` (0 = reuse the root budget for cutset-triggered probes).
+
+Cutset conditioning (single-Fourier): `--branch-single-cutset-depth` (default 16; `0` disables),
+`--branch-single-max-conditioning-nodes`, `--branch-single-max-stagnant-levels` (default 30),
+`--branch-single-lookahead-candidates`, `--branch-single-delegate-reprobe-interval`,
+`--branch-shadow off|auto|on` (default `off`), `--branch-single-diagnose-conditioning`.
 
 `--branch-single-propagate` controls the search-time Hadamard collapse: at each
 node the solver sums out every variable with `unary ∈ {0, r/2}` and active degree

@@ -1,3 +1,4 @@
+#include "branch_shadow.h"
 #include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/qsop_stats.h"
@@ -43,6 +44,9 @@
 #define BRANCH_SINGLE_DEFAULT_MAX_CONDITIONING_NODES UINT64_C(4096)
 #define BRANCH_SINGLE_DEFAULT_DELEGATE_REPROBE_INTERVAL 2U
 #define BRANCH_SINGLE_DEFAULT_MAX_STAGNANT_LEVELS 1U
+/* AUTO shadow-shortlisting trigger: below this the plain unlock3/unlock4 heuristic is already
+ * cheap and effective, so building a shadow graph is not worth its own O(nvars+nedges) scan. */
+#define BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS 128U
 /* Purely a defensive bound on the root-level component-split allocation's O(nvars) cost, not
  * a solvability gate -- that job belongs to a per-component --max-vars check instead (in
  * qsop_solve_branch_single_mode's case, the one inside branch_single_mode_delegate_component,
@@ -371,11 +375,26 @@ typedef struct branch_search_stats {
  * real DP cost rather than the width alone, which is a poor proxy: qnn_24 (width 26) solves in
  * ~22 s while realamprandom_25 (width 25) times out. Calibrated on the gauntlet corpus so the
  * slowest solved case (grover-v-chain_15, ~2.85e9 work, 62 s) stays admitted while the dense
- * width-26 realamprandom_26 (~7.1e9) is refused; qnn_24 (~1.09e9) newly clears it and solves in
- * ~22 s. The budget sits above grover-v-chain_15 and below realamprandom_26, and the width-26
- * ceiling above keeps out the qnn_25 (width 27) family the budget would otherwise admit. */
-#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK UINT64_C(3200000000)
+ * width-26 realamprandom_26 (~7.1e9) is refused. The budget sits above grover-v-chain_15 and
+ * below realamprandom_26; the width and memory ceilings below keep out the wider qnn the budget
+ * would otherwise admit.
+ *
+ * Raised 3.2e9 -> 4.0e9 to newly admit qnn_26 (width 26, ~3.76e9 work, ~53 s, ~7.5 GiB peak --
+ * memory-safe under the 12 GiB budget below), while still refusing realamprandom_26 (~7.1e9,
+ * times out). The gap [3.76e9, 7.1e9] is the calibration window. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK UINT64_C(4000000000)
 #define BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH 12U
+/* Memory-safety budget for the treewidth delegate, in MiB. The DP's *peak* live memory is
+ * dominated by join intermediates, not the final 2^width table: a width-26 qnn component whose
+ * final long-double-complex table is ~2 GiB was measured to peak at ~7.5 GiB (~3.6x). Forecast
+ * it conservatively as 2^width * PEAK_BYTES_PER_ENTRY (128 B/entry reproduces the measured peak
+ * with headroom: width 26 -> ~8.6 GiB admitted under 12 GiB, width 27 -> ~17 GiB refused) and
+ * reject over-budget components *gracefully* as BRANCH_DELEGATE_MISS_MEMORY, rather than letting
+ * the DP fail its own allocation mid-run (an error, not a refusal -- observed when the width cap
+ * was raised without this guard). Default 12 GiB matches the gauntlet's per-solve RLIMIT_AS;
+ * lower --branch-single-delegate-max-memory-mib to match a tighter process limit. */
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_PEAK_BYTES_PER_ENTRY UINT64_C(128)
+#define BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB UINT64_C(12288)
 #define BRANCH_SMALL_COMPONENT_CANONICAL_NVARS 5U
 #define BRANCH_DELEGATION_DEPTH_TOP_K 6U
 
@@ -2988,6 +3007,8 @@ typedef struct branch_single_mode_state {
   uint32_t treewidth_delegate_max_width;
   uint32_t rankwidth_delegate_max_width;
   uint64_t treewidth_delegate_max_dp_work;
+  uint64_t cutset_treewidth_delegate_max_dp_work; /* 0 = reuse treewidth_delegate_max_dp_work */
+  uint64_t treewidth_delegate_max_memory_mib;     /* 0 = built-in 12 GiB budget */
   bool materialized_reduction;
   bool hadamard_reduction_exact;
   bool diagnose_conditioning;
@@ -2999,6 +3020,7 @@ typedef struct branch_single_mode_state {
   /* Resolved once at init: qsop_residual_propagate is exact only for an even modulus and an odd
    * target mode (an even mode kills the sign edges outright and the rule changes shape). */
   bool propagate;
+  qsop_branch_shadow_mode_t shadow_mode;
 
   branch_phase_cache_t phase_cache;
   branch_amp_cache_t amp_cache;
@@ -3298,50 +3320,154 @@ static bool branch_cutset_lookahead_child(qsop_residual_t *residual,
   return true;
 }
 
+/* Evaluates one candidate variable's two real children (branch, propagate, materialized
+ * reduction, shape measurement -- exactly today's per-candidate treatment, unchanged) and fills
+ * *out. Shared by both the shadow-shortlist-driven and the Hadamard-unlock (unlock3/unlock4)
+ * shortlist-driven candidate loops in branch_choose_cutset_candidate below, so the shadow graph can
+ * only ever change *which* variables get this expensive real-residual lookahead, never how a
+ * candidate is scored once evaluated. */
+static bool branch_evaluate_cutset_candidate_real(qsop_residual_t *residual,
+                                                   branch_single_mode_state_t *state,
+                                                   bool diagnostic_full_simplify,
+                                                   uint32_t parent_vars, uint32_t var,
+                                                   branch_cutset_candidate_t *out,
+                                                   qsop_error_t *error) {
+  *out = (branch_cutset_candidate_t){.var = var};
+  for (uint8_t value = 0; value <= 1U; value++) {
+    if (!branch_cutset_lookahead_child(residual, state, parent_vars, var, value,
+                                       state->hadamard_reduction_exact &&
+                                           (diagnostic_full_simplify || state->materialized_reduction),
+                                       &out->child[value], error)) {
+      branch_cutset_candidate_free(out);
+      return false;
+    }
+    if (state->diagnose_conditioning && !state->conditioning_diagnosed) {
+      branch_emit_conditioning_record(state, out, value, parent_vars);
+    }
+  }
+  return true;
+}
+
+/* Evaluates `var` (unless already present in `seen[0..nseen)`, in which case it's a no-op) and,
+ * if it scores better than the current *out, replaces it. `*winner_is_shadow` is only ever set
+ * to `shadow`, never cleared, and only meaningful once `*have_best` is true. */
+static bool branch_cutset_consider_candidate(qsop_residual_t *residual,
+                                             branch_single_mode_state_t *state,
+                                             bool diagnostic_full_simplify, uint32_t parent_vars,
+                                             uint32_t var, bool shadow,
+                                             branch_cutset_candidate_t *out, bool *have_best,
+                                             bool *winner_is_shadow, qsop_error_t *error) {
+  branch_cutset_candidate_t candidate = {0};
+  if (!branch_evaluate_cutset_candidate_real(residual, state, diagnostic_full_simplify,
+                                             parent_vars, var, &candidate, error)) {
+    branch_cutset_candidate_free(out);
+    return false;
+  }
+  if (!*have_best || branch_cutset_score_better(&candidate, out)) {
+    branch_cutset_candidate_free(out);
+    *out = candidate;
+    candidate = (branch_cutset_candidate_t){0};
+    *have_best = true;
+    *winner_is_shadow = shadow;
+  }
+  branch_cutset_candidate_free(&candidate);
+  return true;
+}
+
+/* Picks the best variable to condition on.
+ *
+ * branch_cutset_score_better is a one-step-greedy comparator: it scores a candidate by the
+ * shape of its own two children, with no visibility into what a candidate sets up two or three
+ * branches later. unlock3/unlock4 (the Hadamard-unlock shortlist's heuristic) is tuned to exploit exactly
+ * that: a nonzero count means some neighbour is one pin away from qualifying for the exact [HH]
+ * materialized-reduction cascade, the dominant source of real one-step progress in this
+ * recursion, so whenever that signal exists a Hadamard-unlock candidate reliably outscores a shadow
+ * candidate chosen for its multi-step structural payoff -- shadow doesn't see coefficients at
+ * all, by design. Two designs were tried and rejected empirically before this one:
+ *
+ *   - Shadow *replacing* the shortlist unconditionally regressed a real mqt2040
+ *     qnn_indep_qiskit fixture (1430-variable component): the Hadamard-unlock shortlist alone solved it in 3
+ *     conditioning nodes, shadow-only stalled into the stagnant-level budget.
+ *   - Shadow candidates *merged* into the same real-child comparison alongside the Hadamard-unlock
+ *     shortlist's, always,
+ *     neutralized shadow's own benefit on a synthetic gadget-chain fixture built with no unary
+ *     value in {0, r/2} anywhere (so [HH] can fire nowhere): a degree-2 gadget "orphan" and a
+ *     genuine structural hub look locally identical to a one-step-greedy comparator once neither
+ *     can trigger an exact elimination, so the Hadamard-unlock shortlist's generic degree/ID
+ *     fallback tiebreak won the
+ *     comparison as often as shadow's structurally-informed pick did, at double the per-node
+ *     evaluation cost for no gain.
+ *
+ * The distinguishing case is exactly "does the Hadamard-unlock shortlist have any signal at all" --
+ * sorted unlock3 desc, unlock4 desc, so entry 0 carries the strongest signal in the list. When it
+ * does (real circuits, empirically, almost always), trust it alone, unchanged from before this
+ * feature existed. When it doesn't (a gadget-chain-heavy component whose coefficients don't
+ * align with any exact rule -- what this feature targets), let shadow's own remove-and-rereduce
+ * scoring pick the shortlist instead, competing only against itself, so its multi-step judgement
+ * isn't drowned out by a Hadamard-unlock fallback pick the one-step comparator can't fairly rank against
+ * it either. Either way, the actual winner is still chosen by the same real branch + materialized
+ * reduction + branch_cutset_score_better used throughout this file -- shadow only ever changes
+ * which variables are worth that treatment, never the treatment itself. */
 static bool branch_choose_cutset_candidate(qsop_residual_t *residual,
                                            branch_single_mode_state_t *state,
                                            bool diagnostic_full_simplify,
                                            branch_cutset_candidate_t *out, qsop_error_t *error) {
-  *out = (branch_cutset_candidate_t){0};
+  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+
   branch_cutset_candidate_t *shortlist = NULL;
   uint32_t shortlist_len = 0;
   if (!branch_cutset_shortlist(residual, state->lookahead_candidates, &shortlist, &shortlist_len,
                                error)) {
     return false;
   }
-  const uint32_t parent_vars = qsop_residual_active_vars(residual);
+  const bool hadamard_unlock_signal =
+      shortlist_len > 0U && (shortlist[0].unlock3 > 0U || shortlist[0].unlock4 > 0U);
+
+  bool try_shadow = !hadamard_unlock_signal && state->shadow_mode == QSOP_BRANCH_SHADOW_ON;
+  if (!hadamard_unlock_signal && state->shadow_mode == QSOP_BRANCH_SHADOW_AUTO) {
+    const uint32_t active_edges = qsop_residual_active_edges(residual);
+    try_shadow = parent_vars >= BRANCH_SHADOW_AUTO_TRIGGER_MIN_VARS &&
+                active_edges >= 2U * parent_vars;
+  }
+
+  *out = (branch_cutset_candidate_t){0};
   bool have_best = false;
-  for (uint32_t i = 0; i < shortlist_len; i++) {
-    branch_cutset_candidate_t candidate = shortlist[i];
-    bool ok = true;
-    for (uint8_t value = 0; ok && value <= 1U; value++) {
-      ok = branch_cutset_lookahead_child(residual, state, parent_vars, candidate.var, value,
-                                         state->hadamard_reduction_exact &&
-                                             (diagnostic_full_simplify ||
-                                              state->materialized_reduction),
-                                         &candidate.child[value], error);
-      if (ok && state->diagnose_conditioning && !state->conditioning_diagnosed) {
-        branch_emit_conditioning_record(state, &candidate, value, parent_vars);
-      }
+  bool winner_is_shadow = false;
+  bool ok = true;
+
+  if (try_shadow) {
+    uint32_t *shadow_vars = NULL;
+    uint32_t shadow_len = 0;
+    ok = branch_shadow_shortlist(residual, state->lookahead_candidates, &shadow_vars, &shadow_len,
+                                 state->stats, error);
+    for (uint32_t i = 0; ok && i < shadow_len; i++) {
+      ok = branch_cutset_consider_candidate(residual, state, diagnostic_full_simplify, parent_vars,
+                                            shadow_vars[i], true, out, &have_best, &winner_is_shadow,
+                                            error);
     }
-    if (!ok) {
-      branch_cutset_candidate_free(&candidate);
-      free(shortlist);
-      branch_cutset_candidate_free(out);
-      return false;
-    }
-    if (!have_best || branch_cutset_score_better(&candidate, out)) {
-      branch_cutset_candidate_free(out);
-      *out = candidate;
-      candidate = (branch_cutset_candidate_t){0};
-      have_best = true;
-    }
-    branch_cutset_candidate_free(&candidate);
+    free(shadow_vars);
+  }
+
+  /* Shadow disabled/not triggered, budget-skipped, empty reduced core, or (defensively) no
+   * shadow candidate evaluated cleanly: fall back to the Hadamard-unlock shortlist, exactly as
+   * before this feature existed. */
+  for (uint32_t i = 0; ok && !have_best && i < shortlist_len; i++) {
+    ok = branch_cutset_consider_candidate(residual, state, diagnostic_full_simplify, parent_vars,
+                                          shortlist[i].var, false, out, &have_best,
+                                          &winner_is_shadow, error);
   }
   free(shortlist);
+
+  if (!ok) {
+    branch_cutset_candidate_free(out);
+    return false;
+  }
   if (!have_best) {
     qsop_set_error(error, "cutset lookahead found no active candidate");
     return false;
+  }
+  if (winner_is_shadow && state->stats != NULL) {
+    state->stats->branch_shadow_selected++;
   }
   return true;
 }
@@ -3692,6 +3818,16 @@ static bool branch_single_mode_ensure_order(const qsop_instance_t *sub, uint32_t
   return true;
 }
 
+/* Conservative forecast of the treewidth DP's peak live memory for a component of this width (see
+ * BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB). Saturates to UINT64_MAX once 2^width * 128 B
+ * would overflow, so an absurd width always exceeds any finite budget. */
+static uint64_t branch_treewidth_delegate_peak_bytes(uint32_t width) {
+  if (width >= 57U) { /* 2^57 * 128 = 2^64 overflows uint64_t */
+    return UINT64_MAX;
+  }
+  return (UINT64_C(1) << width) * BRANCH_SINGLE_TREEWIDTH_DELEGATE_PEAK_BYTES_PER_ENTRY;
+}
+
 static bool branch_single_mode_delegate_component(
     const qsop_instance_t *sub, uint32_t max_vars, uint32_t target_mode,
     const qsop_branch_single_mode_options_t *options, bool fail_on_refusal, bool *out_delegated,
@@ -3735,6 +3871,11 @@ static bool branch_single_mode_delegate_component(
   const uint64_t dp_work_budget = options->treewidth_delegate_max_dp_work != 0
                                       ? options->treewidth_delegate_max_dp_work
                                       : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_DP_WORK;
+  const uint64_t mem_budget_mib = options->treewidth_delegate_max_memory_mib != 0
+                                      ? options->treewidth_delegate_max_memory_mib
+                                      : BRANCH_SINGLE_TREEWIDTH_DELEGATE_MAX_MEMORY_MIB;
+  const uint64_t mem_budget_bytes =
+      qsop_saturating_mul_u64(mem_budget_mib, UINT64_C(1024) * UINT64_C(1024));
 
   /* qsop_compute_stats_with_order only populates `order` for nvars <= 63 -- its width-
    * diagnostics path for larger instances (compute_large_width_diagnostics) computes
@@ -3770,11 +3911,14 @@ static bool branch_single_mode_delegate_component(
   bool setup_ok = true;
 
   /* Admit the treewidth DP on cost, not raw width: the min-fill DP work must be within budget
-   * (a dense width-25 component like realamprandom_25 blows past it and would time out) and the
-   * width within the memory-safety ceiling. Single-Fourier tables carry no residue axis, so the
+   * (a dense width-25 component like realamprandom_25 blows past it and would time out), the
+   * width within the memory-safety ceiling, and the forecast peak memory within budget so the DP
+   * cannot fail its own allocation mid-run. Single-Fourier tables carry no residue axis, so the
    * r factor is 1. */
+  const uint64_t treewidth_peak_bytes = branch_treewidth_delegate_peak_bytes(treewidth_width);
+  const bool treewidth_mem_ok = treewidth_peak_bytes <= mem_budget_bytes;
   const bool treewidth_usable = treewidth_available && treewidth_width <= tw_cap &&
-                                sub_stats.min_fill_dp_work <= dp_work_budget;
+                                sub_stats.min_fill_dp_work <= dp_work_budget && treewidth_mem_ok;
   const uint64_t tw_est =
       branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
 
@@ -3855,7 +3999,12 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
-  } else if (treewidth_usable && order_width <= tw_cap) {
+  } else if (treewidth_usable && order_width <= tw_cap &&
+             branch_treewidth_delegate_peak_bytes(order_width) <= mem_budget_bytes) {
+    /* Re-check memory against the *resolved* order width: branch_single_mode_ensure_order can
+     * return an order wider than the pre-probe estimate treewidth_usable was computed from, and a
+     * wider order means a larger peak. Falling through here refuses (or uses rankwidth) gracefully
+     * rather than letting the DP OOM. */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_treewidth_precomputed_order_single_mode(
           sub, tw_cap + 1U, order, order_width, target_mode, out, &delegated, options->trace,
@@ -3867,8 +4016,15 @@ static bool branch_single_mode_delegate_component(
     }
     delegated.treewidth_delegations++;
   } else if (decomposition != NULL && cutrank_width <= rw_cap) {
-    /* Treewidth unavailable/too wide, but rankwidth is viable even though the cost model
-     * (computed above only when !cheap_treewidth && !prefer_treewidth) didn't prefer it. */
+    /* order_width (resolved lazily by branch_single_mode_ensure_order, using
+     * QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE) can come out wider than treewidth_width -- the
+     * cheap pre-probe estimate from qsop_compute_stats_with_order's plain MIN_FILL pass -- for
+     * nvars > 63 components, where the two elimination orders tiebreak differently.
+     * treewidth_usable above was computed from the stale estimate, so the earlier cost-model
+     * evaluation may have judged rankwidth not worth attempting against a treewidth cost that
+     * turns out unachievable. Having already generated and paid for a valid rankwidth
+     * decomposition, use it rather than refuse. (The DP-work side of the estimate has the same
+     * estimate-vs-actual-order gap and is not re-verified here.) */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
       ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
                                             &delegated, options->trace, error);
@@ -3888,11 +4044,17 @@ static bool branch_single_mode_delegate_component(
         *out_miss = decomposition != NULL && cutrank_width > rw_cap
                         ? BRANCH_DELEGATE_MISS_RW_WIDTH
                         : BRANCH_DELEGATE_MISS_TW_WORK;
+      } else if (!treewidth_mem_ok) {
+        *out_miss = decomposition != NULL && cutrank_width > rw_cap ? BRANCH_DELEGATE_MISS_RW_WIDTH
+                                                                    : BRANCH_DELEGATE_MISS_MEMORY;
       } else {
         *out_miss = BRANCH_DELEGATE_MISS_COST;
       }
     }
     if (fail_on_refusal) {
+      /* Keep this concise: qsop_error_t.message is a 256-byte buffer, and the "no delegate
+       * available" suffix is asserted by tests/test_differential_backends.py. The memory-forecast
+       * detail lives in the BRANCH_DELEGATE_MISS_MEMORY stat, not here. */
       qsop_set_error(error,
                 "branch single-fourier: connected component (%" PRIu32
                 " vars) has treewidth %" PRIu32 " (DP work %" PRIu64 ", budget %" PRIu64
@@ -3963,6 +4125,8 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .treewidth_delegate_max_width = o.treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = o.rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
+      .cutset_treewidth_delegate_max_dp_work = o.cutset_treewidth_delegate_max_dp_work,
+      .treewidth_delegate_max_memory_mib = o.treewidth_delegate_max_memory_mib,
       .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
                                 (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
@@ -3985,6 +4149,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
        * (-1)^(t*(s+S)) into 1 and the constraint disappears, so refuse rather than mis-fold. */
       .propagate = o.propagate != QSOP_BRANCH_SINGLE_PROPAGATE_OFF && qsop->r >= 2U &&
                    (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
+      .shadow_mode = o.shadow_mode,
       .stats = stats,
       .trace = o.trace,
       .sink = o.sink,
@@ -4146,15 +4311,27 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   return true;
 }
 
+/* inside_cutset: true for a delegate probe reached from within cutset conditioning's own
+ * recursion (frame.depth > 0 at the call site), as opposed to the root-level probe or one from
+ * the ordinary (non-cutset) branching fallback. Selects
+ * state->cutset_treewidth_delegate_max_dp_work when set, instead of the root-level
+ * state->treewidth_delegate_max_dp_work -- see the option's doc comment in qsop_solve.h for why
+ * these need to differ: a DP-work budget calibrated for the one root-level attempt is far too
+ * permissive once cutset conditioning re-attempts delegation on dozens of sub-residuals. */
 static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
-                                            branch_single_mode_state_t *state, bool *out_delegated,
-                                            branch_c64_t *out, qsop_error_t *error) {
+                                            branch_single_mode_state_t *state, bool inside_cutset,
+                                            bool *out_delegated, branch_c64_t *out,
+                                            qsop_error_t *error) {
   *out_delegated = false;
   qsop_instance_t sub = {0};
   qsop_amplitude_t delegated_amp = {0};
   if (!build_active_residual_subinstance(residual, &sub, error)) {
     return false;
   }
+  const uint64_t dp_work_budget =
+      (inside_cutset && state->cutset_treewidth_delegate_max_dp_work != 0)
+          ? state->cutset_treewidth_delegate_max_dp_work
+          : state->treewidth_delegate_max_dp_work;
   const qsop_branch_single_mode_options_t delegate_options = {
       .rw_source = state->rw_source,
       .policy = state->policy,
@@ -4165,7 +4342,8 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .simd = state->simd,
       .treewidth_delegate_max_width = state->treewidth_delegate_max_width,
       .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
-      .treewidth_delegate_max_dp_work = state->treewidth_delegate_max_dp_work,
+      .treewidth_delegate_max_dp_work = dp_work_budget,
+      .treewidth_delegate_max_memory_mib = state->treewidth_delegate_max_memory_mib,
       .trace = state->trace,
   };
   /* Diagnostic mode must inspect a legal delegate miss even under delegate-only policy.  The
@@ -4404,7 +4582,8 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
         if (state->stats != NULL) {
           state->stats->branch_delegate_probes++;
         }
-        ok = branch_try_single_mode_delegate(residual, state, &delegated, out, error);
+        ok = branch_try_single_mode_delegate(residual, state, frame.depth > 0U, &delegated, out,
+                                             error);
         frame.levels_since_delegate_probe = 0U;
         frame.vars_at_last_delegate_probe = qsop_residual_active_vars(residual);
         frame.edges_at_last_delegate_probe = qsop_residual_active_edges(residual);

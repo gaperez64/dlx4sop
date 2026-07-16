@@ -147,6 +147,14 @@ typedef struct qsop_solve_stats {
   uint32_t branch_cutset_stagnant_levels;
   uint32_t branch_last_delegate_miss;
 
+  /* Shadow-graph cutset-candidate shortlisting (branch_shadow.c; opt-in via --branch-shadow). */
+  uint64_t branch_shadow_builds;
+  uint64_t branch_shadow_skips;
+  uint64_t branch_shadow_selected;
+  uint32_t branch_shadow_max_source_vars;
+  uint32_t branch_shadow_max_core_vars;
+  uint64_t branch_shadow_build_ns;
+
   /* f64 single-Fourier treewidth diagnostics. */
   uint64_t treewidth_factor_scope_tests;
   uint64_t treewidth_factor_bucket_visits;
@@ -520,9 +528,22 @@ typedef enum qsop_branch_single_propagate {
   QSOP_BRANCH_SINGLE_PROPAGATE_OFF,
 } qsop_branch_single_propagate_t;
 
+/* Shadow-graph shortlisting for cutset-candidate selection (branch_shadow.c): a cheap auxiliary
+ * unlabelled graph on the same variable IDs, reduced by exhaustive degree-<=2 elimination, used
+ * only to narrow which *real* residual variables get the existing expensive lookahead treatment.
+ * OFF (the default) is exactly today's behavior with zero extra allocation. AUTO engages once the
+ * residual crosses a size trigger; ON always attempts it (subject to its own hard budgets). Either
+ * way the shadow graph never reaches a treewidth/rankwidth delegate and a shortlisted candidate is
+ * always evaluated -- and the final choice always made -- on the real residual, unchanged. */
+typedef enum qsop_branch_shadow_mode {
+  QSOP_BRANCH_SHADOW_OFF = 0,
+  QSOP_BRANCH_SHADOW_AUTO,
+  QSOP_BRANCH_SHADOW_ON,
+} qsop_branch_shadow_mode_t;
+
 /* Per-solve options for qsop_solve_branch_single_mode. Zero-initialize for defaults:
  * rw_source=none, heuristic=delegation-depth, fallback=auto, precision/kernel=auto,
- * and zero numeric caps selecting built-in limits. */
+ * shadow_mode=off, and zero numeric caps selecting built-in limits. */
 typedef struct qsop_branch_single_mode_options {
   qsop_branch_rw_source_t rw_source;
   qsop_branch_policy_t policy;
@@ -531,6 +552,7 @@ typedef struct qsop_branch_single_mode_options {
   qsop_branch_single_precision_t precision;
   qsop_branch_single_kernel_t kernel;
   qsop_branch_single_propagate_t propagate;
+  qsop_branch_shadow_mode_t shadow_mode;
   const qsop_simd_vtable_t *simd;
 
   uint64_t max_search_nodes;
@@ -562,6 +584,24 @@ typedef struct qsop_branch_single_mode_options {
    * work (sum over elimination steps of 2^bagsize) exceeds this, so admission tracks real DP cost
    * rather than raw width. Zero selects the built-in budget. */
   uint64_t treewidth_delegate_max_dp_work;
+
+  /* Separate, tighter DP-work budget applied only to delegate probes reached from *inside*
+   * cutset conditioning (frame.depth > 0), leaving treewidth_delegate_max_dp_work as the budget
+   * for the one root-level probe. A component whose predicted DP work is high enough to be worth
+   * the *one* root-level attempt (which treewidth_delegate_max_dp_work is calibrated for) is not
+   * automatically worth re-attempting at the same cost on every one of the many sub-residuals a
+   * deep cutset search reaches -- each admitted-but-marginal attempt near the width ceiling
+   * costs real wall-clock seconds, and cutset conditioning may probe dozens of them. Zero (the
+   * default) reuses treewidth_delegate_max_dp_work for cutset-triggered probes too, i.e. no
+   * separate budget -- unchanged from before this option existed. */
+  uint64_t cutset_treewidth_delegate_max_dp_work;
+
+  /* Memory-safety budget for the treewidth delegate, in MiB. A component is refused (gracefully,
+   * as a delegate miss) when its forecast peak DP memory -- dominated by join intermediates, ~4x
+   * the final 2^width table -- would exceed this, so the DP cannot fail its own allocation
+   * mid-run. Zero selects the built-in budget (12 GiB, matching the gauntlet's per-solve
+   * RLIMIT_AS); set it to match a tighter process memory limit. */
+  uint64_t treewidth_delegate_max_memory_mib;
 
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;

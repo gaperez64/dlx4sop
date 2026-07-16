@@ -6,6 +6,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Defined further down; forward-declared so the memory-gate test (placed near the other
+ * single-mode gate tests) can build a clique and solve it. */
+static qsop_instance_t *make_complete(uint32_t n);
+static bool solve_complete_single(const qsop_instance_t *q,
+                                  const qsop_branch_single_mode_options_t *options,
+                                  qsop_amplitude_t *amp, qsop_solve_stats_t *stats,
+                                  qsop_error_t *error);
+
 /* A tiny 3-variable QSOP instance.  nvars < BRANCH_TREEWIDTH_DELEGATE_MIN_VARS (16),
  * so branch_try_root_treewidth_fast_path returns immediately with root_handled=false,
  * which lets the main branch_solve_counts_once path run on every test call. */
@@ -272,6 +280,81 @@ static int test_single_mode_dp_work_gate(void) {
   return 0;
 }
 
+/* Memory-safety gate: a component whose forecast peak DP memory (2^width * 128 B) exceeds the
+ * budget is refused *gracefully* (branch fallback) rather than letting the treewidth DP fail its
+ * own allocation mid-run. make_complete(15) has treewidth 14 -> forecast 2^14 * 128 = 2 MiB, so a
+ * 1 MiB budget rejects it while a 64 MiB budget admits it; the amplitude must agree either way. */
+static int test_single_mode_memory_gate(void) {
+  qsop_instance_t *k15 = make_complete(15U);
+  if (k15 == NULL) {
+    return 1;
+  }
+  int failures = 0;
+  const qsop_branch_single_mode_options_t generous = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 64U,
+      .treewidth_delegate_max_dp_work = UINT64_MAX,
+      .treewidth_delegate_max_memory_mib = 64U, /* >= 2 MiB forecast */
+  };
+  qsop_amplitude_t amp_wide = {0};
+  qsop_solve_stats_t wide = {0};
+  qsop_error_t error = {0};
+  if (!solve_complete_single(k15, &generous, &amp_wide, &wide, &error)) {
+    fprintf(stderr, "FAIL single_mode_memory_gate: generous-budget solve failed: %s\n",
+            error.message);
+    qsop_free(k15);
+    return 1;
+  }
+  if (wide.treewidth_delegations != 1U) {
+    fprintf(stderr,
+            "FAIL single_mode_memory_gate: expected treewidth delegate under a generous memory "
+            "budget, got tw=%" PRIu64 " fallthrough=%" PRIu64 "\n",
+            wide.treewidth_delegations, wide.branch_fallthroughs);
+    failures++;
+  }
+
+  const qsop_branch_single_mode_options_t tight = {
+      .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+      .fallback = QSOP_BRANCH_SINGLE_FALLBACK_ALWAYS,
+      .max_fallback_vars = 64U,
+      .treewidth_delegate_max_dp_work = UINT64_MAX,
+      .treewidth_delegate_max_memory_mib = 1U, /* < 2 MiB forecast -> memory miss */
+  };
+  qsop_amplitude_t amp_tight = {0};
+  qsop_solve_stats_t tstats = {0};
+  error = (qsop_error_t){0};
+  if (!solve_complete_single(k15, &tight, &amp_tight, &tstats, &error)) {
+    fprintf(stderr, "FAIL single_mode_memory_gate: tight-budget solve failed: %s\n", error.message);
+    qsop_free(k15);
+    return failures + 1;
+  }
+  /* The full width-14 clique (forecast 2 MiB) must be refused by the memory gate, forcing at least
+   * one branch fallback at the root. Sub-cliques created by that branching are narrower (width 13,
+   * forecast 1 MiB) and may legitimately delegate again, so only branch_fallthroughs -- which is 0
+   * in the generous case -- distinguishes the gate firing. */
+  if (tstats.branch_fallthroughs == 0U) {
+    fprintf(stderr,
+            "FAIL single_mode_memory_gate: expected a branch fallback once forecast memory exceeds "
+            "the budget, got tw=%" PRIu64 " fallthrough=%" PRIu64 "\n",
+            tstats.treewidth_delegations, tstats.branch_fallthroughs);
+    failures++;
+  }
+
+  long double re_wide = 0, im_wide = 0, re_tight = 0, im_tight = 0;
+  if (!qsop_amplitude_normalized(&amp_wide, 0, &re_wide, &im_wide) ||
+      !qsop_amplitude_normalized(&amp_tight, 0, &re_tight, &im_tight) ||
+      fabsl(re_wide - re_tight) > 1e-9L || fabsl(im_wide - im_tight) > 1e-9L) {
+    fprintf(stderr, "FAIL single_mode_memory_gate: amplitude differs across gate paths\n");
+    failures++;
+  }
+  qsop_free(k15);
+  if (failures == 0) {
+    fprintf(stderr, "PASS single_mode_memory_gate\n");
+  }
+  return failures;
+}
+
 static int expect_treewidth_preference(const char *name, uint32_t prefix_cut_rank, uint32_t nvars,
                                        uint64_t dp_work, bool expected) {
   const bool actual = qsop_branch_single_treewidth_clearly_preferred(
@@ -518,6 +601,7 @@ int main(void) {
   failures += test_null_qsop_rejected();
   failures += test_unsupported_mode_rejected();
   failures += test_single_mode_dp_work_gate();
+  failures += test_single_mode_memory_gate();
   failures += test_rankwidth_preprobe_policy();
   failures += test_materialized_cutset();
   failures += test_cutset_differential();

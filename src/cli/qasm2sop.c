@@ -123,7 +123,7 @@ typedef struct qasm_importer {
    * one wasted re-parse. */
   bool angle_refusal;
   /* Build the former H-CZ-H/X-HZH graph as a comparison candidate. */
-  bool legacy_permutation_lowering;
+  bool permutation_lowering;
 } qasm_importer_t;
 
 static void set_error(qasm_importer_t *importer, const char *fmt, ...) {
@@ -1522,7 +1522,7 @@ static bool apply_ryy(qasm_importer_t *importer, uint32_t left, uint32_t right, 
 }
 
 static bool apply_x_decomposition(qasm_importer_t *importer, uint32_t qubit) {
-  if (importer->legacy_permutation_lowering) {
+  if (importer->permutation_lowering) {
     return apply_h(importer, qubit) &&
            apply_phase(importer, qubit, coeff_from_pi_over_eight_units(importer, 8)) &&
            apply_h(importer, qubit);
@@ -1581,7 +1581,7 @@ static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_unit
 }
 
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
-  if (importer->legacy_permutation_lowering) {
+  if (importer->permutation_lowering) {
     return apply_h(importer, target) && apply_cz(importer, control, target) &&
            apply_h(importer, target);
   }
@@ -3327,15 +3327,15 @@ static bool canonicalize_importer(qasm_importer_t *importer, qsop_error_t *error
   return true;
 }
 
-static bool prefer_legacy_candidate(const qsop_instance_t *affine,
-                                    const qsop_instance_t *legacy) {
+static bool prefer_permutation_candidate(const qsop_instance_t *affine,
+                                    const qsop_instance_t *permutation) {
   /* First preserve both basic size measures monotonically. */
-  if (affine->nvars > legacy->nvars || affine->nedges > legacy->nedges) {
+  if (affine->nvars > permutation->nvars || affine->nedges > permutation->nedges) {
     return true;
   }
-  if ((affine->nvars == legacy->nvars && affine->nedges == legacy->nedges) ||
-      affine->nvars > 1000U || legacy->nvars > 1000U || affine->nedges > 5000U ||
-      legacy->nedges > 5000U) {
+  if ((affine->nvars == permutation->nvars && affine->nedges == permutation->nedges) ||
+      affine->nvars > 1000U || permutation->nvars > 1000U || affine->nedges > 5000U ||
+      permutation->nedges > 5000U) {
     return false;
   }
 
@@ -3344,19 +3344,19 @@ static bool prefer_legacy_candidate(const qsop_instance_t *affine,
    * its more timing-relevant DP-work estimate. Giant QFT/qwalk graphs stay on the O(1) size guard
    * above; running min-fill inside an importer must not turn those imports into minute-long jobs. */
   uint32_t affine_width = 0;
-  uint32_t legacy_width = 0;
+  uint32_t permutation_width = 0;
   uint64_t affine_work = 0;
-  uint64_t legacy_work = 0;
+  uint64_t permutation_work = 0;
   qsop_error_t error = {0};
   if (!qsop_min_fill_eliminate(affine->nvars, affine->edge_u, affine->edge_v, affine->nedges,
                                QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, NULL, &affine_width,
                                NULL, &affine_work, NULL, &error) ||
-      !qsop_min_fill_eliminate(legacy->nvars, legacy->edge_u, legacy->edge_v, legacy->nedges,
-                               QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, NULL, &legacy_width,
-                               NULL, &legacy_work, NULL, &error)) {
+      !qsop_min_fill_eliminate(permutation->nvars, permutation->edge_u, permutation->edge_v, permutation->nedges,
+                               QSOP_TREEWIDTH_ORDER_MIN_FILL, UINT32_MAX, NULL, &permutation_width,
+                               NULL, &permutation_work, NULL, &error)) {
     return false;
   }
-  return affine_width > legacy_width || affine_work > legacy_work;
+  return affine_width > permutation_width || affine_work > permutation_work;
 }
 
 static void print_qsop_error(const qsop_error_t *error) {
@@ -3795,48 +3795,48 @@ int main(int argc, char **argv) {
    * modulus too, then retain it whenever the affine result regresses canonical size or (for
    * bounded graphs) min-fill cost. This makes the optimization monotone relative to the old
    * importer without running expensive diagnostics on giant instances. */
-  qasm_importer_t legacy = {
+  qasm_importer_t permutation = {
       .input_bits = input_bits,
       .output_bits = output_bits,
       .modulus = importer.modulus,
       .approx_enabled = importer.approx_enabled,
       .approx_epsilon = importer.approx_epsilon,
-      .legacy_permutation_lowering = true,
+      .permutation_lowering = true,
   };
-  bool have_legacy = false;
-  FILE *legacy_input = fmemopen(source, source_len, "rb");
-  if (legacy_input != NULL) {
-    have_legacy = parse_qasm(legacy_input, diagnostic_path, &legacy);
-    fclose(legacy_input);
-    if (have_legacy && legacy.nqubits != importer.nqubits) {
-      have_legacy = false;
+  bool have_permutation = false;
+  FILE *permutation_input = fmemopen(source, source_len, "rb");
+  if (permutation_input != NULL) {
+    have_permutation = parse_qasm(permutation_input, diagnostic_path, &permutation);
+    fclose(permutation_input);
+    if (have_permutation && permutation.nqubits != importer.nqubits) {
+      have_permutation = false;
     }
   }
 
   qsop_error_t error = {0};
   qsop_instance_t *affine_qsop = NULL;
-  qsop_instance_t *legacy_qsop = NULL;
+  qsop_instance_t *permutation_qsop = NULL;
   ok = canonicalize_importer(&importer, &error, optimize, &affine_qsop);
-  if (ok && have_legacy) {
-    qsop_error_t legacy_error = {0};
-    if (!canonicalize_importer(&legacy, &legacy_error, optimize, &legacy_qsop)) {
-      qsop_free(legacy_qsop);
-      legacy_qsop = NULL;
+  if (ok && have_permutation) {
+    qsop_error_t permutation_error = {0};
+    if (!canonicalize_importer(&permutation, &permutation_error, optimize, &permutation_qsop)) {
+      qsop_free(permutation_qsop);
+      permutation_qsop = NULL;
     }
   }
 
   if (ok) {
-    const bool use_legacy =
-        legacy_qsop != NULL && prefer_legacy_candidate(affine_qsop, legacy_qsop);
-    const qasm_importer_t *certificate = use_legacy ? &legacy : &importer;
-    const qsop_instance_t *chosen = use_legacy ? legacy_qsop : affine_qsop;
+    const bool use_permutation =
+        permutation_qsop != NULL && prefer_permutation_candidate(affine_qsop, permutation_qsop);
+    const qasm_importer_t *certificate = use_permutation ? &permutation : &importer;
+    const qsop_instance_t *chosen = use_permutation ? permutation_qsop : affine_qsop;
     write_approx_certificate(stdout, certificate);
     ok = qsop_write_file(stdout, chosen, &error);
   }
 
   qsop_free(affine_qsop);
-  qsop_free(legacy_qsop);
-  free_importer(&legacy);
+  qsop_free(permutation_qsop);
+  free_importer(&permutation);
   free_importer(&importer);
   free(source);
   if (!ok) {

@@ -151,7 +151,11 @@ def test_jsonl_policy_refusal_summary(exe: pathlib.Path, tmpdir: pathlib.Path) -
             lines.append(f"e {u} {v}")
     result = run_branch_jsonl(
         exe, "\n".join(lines) + "\n", jsonl_path,
+        # Cutset conditioning is on by default; disable it so this component (too wide to delegate,
+        # over the fallback cap) still refuses rather than being conditioned to a solution -- this
+        # test exercises the refusal jsonl summary specifically.
         ["--solve-mode", "single-fourier", "--branch-rw-source", "none",
+         "--branch-single-cutset-depth", "0",
          "--branch-single-max-fallback-vars", "2",
          "--branch-single-delegate-max-dp-work", "1"],
     )
@@ -198,7 +202,10 @@ def test_conditioning_diagnostic_and_cutset(exe: pathlib.Path, tmpdir: pathlib.P
     diagnostic_path = str(tmpdir / "conditioning.jsonl")
     diagnostic = run_branch_jsonl(
         exe, qsop, diagnostic_path,
+        # cutset-depth 0 keeps this a diagnostic-only run (conditioning is on by default now); the
+        # probe records are still emitted from the fallback-refusal path, and the run refuses.
         ["--solve-mode", "single-fourier", "--branch-rw-source", "none",
+         "--branch-single-cutset-depth", "0",
          "--branch-single-max-fallback-vars", "2",
          "--branch-single-delegate-max-dp-work", "1",
          "--branch-single-lookahead-candidates", "1",
