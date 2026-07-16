@@ -144,20 +144,6 @@ In either case, `probability = |raw_amplitude|^2 * 2^(-norm_h)`, matching
 `sop-solve --include-probability`. Metadata comments document the applicable
 reconstruction and variable map.
 
-## Amplitudes are normalized
-
-`sop-solve --format amplitude` reports the **normalized** amplitude
-`raw_amplitude * 2^(-norm_h/2)`: the physical `<y|C|x>`, whose modulus is at most 1,
-alongside the `norm_h` needed to recover the raw value. The raw sum-over-paths
-amplitude grows like `2^nvars` so no fixed-exponent floating type can hold it, and
-a naive `float(raw) * 2**(-norm_h/2)` silently yields `nan`.
-
-Internally the single-Fourier solvers carry a mantissa and a separate binary
-exponent (`qsop_amplitude_t.scale_exp2`). This also lets the branch backend
-multiply component amplitudes without overflowing intermediate values. Moving a
-power of two into the exponent is exact and adds no rounding error; the reported
-`numeric_error_bound` accounts for the floating-point DP operations.
-
 ## Build
 
 ```sh
