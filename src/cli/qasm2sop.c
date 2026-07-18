@@ -1575,11 +1575,6 @@ static bool apply_u3(qasm_importer_t *importer, uint32_t qubit, int64_t theta_un
          apply_phase(importer, qubit, coeff_from_units(importer, phi_units));
 }
 
-static bool apply_u2(qasm_importer_t *importer, uint32_t qubit, int64_t phi_units,
-                     int64_t lambda_units) {
-  return apply_u3(importer, qubit, (int64_t)sign_coeff(importer) / 2, phi_units, lambda_units);
-}
-
 static bool apply_cx_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t target) {
   if (importer->permutation_lowering) {
     return apply_h(importer, target) && apply_cz(importer, control, target) &&
@@ -1801,18 +1796,15 @@ static bool apply_ccx_decomposition(qasm_importer_t *importer, uint32_t first, u
 
 static bool apply_rccx_decomposition(qasm_importer_t *importer, uint32_t first, uint32_t second,
                                      uint32_t target) {
-  return apply_u2(importer, target, 0, (int64_t)sign_coeff(importer)) &&
-         apply_phase(importer, first, coeff_from_pi_over_eight_units(importer, 2)) &&
-         apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 2)) &&
+  return apply_h(importer, target) &&
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
-         apply_cx_decomposition(importer, first, second) &&
          apply_cx_decomposition(importer, second, target) &&
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 14)) &&
-         apply_cx_decomposition(importer, first, second) &&
-         apply_cx_decomposition(importer, second, target) &&
-         apply_phase(importer, second, coeff_from_pi_over_eight_units(importer, 14)) &&
+         apply_cx_decomposition(importer, first, target) &&
          apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 2)) &&
-         apply_u2(importer, target, 0, (int64_t)sign_coeff(importer));
+         apply_cx_decomposition(importer, second, target) &&
+         apply_phase(importer, target, coeff_from_pi_over_eight_units(importer, 14)) &&
+         apply_h(importer, target);
 }
 
 static bool apply_cswap_decomposition(qasm_importer_t *importer, uint32_t control, uint32_t left,

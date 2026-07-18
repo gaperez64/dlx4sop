@@ -214,6 +214,30 @@ def apply_ccx(state: list[complex], nqubits: int, first: int, second: int, targe
         state[base], state[other] = state[other], state[base]
 
 
+def apply_rccx(state: list[complex], nqubits: int, first: int, second: int, target: int) -> None:
+    """Apply Qiskit's RCCX matrix directly, including its asymmetric relative phases."""
+    first_bit = 1 << first
+    second_bit = 1 << second
+    target_bit = 1 << target
+    for base in range(1 << nqubits):
+        if (
+            (base & first_bit) != 0
+            and (base & second_bit) == 0
+            and (base & target_bit) != 0
+        ):
+            state[base] *= -1
+        if (
+            (base & first_bit) != 0
+            and (base & second_bit) != 0
+            and (base & target_bit) == 0
+        ):
+            other = base | target_bit
+            low = state[base]
+            high = state[other]
+            state[base] = -1j * high
+            state[other] = 1j * low
+
+
 def apply_cswap(state: list[complex], nqubits: int, control: int, left: int, right: int) -> None:
     control_bit = 1 << control
     left_bit = 1 << left
@@ -370,21 +394,7 @@ def simulate_qasm(qasm: str, input_bits: str, output_bits: str) -> complex:
                 elif gate == "ccx":
                     apply_ccx(state, nqubits, a, b, c)
                 elif gate == "rccx":
-                    u2_0_pi = u3_matrix(math.pi / 2.0, 0.0, math.pi)
-                    t_phase = (1, 0, 0, cmath.exp(1j * math.pi / 4.0))
-                    tdg_phase = (1, 0, 0, cmath.exp(-1j * math.pi / 4.0))
-                    apply_one(state, nqubits, c, u2_0_pi)
-                    apply_one(state, nqubits, a, t_phase)
-                    apply_one(state, nqubits, b, t_phase)
-                    apply_one(state, nqubits, c, t_phase)
-                    apply_controlled_x(state, nqubits, a, b)
-                    apply_controlled_x(state, nqubits, b, c)
-                    apply_one(state, nqubits, c, tdg_phase)
-                    apply_controlled_x(state, nqubits, a, b)
-                    apply_controlled_x(state, nqubits, b, c)
-                    apply_one(state, nqubits, b, tdg_phase)
-                    apply_one(state, nqubits, c, t_phase)
-                    apply_one(state, nqubits, c, u2_0_pi)
+                    apply_rccx(state, nqubits, a, b, c)
                 else:
                     apply_cswap(state, nqubits, a, b, c)
             continue
@@ -710,10 +720,15 @@ def run_amplitude_cases(qasm2sop: pathlib.Path, sop_solve: pathlib.Path) -> None
             """OPENQASM 2.0;
             include "qelib1.inc";
             qreg q[3];
-            h q;
             rccx q[0], q[1], q[2];
             """,
-            [("000", "000"), ("000", "111"), ("101", "110"), ("011", "010")],
+            [
+                ("000", "000"),
+                ("101", "101"),
+                ("110", "111"),
+                ("111", "110"),
+                ("110", "110"),
+            ],
         ),
         (
             "cswap",
