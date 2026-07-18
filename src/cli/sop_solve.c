@@ -3,6 +3,7 @@
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/simd.h"
+#include "../solve/trace.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -2275,6 +2276,7 @@ int main(int argc, char **argv) {
     qsop_solve_stats_t amp_stats = {0};
     if (backend == SOLVE_BACKEND_RANKWIDTH) {
       qsop_rankwidth_decomposition_t *single_mode_decomposition = NULL;
+      const uint64_t decomposition_start = qsop_trace_begin(trace_ptr);
       if (rankwidth_decomposition_path != NULL) {
         FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
         if (decomposition_file == NULL) {
@@ -2290,6 +2292,8 @@ int main(int argc, char **argv) {
         ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
                                                    &single_mode_decomposition, &error);
       }
+      qsop_trace_emit_elapsed(trace_ptr, "rankwidth.decomposition_generation", 0, qsop->nvars,
+                              decomposition_start);
       if (!ok) {
         print_error(&error, rankwidth_decomposition_path != NULL ? rankwidth_decomposition_path
                                                                  : diagnostic_path);
@@ -2429,6 +2433,7 @@ int main(int argc, char **argv) {
                              },
                              &result, &solve_stats, &error);
     } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
+      const uint64_t decomposition_start = qsop_trace_begin(trace_ptr);
       if (rankwidth_decomposition_path != NULL) {
         FILE *decomposition_file = fopen(rankwidth_decomposition_path, "r");
         if (decomposition_file == NULL) {
@@ -2449,6 +2454,8 @@ int main(int argc, char **argv) {
         ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
                                                    &rankwidth_decomposition, &error);
       }
+      qsop_trace_emit_elapsed(trace_ptr, "rankwidth.decomposition_generation", 0, qsop->nvars,
+                              decomposition_start);
       if (ok && rankwidth_dump_path != NULL) {
         FILE *dump_file = fopen(rankwidth_dump_path, "w");
         if (dump_file == NULL) {

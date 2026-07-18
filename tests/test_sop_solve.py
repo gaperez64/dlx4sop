@@ -1384,12 +1384,42 @@ u 3 4
     )
     if (
         fourier_traced.returncode != 0
+        or "rankwidth.decomposition_generation" not in fourier_traced.stderr
         or "rankwidth.fourier_leaf" not in fourier_traced.stderr
         or "rankwidth.fourier_join_map" not in fourier_traced.stderr
         or "rankwidth.fourier_join" not in fourier_traced.stderr
         or "rankwidth.fourier_even_closed_form" not in fourier_traced.stderr
     ):
         raise AssertionError(f"rankwidth Fourier trace failed\n{fourier_traced.stdout}\n{fourier_traced.stderr}")
+
+    single_traced = subprocess.run(
+        [
+            str(exe),
+            "--format",
+            "stats",
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-generate",
+            "balanced",
+            "--trace",
+            "csv",
+            str(qsop),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if (
+        single_traced.returncode != 0
+        or "rankwidth.decomposition_generation" not in single_traced.stderr
+    ):
+        raise AssertionError(
+            f"rankwidth single-Fourier decomposition trace failed\n"
+            f"{single_traced.stdout}\n{single_traced.stderr}"
+        )
 
     malformed = subprocess.run(
         [
