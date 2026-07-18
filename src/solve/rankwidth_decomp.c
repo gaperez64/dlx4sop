@@ -94,62 +94,109 @@ static bool parse_u32_token(const char *text, uint32_t *out) {
   *out = (uint32_t)value;
   return true;
 }
-static bool validate_decomposition_dfs(qsop_rankwidth_decomposition_t *decomposition, uint32_t node,
-                                       uint8_t *state, uint8_t *seen_var, qsop_error_t *error) {
-  if (node >= decomposition->nnodes) {
-    qsop_set_error(error, "rankwidth decomposition references node outside range");
+typedef struct rw_validation_frame {
+  uint32_t node;
+  uint8_t phase;
+} rw_validation_frame_t;
+
+static bool validate_decomposition_nodes(qsop_rankwidth_decomposition_t *decomposition,
+                                         uint8_t *state, uint8_t *seen_var,
+                                         qsop_error_t *error) {
+  const size_t stack_capacity = (size_t)decomposition->nnodes + 1U;
+  rw_validation_frame_t *stack = calloc(stack_capacity, sizeof(*stack));
+  if (stack == NULL) {
+    qsop_set_error(error, "out of memory while validating rankwidth decomposition");
     return false;
-  }
-  if (state[node] == 1U) {
-    qsop_set_error(error, "rankwidth decomposition contains a cycle");
-    return false;
-  }
-  if (state[node] == 2U) {
-    return true;
   }
 
-  rw_node_t *entry = &decomposition->nodes[node];
-  if (entry->kind == RW_NODE_UNDEFINED) {
-    qsop_set_error(error, "rankwidth decomposition references undefined node %" PRIu32, node);
-    return false;
-  }
-  state[node] = 1U;
-  if (entry->kind == RW_NODE_LEAF) {
-    if (entry->var >= decomposition->nvars) {
-      qsop_set_error(error, "rankwidth decomposition leaf variable is outside range");
+  size_t stack_len = 1U;
+  stack[0].node = decomposition->root;
+  while (stack_len != 0U) {
+    rw_validation_frame_t *frame = &stack[stack_len - 1U];
+    const uint32_t node = frame->node;
+    if (node >= decomposition->nnodes) {
+      qsop_set_error(error, "rankwidth decomposition references node outside range");
+      free(stack);
       return false;
     }
-    if (seen_var[entry->var] != 0) {
-      qsop_set_error(error, "rankwidth decomposition maps variable %" PRIu32 " more than once",
-                     entry->var);
-      return false;
+    if (frame->phase == 0U) {
+      if (state[node] == 1U) {
+        qsop_set_error(error, "rankwidth decomposition contains a cycle");
+        free(stack);
+        return false;
+      }
+      if (state[node] == 2U) {
+        stack_len--;
+        continue;
+      }
+
+      rw_node_t *entry = &decomposition->nodes[node];
+      if (entry->kind == RW_NODE_UNDEFINED) {
+        qsop_set_error(error, "rankwidth decomposition references undefined node %" PRIu32, node);
+        free(stack);
+        return false;
+      }
+      state[node] = 1U;
+      if (entry->kind == RW_NODE_LEAF) {
+        if (entry->var >= decomposition->nvars) {
+          qsop_set_error(error, "rankwidth decomposition leaf variable is outside range");
+          free(stack);
+          return false;
+        }
+        if (seen_var[entry->var] != 0) {
+          qsop_set_error(error, "rankwidth decomposition maps variable %" PRIu32 " more than once",
+                         entry->var);
+          free(stack);
+          return false;
+        }
+        seen_var[entry->var] = 1U;
+        uint64_t *vars = node_vars(decomposition, node);
+        qsop_bitset_zero(vars, decomposition->words);
+        qsop_bitset_set(vars, entry->var);
+        state[node] = 2U;
+        decomposition->postorder[decomposition->postorder_len++] = node;
+        stack_len--;
+        continue;
+      }
+      if (entry->kind != RW_NODE_JOIN) {
+        qsop_set_error(error, "rankwidth decomposition node has invalid kind");
+        free(stack);
+        return false;
+      }
+      frame->phase = 1U;
+      stack[stack_len++] = (rw_validation_frame_t){.node = entry->left};
+      continue;
     }
-    seen_var[entry->var] = 1U;
-    uint64_t *vars = node_vars(decomposition, node);
-    qsop_bitset_zero(vars, decomposition->words);
-    qsop_bitset_set(vars, entry->var);
-  } else {
-    if (!validate_decomposition_dfs(decomposition, entry->left, state, seen_var, error) ||
-        !validate_decomposition_dfs(decomposition, entry->right, state, seen_var, error)) {
-      return false;
+
+    rw_node_t *entry = &decomposition->nodes[node];
+    if (frame->phase == 1U) {
+      frame->phase = 2U;
+      stack[stack_len++] = (rw_validation_frame_t){.node = entry->right};
+      continue;
     }
+
     const uint64_t *left = node_vars_const(decomposition, entry->left);
     const uint64_t *right = node_vars_const(decomposition, entry->right);
     uint64_t *vars = node_vars(decomposition, node);
     for (size_t w = 0; w < decomposition->words; w++) {
       if ((left[w] & right[w]) != 0) {
         qsop_set_error(error, "rankwidth decomposition children are not disjoint");
+        free(stack);
         return false;
       }
       vars[w] = left[w] | right[w];
     }
     if (qsop_bitset_empty(vars, decomposition->words)) {
       qsop_set_error(error, "rankwidth decomposition children are not disjoint");
+      free(stack);
       return false;
     }
+    state[node] = 2U;
+    decomposition->postorder[decomposition->postorder_len++] = node;
+    stack_len--;
   }
-  state[node] = 2U;
-  decomposition->postorder[decomposition->postorder_len++] = node;
+
+  free(stack);
   return true;
 }
 static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition,
@@ -168,8 +215,7 @@ static bool validate_decomposition(qsop_rankwidth_decomposition_t *decomposition
     return false;
   }
 
-  const bool ok =
-      validate_decomposition_dfs(decomposition, decomposition->root, state, seen_var, error);
+  const bool ok = validate_decomposition_nodes(decomposition, state, seen_var, error);
   uint64_t *all = calloc(decomposition->words == 0 ? 1U : decomposition->words, sizeof(*all));
   if (all == NULL) {
     free(state);

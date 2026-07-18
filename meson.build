@@ -9,6 +9,7 @@ cc = meson.get_compiler('c')
 inc = include_directories('include')
 cli_inc = include_directories('src/cli')
 m_dep = cc.find_library('m', required: false)
+threads_dep = dependency('threads')
 simd_option = get_option('simd')
 add_project_arguments(
   '-DDLX4SOP_VERSION="@0@"'.format(meson.project_version()),
@@ -358,6 +359,14 @@ test_rankwidth_join = executable(
 )
 
 test('rankwidth join unit', test_rankwidth_join, suite: 'unit', timeout: 120)
+
+test_rankwidth_decomp = executable(
+  'test-rankwidth-decomp',
+  'tests/unit/test_rankwidth_decomp.c',
+  dependencies: [dlx4sop_core_dep, threads_dep],
+)
+
+test('rankwidth decomposition unit', test_rankwidth_decomp, suite: 'unit', timeout: 120)
 
 test(
   'kernel benchmark smoke',
