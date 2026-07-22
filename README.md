@@ -4,18 +4,9 @@
 powers (QSOPs). The project goal is a competitive exact strong simulator using
 QSOPs with fixed-boundary circuit amplitudes.
 
-**Formal verification:** [`docs/lean`](docs/lean) contains a Lean 4 + Mathlib
-formalization of the algorithms implemented here — correctness and
-operation-count runtime of the rank-decomposition DP, its Fourier-mode and
-linear-layout variants, and the coupling to real Clifford+T circuit
-amplitudes. See [docs/lean/README.md](docs/lean/README.md) for the full
-theorem-to-file map; that subdirectory is Apache-2.0 licensed (see
-[docs/lean/LICENSE](docs/lean/LICENSE)).
-
-**Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
-the `sop2wmc` + Ganak weighted-model-counting pipeline (all described below)
-are ranked on the
-public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
+QSOP is the shared intermediate representation. The WMC export is a separate,
+explicit path; inside `sop-solve`, the recommended branch backend selects
+treewidth or rankwidth DP independently for each connected residual component.
 
 ```mermaid
 flowchart LR
@@ -29,9 +20,18 @@ flowchart LR
     SOP -. explicit backend .-> RW
 ```
 
-QSOP is the shared intermediate representation. The WMC export is a separate,
-explicit path; inside `sop-solve`, the recommended branch backend selects
-treewidth or rankwidth DP independently for each connected residual component.
+**Formal verification:** [`docs/lean`](docs/lean) contains a Lean 4 + Mathlib
+formalization of the algorithms implemented here — correctness and
+operation-count runtime of the rank-decomposition DP, its Fourier-mode and
+linear-layout variants, and the coupling to real Clifford+T circuit
+amplitudes. See [docs/lean/README.md](docs/lean/README.md) for the full
+theorem-to-file map; that subdirectory is Apache-2.0 licensed (see
+[docs/lean/LICENSE](docs/lean/LICENSE)).
+
+**Benchmarks:** dlx4sop's branch/treewidth/rankwidth solver backends and
+the `sop2wmc` + Ganak weighted-model-counting pipeline (all described below)
+are ranked on the
+public [qccq-gauntlet leaderboard](https://qccq-cgd.pages.dev/).
 
 ## Tools
 
