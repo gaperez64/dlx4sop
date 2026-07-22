@@ -30,7 +30,7 @@ implementation of the algorithms it formalizes, and is linked directly from the 
 |---|---|---|
 | path-sum compilation (sec:sop) | `Quantum.compile_invariant` | `Formal/Quantum/Coupling.lean` |
 | pinning the boundary (sec:sop) | `Quantum.Sym.pathSum_pinned` | `Formal/Quantum/PinningLemmas.lean` |
-| **coupling** `⟨z|C|y⟩ = R_C⁻¹·δ_C·S(f_C)` | `Quantum.amplitude_eq_sop` | `Formal/Quantum/Capstone.lean` |
+| coupling `⟨z|C|y⟩ = R_C⁻¹·δ_C·S(f_C)` (sec:rw-fpt) | `Quantum.amplitude_eq_sop` | `Formal/Quantum/Capstone.lean` |
 | rank-width FPT simulation (sec:rw-fpt) | `Quantum.amplitude_by_rank_dp` | `Formal/Quantum/Capstone.lean` |
 
 `δ_C` is the Kronecker delta of Hadamard-free wires (the paper folds it into "the pinned
