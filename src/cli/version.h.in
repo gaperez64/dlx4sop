@@ -1,0 +1,6 @@
+#ifndef DLX4SOP_CLI_VERSION_H
+#define DLX4SOP_CLI_VERSION_H
+
+#define DLX4SOP_VERSION "@VCS_TAG@"
+
+#endif

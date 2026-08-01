@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from cli_version import assert_version_output
+
 
 def run_check(exe: pathlib.Path, source_root: pathlib.Path, name: str) -> None:
     raw = source_root / "tests" / "golden" / f"{name}_raw.qsop"
@@ -56,17 +58,7 @@ def run_cli_paths(exe: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: sop-check" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
-    version_result = subprocess.run(
-        [str(exe), "--version"],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if version_result.returncode != 0 or version_result.stdout != "sop-check 0.6\n":
-        raise AssertionError(
-            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
-        )
+    assert_version_output(exe, "sop-check")
 
     quiet_result = subprocess.run(
         [str(exe), "--quiet", str(raw)],
