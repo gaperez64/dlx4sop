@@ -79,9 +79,9 @@ def parse_args(args: list[str]) -> tuple[pathlib.Path, bool]:
 def main() -> None:
     try:
         source_root, dirty = parse_args(sys.argv[1:])
-        version = live_git_version(source_root, dirty) or archive_version(source_root) or "1"
+        version = live_git_version(source_root, dirty) or archive_version(source_root) or "unknown"
     except Exception:
-        version = "1"
+        version = "unknown"
     print(version)
 
 
