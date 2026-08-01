@@ -19,6 +19,8 @@ import subprocess
 import sys
 import tempfile
 
+from cli_version import assert_version_output
+
 
 def run(cmd, **kwargs):
     return subprocess.run(
@@ -627,11 +629,7 @@ def check_cli(sop2wmc: pathlib.Path, source_root: pathlib.Path) -> None:
     if help_result.returncode != 0 or "usage: sop2wmc" not in help_result.stdout:
         raise AssertionError(f"unexpected --help result:\n{help_result.stdout}\n{help_result.stderr}")
 
-    version_result = run([str(sop2wmc), "--version"])
-    if version_result.returncode != 0 or version_result.stdout != "sop2wmc 0.6\n":
-        raise AssertionError(
-            f"unexpected --version result:\n{version_result.stdout}\n{version_result.stderr}"
-        )
+    assert_version_output(sop2wmc, "sop2wmc")
 
     stdin_result = run([str(sop2wmc), "--residue", "0", "-"], input=qsop.read_text())
     file_result = run([str(sop2wmc), "--residue", "0", str(qsop)])

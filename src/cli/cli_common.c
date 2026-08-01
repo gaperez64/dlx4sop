@@ -1,14 +1,11 @@
 #include "cli_common.h"
+#include "version.h"
 
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifndef DLX4SOP_VERSION
-#define DLX4SOP_VERSION "unknown"
-#endif
 
 bool dlx4sop_cli_is_version_arg(const char *arg) {
   return arg != NULL && strcmp(arg, "--version") == 0;

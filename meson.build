@@ -1,7 +1,7 @@
 project(
   'dlx4sop',
   'c',
-  version: '0.6',
+  version: run_command('scripts/git-version.py', check: true).stdout().strip(),
   default_options: ['c_std=c2x', 'warning_level=3'],
 )
 
@@ -11,10 +11,6 @@ cli_inc = include_directories('src/cli')
 m_dep = cc.find_library('m', required: false)
 threads_dep = dependency('threads')
 simd_option = get_option('simd')
-add_project_arguments(
-  '-DDLX4SOP_VERSION="@0@"'.format(meson.project_version()),
-  language: 'c',
-)
 
 if get_option('developer_warnings')
   warning_flags = [
@@ -176,9 +172,18 @@ dlx4sop_core_dep = declare_dependency(
   dependencies: m_dep,
 )
 
+version_h = vcs_tag(
+  command: ['scripts/git-version.py', '--dirty'],
+  input: 'src/cli/version.h.in',
+  output: 'version.h',
+  fallback: meson.project_version(),
+  replace_string: '@VCS_TAG@',
+)
+
 dlx4sop_cli = static_library(
   'dlx4sop_cli',
   files('src/cli/cli_common.c'),
+  version_h,
   include_directories: cli_inc,
 )
 
