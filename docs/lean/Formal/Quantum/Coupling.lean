@@ -38,6 +38,17 @@ theorem compile_snoc {n : ℕ} (y : Fin n → ZMod 2) (C : Circuit n) (g : Gate 
   rw [List.foldl_append]
   rfl
 
+/-- The compiler's normalization counter is exactly the syntactic number of Hadamard
+gates in the circuit. This identifies the compiler-side exponent with the paper's
+`m_H` and hence its normalization `R_C = (sqrt 2)^{m_H}`. -/
+theorem compile_mH_eq_hadamardCount {n : ℕ} (C : Circuit n) (y : Fin n → ZMod 2) :
+    (Sym.compile y C).mH = hadamardCount C := by
+  induction C using List.reverseRecOn with
+  | nil => rfl
+  | append_singleton C g ih =>
+      rw [compile_snoc]
+      cases g <;> simp [hadamardCount, ih]
+
 /-! ## Powers of `ω₈` -/
 
 theorem omega8_pow_8 : omega8 ^ (8 : ℕ) = 1 := by

@@ -166,16 +166,17 @@ theorem statesSig_leaf_le (w : I.V) : I.statesSig (RTree.leaf w) ≤ 2 := by
     _ = 2 := by rw [Finset.card_singleton]
 
 set_option linter.unusedVariables false in
-/-- **`cor:lrw` (op-count form).** A width-`k` linear layout runs one mode of the per-mode
+/-- **`thm:linear-layout-fourier` (op-count form).** A width-`k` linear layout runs one mode
+of the per-mode
 DP in at most `(n + 1) · (2 + 2 · 2^k)` operations, `n + 1` the number of variables in the
 layout: each join scans a prefix (`≤ 2^k` signatures) against a single leaf (`≤ 2`
 signatures), so per-step work is base-2 in `k` — versus the `4^k` pair scan of a general
 branching join.
 
-(`hnd`, `hcov`, `hk1` are not needed by the cost bound itself — they are kept so the
-statement matches `layout_widthBounded`, hence the local linter option.) -/
-theorem costMode_layout_le (v : I.V) (l : List I.V) (hnd : (v :: l).Nodup)
-    (hcov : (I.caterpillar v l).verts = Finset.univ) {k : ℕ} (hk1 : 1 ≤ k)
+The direct layout bound is valid also for `k = 0`. Unlike the conversion to a branching
+decomposition, it does not need a width bound on singleton leaf cuts. -/
+theorem costMode_layout_le_all_k (v : I.V) (l : List I.V) (hnd : (v :: l).Nodup)
+    (hcov : (I.caterpillar v l).verts = Finset.univ) {k : ℕ}
     (hk : I.LayoutWidthLe v l k) :
     I.costMode (I.caterpillar v l) ≤ (l.length + 1) * (2 + 2 * 2 ^ k) := by
   clear hnd hcov
@@ -203,6 +204,17 @@ theorem costMode_layout_le (v : I.V) (l : List I.V) (hnd : (v :: l).Nodup)
           ≤ (l.length + 1) * (2 + 2 * 2 ^ k) + 2 + 2 ^ k * 2 :=
             Nat.add_le_add (Nat.add_le_add (ih hk') le_rfl) hprod
         _ = (l.length + 1 + 1) * (2 + 2 * 2 ^ k) := by ring
+
+/-- Backwards-compatible form matching `layout_widthBounded`. The `k ≥ 1` hypothesis is
+irrelevant to the direct linear-layout cost bound. Use `costMode_layout_le_all_k` when the
+zero-width case matters. -/
+theorem costMode_layout_le (v : I.V) (l : List I.V) (hnd : (v :: l).Nodup)
+    (hcov : (I.caterpillar v l).verts = Finset.univ) {k : ℕ} (hk1 : 1 ≤ k)
+    (hk : I.LayoutWidthLe v l k) :
+    I.costMode (I.caterpillar v l) ≤ (l.length + 1) * (2 + 2 * 2 ^ k) := by
+  cases k with
+  | zero => simp at hk1
+  | succ k => exact I.costMode_layout_le_all_k v l hnd hcov hk
 
 end SopInstance
 end Formal

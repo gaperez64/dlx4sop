@@ -10,6 +10,7 @@ import Formal.Core.Cost
 import Formal.Core.Fourier
 import Formal.Core.LinearLayout
 import Formal.Quantum.Capstone
+import Formal.Paper
 
 /-!
 # Rank-width FPT quantum-circuit simulation — library root
@@ -22,4 +23,7 @@ import Formal.Quantum.Capstone
 * `Formal.SopInstance.single_amplitude`, `N_inversion` — Fourier mode-1 / inversion
 * `Formal.SopInstance.costMode_layout_le` — linear-layout base-2 bound (cor:lrw)
 * `Formal.Quantum.amplitude_eq_sop`, `amplitude_by_rank_dp` — the honest capstone
+* `Formal.SopInstance.rank_dp_spec`, `fourier_mode_spec`, `linear_fourier_mode_spec` and
+  `Formal.Quantum.amplitude_eq_sop_normalized`, `amplitude_by_rank_dp_normalized`. These are
+  the exact paper-facing compositions used by the Lean badges.
 -/
