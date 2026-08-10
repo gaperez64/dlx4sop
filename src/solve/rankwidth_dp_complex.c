@@ -914,22 +914,15 @@ static void rw_twist_note_occupancy(rw_twist_workspace_t *ws, bool left, size_t 
  * the magnitude of a transformed value, which would be numerical garbage for unreachable
  * coordinates and would also leave no witness from which to build a parent signature. */
 static bool rw_twist_mark_reachable(rw_twist_workspace_t *ws, uint32_t p, qsop_error_t *error) {
-  const uint64_t direct_pairs = (uint64_t)ws->left_coords_len * (uint64_t)ws->right_coords_len;
-  if (direct_pairs <= RW_TWIST_REACH_PAIR_BUDGET) {
-    for (size_t a = 0; a < ws->left_coords_len; a++) {
-      const uint32_t w1 = ws->left_coords[a];
-      for (size_t b = 0; b < ws->right_coords_len; b++) {
-        const uint32_t w2 = ws->right_coords[b];
-        const uint32_t w = w1 ^ w2;
-        if (ws->pair_left[w] == UINT32_MAX) {
-          ws->pair_left[w] = ws->first_left[w1];
-          ws->pair_right[w] = ws->first_right[w2];
-        }
-      }
-    }
+  if (ws->left_coords_len == 0 || ws->right_coords_len == 0) {
     return true;
   }
 
+  /* How many parent coordinates are realized at all, counted exactly by an XOR convolution of
+   * the two occupancy indicators over F_2^p modulo a Mersenne prime. This costs 2^p*p, which is
+   * dominated by the join's own transforms, and it gives the witness scan below a termination
+   * target: without one, that scan degenerates badly when one side is dense and the other
+   * sparse (every coordinate would sweep most of the dense list before matching). */
   ws->reach_work = malloc(2U * ws->n_p * sizeof(*ws->reach_work));
   ws->reach_counts = malloc(ws->n_p * sizeof(*ws->reach_counts));
   if (ws->reach_work == NULL || ws->reach_counts == NULL) {
@@ -940,17 +933,30 @@ static bool rw_twist_mark_reachable(rw_twist_workspace_t *ws, uint32_t p, qsop_e
                              error)) {
     return false;
   }
+  size_t reachable = 0;
   for (size_t w = 0; w < ws->n_p; w++) {
-    if (ws->reach_counts[w] == 0) {
-      continue;
+    if (ws->reach_counts[w] != 0) {
+      reachable++;
     }
-    for (size_t a = 0; a < ws->left_coords_len; a++) {
-      const uint32_t w1 = ws->left_coords[a];
-      const uint32_t w2 = (uint32_t)(w1 ^ w);
-      if (qsop_bitset_get(ws->occ_right, w2)) {
+  }
+  if (reachable == 0) {
+    return true;
+  }
+
+  /* One witness pair per realized coordinate. Every reachable coordinate is w1 ^ w2 for some
+   * occupied pair, so walking the pairs finds them all; stopping as soon as the exact count is
+   * met keeps this from running the full product once coverage is complete. */
+  size_t witnessed = 0;
+  for (size_t a = 0; a < ws->left_coords_len && witnessed < reachable; a++) {
+    const uint32_t w1 = ws->left_coords[a];
+    for (size_t b = 0; b < ws->right_coords_len; b++) {
+      const uint32_t w = w1 ^ ws->right_coords[b];
+      if (ws->pair_left[w] == UINT32_MAX) {
         ws->pair_left[w] = ws->first_left[w1];
-        ws->pair_right[w] = ws->first_right[w2];
-        break;
+        ws->pair_right[w] = ws->first_right[ws->right_coords[b]];
+        if (++witnessed == reachable) {
+          break;
+        }
       }
     }
   }

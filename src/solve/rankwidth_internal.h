@@ -21,11 +21,9 @@
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 #define RW_SIG_HT_THRESHOLD 32U /* use linear scan below this; hash table above */
 /* Twist-diagonalized (WHT) single-mode join: cap on p + c (parent-coordinate dimension plus
- * crossing rank), AUTO preflight gate on the naive pair forecast, and the direct-marking
- * budget for reachability (above it the exact modular count-WHT tier takes over). */
+ * crossing rank) and the AUTO preflight gate on the naive pair forecast. */
 #define RW_TWIST_MAX_DIM 22U
 #define RW_TWIST_AUTO_MIN_PAIRS UINT64_C(4096)
-#define RW_TWIST_REACH_PAIR_BUDGET UINT64_C(67108864)
 static inline const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
   const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
