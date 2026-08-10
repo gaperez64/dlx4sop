@@ -49,6 +49,7 @@ dlx4sop_core_sources = files(
     'src/solve/rankwidth_dp_counts.c',
     'src/solve/rankwidth_dp_complex.c',
     'src/solve/rankwidth_drivers.c',
+    'src/solve/rankwidth_join_twist.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
 )
@@ -372,6 +373,14 @@ test_rankwidth_decomp = executable(
 )
 
 test('rankwidth decomposition unit', test_rankwidth_decomp, suite: 'unit', timeout: 120)
+
+test_rankwidth_twist_plan = executable(
+  'test-rankwidth-twist-plan',
+  'tests/unit/test_rankwidth_twist_plan.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('rankwidth twist plan unit', test_rankwidth_twist_plan, suite: 'unit', timeout: 120)
 
 test(
   'kernel benchmark smoke',

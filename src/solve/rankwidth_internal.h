@@ -20,6 +20,12 @@
 #define RW_DENSE_REFERENCE_MAX_DIM 22U
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 #define RW_SIG_HT_THRESHOLD 32U /* use linear scan below this; hash table above */
+/* Twist-diagonalized (WHT) single-mode join: cap on p + c (parent-coordinate dimension plus
+ * crossing rank), AUTO preflight gate on the naive pair forecast, and the direct-marking
+ * budget for reachability (above it the exact modular count-WHT tier takes over). */
+#define RW_TWIST_MAX_DIM 22U
+#define RW_TWIST_AUTO_MIN_PAIRS UINT64_C(4096)
+#define RW_TWIST_REACH_PAIR_BUDGET UINT64_C(67108864)
 static inline const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
   const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
@@ -139,6 +145,24 @@ typedef struct rw_dense_basis {
   size_t words;
   uint32_t dim;
 } rw_dense_basis_t;
+typedef enum rw_twist_feasibility {
+  RW_TWIST_FEASIBLE,
+  RW_TWIST_TOO_LARGE,
+  RW_TWIST_ERROR,
+} rw_twist_feasibility_t;
+/* Precomputed join geometry for the twist-diagonalized (WHT) single-mode join
+ * (thm:fast-join-wht / cor:crossing-join): a coordinate basis for the realized parent
+ * signatures (dim p) and a row basis of the crossing block A[X_L, X_R] (dim c = crossing
+ * rank), with the source vertex of each independent crossing row so that the right-side
+ * twist coordinate can be read directly off a right signature's bits. */
+typedef struct rw_twist_plan {
+  rw_dense_basis_t parent_basis;
+  rw_dense_basis_t cross_basis;
+  uint32_t *gen_vertex; /* c entries: vertex in X_L contributing the j-th independent row */
+  uint32_t p;
+  uint32_t c;
+  uint64_t forecast_ops; /* 2^{p+c}(p+c+1) + 2^p(p+1) + |U| + |V| */
+} rw_twist_plan_t;
 typedef struct rw_sig_ht {
   uint32_t *slots; /* maps hash bucket → pool index (UINT32_MAX = empty) */
   uint64_t *keys;  /* parallel fingerprint for fast comparison without dereferencing pool */
@@ -381,5 +405,27 @@ uint64_t *rw_table_assignment(const rw_table_t *table, size_t index, size_t word
 void rw_table_free(rw_table_t *table);
 
 void rw_table_sort(rw_table_t *table);
+
+rw_twist_feasibility_t rw_twist_plan_build(uint32_t nvars, const uint64_t *adj,
+                                           const rw_signature_pool_t *pool,
+                                           const uint32_t *left_signatures, size_t left_len,
+                                           const uint32_t *right_signatures, size_t right_len,
+                                           const uint64_t *left_vars, const uint64_t *right_vars,
+                                           const uint64_t *outside, size_t words, bool want_twist,
+                                           uint32_t max_dim, rw_twist_plan_t *plan,
+                                           qsop_error_t *error);
+
+void rw_twist_plan_free(rw_twist_plan_t *plan);
+
+bool rw_twist_reach_counts(const uint64_t *occ_left, const uint64_t *occ_right, uint32_t p,
+                           uint64_t *work, uint64_t *counts_out, qsop_error_t *error);
+
+void rw_twist_wht_cols_f64(double *re, double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_cols_l(long double *re, long double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_rows_f64(double *re, double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_rows_l(long double *re, long double *im, uint32_t p, uint32_t c);
 
 #endif
