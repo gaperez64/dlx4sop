@@ -662,6 +662,22 @@ if python3.found()
     timeout: 60,
   )
   test(
+    'twist join benchmark smoke',
+    python3,
+    args: [
+      files('scripts/bench_twist_join.py'),
+      sop_solve.full_path(),
+      meson.current_build_dir() / 'twist_join_smoke.csv',
+      '--kmin', '4',
+      '--kmax', '6',
+      '--crossings', '0,1',
+      '--timeout', '30',
+      '--kernels', 'streaming,twist,auto',
+    ],
+    depends: sop_solve,
+    timeout: 120,
+  )
+  test(
     'solver coverage paths smoke',
     python3,
     args: [
