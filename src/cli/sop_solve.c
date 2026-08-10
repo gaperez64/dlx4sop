@@ -78,7 +78,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-single-materialized-reduction",
       "--branch-single-diagnose-conditioning",
       "--branch-single-kernel auto|scalar",
-      "--rankwidth-single-kernel auto|streaming|materialized|dense",
+      "--rankwidth-single-kernel auto|streaming|materialized|dense|twist",
       "--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference",
       "--print-kernels",
   };
@@ -770,6 +770,8 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_materialized_join_events);
     fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_events);
+    fprintf(file, "rankwidth_twist_join_events: %" PRIu64 "\n",
+            stats->rankwidth_twist_join_events);
     fprintf(file, "rankwidth_streaming_join_candidate_pairs: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_candidate_pairs);
     fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
@@ -1380,7 +1382,7 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--rankwidth-single-kernel") == 0) {
       if (i + 1 >= argc) {
-        fputs("error: --rankwidth-single-kernel requires auto|streaming|materialized|dense\n",
+        fputs("error: --rankwidth-single-kernel requires auto|streaming|materialized|dense|twist\n",
               stderr);
         return 2;
       }
@@ -1393,10 +1395,12 @@ int main(int argc, char **argv) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED;
       } else if (strcmp(val, "dense") == 0) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
+      } else if (strcmp(val, "twist") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST;
       } else {
         fprintf(stderr,
                 "error: unknown rankwidth single-mode kernel '%s' "
-                "(expected auto|streaming|materialized|dense)\n",
+                "(expected auto|streaming|materialized|dense|twist)\n",
                 val);
         return 2;
       }

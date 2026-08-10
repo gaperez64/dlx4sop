@@ -91,6 +91,10 @@ typedef struct qsop_solve_stats {
   uint64_t max_table_entries;
   uint64_t signature_entries;
   uint64_t max_signature_entries;
+  /* Arithmetic work charged to the certified numeric error bound. For the pairwise kernels
+   * this is the number of child-state pairs scanned; the twist kernel replaces the scan with
+   * Walsh-Hadamard transforms, so there it counts butterflies, pointwise products and binned
+   * rows instead. rankwidth_twist_join_events discriminates the two regimes. */
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
 
@@ -105,6 +109,7 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_dense_join_events;
   uint64_t rankwidth_materialized_join_events;
   uint64_t rankwidth_streaming_join_events;
+  uint64_t rankwidth_twist_join_events;
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
   uint64_t rankwidth_linear_transition_events;
@@ -225,6 +230,7 @@ typedef enum qsop_rankwidth_single_kernel {
   QSOP_RANKWIDTH_SINGLE_KERNEL_STREAMING,
   QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED,
   QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE,
+  QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST, /* Walsh-Hadamard twist-diagonalized join */
 } qsop_rankwidth_single_kernel_t;
 
 typedef enum qsop_treewidth_order {

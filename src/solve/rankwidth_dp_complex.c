@@ -819,6 +819,307 @@ cleanup:
   free(basis_scratch);
   return ok;
 }
+/* Shared twist-join scaffolding: the dense bins, the occupancy/back-pointer bookkeeping and
+ * the reachability scratch are identical for both precisions, only the value arrays differ. */
+typedef struct rw_twist_workspace {
+  size_t n_p;      /* 2^p parent coordinates */
+  size_t n_pc;     /* 2^{p+c} table cells */
+  size_t occ_words;/* bitset words covering n_p */
+  uint32_t *first_left;
+  uint32_t *first_right;
+  uint32_t *pair_left;
+  uint32_t *pair_right;
+  uint64_t *occ_left;
+  uint64_t *occ_right;
+  uint32_t *left_coords;  /* occupied left coordinates, in first-seen order */
+  uint32_t *right_coords; /* occupied right coordinates, in first-seen order */
+  size_t left_coords_len;
+  size_t right_coords_len;
+  uint64_t *reach_work;   /* 2 * n_p, allocated only for the modular tier */
+  uint64_t *reach_counts; /* n_p, allocated only for the modular tier */
+  uint64_t *basis_scratch;
+  uint64_t *masked;
+} rw_twist_workspace_t;
+
+static void rw_twist_workspace_free(rw_twist_workspace_t *ws) {
+  if (ws == NULL) {
+    return;
+  }
+  free(ws->first_left);
+  free(ws->first_right);
+  free(ws->pair_left);
+  free(ws->pair_right);
+  free(ws->occ_left);
+  free(ws->occ_right);
+  free(ws->left_coords);
+  free(ws->right_coords);
+  free(ws->reach_work);
+  free(ws->reach_counts);
+  free(ws->basis_scratch);
+  free(ws->masked);
+  *ws = (rw_twist_workspace_t){0};
+}
+
+static bool rw_twist_workspace_init(rw_twist_workspace_t *ws, const rw_twist_plan_t *plan,
+                                    size_t words, qsop_error_t *error) {
+  *ws = (rw_twist_workspace_t){0};
+  const size_t w = words == 0 ? 1U : words;
+  ws->n_p = (size_t)1 << plan->p;
+  ws->n_pc = (size_t)1 << (plan->p + plan->c);
+  ws->occ_words = qsop_bitset_words((uint32_t)ws->n_p);
+  ws->first_left = malloc(ws->n_p * sizeof(*ws->first_left));
+  ws->first_right = malloc(ws->n_p * sizeof(*ws->first_right));
+  ws->pair_left = malloc(ws->n_p * sizeof(*ws->pair_left));
+  ws->pair_right = malloc(ws->n_p * sizeof(*ws->pair_right));
+  ws->occ_left = calloc(ws->occ_words, sizeof(*ws->occ_left));
+  ws->occ_right = calloc(ws->occ_words, sizeof(*ws->occ_right));
+  ws->left_coords = malloc(ws->n_p * sizeof(*ws->left_coords));
+  ws->right_coords = malloc(ws->n_p * sizeof(*ws->right_coords));
+  ws->basis_scratch = calloc(w, sizeof(*ws->basis_scratch));
+  ws->masked = calloc(w, sizeof(*ws->masked));
+  if (ws->first_left == NULL || ws->first_right == NULL || ws->pair_left == NULL ||
+      ws->pair_right == NULL || ws->occ_left == NULL || ws->occ_right == NULL ||
+      ws->left_coords == NULL || ws->right_coords == NULL || ws->basis_scratch == NULL ||
+      ws->masked == NULL) {
+    qsop_set_error(error, "out of memory while allocating rankwidth twist join workspace");
+    rw_twist_workspace_free(ws);
+    return false;
+  }
+  memset(ws->first_left, 0xFF, ws->n_p * sizeof(*ws->first_left));
+  memset(ws->first_right, 0xFF, ws->n_p * sizeof(*ws->first_right));
+  memset(ws->pair_left, 0xFF, ws->n_p * sizeof(*ws->pair_left));
+  memset(ws->pair_right, 0xFF, ws->n_p * sizeof(*ws->pair_right));
+  return true;
+}
+
+/* Record the first row landing on a coordinate, so the scatter-back has a witness pair from
+ * which to rebuild the parent signature and its representative assignment. */
+static void rw_twist_note_occupancy(rw_twist_workspace_t *ws, bool left, size_t coord,
+                                    size_t row) {
+  uint32_t *first = left ? ws->first_left : ws->first_right;
+  if (first[coord] != UINT32_MAX) {
+    return;
+  }
+  first[coord] = (uint32_t)row;
+  qsop_bitset_set(left ? ws->occ_left : ws->occ_right, (uint32_t)coord);
+  if (left) {
+    ws->left_coords[ws->left_coords_len++] = (uint32_t)coord;
+  } else {
+    ws->right_coords[ws->right_coords_len++] = (uint32_t)coord;
+  }
+}
+
+/* Mark which parent coordinates are actually realized by some occupied (w1, w2) pair, and
+ * store one witness pair per coordinate. Reachability is decided exactly -- never by testing
+ * the magnitude of a transformed value, which would be numerical garbage for unreachable
+ * coordinates and would also leave no witness from which to build a parent signature. */
+static bool rw_twist_mark_reachable(rw_twist_workspace_t *ws, uint32_t p, qsop_error_t *error) {
+  const uint64_t direct_pairs = (uint64_t)ws->left_coords_len * (uint64_t)ws->right_coords_len;
+  if (direct_pairs <= RW_TWIST_REACH_PAIR_BUDGET) {
+    for (size_t a = 0; a < ws->left_coords_len; a++) {
+      const uint32_t w1 = ws->left_coords[a];
+      for (size_t b = 0; b < ws->right_coords_len; b++) {
+        const uint32_t w2 = ws->right_coords[b];
+        const uint32_t w = w1 ^ w2;
+        if (ws->pair_left[w] == UINT32_MAX) {
+          ws->pair_left[w] = ws->first_left[w1];
+          ws->pair_right[w] = ws->first_right[w2];
+        }
+      }
+    }
+    return true;
+  }
+
+  ws->reach_work = malloc(2U * ws->n_p * sizeof(*ws->reach_work));
+  ws->reach_counts = malloc(ws->n_p * sizeof(*ws->reach_counts));
+  if (ws->reach_work == NULL || ws->reach_counts == NULL) {
+    qsop_set_error(error, "out of memory while allocating rankwidth twist reachability scratch");
+    return false;
+  }
+  if (!rw_twist_reach_counts(ws->occ_left, ws->occ_right, p, ws->reach_work, ws->reach_counts,
+                             error)) {
+    return false;
+  }
+  for (size_t w = 0; w < ws->n_p; w++) {
+    if (ws->reach_counts[w] == 0) {
+      continue;
+    }
+    for (size_t a = 0; a < ws->left_coords_len; a++) {
+      const uint32_t w1 = ws->left_coords[a];
+      const uint32_t w2 = (uint32_t)(w1 ^ w);
+      if (qsop_bitset_get(ws->occ_right, w2)) {
+        ws->pair_left[w] = ws->first_left[w1];
+        ws->pair_right[w] = ws->first_right[w2];
+        break;
+      }
+    }
+  }
+  return true;
+}
+
+/* Operation count charged to the certified error bound: every butterfly (add/sub pair), the
+ * pointwise products, the final scaling, and the binning passes. */
+static uint64_t rw_twist_op_count(const rw_twist_plan_t *plan, size_t left_len,
+                                  size_t right_len) {
+  const size_t n_pc = (size_t)1 << (plan->p + plan->c);
+  const size_t n_p = (size_t)1 << plan->p;
+  uint64_t ops = 0;
+  ops += (uint64_t)plan->c * (uint64_t)(n_pc >> 1U);       /* twist-axis WHT of Gamma */
+  ops += 2U * (uint64_t)plan->p * (uint64_t)(n_pc >> 1U);  /* parent-axis WHT of Phi, Gamma */
+  ops += (uint64_t)n_pc;                                   /* pointwise multiply-accumulate */
+  ops += (uint64_t)plan->p * (uint64_t)(n_p >> 1U);        /* inverse parent-axis WHT */
+  ops += (uint64_t)n_p;                                    /* 2^-p scaling */
+  ops = qsop_saturating_add_u64(ops, (uint64_t)left_len);
+  return qsop_saturating_add_u64(ops, (uint64_t)right_len);
+}
+
+/* The twist-diagonalized join (thm:fast-join-wht): bin both child tables into dense
+ * [2^p][2^c] arrays keyed by (parent coordinate, twist coordinate), Walsh-Hadamard the twist
+ * axis of Gamma to diagonalize the sign kernel, Walsh-Hadamard the parent axis of both to
+ * diagonalize the XOR convolution, contract, and invert -- O(2^{p+c}(p+c) + |U| + |V|)
+ * instead of the |U|*|V| pairwise scan. */
+static bool solve_join_complex_twist(const qsop_instance_t *qsop, rw_signature_pool_t *pool,
+                                     const rw_complex_table_t *left,
+                                     const rw_complex_table_t *right, rw_complex_context_t *ctx,
+                                     rw_complex_table_t *out, const uint64_t *outside,
+                                     const uint64_t *right_vars, const rw_twist_plan_t *plan,
+                                     uint64_t *scratch_sig, uint64_t *parent_assignment,
+                                     size_t words, qsop_error_t *error) {
+  (void)qsop;
+  if (left->len > UINT32_MAX || right->len > UINT32_MAX) {
+    qsop_set_error(error, "rankwidth twist single-mode table is too large");
+    return false;
+  }
+  const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
+  const uint32_t p = plan->p;
+  const uint32_t c = plan->c;
+
+  bool ok = false;
+  rw_twist_workspace_t ws;
+  if (!rw_twist_workspace_init(&ws, plan, words, error)) {
+    return false;
+  }
+  long double *phi_re = calloc(ws.n_pc, sizeof(*phi_re));
+  long double *phi_im = calloc(ws.n_pc, sizeof(*phi_im));
+  long double *gam_re = calloc(ws.n_pc, sizeof(*gam_re));
+  long double *gam_im = calloc(ws.n_pc, sizeof(*gam_im));
+  long double *acc_re = calloc(ws.n_p, sizeof(*acc_re));
+  long double *acc_im = calloc(ws.n_p, sizeof(*acc_im));
+  if (phi_re == NULL || phi_im == NULL || gam_re == NULL || gam_im == NULL || acc_re == NULL ||
+      acc_im == NULL) {
+    qsop_set_error(error, "out of memory while allocating rankwidth twist join tables");
+    goto cleanup;
+  }
+
+  for (size_t i = 0; i < left->len; i++) {
+    const uint64_t *bits = rw_signature_bits(pool, left->signatures[i]);
+    qsop_bitset_copy(ws.masked, bits, words);
+    qsop_bitset_and(ws.masked, outside, words);
+    uint64_t w1 = 0;
+    if (!rw_dense_basis_coord(&plan->parent_basis, ws.masked, ws.basis_scratch, &w1, error)) {
+      goto cleanup;
+    }
+    uint64_t s = 0;
+    if (c > 0) {
+      qsop_bitset_copy(ws.masked, bits, words);
+      qsop_bitset_and(ws.masked, right_vars, words);
+      if (!rw_dense_basis_coord(&plan->cross_basis, ws.masked, ws.basis_scratch, &s, error)) {
+        goto cleanup;
+      }
+    }
+    const size_t index = ((size_t)w1 << c) | (size_t)s;
+    phi_re[index] += left->re[i];
+    phi_im[index] += left->im[i];
+    rw_twist_note_occupancy(&ws, true, (size_t)w1, i);
+  }
+  for (size_t j = 0; j < right->len; j++) {
+    const uint64_t *bits = rw_signature_bits(pool, right->signatures[j]);
+    qsop_bitset_copy(ws.masked, bits, words);
+    qsop_bitset_and(ws.masked, outside, words);
+    uint64_t w2 = 0;
+    if (!rw_dense_basis_coord(&plan->parent_basis, ws.masked, ws.basis_scratch, &w2, error)) {
+      goto cleanup;
+    }
+    size_t t = 0;
+    for (uint32_t jb = 0; jb < c; jb++) {
+      if (qsop_bitset_get(bits, plan->gen_vertex[jb])) {
+        t |= (size_t)1 << jb;
+      }
+    }
+    const size_t index = ((size_t)w2 << c) | t;
+    gam_re[index] += right->re[j];
+    gam_im[index] += right->im[j];
+    rw_twist_note_occupancy(&ws, false, (size_t)w2, j);
+  }
+
+  if (c > 0) {
+    rw_twist_wht_cols_l(gam_re, gam_im, p, c);
+  }
+  rw_twist_wht_rows_l(phi_re, phi_im, p, c);
+  rw_twist_wht_rows_l(gam_re, gam_im, p, c);
+  for (size_t wcoord = 0; wcoord < ws.n_p; wcoord++) {
+    long double sum_re = 0.0L;
+    long double sum_im = 0.0L;
+    for (size_t t = 0; t < ((size_t)1 << c); t++) {
+      const size_t index = (wcoord << c) | t;
+      sum_re += phi_re[index] * gam_re[index] - phi_im[index] * gam_im[index];
+      sum_im += phi_re[index] * gam_im[index] + phi_im[index] * gam_re[index];
+    }
+    acc_re[wcoord] = sum_re;
+    acc_im[wcoord] = sum_im;
+  }
+  rw_twist_wht_rows_l(acc_re, acc_im, p, 0U);
+  {
+    const long double scale = ldexpl(1.0L, -(int)p);
+    for (size_t wcoord = 0; wcoord < ws.n_p; wcoord++) {
+      acc_re[wcoord] *= scale;
+      acc_im[wcoord] *= scale;
+    }
+  }
+
+  if (!rw_twist_mark_reachable(&ws, p, error)) {
+    goto cleanup;
+  }
+  for (size_t wcoord = 0; wcoord < ws.n_p; wcoord++) {
+    if (ws.pair_left[wcoord] == UINT32_MAX) {
+      continue;
+    }
+    const size_t i = ws.pair_left[wcoord];
+    const size_t j = ws.pair_right[wcoord];
+    qsop_bitset_copy(scratch_sig, rw_signature_bits(pool, left->signatures[i]), words);
+    qsop_bitset_xor_simd(scratch_sig, rw_signature_bits(pool, right->signatures[j]), words, simd);
+    qsop_bitset_and_simd(scratch_sig, outside, words, simd);
+    uint32_t parent_signature = 0;
+    if (!rw_signature_pool_intern(pool, scratch_sig, &parent_signature, error)) {
+      goto cleanup;
+    }
+    size_t out_index = 0;
+    if (!complex_table_find_signature(out, parent_signature, &out_index)) {
+      qsop_bitset_copy(parent_assignment, rw_complex_assignment(left, i, words), words);
+      qsop_bitset_or_simd(parent_assignment, rw_complex_assignment(right, j, words), words, simd);
+      if (!complex_table_signature_index(out, parent_signature, parent_assignment, words,
+                                         &out_index, error)) {
+        goto cleanup;
+      }
+    }
+    out->re[out_index] += acc_re[wcoord];
+    out->im[out_index] += acc_im[wcoord];
+  }
+
+  ctx->complex_ops =
+      qsop_saturating_add_u64(ctx->complex_ops, rw_twist_op_count(plan, left->len, right->len));
+  ok = true;
+
+cleanup:
+  free(phi_re);
+  free(phi_im);
+  free(gam_re);
+  free(gam_im);
+  free(acc_re);
+  free(acc_im);
+  rw_twist_workspace_free(&ws);
+  return ok;
+}
 static bool rw_complex_transition_csr_build(
     const qsop_instance_t *qsop, const uint64_t *adj, rw_signature_pool_t *pool,
     const rw_complex_table_t *left, const rw_complex_table_t *right, rw_complex_table_t *out,
@@ -1272,6 +1573,7 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
   uint64_t dense_join_events = 0;
   uint64_t materialized_join_events = 0;
   uint64_t streaming_join_events = 0;
+  uint64_t twist_join_events = 0;
   const uint64_t max_pairs = materialize_join_max_pairs > 0 ? materialize_join_max_pairs
                                                             : RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT;
 
@@ -1295,8 +1597,10 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
         ok = false;
       } else {
         const uint64_t pair_forecast = (uint64_t)left_len * (uint64_t)right_len;
+        bool use_twist = kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST;
         bool use_dense = kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
         bool dense_preflight_failed = false;
+        rw_twist_plan_t twist_plan = {0};
         if (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO) {
           uint64_t dense_pair_count = 0;
           const rw_dense_join_feasibility_t dense_status = dense_single_join_feasibility(
@@ -1311,11 +1615,40 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
           (void)dense_pair_count;
         }
         const bool use_materialized =
-            !use_dense &&
+            !use_twist && !use_dense &&
             (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED ||
              (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO && pair_forecast <= max_pairs));
+        if (use_twist) {
+          const rw_twist_feasibility_t twist_status = rw_twist_plan_build(
+              qsop->nvars, adj, &pool, tables[node->left].signatures, left_len,
+              tables[node->right].signatures, right_len,
+              node_vars_const(decomposition, node->left),
+              node_vars_const(decomposition, node->right), outside, decomposition->words,
+              (target_mode % 2U) != 0U, RW_TWIST_MAX_DIM, &twist_plan, error);
+          if (twist_status != RW_TWIST_FEASIBLE) {
+            if (twist_status == RW_TWIST_TOO_LARGE) {
+              qsop_set_error(error,
+                             "rankwidth twist single-mode join exceeds the dimension cap %" PRIu32,
+                             (uint32_t)RW_TWIST_MAX_DIM);
+            }
+            dense_preflight_failed = true;
+            use_twist = false;
+            ok = false;
+          }
+        }
         if (dense_preflight_failed) {
           ok = false;
+        } else if (use_twist) {
+          ok = solve_join_complex_twist(qsop, &pool, &tables[node->left], &tables[node->right],
+                                        &ctx, &tables[node_id], outside,
+                                        node_vars_const(decomposition, node->right), &twist_plan,
+                                        scratch_sig, parent_assignment, decomposition->words,
+                                        error);
+          if (ok) {
+            twist_join_events++;
+            qsop_trace_emit_elapsed(trace, "rankwidth.single_mode_join_twist", 0,
+                                    tables[node_id].len, join_start);
+          }
         } else if (use_dense) {
           ok = solve_join_complex_dense_reference(
               qsop, adj, &pool, &tables[node->left], &tables[node->right], &ctx, &tables[node_id],
@@ -1347,6 +1680,7 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
             streaming_join_events++;
           }
         }
+        rw_twist_plan_free(&twist_plan);
       }
       qsop_trace_emit_elapsed(trace, "rankwidth.single_mode_join", 0, tables[node_id].len,
                               join_start);
@@ -1397,6 +1731,7 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
     stats->rankwidth_dense_join_events += dense_join_events;
     stats->rankwidth_materialized_join_events += materialized_join_events;
     stats->rankwidth_streaming_join_events += streaming_join_events;
+    stats->rankwidth_twist_join_events += twist_join_events;
     stats->decomposition_width = rw_decomposition_width(decomposition, adj, stats, error);
     if (stats->decomposition_width == UINT32_MAX) {
       for (uint32_t t = 0; t < decomposition->nnodes; t++) {

@@ -121,6 +121,8 @@ int main(void) {
   uint32_t trials = 0;
   uint64_t total_vectorized_ops = 0;
   uint64_t total_scalar_fallback_ops = 0;
+  uint64_t twist_events_even = 0;
+  uint64_t twist_events_odd = 0;
 
   for (uint32_t trial = 0; trial < 320U; trial++) {
     const uint64_t r = moduli[xorshift(&seed) % 4U];
@@ -156,11 +158,19 @@ int main(void) {
     const qsop_rankwidth_single_mode_options_t scalar_options = {
         .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED, .simd = scalar};
 
+    /* The twist kernel replaces the pairwise scan with Walsh-Hadamard transforms, so it is
+     * checked on the same instances: even modes exercise the untwisted (c = 0) convolution and
+     * odd modes the twisted kernel. */
+    const qsop_rankwidth_single_mode_options_t twist_options = {
+        .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST};
+
     qsop_amplitude_t native_amp = {0};
     qsop_amplitude_t scalar_amp = {0};
     qsop_amplitude_t wide_amp = {0};
+    qsop_amplitude_t twist_amp = {0};
     qsop_solve_stats_t native_stats = {0};
     qsop_solve_stats_t scalar_stats = {0};
+    qsop_solve_stats_t twist_stats = {0};
     const bool ok =
         qsop_solve_rankwidth_single_mode_f64_options(q, decomposition, MAX_VARS + 1U, target_mode,
                                                      &native_options, &native_amp, &native_stats,
@@ -169,7 +179,10 @@ int main(void) {
                                                      &scalar_options, &scalar_amp, &scalar_stats,
                                                      NULL, &error) &&
         qsop_solve_rankwidth_single_mode(q, decomposition, MAX_VARS + 1U, target_mode, &wide_amp,
-                                         NULL, NULL, &error);
+                                         NULL, NULL, &error) &&
+        qsop_solve_rankwidth_single_mode_options(q, decomposition, MAX_VARS + 1U, target_mode,
+                                                 &twist_options, &twist_amp, &twist_stats, NULL,
+                                                 &error);
     if (!ok) {
       fprintf(stderr, "trial %" PRIu32 ": solve failed: %s\n", trial, error.message);
       qsop_rankwidth_decomposition_free(decomposition);
@@ -179,6 +192,11 @@ int main(void) {
 
     total_vectorized_ops += native_stats.simd_vectorized_ops;
     total_scalar_fallback_ops += native_stats.simd_scalar_fallback_ops;
+    if ((target_mode % 2U) == 0U) {
+      twist_events_even += twist_stats.rankwidth_twist_join_events;
+    } else {
+      twist_events_odd += twist_stats.rankwidth_twist_join_events;
+    }
     /* Forcing the scalar vtable must never take the vectorized branch. */
     if (scalar_stats.simd_vectorized_ops != 0) {
       fprintf(stderr, "trial %" PRIu32 ": scalar vtable reported %" PRIu64 " vectorized ops\n",
@@ -192,8 +210,11 @@ int main(void) {
       const char *label;
       const qsop_amplitude_t *amp;
     } cases[] = {
-        {"f64/native", &native_amp}, {"f64/scalar", &scalar_amp}, {"long-double", &wide_amp}};
-    for (uint32_t i = 0; i < 3U; i++) {
+        {"f64/native", &native_amp},
+        {"f64/scalar", &scalar_amp},
+        {"long-double", &wide_amp},
+        {"long-double/twist", &twist_amp}};
+    for (uint32_t i = 0; i < 4U; i++) {
       if (!agrees(cases[i].amp, want_re, want_im)) {
         fprintf(stderr,
                 "trial %" PRIu32 " (r=%" PRIu64 " n=%" PRIu32 " density=%" PRIu32 " mode=%" PRIu32
@@ -224,10 +245,22 @@ int main(void) {
             trials, total_vectorized_ops, total_scalar_fallback_ops);
     return 1;
   }
+  /* Both twist regimes must have run: odd modes carry the sign kernel and exercise the twist
+   * axis, even modes reduce to a pure XOR convolution. A run that silently took neither would
+   * still agree with the oracle, so require both explicitly. */
+  if (twist_events_even == 0 || twist_events_odd == 0) {
+    fprintf(stderr,
+            "twist kernel underexercised: %" PRIu64 " even-mode joins, %" PRIu64
+            " odd-mode joins\n",
+            twist_events_even, twist_events_odd);
+    return 1;
+  }
 
   fprintf(stderr,
           "rankwidth join tests passed (%" PRIu32 " instances, %" PRIu64 " vectorized ops, %"
-          PRIu64 " scalar-fallback ops, kernel %s)\n",
-          trials, total_vectorized_ops, total_scalar_fallback_ops, qsop_simd_kernel_name(native));
+          PRIu64 " scalar-fallback ops, %" PRIu64 "/%" PRIu64
+          " even/odd twist joins, kernel %s)\n",
+          trials, total_vectorized_ops, total_scalar_fallback_ops, twist_events_even,
+          twist_events_odd, qsop_simd_kernel_name(native));
   return 0;
 }
