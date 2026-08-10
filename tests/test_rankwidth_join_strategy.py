@@ -174,6 +174,7 @@ def run_tests(sop_solve, tmp):
             "rankwidth_dense_join_events:",
             "rankwidth_materialized_join_events:",
             "rankwidth_streaming_join_events:",
+            "rankwidth_twist_join_events:",
             "rankwidth_linear_transition_events:",
             "rankwidth_table_assignment_bytes:",
         ]

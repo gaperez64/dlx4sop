@@ -263,6 +263,30 @@ def check_rankwidth_modes(exe: pathlib.Path, reference: complex) -> None:
             ],
             {"rankwidth_single_complex_kernel": "2", "rankwidth_dense_join_events": None},
         ),
+        (
+            "rankwidth double twist",
+            [
+                "--rankwidth-generate",
+                "min-fill-cut",
+                "--single-mode-precision",
+                "double",
+                "--rankwidth-single-kernel",
+                "twist",
+            ],
+            {"rankwidth_single_complex_kernel": "2", "rankwidth_twist_join_events": None},
+        ),
+        (
+            "rankwidth long-double twist",
+            [
+                "--rankwidth-generate",
+                "from-treewidth",
+                "--single-mode-precision",
+                "long-double",
+                "--rankwidth-single-kernel",
+                "twist",
+            ],
+            {"rankwidth_single_complex_kernel": "1", "rankwidth_twist_join_events": None},
+        ),
     ]
     for label, extra, expected in single_cases:
         stats = run_solver(
