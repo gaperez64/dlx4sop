@@ -352,7 +352,11 @@ where `B` is the crossing parity between the two children.
 Under `auto` the kernels are chosen per join. The dense preflight runs first; the
 twist plan is then built when the pairwise forecast reaches
 `RW_TWIST_AUTO_MIN_PAIRS`, and the transform is adopted only when its forecast is
-a strict win over the cheapest available scan. Small joins therefore never pay the
+a strict win over the cheapest available scan *and* its dense tables fit
+`RW_TWIST_AUTO_MAX_BYTES`. That second condition matters because the transform is
+dense where the pairwise kernels are sparse, so an operation-count win can still
+cost one to two orders of magnitude more peak memory; naming the kernel explicitly
+opts out of the byte budget and is bounded only by the dimension cap. Small joins therefore never pay the
 plan-building passes, and the crossing rank decides the outcome: a bounded-rank
 crossing reaches base `2^k` while a full-rank one stays with the pairwise kernels.
 

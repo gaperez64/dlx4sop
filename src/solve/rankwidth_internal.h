@@ -21,9 +21,14 @@
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 #define RW_SIG_HT_THRESHOLD 32U /* use linear scan below this; hash table above */
 /* Twist-diagonalized (WHT) single-mode join: cap on p + c (parent-coordinate dimension plus
- * crossing rank) and the AUTO preflight gate on the naive pair forecast. */
+ * crossing rank) and the AUTO preflight gate on the naive pair forecast. The transform works
+ * on dense 2^{p+c} tables where the pairwise kernels only hold the sparse child tables, so
+ * AUTO also refuses it past a byte budget -- an operation-count win is not worth an
+ * unannounced jump in peak memory. An explicit --rankwidth-single-kernel twist is bounded by
+ * the dimension cap alone. */
 #define RW_TWIST_MAX_DIM 22U
 #define RW_TWIST_AUTO_MIN_PAIRS UINT64_C(4096)
+#define RW_TWIST_AUTO_MAX_BYTES UINT64_C(536870912)
 static inline const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
   const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);

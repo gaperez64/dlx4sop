@@ -146,6 +146,12 @@ def run_case(
     }
 
 
+def amplitudes_agree(left: dict, right: dict) -> bool:
+    return close_enough(left["amplitude_re"], right["amplitude_re"]) and close_enough(
+        left["amplitude_im"], right["amplitude_im"]
+    )
+
+
 def close_enough(left: str, right: str, tol: float = 1e-6) -> bool:
     try:
         return abs(float(left) - float(right)) <= tol * (1.0 + abs(float(left)))
@@ -162,6 +168,11 @@ def main() -> int:
     parser.add_argument("--crossings", default="0,1,2,4")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--kernels", default="streaming,materialized,twist,auto")
+    parser.add_argument(
+        "--reference-kernel",
+        default="streaming",
+        help="kernel whose amplitude every other kernel is checked against",
+    )
     parser.add_argument("--workdir", type=pathlib.Path, default=None)
     parser.add_argument(
         "--generated-decomposition",
@@ -177,6 +188,8 @@ def main() -> int:
 
     rows = []
     mismatches = 0
+    errors = 0
+    unverified = 0
     for k in range(args.kmin, args.kmax + 1):
         for c in crossings:
             if c > k:
@@ -187,26 +200,47 @@ def main() -> int:
             if not args.generated_decomposition:
                 decomposition = workdir / f"family_k{k}_c{c}.rwdec"
                 decomposition.write_text(build_decomposition(k))
+            # The oracle is a named kernel, never "whichever ran first": once the pairwise
+            # kernels start timing out at large k, the twist would otherwise validate itself.
             reference = None
+            unchecked = []
             for kernel in kernels:
                 result = run_case(args.solver, path, kernel, args.timeout, decomposition)
                 row = {"k": k, "c": c, "nvars": 3 * k, "kernel": kernel}
                 row.update(result)
                 rows.append(row)
-                if result["outcome"] == "ok":
-                    if reference is None:
-                        reference = result
-                    elif not (
-                        close_enough(result["amplitude_re"], reference["amplitude_re"])
-                        and close_enough(result["amplitude_im"], reference["amplitude_im"])
-                    ):
-                        mismatches += 1
-                        print(
-                            f"MISMATCH k={k} c={c} {kernel}: "
-                            f"({result['amplitude_re']},{result['amplitude_im']}) vs "
-                            f"({reference['amplitude_re']},{reference['amplitude_im']})",
-                            file=sys.stderr,
-                        )
+                if result["outcome"] == "error":
+                    errors += 1
+                    print(
+                        f"ERROR k={k} c={c} {kernel}: {result.get('message', '')}",
+                        file=sys.stderr,
+                    )
+                    continue
+                if result["outcome"] != "ok":
+                    continue
+                if kernel == args.reference_kernel:
+                    reference = result
+                    for pending in unchecked:
+                        if not amplitudes_agree(pending[1], reference):
+                            mismatches += 1
+                            print(f"MISMATCH k={k} c={c} {pending[0]} vs {kernel}", file=sys.stderr)
+                    unchecked = []
+                elif reference is None:
+                    unchecked.append((kernel, result))
+                elif not amplitudes_agree(result, reference):
+                    mismatches += 1
+                    print(
+                        f"MISMATCH k={k} c={c} {kernel}: "
+                        f"({result['amplitude_re']},{result['amplitude_im']}) vs "
+                        f"({reference['amplitude_re']},{reference['amplitude_im']})",
+                        file=sys.stderr,
+                    )
+            if reference is None and unchecked:
+                unverified += len(unchecked)
+                print(
+                    f"note: k={k} c={c} unverified ({args.reference_kernel} did not finish)",
+                    file=sys.stderr,
+                )
                 print(
                     f"k={k:2d} c={c} {kernel:13s} {result['outcome']:8s} "
                     f"{result['wall_s']:8.3f}s joins={result.get('join_pairs', '')}"
@@ -218,8 +252,10 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
     print(f"\nwrote {len(rows)} rows to {args.output}")
-    if mismatches:
-        print(f"{mismatches} amplitude mismatches", file=sys.stderr)
+    if unverified:
+        print(f"{unverified} runs unverified against {args.reference_kernel}", file=sys.stderr)
+    if mismatches or errors:
+        print(f"{mismatches} amplitude mismatches, {errors} solver errors", file=sys.stderr)
         return 1
     return 0
 

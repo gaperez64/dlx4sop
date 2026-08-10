@@ -963,6 +963,18 @@ static bool rw_twist_mark_reachable(rw_twist_workspace_t *ws, uint32_t p, qsop_e
   return true;
 }
 
+/* Peak bytes the twist kernel allocates: the four dense 2^{p+c} value planes plus the 2^p
+ * accumulator, the coordinate bookkeeping, and the reachability scratch. `value_size` is the
+ * size of one real component (long double or double). */
+static uint64_t rw_twist_bytes(const rw_twist_plan_t *plan, size_t value_size) {
+  const uint64_t n_pc = (uint64_t)1 << (plan->p + plan->c);
+  const uint64_t n_p = (uint64_t)1 << plan->p;
+  const uint64_t planes = 6U * n_pc * (uint64_t)value_size; /* phi/gam/acc, re and im */
+  const uint64_t coords = 6U * n_p * (uint64_t)sizeof(uint32_t);
+  const uint64_t reach = 3U * n_p * (uint64_t)sizeof(uint64_t);
+  return planes + coords + reach;
+}
+
 /* Operation count charged to the certified error bound: every butterfly (add/sub pair), the
  * pointwise products, the final scaling, and the binning passes. */
 static uint64_t rw_twist_op_count(const rw_twist_plan_t *plan, size_t left_len,
@@ -1783,7 +1795,8 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
             } else if (twist_status == RW_TWIST_FEASIBLE) {
               const uint64_t best_alternative =
                   use_dense && dense_pair_count < pair_forecast ? dense_pair_count : pair_forecast;
-              if (twist_plan.forecast_ops < best_alternative) {
+              if (twist_plan.forecast_ops < best_alternative &&
+                  rw_twist_bytes(&twist_plan, sizeof(long double)) <= RW_TWIST_AUTO_MAX_BYTES) {
                 use_twist = true;
                 twist_planned = true;
                 use_dense = false;
@@ -2068,7 +2081,8 @@ bool rw_solve_single_mode_once_f64(const qsop_instance_t *qsop,
             } else if (twist_status == RW_TWIST_FEASIBLE) {
               const uint64_t best_alternative =
                   use_dense && dense_pair_count < pair_forecast ? dense_pair_count : pair_forecast;
-              if (twist_plan.forecast_ops < best_alternative) {
+              if (twist_plan.forecast_ops < best_alternative &&
+                  rw_twist_bytes(&twist_plan, sizeof(double)) <= RW_TWIST_AUTO_MAX_BYTES) {
                 use_twist = true;
                 twist_planned = true;
                 use_dense = false;
