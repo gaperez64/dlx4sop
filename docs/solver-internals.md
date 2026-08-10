@@ -319,6 +319,48 @@ A component that cannot reach a delegate within the depth, node, search, or
 stagnation budgets refuses cleanly rather than continuing an unbounded
 exponential recursion.
 
+## Rankwidth join kernels
+
+Inside the rankwidth backend, a branching join combines the two child tables at a
+node. The single-Fourier DP keeps one complex value per boundary signature, and
+the kernels differ only in how they evaluate
+
+```
+H(w) = sum over P u + Q v = w of F(u) G(v) (-1)^{B(u,v)}
+```
+
+where `B` is the crossing parity between the two children.
+
+- `streaming` scans every pair of child signatures, computing the crossing parity
+  per pair from stored representative assignments. `|U| * |V|` work, no
+  precomputation.
+- `materialized` scans the same pairs but first builds a CSR of the surviving
+  transitions, so the sign partitions can be batched through the SIMD kernel.
+- `dense` bins both children into dense coordinate arrays over the span of their
+  realized signatures, then scans coordinate pairs. Refuses above
+  `RW_DENSE_REFERENCE_MAX_DIM` (22) or `2^22` coordinate pairs.
+- `twist` diagonalizes the join instead of scanning it (`thm:fast-join-wht`,
+  `cor:crossing-join`). It factors the crossing form through its rank `c`, bins
+  both children into dense `[2^p][2^c]` arrays keyed by (parent coordinate, twist
+  coordinate) where `p` is the realized parent-coordinate dimension, Walsh-Hadamard
+  transforms the twist axis to diagonalize the sign kernel and the parent axis to
+  diagonalize the XOR convolution, contracts, and inverts. That costs
+  `O(2^{p+c}(p+c) + |U| + |V|)` against the pairwise `|U| * |V| <= 4^k`. Even
+  Fourier modes carry no sign kernel, so `c` is zero and the join degenerates to a
+  single XOR convolution. Refuses above `RW_TWIST_MAX_DIM` (a cap on `p + c`).
+
+Under `auto` the kernels are chosen per join. The dense preflight runs first; the
+twist plan is then built when the pairwise forecast reaches
+`RW_TWIST_AUTO_MIN_PAIRS`, and the transform is adopted only when its forecast is
+a strict win over the cheapest available scan. Small joins therefore never pay the
+plan-building passes, and the crossing rank decides the outcome: a bounded-rank
+crossing reaches base `2^k` while a full-rank one stays with the pairwise kernels.
+
+Which parent coordinates are actually realized is decided exactly -- by direct pair
+marking, or by an exact modular transform above its budget -- never by testing the
+magnitude of a transformed value. Unreachable coordinates hold numerical noise, and
+they also admit no witness pair from which to rebuild the parent signature.
+
 ## Runtime controls
 
 `sop-solve --help-advanced` summarizes the main switches. The controls most
@@ -338,7 +380,8 @@ closely tied to the dispatch described above are:
   conditioning options above, and `--branch-shadow`.
 - Rankwidth standalone policy: `--rankwidth-memory-budget-mib`,
   `--rankwidth-memory-policy`, `--rankwidth-join-strategy`,
-  `--rankwidth-single-kernel`, and `--rankwidth-fourier-kernel`.
+  `--rankwidth-single-kernel` (`auto|streaming|materialized|dense|twist`), and
+  `--rankwidth-fourier-kernel`.
 
 The process reads no solver-tuning environment variables.
 
@@ -371,7 +414,14 @@ flags or the private `C_*` constants.
   `decomposition_width`, and `rankwidth_cutrank_width` summarize the competing
   width decisions.
 - `table_entries`, `signature_entries`, and `join_pairs`, together with the
-  `rankwidth_*_forecast` fields, show forecast quality and actual DP work.
+  `rankwidth_*_forecast` fields, show forecast quality and actual DP work. Note
+  that `join_pairs` counts the arithmetic charged to the certified error bound, so
+  on twist joins it counts Walsh-Hadamard butterflies and binned rows rather than
+  signature pairs.
+- `rankwidth_streaming_join_events`, `rankwidth_materialized_join_events`,
+  `rankwidth_dense_join_events`, and `rankwidth_twist_join_events` report which
+  join kernel ran where; the matching trace phases are
+  `rankwidth.single_mode_join_{dense,map,twist}` (plus `_f64`).
 - `branch_delegate_probes`, `branch_conditioning_nodes`,
   `branch_max_cutset_depth`, `branch_last_delegate_miss`, and
   `termination_reason` explain single-Fourier conditioning and refusal.

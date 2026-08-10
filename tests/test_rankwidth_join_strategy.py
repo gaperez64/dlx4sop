@@ -366,6 +366,154 @@ def run_tests(sop_solve, tmp):
         else:
             print(f"    OK: streaming_join_events={stream_events}, materialized_join_events={mat_events}")
 
+    if not check_twist_auto_adoption(sop_solve, tmp):
+        all_passed = False
+
+    return all_passed
+
+
+def _make_crossing_join_qsop(k: int, c: int, r: int = 8) -> str:
+    """Family(k, c): l_i -- w_i, r_i -- w_i for all i, plus l_i -- r_i for i < c.
+
+    Each shore exposes 2^k signatures across the balanced join, whose crossing rank is c, so
+    the twist-diagonalized kernel should beat the |U|*|V| pairwise scan there.
+    """
+    nvars = 3 * k
+    edges = []
+    for i in range(k):
+        edges.append((i, 2 * k + i))
+        edges.append((k + i, 2 * k + i))
+        if i < c:
+            edges.append((i, k + i))
+    lines = [f"p qsop-sign {r} {nvars} {len(edges)}", f"n {2 * k}", "cst 0"]
+    for v in range(nvars):
+        lines.append(f"u {v} {(v * 3 + 1) % r}")
+    for u, v in edges:
+        lines.append(f"e {u} {v}")
+    return "\n".join(lines) + "\n"
+
+
+def _make_crossing_join_rwdec(k: int) -> str:
+    """Decomposition realizing that balanced join: shore, shore, then fold in the witnesses."""
+    lines = []
+    node = 0
+
+    def leaf(var):
+        nonlocal node
+        lines.append(f"l {node} {var}")
+        node += 1
+        return node - 1
+
+    def join(left, right):
+        nonlocal node
+        lines.append(f"j {node} {left} {right}")
+        node += 1
+        return node - 1
+
+    left_root = leaf(0)
+    for i in range(1, k):
+        left_root = join(left_root, leaf(i))
+    right_root = leaf(k)
+    for i in range(1, k):
+        right_root = join(right_root, leaf(k + i))
+    root = join(left_root, right_root)
+    for i in range(k):
+        root = join(root, leaf(2 * k + i))
+    return "\n".join([f"p rwdec {3 * k} {node} {root}"] + lines) + "\n"
+
+
+def check_twist_auto_adoption(sop_solve: pathlib.Path, tmp: pathlib.Path) -> bool:
+    """AUTO must adopt the twist kernel where it forecasts a win, and only there.
+
+    On the crossing-join family the balanced join has 2^k signatures per side, so the
+    transform wins and AUTO should take it while still agreeing with the pairwise kernels.
+    On a tiny instance the preflight is gated off and AUTO must not use twist at all.
+    """
+    print("  twist AUTO adoption")
+    all_passed = True
+
+    k, c = 9, 1
+    qsop = tmp / "crossing_join.qsop"
+    rwdec = tmp / "crossing_join.rwdec"
+    qsop.write_text(_make_crossing_join_qsop(k, c))
+    rwdec.write_text(_make_crossing_join_rwdec(k))
+
+    def solve(extra):
+        cmd = [
+            str(sop_solve),
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--format",
+            "stats",
+            "--max-vars",
+            "256",
+            "--rankwidth-decomposition",
+            str(rwdec),
+        ] + extra + [str(qsop)]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        if r.returncode != 0:
+            return None
+        fields = {}
+        for line in r.stdout.decode(errors="replace").splitlines():
+            if ": " in line:
+                key, _, value = line.partition(": ")
+                fields[key.strip()] = value.strip()
+        return fields
+
+    auto = solve([])
+    forced = solve(["--rankwidth-single-kernel", "streaming"])
+    if auto is None or forced is None:
+        print("    FAIL: crossing-join solve failed")
+        return False
+
+    if int(auto.get("rankwidth_twist_join_events", "0")) < 1:
+        print(f"    FAIL: auto did not adopt twist (events={auto.get('rankwidth_twist_join_events')})")
+        all_passed = False
+    else:
+        print(f"    OK: auto adopted twist ({auto['rankwidth_twist_join_events']} joins)")
+
+    for field in ("amplitude_re", "amplitude_im"):
+        got = float(auto.get(field, "nan"))
+        want = float(forced.get(field, "nan"))
+        if abs(got - want) > 1e-6 * (1.0 + abs(want)):
+            print(f"    FAIL: auto {field}={got} disagrees with streaming {want}")
+            all_passed = False
+    if all_passed:
+        print("    OK: auto amplitude matches the pairwise kernel")
+
+    tiny = tmp / "tiny_twist_gate.qsop"
+    tiny.write_bytes(_SIGN_EDGE_4CYCLE)
+    r = subprocess.run(
+        [
+            str(sop_solve),
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--format",
+            "stats",
+            "--max-vars",
+            "64",
+            "--rankwidth-generate",
+            "min-fill-cut",
+            str(tiny),
+        ],
+        capture_output=True,
+        timeout=60,
+    )
+    if r.returncode != 0:
+        print("    FAIL: tiny instance solve failed")
+        return False
+    text = r.stdout.decode(errors="replace")
+    for line in text.splitlines():
+        if line.startswith("rankwidth_twist_join_events:"):
+            if int(line.split(":")[1].strip()) != 0:
+                print("    FAIL: auto used twist on a tiny join (min-pairs gate not honored)")
+                all_passed = False
+            else:
+                print("    OK: min-pairs gate keeps tiny joins off the transform")
     return all_passed
 
 

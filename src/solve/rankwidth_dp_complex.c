@@ -1749,6 +1749,7 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
         bool use_dense = kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
         bool dense_preflight_failed = false;
         rw_twist_plan_t twist_plan = {0};
+        bool twist_planned = false;
         if (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO) {
           uint64_t dense_pair_count = 0;
           const rw_dense_join_feasibility_t dense_status = dense_single_join_feasibility(
@@ -1760,13 +1761,37 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
           } else {
             use_dense = dense_status == RW_DENSE_JOIN_FEASIBLE;
           }
-          (void)dense_pair_count;
+          /* The transform beats every pairwise kernel only when its forecast is a strict win
+           * over the cheapest available scan, and the plan build itself costs two basis passes,
+           * so tiny joins skip the preflight entirely. */
+          if (!dense_preflight_failed && pair_forecast >= RW_TWIST_AUTO_MIN_PAIRS) {
+            const rw_twist_feasibility_t twist_status = rw_twist_plan_build(
+                qsop->nvars, adj, &pool, tables[node->left].signatures, left_len,
+                tables[node->right].signatures, right_len,
+                node_vars_const(decomposition, node->left),
+                node_vars_const(decomposition, node->right), outside, decomposition->words,
+                (target_mode % 2U) != 0U, RW_TWIST_MAX_DIM, &twist_plan, error);
+            if (twist_status == RW_TWIST_ERROR) {
+              dense_preflight_failed = true;
+              ok = false;
+            } else if (twist_status == RW_TWIST_FEASIBLE) {
+              const uint64_t best_alternative =
+                  use_dense && dense_pair_count < pair_forecast ? dense_pair_count : pair_forecast;
+              if (twist_plan.forecast_ops < best_alternative) {
+                use_twist = true;
+                twist_planned = true;
+                use_dense = false;
+              } else {
+                rw_twist_plan_free(&twist_plan);
+              }
+            }
+          }
         }
         const bool use_materialized =
             !use_twist && !use_dense &&
             (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED ||
              (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO && pair_forecast <= max_pairs));
-        if (use_twist) {
+        if (use_twist && !twist_planned) {
           const rw_twist_feasibility_t twist_status = rw_twist_plan_build(
               qsop->nvars, adj, &pool, tables[node->left].signatures, left_len,
               tables[node->right].signatures, right_len,
@@ -2009,6 +2034,7 @@ bool rw_solve_single_mode_once_f64(const qsop_instance_t *qsop,
         bool use_dense = kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
         bool dense_preflight_failed = false;
         rw_twist_plan_t twist_plan = {0};
+        bool twist_planned = false;
         if (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO) {
           uint64_t dense_pair_count = 0;
           const rw_dense_join_feasibility_t dense_status = dense_single_join_feasibility(
@@ -2020,13 +2046,37 @@ bool rw_solve_single_mode_once_f64(const qsop_instance_t *qsop,
           } else {
             use_dense = dense_status == RW_DENSE_JOIN_FEASIBLE;
           }
-          (void)dense_pair_count;
+          /* The transform beats every pairwise kernel only when its forecast is a strict win
+           * over the cheapest available scan, and the plan build itself costs two basis passes,
+           * so tiny joins skip the preflight entirely. */
+          if (!dense_preflight_failed && pair_forecast >= RW_TWIST_AUTO_MIN_PAIRS) {
+            const rw_twist_feasibility_t twist_status = rw_twist_plan_build(
+                qsop->nvars, adj, &pool, tables[node->left].signatures, left_len,
+                tables[node->right].signatures, right_len,
+                node_vars_const(decomposition, node->left),
+                node_vars_const(decomposition, node->right), outside, decomposition->words,
+                (target_mode % 2U) != 0U, RW_TWIST_MAX_DIM, &twist_plan, error);
+            if (twist_status == RW_TWIST_ERROR) {
+              dense_preflight_failed = true;
+              ok = false;
+            } else if (twist_status == RW_TWIST_FEASIBLE) {
+              const uint64_t best_alternative =
+                  use_dense && dense_pair_count < pair_forecast ? dense_pair_count : pair_forecast;
+              if (twist_plan.forecast_ops < best_alternative) {
+                use_twist = true;
+                twist_planned = true;
+                use_dense = false;
+              } else {
+                rw_twist_plan_free(&twist_plan);
+              }
+            }
+          }
         }
         const bool use_materialized =
             !use_twist && !use_dense &&
             (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED ||
              (kernel == QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO && pair_forecast <= max_pairs));
-        if (use_twist) {
+        if (use_twist && !twist_planned) {
           const rw_twist_feasibility_t twist_status = rw_twist_plan_build(
               qsop->nvars, adj, &pool, tables[node->left].signatures, left_len,
               tables[node->right].signatures, right_len,
