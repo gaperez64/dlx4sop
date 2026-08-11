@@ -80,6 +80,7 @@ SHAPE_KEYS = [
     "min_fill_width",
     "min_fill_dp_work",
     "prefix_cut_rank",
+    "magic_vertices_mode_1",
 ]
 
 

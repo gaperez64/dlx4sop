@@ -46,7 +46,9 @@ flowchart TD
     C -->|yes| D[direct terminal evaluation]
     C -->|no| E{disconnected?}
     E -->|yes| F[solve components and combine]
-    E -->|no| G[width probe and two-stage cost model]
+    E -->|no| Q{QPF term bound affordable?}
+    Q -->|yes| QT[exact QPF terminal]
+    Q -->|no| G[width probe and two-stage cost model]
     G -->|treewidth wins| TW[treewidth DP]
     G -->|rankwidth wins| RW[rankwidth DP]
     G -->|no delegate| H{fallback allowed and bounded?}
@@ -102,10 +104,13 @@ For a connected residual, the effective order is:
    directly, as described above.
 3. Split disconnected support graphs, solve each component recursively, and
    convolve count histograms or multiply component amplitudes.
-4. Probe decomposition widths and try DP delegation. Count mode skips this
+4. Before any width probe, use the QPF terminal when its exact stabilizer-list
+   bound fits `--qpf-max-terms` (default 4096). Sparse/small components keep the
+   established fast path.
+5. Probe decomposition widths and try DP delegation. Count mode skips this
    probe below 16 active variables; those small residuals go directly to the
    branch fallback.
-5. If neither DP is selected, apply the mode-specific branch, conditioning, or
+6. If neither DP is selected, apply the mode-specific branch, conditioning, or
    refusal rule from the table above.
 
 There are two whole-instance shortcuts. Count-table/all-modes solving can send
@@ -143,6 +148,53 @@ width bound: a very large low-width component can be cheap for DP. The CLI
 defaults to 24 for the exact count path and raises an unset value to `2^24` for
 single-Fourier/auto; the per-component width, work, and memory checks still
 decide whether delegation is affordable.
+
+## Quadratic phase functions and the second cost axis
+
+For a rank-decomposition node `u`, let `rho_u` be its cut-rank, `tau_u` its
+number of magic vertices, and `chi_u` the number of QPF terms retained for its
+table. The hybrid has four exact moves:
+
+```text
+chi_u <= min(stabilizer_terms(tau_u), chi_left * chi_right, 2^rho_u)
+```
+
+- **Rebuild** ignores child representations and decomposes the node's induced
+  unary phase directly.
+- **Join** takes products on disjoint coordinate blocks and adds the bilinear
+  crossing form to the QPF quadratic matrix.
+- **Point** is the existing signature table.
+- **Collapse** conditions every QPF on every boundary signature, sums its
+  internal variables, and returns to point form at any node.
+
+The mode-independent setup Gaussian-eliminates signature rows while carrying
+their preimages. This gives a linear section, rather than the point DP's
+first-seen representative, and makes the join crossing matrix bilinear. Even
+Fourier modes have no crossing sign. The point implementation remains the
+default and is called bit-for-bit whenever existing standalone rankwidth
+admission succeeds; QPF lists are the refusal-rescue path.
+
+The QPF record stores a mod-4 linear phase, an upper-triangular quadratic form,
+and an affine binary subspace. Count mode works in the exact ring
+`Z[zeta_lcm(r,8)][1/2]`, reduces in the cyclotomic power basis, and performs the
+inverse Fourier transform there. The current checked exact limits are
+`lcm(r,8) <= 64` and at most 96 variables; outside them, dispatch uses another
+exact backend.
+
+For `r=8`, groups of six T-equivalent magic phases use the verified six-term
+decomposition obtained from Eq. (5) of
+[Qassim, Pashayan, and Gosset](https://quantum-journal.org/papers/q-2021-12-20-606/);
+remaining magic vertices use the two-term basis. The implemented tiling bound
+is therefore `6^(tau/6) * 2^(tau mod 6)`. The paper's `0.3963` exponent is an
+asymptotic cat-chain construction, not a `(12,27)` finite block; that arithmetic
+conjecture from the implementation plan is deliberately not encoded. The block
+is exhaustively checked against all `2^6` amplitudes in the unit suite.
+
+QPF joins do cubic binary-linear-algebra work in the boundary dimension, so
+they are a coverage feature outside today's cut-rank window, not a blanket
+speed optimization. Statistics expose `qpf_decompositions`, `qpf_rebuilds`,
+`qpf_joins`, `qpf_collapses`, `qpf_terms`, `qpf_max_terms`, and
+`qpf_magic_vertices`.
 
 ## Treewidth-versus-rankwidth cost model
 
@@ -325,7 +377,7 @@ exponential recursion.
 closely tied to the dispatch described above are:
 
 - Backend and mode: `--backend`, `--solve-mode`, `--max-vars`,
-  `--treewidth-order`, `--fourier-target-mode`.
+  `--treewidth-order`, `--fourier-target-mode`, `--qpf-max-terms`.
 - Cost policy: `--branch-rw-source`, `--branch-rw-min-speedup`,
   `--branch-rw-fixed-overhead-ns`, `--branch-tw-fixed-overhead-ns`,
   `--branch-rw-memory-penalty-ns`.

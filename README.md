@@ -15,9 +15,11 @@ flowchart LR
     SOP -->|sop-solve| BR[branch orchestrator]
     BR -->|cost model| TW[treewidth DP]
     BR -->|cost model| RW[rankwidth DP]
+    BR -->|small stabilizer list| QPF[QPF terminal]
     BR -->|no affordable delegate| RS[residual branching / conditioning]
     SOP -. explicit backend .-> TW
     SOP -. explicit backend .-> RW
+    SOP -. explicit backend .-> QPF
 ```
 
 **Formal verification:** [`docs/lean`](docs/lean) contains a Lean 4 + Mathlib
@@ -40,8 +42,8 @@ Prebuilt releases include the core command-line tools as `linux-x86_64` and
 from source:
 
 - `sop-check`: parse, validate, pin-reduce, and canonicalize QSOP files.
-- `sop-stats`: print structural statistics, with opt-in exact small-width
-  support-graph diagnostics.
+- `sop-stats`: print structural statistics, exact small-width support-graph diagnostics, and
+  per-Fourier-mode-class magic-vertex/QPF bounds.
 - `sop-solve`: compute normalized amplitudes or exact residue-count histograms.
   Single-Fourier mode reports a certified floating-point error bound; stats mode
   can include the exact count vector and a convenience probability estimate via
@@ -93,7 +95,16 @@ from source:
   DP baseline for developer and profiling runs.
 - `sop-solve --backend rankwidth`: decomposition-DP backend with cut-rank
   diagnostics and count-table/Fourier modes; useful for comparison and targeted
-  low-rank cases.
+  low-rank cases. Its point-table path is unchanged; an affordable QPF list can
+  rescue an instance rejected by the standalone `--max-vars` gate.
+- `sop-solve --backend qpf --qpf-max-terms 4096`: direct quadratic-phase-function
+  solver. Count output uses exact cyclotomic arithmetic (no floating-point or
+  NTT/CRT); single-Fourier output uses scaled long-double coefficients.
+
+A vertex is magic in Fourier mode `a` exactly when `4*a*b_v mod r != 0`.
+This general predicate matters for moduli such as 6 and 16. The QPF budget is a
+term-count ceiling: unaffordable branch components fall through to the existing
+width/branch dispatch without changing its result.
 
 ## QSOP Format
 

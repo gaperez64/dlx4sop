@@ -5,10 +5,13 @@
  * rankwidth_internal.h for the shared types and cross-TU declarations. */
 #include "../core/qsop_internal.h"
 #include "dlx4sop/bitset.h"
+#include "dlx4sop/qpf.h"
 #include "dlx4sop/qsop_solve.h"
+#include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residue.h"
 #include "dlx4sop/simd.h"
 #include "rankwidth_internal.h"
+#include "qpf_magic.h"
 #include "trace.h"
 
 #include <float.h>
@@ -20,6 +23,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static bool rankwidth_qpf_count_affordable(const qsop_instance_t *qsop, uint64_t max_terms) {
+  const uint64_t budget = max_terms == 0U ? UINT64_C(4096) : max_terms;
+  if (!qsop_qpf_phase_order_supported(qsop->r, QSOP_QPF_CYCLOTOMIC_MAX_ORDER) ||
+      qsop->nvars > 96U) {
+    return false;
+  }
+  for (uint64_t mode = 0; mode < qsop->r; mode++) {
+    const uint64_t bound = qsop_qpf_stabilizer_term_bound(qsop, mode);
+    if (bound == UINT64_MAX || bound > budget) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool rankwidth_try_qpf_single(const qsop_instance_t *qsop,
+                                     const qsop_rankwidth_decomposition_t *decomposition,
+                                     uint32_t target_mode, uint64_t max_terms,
+                                     bool *out_handled, qsop_amplitude_t *out,
+                                     qsop_solve_stats_t *stats, qsop_error_t *error) {
+  *out_handled = false;
+  if (!qsop_qpf_phase_order_supported(qsop->r, UINT32_MAX)) {
+    return true;
+  }
+  uint64_t *adj = NULL;
+  if (qsop->nedges != 0U) {
+    adj = rw_adjacency_bitsets(qsop, decomposition->words, error);
+    if (adj == NULL) {
+      return false;
+    }
+  }
+  const bool ok = rw_qpf_hybrid_single_mode(qsop, decomposition, adj, target_mode, max_terms,
+                                             out_handled, out, stats, error);
+  free(adj);
+  return ok;
+}
 
 bool qsop_solve_rankwidth_count_table_mod_stats(const qsop_instance_t *qsop,
                                                 const qsop_rankwidth_decomposition_t *decomposition,
@@ -106,7 +146,12 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
     qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
+  const qsop_rankwidth_solve_options_t o =
+      options != NULL ? *options : (qsop_rankwidth_solve_options_t){0};
   if (qsop->nvars > max_vars) {
+    if (rankwidth_qpf_count_affordable(qsop, o.qpf_max_terms)) {
+      return qsop_solve_qpf(qsop, o.qpf_max_terms, out, stats, error);
+    }
     qsop_set_error(error,
                    "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
                    qsop->nvars);
@@ -121,11 +166,9 @@ bool qsop_solve_rankwidth_options_mode_trace_stats(
   if (!rw_record_decomposition_diagnostics(qsop, decomposition, stats, trace, error)) {
     return false;
   }
-  const qsop_rankwidth_join_strategy_t js =
-      (options != NULL) ? options->join_strategy : QSOP_RANKWIDTH_JOIN_AUTO;
-  const uint64_t mp = (options != NULL) ? options->materialize_join_max_pairs : 0;
-  const qsop_rankwidth_fourier_kernel_t fk =
-      (options != NULL) ? options->fourier_kernel : QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
+  const qsop_rankwidth_join_strategy_t js = o.join_strategy;
+  const uint64_t mp = o.materialize_join_max_pairs;
+  const qsop_rankwidth_fourier_kernel_t fk = o.fourier_kernel;
   if (qsop->nedges == 0) {
     return mode == QSOP_RANKWIDTH_SOLVE_FOURIER
                ? rw_solve_fourier(qsop, decomposition, NULL, fk, out, stats, trace, error)
@@ -178,7 +221,17 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
     qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
+  const qsop_rankwidth_single_mode_options_t o =
+      options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   if (qsop->nvars > max_vars) {
+    bool handled = false;
+    if (!rankwidth_try_qpf_single(qsop, decomposition, target_mode, o.qpf_max_terms, &handled,
+                                  out, stats, error)) {
+      return false;
+    }
+    if (handled) {
+      return true;
+    }
     qsop_set_error(error,
                    "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
                    qsop->nvars);
@@ -208,8 +261,6 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
   long double im = 0.0L;
   long double numeric_error_bound = 0.0L;
   int scale_exp2 = 0;
-  const qsop_rankwidth_single_mode_options_t o =
-      options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = rw_solve_single_mode_once(qsop, decomposition, adj, target_mode, &scale_exp2, &re,
                                             &im, &numeric_error_bound, o.kernel,
                                             o.materialize_join_max_pairs, stats, trace, error);
@@ -256,7 +307,17 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
     qsop_set_error(error, "rankwidth decomposition variable count does not match QSOP");
     return false;
   }
+  const qsop_rankwidth_single_mode_options_t o =
+      options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   if (qsop->nvars > max_vars) {
+    bool handled = false;
+    if (!rankwidth_try_qpf_single(qsop, decomposition, target_mode, o.qpf_max_terms, &handled,
+                                  out, stats, error)) {
+      return false;
+    }
+    if (handled) {
+      return true;
+    }
     qsop_set_error(error,
                    "rankwidth solver refuses %" PRIu32 " variables; pass a larger --max-vars",
                    qsop->nvars);
@@ -289,8 +350,6 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
   long double im = 0.0L;
   long double numeric_error_bound = 0.0L;
   int scale_exp2 = 0;
-  const qsop_rankwidth_single_mode_options_t o =
-      options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = rw_solve_single_mode_once_f64(
       qsop, decomposition, adj, target_mode, &scale_exp2, &re, &im, &numeric_error_bound, o.kernel,
       o.materialize_join_max_pairs, o.simd, stats, trace, error);

@@ -1,6 +1,7 @@
 #include "branch_shadow.h"
 #include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
+#include "qpf_magic.h"
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
@@ -342,6 +343,11 @@ typedef struct branch_search_stats {
   uint32_t depth;
   uint32_t decomposition_width;
   uint32_t rankwidth_cutrank_width;
+  uint64_t qpf_max_terms;
+  uint64_t qpf_decompositions;
+  uint64_t qpf_terms;
+  uint64_t qpf_peak_terms;
+  uint32_t qpf_magic_vertices;
   /* Unlike single-fourier's branch_single_mode_state_t, this recursion's branching fallback
    * (see branch_sum_uncached) has no separate max_fallback_vars-style cap of its own -- the
    * root nvars check in qsop_solve_branch is deliberately loose (see BRANCH_ROOT_SANITY_
@@ -349,6 +355,8 @@ typedef struct branch_search_stats {
    * step per component instead. */
   uint32_t max_vars;
 } branch_search_stats_t;
+
+#define BRANCH_QPF_DEFAULT_MAX_TERMS UINT64_C(4096)
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
@@ -1916,7 +1924,8 @@ static void branch_search_free(branch_search_stats_t *search) {
 }
 
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
-                                     uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+                                     uint32_t max_vars, uint64_t qpf_max_terms,
+                                     qsop_branch_heuristic_t heuristic,
                                      qsop_branch_rw_source_t rw_source,
                                      const qsop_branch_policy_t *policy, qsop_solve_mode_t mode,
                                      uint64_t *counts, qsop_solve_stats_t *stats,
@@ -1932,6 +1941,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
       .mode = mode,
       .count_modulus = count_modulus,
       .max_vars = max_vars,
+      .qpf_max_terms = qpf_max_terms != 0 ? qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS,
   };
 
   if (!qsop_residual_create(qsop, &residual, error) ||
@@ -1984,6 +1994,10 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_residual_prefix_cut_rank = search.max_residual_prefix_cut_rank;
     stats->decomposition_width = search.decomposition_width;
     stats->rankwidth_cutrank_width = search.rankwidth_cutrank_width;
+    stats->qpf_decompositions = search.qpf_decompositions;
+    stats->qpf_terms = search.qpf_terms;
+    stats->qpf_max_terms = search.qpf_peak_terms;
+    stats->qpf_magic_vertices = search.qpf_magic_vertices;
   }
 
   qsop_residual_free(residual);
@@ -2356,6 +2370,89 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
+  /* Stabilizer/QPF is a terminal, not another width delegate. Test its exact term bound before
+   * paying for min-fill and cut-rank diagnostics. The density guard preserves the established
+   * sparse point-table/branch path. CRT branch primes need not contain lcm(R,8)-th roots, so the
+   * count terminal is restricted to the native uint64 pass. */
+  const uint32_t qpf_active_vars = qsop_residual_active_vars(residual);
+  const uint32_t qpf_active_edges = qsop_residual_active_edges(residual);
+  if (stats->count_modulus == 0U && qpf_active_vars > stats->max_vars && qpf_active_vars < 64U &&
+      qpf_active_vars >= 12U &&
+      qpf_active_edges >= qpf_active_vars &&
+      qsop_qpf_phase_order_supported(qsop_residual_modulus(residual),
+                                     QSOP_QPF_CYCLOTOMIC_MAX_ORDER)) {
+    qsop_instance_t qpf_sub = {0};
+    if (!build_active_residual_subinstance(residual, &qpf_sub, error)) {
+      return false;
+    }
+    bool affordable = true;
+    uint32_t peak_magic = 0;
+    for (uint64_t mode = 0; mode < qpf_sub.r; mode++) {
+      const uint32_t magic = qsop_magic_vertex_count(&qpf_sub, mode);
+      const uint64_t bound = qsop_qpf_stabilizer_term_bound(&qpf_sub, mode);
+      if (magic > peak_magic) {
+        peak_magic = magic;
+      }
+      if (bound == UINT64_MAX || bound > stats->qpf_max_terms) {
+        affordable = false;
+        break;
+      }
+    }
+    if (affordable) {
+      qsop_result_t *qpf_result = NULL;
+      qsop_solve_stats_t qpf_stats = {0};
+      if (!qsop_solve_qpf(&qpf_sub, stats->qpf_max_terms, &qpf_result, &qpf_stats, error)) {
+        free_subinstance(&qpf_sub);
+        return false;
+      }
+      uint64_t *qpf_counts = calloc((size_t)qpf_sub.r, sizeof(*qpf_counts));
+      if (qpf_counts == NULL) {
+        qsop_result_free(qpf_result);
+        free_subinstance(&qpf_sub);
+        qsop_set_error(error, "out of memory while adopting branch QPF terminal counts");
+        return false;
+      }
+      bool parsed = true;
+      for (uint32_t residue = 0; residue < (uint32_t)qpf_sub.r; residue++) {
+        if (qpf_result->counts != NULL) {
+          qpf_counts[residue] = qpf_result->counts[residue];
+        } else {
+          char *end = NULL;
+          qpf_counts[residue] = strtoull(qpf_result->count_strings[residue], &end, 10);
+          if (end == NULL || *end != '\0') {
+            parsed = false;
+            break;
+          }
+        }
+      }
+      if (!parsed || !branch_counts_shift_add((uint32_t)qpf_sub.r, counts, qpf_counts,
+                                               (uint32_t)qsop_residual_constant(residual), stats,
+                                               error)) {
+        free(qpf_counts);
+        qsop_result_free(qpf_result);
+        free_subinstance(&qpf_sub);
+        if (!parsed) {
+          qsop_set_error(error, "invalid decimal count returned by branch QPF terminal");
+        }
+        return false;
+      }
+      stats->qpf_decompositions += qpf_stats.qpf_decompositions;
+      stats->qpf_terms += qpf_stats.qpf_terms;
+      if (qpf_stats.qpf_max_terms > stats->qpf_peak_terms) {
+        stats->qpf_peak_terms = qpf_stats.qpf_max_terms;
+      }
+      if (peak_magic > stats->qpf_magic_vertices) {
+        stats->qpf_magic_vertices = peak_magic;
+      }
+      qsop_add_saturating_u64(&stats->leaves, assignment_count(qpf_active_vars));
+      free(qpf_counts);
+      qsop_result_free(qpf_result);
+      free_subinstance(&qpf_sub);
+      return true;
+    }
+    free_subinstance(&qpf_sub);
+  }
+
   bool delegated = false;
   if (!branch_try_dp_delegate(residual, counts, stats, &delegated, error)) {
     return false;
@@ -2472,6 +2569,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 }
 
 static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
+                             uint64_t qpf_max_terms,
                              qsop_branch_heuristic_t heuristic, qsop_branch_rw_source_t rw_source,
                              qsop_result_t **out, qsop_solve_stats_t *stats,
                              qsop_solve_trace_t *trace, qsop_backend_stats_sink_t *sink,
@@ -2514,7 +2612,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     qsop_backend_stats_sink_t *sink_for_prime = p == 0 ? sink : NULL;
-    if (!branch_solve_counts_once(qsop, primes[p], max_vars, heuristic, rw_source, NULL,
+    if (!branch_solve_counts_once(qsop, primes[p], max_vars, qpf_max_terms, heuristic, rw_source, NULL,
                                   QSOP_SOLVE_MODE_COUNT_TABLE, &all_counts[p * (size_t)qsop->r],
                                   stats_for_prime, trace_for_prime, sink_for_prime, error)) {
       free(primes);
@@ -2809,7 +2907,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     }
   }
   if (qsop->nvars >= 64U) {
-    return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace, o.sink,
+    return solve_branch_crt(qsop, max_vars, o.qpf_max_terms, o.heuristic, o.rw_source, out, stats, o.trace, o.sink,
                             error);
   }
 
@@ -2825,7 +2923,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
 
-  if (!branch_solve_counts_once(qsop, 0, max_vars, o.heuristic, o.rw_source, &o.policy, o.mode,
+  if (!branch_solve_counts_once(qsop, 0, max_vars, o.qpf_max_terms, o.heuristic, o.rw_source, &o.policy, o.mode,
                                 result->counts, stats, o.trace, o.sink, error)) {
     qsop_result_free(result);
     return false;
@@ -3009,6 +3107,7 @@ typedef struct branch_single_mode_state {
   uint64_t treewidth_delegate_max_dp_work;
   uint64_t cutset_treewidth_delegate_max_dp_work; /* 0 = reuse treewidth_delegate_max_dp_work */
   uint64_t treewidth_delegate_max_memory_mib;     /* 0 = built-in 12 GiB budget */
+  uint64_t qpf_max_terms;
   bool materialized_reduction;
   bool hadamard_reduction_exact;
   bool diagnose_conditioning;
@@ -4127,6 +4226,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
       .cutset_treewidth_delegate_max_dp_work = o.cutset_treewidth_delegate_max_dp_work,
       .treewidth_delegate_max_memory_mib = o.treewidth_delegate_max_memory_mib,
+      .qpf_max_terms = o.qpf_max_terms != 0 ? o.qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS,
       .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
                                 (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
@@ -4308,6 +4408,59 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   free(component);
   *out = acc;
   *out_split = true;
+  return true;
+}
+
+static bool branch_try_qpf_terminal_single_mode(qsop_residual_t *residual,
+                                                branch_single_mode_state_t *state,
+                                                bool *out_handled, branch_c64_t *out,
+                                                qsop_error_t *error) {
+  *out_handled = false;
+  const uint32_t active_vars = qsop_residual_active_vars(residual);
+  const uint32_t active_edges = qsop_residual_active_edges(residual);
+  if (state->fallback != QSOP_BRANCH_SINGLE_FALLBACK_AUTO ||
+      state->shadow_mode != QSOP_BRANCH_SHADOW_OFF ||
+      state->max_cutset_depth != 0U ||
+      active_vars <= state->max_fallback_vars || active_vars < 12U || active_edges < active_vars ||
+      !qsop_qpf_phase_order_supported(qsop_residual_modulus(residual), UINT32_MAX)) {
+    return true;
+  }
+
+  qsop_instance_t sub = {0};
+  if (!build_active_residual_subinstance(residual, &sub, error)) {
+    return false;
+  }
+  const uint32_t magic = qsop_magic_vertex_count(&sub, state->target_mode);
+  const uint64_t bound = qsop_qpf_stabilizer_term_bound(&sub, state->target_mode);
+  if (bound == UINT64_MAX || bound > state->qpf_max_terms) {
+    free_subinstance(&sub);
+    return true;
+  }
+
+  qsop_amplitude_t amplitude = {0};
+  qsop_solve_stats_t qpf_stats = {0};
+  const bool ok = qsop_solve_qpf_single_mode(&sub, state->target_mode, state->qpf_max_terms,
+                                              &amplitude, &qpf_stats, error);
+  free_subinstance(&sub);
+  if (!ok) {
+    return false;
+  }
+  const branch_c64_t phase =
+      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  *out = c64_mul(phase, c64_normalize((branch_c64_t){
+                            amplitude.re, amplitude.im, amplitude.scale_exp2}));
+  state->numeric_error_bound += amplitude.numeric_error_bound;
+  if (state->stats != NULL) {
+    state->stats->qpf_decompositions += qpf_stats.qpf_decompositions;
+    state->stats->qpf_terms += qpf_stats.qpf_terms;
+    if (qpf_stats.qpf_max_terms > state->stats->qpf_max_terms) {
+      state->stats->qpf_max_terms = qpf_stats.qpf_max_terms;
+    }
+    if (magic > state->stats->qpf_magic_vertices) {
+      state->stats->qpf_magic_vertices = magic;
+    }
+  }
+  *out_handled = true;
   return true;
 }
 
@@ -4578,7 +4731,8 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
     ok = branch_sum_components_single_mode(residual, state, frame, &did_split, out, error);
     if (ok && !did_split) {
       bool delegated = false;
-      if (branch_delegate_probe_due(residual, state, &frame)) {
+      ok = branch_try_qpf_terminal_single_mode(residual, state, &delegated, out, error);
+      if (ok && !delegated && branch_delegate_probe_due(residual, state, &frame)) {
         if (state->stats != NULL) {
           state->stats->branch_delegate_probes++;
         }
@@ -4587,7 +4741,7 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
         frame.levels_since_delegate_probe = 0U;
         frame.vars_at_last_delegate_probe = qsop_residual_active_vars(residual);
         frame.edges_at_last_delegate_probe = qsop_residual_active_edges(residual);
-      } else if (state->stats != NULL) {
+      } else if (ok && !delegated && state->stats != NULL) {
         state->stats->branch_delegate_probe_skips++;
       }
       if (ok && !delegated) {

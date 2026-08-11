@@ -50,7 +50,7 @@ static void print_error(const qsop_error_t *error, const char *fallback_path) {
 int main(int argc, char **argv) {
   const char *input_path = NULL;
   stats_format_t format = STATS_FORMAT_TEXT;
-  qsop_stats_options_t options = {0};
+  qsop_stats_options_t options = {.magic_diagnostics = true};
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -137,8 +137,9 @@ int main(int argc, char **argv) {
 
   qsop_stats_t stats = {0};
   ok = qsop_compute_stats_with_options(qsop, &options, &stats, &error);
-  qsop_free(qsop);
   if (!ok) {
+    qsop_free(qsop);
+    qsop_stats_dispose(&stats);
     print_error(&error, diagnostic_path);
     return 1;
   }
@@ -148,6 +149,8 @@ int main(int argc, char **argv) {
   } else {
     ok = qsop_stats_write_text(stdout, &stats, &error);
   }
+  qsop_stats_dispose(&stats);
+  qsop_free(qsop);
   if (!ok) {
     print_error(&error, "<stdout>");
     return 1;

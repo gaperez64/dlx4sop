@@ -111,6 +111,15 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_table_assignment_bytes;
   uint32_t rankwidth_fourier_kernel;
 
+  /* Exact quadratic-phase-function backend. */
+  uint64_t qpf_decompositions;
+  uint64_t qpf_terms;
+  uint64_t qpf_max_terms;
+  uint64_t qpf_collapses;
+  uint64_t qpf_rebuilds;
+  uint64_t qpf_joins;
+  uint32_t qpf_magic_vertices;
+
   /* Branch dispatch counters */
   uint64_t treewidth_delegations;
   uint64_t rankwidth_delegations;
@@ -190,6 +199,14 @@ typedef struct qsop_solve_stats {
   uint64_t simd_scalar_fallback_ops;
 } qsop_solve_stats_t;
 
+/* Whole-instance Section 5 / Lemma 7 solver. The count path uses exact cyclotomic arithmetic;
+ * the single-mode path evaluates the same QPF list directly. max_terms==0 selects 4096. */
+bool qsop_solve_qpf(const qsop_instance_t *qsop, uint64_t max_terms, qsop_result_t **out,
+                    qsop_solve_stats_t *stats, qsop_error_t *error);
+bool qsop_solve_qpf_single_mode(const qsop_instance_t *qsop, uint32_t target_mode,
+                                uint64_t max_terms, qsop_amplitude_t *out,
+                                qsop_solve_stats_t *stats, qsop_error_t *error);
+
 typedef struct qsop_rankwidth_decomposition qsop_rankwidth_decomposition_t;
 
 typedef enum qsop_solve_mode {
@@ -251,11 +268,13 @@ typedef struct qsop_rankwidth_solve_options {
   qsop_rankwidth_join_strategy_t join_strategy;   /* default AUTO */
   uint64_t materialize_join_max_pairs;            /* 0 = use built-in default */
   qsop_rankwidth_fourier_kernel_t fourier_kernel; /* default AUTO */
+  uint64_t qpf_max_terms;                         /* 0 = 4096 */
 } qsop_rankwidth_solve_options_t;
 
 typedef struct qsop_rankwidth_single_mode_options {
   qsop_rankwidth_single_kernel_t kernel; /* default AUTO */
   uint64_t materialize_join_max_pairs;   /* 0 = use built-in default */
+  uint64_t qpf_max_terms;                /* 0 = 4096 */
   /* Used by contiguous complex kernels and rankwidth's integer bitset work. Signature-keyed CSR
    * gathers remain scalar because their output writes are scattered. */
   const qsop_simd_vtable_t *simd;
@@ -486,6 +505,8 @@ typedef struct qsop_branch_solve_options {
   qsop_branch_rw_source_t rw_source; /* default NONE (0) */
   qsop_solve_mode_t mode;            /* default COUNT_TABLE (0) */
   qsop_branch_policy_t policy;       /* all-zero fields take built-in defaults */
+  /* Maximum stabilizer/QPF terms for the pre-width-probe terminal. Zero selects 4096. */
+  uint64_t qpf_max_terms;
   qsop_backend_stats_sink_t *sink;   /* NULL to disable JSONL sink */
   qsop_solve_trace_t *trace;         /* NULL to disable tracing */
 } qsop_branch_solve_options_t;
@@ -602,6 +623,9 @@ typedef struct qsop_branch_single_mode_options {
    * mid-run. Zero selects the built-in budget (12 GiB, matching the gauntlet's per-solve
    * RLIMIT_AS); set it to match a tighter process memory limit. */
   uint64_t treewidth_delegate_max_memory_mib;
+
+  /* Maximum stabilizer/QPF terms for the pre-width-probe terminal. Zero selects 4096. */
+  uint64_t qpf_max_terms;
 
   qsop_backend_stats_sink_t *sink;
   qsop_solve_trace_t *trace;
