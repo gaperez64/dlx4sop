@@ -11,6 +11,7 @@ import Formal.Core.Fourier
 import Formal.Core.LinearLayout
 import Formal.Quantum.Capstone
 import Formal.Paper
+import Formal.Stab.Paper
 
 /-!
 # Rank-width FPT quantum-circuit simulation — library root
@@ -26,4 +27,16 @@ import Formal.Paper
 * `Formal.SopInstance.rank_dp_spec`, `fourier_mode_spec`, `linear_fourier_mode_spec` and
   `Formal.Quantum.amplitude_eq_sop_normalized`, `amplitude_by_rank_dp_normalized`. These are
   the exact paper-facing compositions used by the Lean badges.
+
+The stabilizer-rank join (`sec:stabjoin`) adds:
+
+* `Formal.Stab.IsQPF`, `Formal.Stab.QPF` — quadratic phase functions (def:qpf)
+* `Formal.Stab.qpf_closure_spec` — closure under products, single-variable summation and
+  pushforward (lem:qpf-closure)
+* `Formal.Stab.stab_join_spec` — the join stays inside the class (lem:stab-join)
+* `Formal.Stab.magic_decomp_spec` — the `2^τ` magic decomposition (lem:magic-decomp)
+* `Formal.Stab.clifford_collapse_spec` — the Ideal case: a single QPF and `6·|V|` operations,
+  independent of the width (Gottesman–Knill through the SOP lens)
+* `Formal.Stab.hybrid_never_loses_spec` — the Bad case: the same `|V|·(2+4^k)` bound as the
+  plain per-mode join (thm:hybrid-dp)
 -/
