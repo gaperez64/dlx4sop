@@ -2492,89 +2492,9 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
-  /* Stabilizer/QPF is a terminal, not another width delegate. Test its exact term bound before
-   * paying for min-fill and cut-rank diagnostics. The density guard preserves the established
-   * sparse point-table/branch path. CRT branch primes need not contain lcm(R,8)-th roots, so the
-   * count terminal is restricted to the native uint64 pass. */
-  const uint32_t qpf_active_vars = qsop_residual_active_vars(residual);
-  const uint32_t qpf_active_edges = qsop_residual_active_edges(residual);
-  if (stats->count_modulus == 0U && qpf_active_vars > stats->max_vars && qpf_active_vars < 64U &&
-      qpf_active_vars >= 12U &&
-      qpf_active_edges >= qpf_active_vars &&
-      qsop_qpf_phase_order_supported(qsop_residual_modulus(residual),
-                                     QSOP_QPF_CYCLOTOMIC_MAX_ORDER)) {
-    qsop_instance_t qpf_sub = {0};
-    if (!build_active_residual_subinstance(residual, &qpf_sub, error)) {
-      return false;
-    }
-    bool affordable = true;
-    uint32_t peak_magic = 0;
-    for (uint64_t mode = 0; mode < qpf_sub.r; mode++) {
-      const uint32_t magic = qsop_magic_vertex_count(&qpf_sub, mode);
-      const uint64_t bound = qsop_qpf_stabilizer_term_bound(&qpf_sub, mode);
-      if (magic > peak_magic) {
-        peak_magic = magic;
-      }
-      if (bound == UINT64_MAX || bound > stats->qpf_max_terms) {
-        affordable = false;
-        break;
-      }
-    }
-    if (affordable) {
-      qsop_result_t *qpf_result = NULL;
-      qsop_solve_stats_t qpf_stats = {0};
-      if (!qsop_solve_qpf(&qpf_sub, stats->qpf_max_terms, &qpf_result, &qpf_stats, error)) {
-        free_subinstance(&qpf_sub);
-        return false;
-      }
-      uint64_t *qpf_counts = calloc((size_t)qpf_sub.r, sizeof(*qpf_counts));
-      if (qpf_counts == NULL) {
-        qsop_result_free(qpf_result);
-        free_subinstance(&qpf_sub);
-        qsop_set_error(error, "out of memory while adopting branch QPF terminal counts");
-        return false;
-      }
-      bool parsed = true;
-      for (uint32_t residue = 0; residue < (uint32_t)qpf_sub.r; residue++) {
-        if (qpf_result->counts != NULL) {
-          qpf_counts[residue] = qpf_result->counts[residue];
-        } else {
-          char *end = NULL;
-          qpf_counts[residue] = strtoull(qpf_result->count_strings[residue], &end, 10);
-          if (end == NULL || *end != '\0') {
-            parsed = false;
-            break;
-          }
-        }
-      }
-      if (!parsed || !branch_counts_shift_add((uint32_t)qpf_sub.r, counts, qpf_counts,
-                                               (uint32_t)qsop_residual_constant(residual), stats,
-                                               error)) {
-        free(qpf_counts);
-        qsop_result_free(qpf_result);
-        free_subinstance(&qpf_sub);
-        if (!parsed) {
-          qsop_set_error(error, "invalid decimal count returned by branch QPF terminal");
-        }
-        return false;
-      }
-      stats->qpf_decompositions += qpf_stats.qpf_decompositions;
-      stats->qpf_terms += qpf_stats.qpf_terms;
-      if (qpf_stats.qpf_max_terms > stats->qpf_peak_terms) {
-        stats->qpf_peak_terms = qpf_stats.qpf_max_terms;
-      }
-      if (peak_magic > stats->qpf_magic_vertices) {
-        stats->qpf_magic_vertices = peak_magic;
-      }
-      qsop_add_saturating_u64(&stats->leaves, assignment_count(qpf_active_vars));
-      free(qpf_counts);
-      qsop_result_free(qpf_result);
-      free_subinstance(&qpf_sub);
-      return true;
-    }
-    free_subinstance(&qpf_sub);
-  }
-
+  /* The QPF (stabilizer-rank) terminal is priced as a first-class cost axis inside
+   * branch_try_dp_delegate (argmin of the treewidth, rankwidth, and QPF estimates), so no separate
+   * pre-width-probe rescue is needed here. */
   bool delegated = false;
   if (!branch_try_dp_delegate(residual, counts, stats, &delegated, error)) {
     return false;
