@@ -48,6 +48,7 @@ dlx4sop_core_sources = files(
     'src/solve/rankwidth_cutrank.c',
     'src/solve/rankwidth_dp_counts.c',
     'src/solve/rankwidth_dp_complex.c',
+    'src/solve/rankwidth_join_plan.c',
     'src/solve/rankwidth_drivers.c',
     'src/solve/rankwidth_join_twist.c',
     'src/solve/residual.c',

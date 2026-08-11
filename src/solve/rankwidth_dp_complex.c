@@ -412,6 +412,12 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
    * when ctx->r exceeds UINT32_MAX. */
   const uint32_t r = (uint32_t)ctx->r;
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
+  rw_join_plan_t plan = {0};
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    return false;
+  }
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = rw_complex_assignment(left, i, words);
     const long double left_re = left->re[i];
@@ -420,9 +426,10 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
       const uint64_t *right_rep = rw_complex_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         return false;
       }
       if (!eval.valid) {
@@ -435,6 +442,7 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
         qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                            &out_index, error)) {
+          rw_join_plan_free(&plan);
           return false;
         }
       }
@@ -451,6 +459,7 @@ static bool solve_join_complex_streaming(const qsop_instance_t *qsop, const uint
       ctx->complex_ops++;
     }
   }
+  rw_join_plan_free(&plan);
   return true;
 }
 static bool solve_join_complex64_streaming(
@@ -461,6 +470,12 @@ static bool solve_join_complex64_streaming(
   const uint32_t r = (uint32_t)ctx->r;
   const qsop_simd_vtable_t *simd = ctx->simd;
   uint64_t scalar_ops = 0;
+  rw_join_plan_t plan = {0};
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    return false;
+  }
   for (size_t i = 0; i < left->len; i++) {
     const uint64_t *left_rep = rw_complex64_assignment(left, i, words);
     const double left_re = left->re[i];
@@ -469,9 +484,10 @@ static bool solve_join_complex64_streaming(
       const uint64_t *right_rep = rw_complex64_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         return false;
       }
       if (!eval.valid) {
@@ -484,6 +500,7 @@ static bool solve_join_complex64_streaming(
         qsop_bitset_or_simd(parent_assignment, right_rep, words, simd);
         if (!complex64_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                              &out_index, error)) {
+          rw_join_plan_free(&plan);
           return false;
         }
       }
@@ -501,6 +518,7 @@ static bool solve_join_complex64_streaming(
       scalar_ops++;
     }
   }
+  rw_join_plan_free(&plan);
   note_rankwidth_f64_scalar_fallback(ctx, scalar_ops);
   return true;
 }
@@ -525,6 +543,7 @@ static bool solve_join_complex_dense_reference(
   bool ok = false;
   rw_dense_basis_t left_basis = {0};
   rw_dense_basis_t right_basis = {0};
+  rw_join_plan_t plan = {0};
   long double *left_dense_re = NULL;
   long double *left_dense_im = NULL;
   long double *right_dense_re = NULL;
@@ -587,6 +606,12 @@ static bool solve_join_complex_dense_reference(
     right_dense_im[(size_t)coord] = right->im[i];
   }
 
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    goto cleanup;
+  }
+
   const uint32_t r = (uint32_t)ctx->r;
   for (size_t lc = 0; lc < left_signatures; lc++) {
     const uint32_t li = left_index[lc];
@@ -612,8 +637,8 @@ static bool solve_join_complex_dense_reference(
       const uint64_t *right_rep = rw_complex_assignment(right, ri, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[li], left_rep,
-              left->assignment_weights[li], right->signatures[ri], right_rep,
+              qsop->nvars, adj, pool, &plan, li, ri, outside, words, r, left->signatures[li],
+              left_rep, left->assignment_weights[li], right->signatures[ri], right_rep,
               right->assignment_weights[ri], scratch_sig, &eval, error)) {
         goto cleanup;
       }
@@ -646,6 +671,7 @@ static bool solve_join_complex_dense_reference(
   ok = true;
 
 cleanup:
+  rw_join_plan_free(&plan);
   free(left_dense_re);
   free(left_dense_im);
   free(right_dense_re);
@@ -679,6 +705,7 @@ static bool solve_join_complex64_dense_reference(
   bool ok = false;
   rw_dense_basis_t left_basis = {0};
   rw_dense_basis_t right_basis = {0};
+  rw_join_plan_t plan = {0};
   double *left_dense_re = NULL;
   double *left_dense_im = NULL;
   double *right_dense_re = NULL;
@@ -743,6 +770,12 @@ static bool solve_join_complex64_dense_reference(
     right_dense_im[(size_t)coord] = right->im[i];
   }
 
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    goto cleanup;
+  }
+
   const uint32_t r = (uint32_t)ctx->r;
   uint64_t scalar_ops = 0;
   for (size_t lc = 0; lc < left_signatures; lc++) {
@@ -769,8 +802,8 @@ static bool solve_join_complex64_dense_reference(
       const uint64_t *right_rep = rw_complex64_assignment(right, ri, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[li], left_rep,
-              left->assignment_weights[li], right->signatures[ri], right_rep,
+              qsop->nvars, adj, pool, &plan, li, ri, outside, words, r, left->signatures[li],
+              left_rep, left->assignment_weights[li], right->signatures[ri], right_rep,
               right->assignment_weights[ri], scratch_sig, &eval, error)) {
         goto cleanup;
       }
@@ -808,6 +841,7 @@ static bool solve_join_complex64_dense_reference(
   ok = true;
 
 cleanup:
+  rw_join_plan_free(&plan);
   free(left_dense_re);
   free(left_dense_im);
   free(right_dense_re);
@@ -1302,6 +1336,13 @@ static bool rw_complex_transition_csr_build(
     qsop_set_error(error, "out of memory while building rankwidth single-mode transition counts");
     return false;
   }
+  rw_join_plan_t plan = {0};
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    free(counts);
+    return false;
+  }
 
   uint64_t total = 0;
   for (uint32_t i = 0; i < (uint32_t)left->len; i++) {
@@ -1310,9 +1351,10 @@ static bool rw_complex_transition_csr_build(
       const uint64_t *right_rep = rw_complex_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         return false;
       }
@@ -1324,6 +1366,7 @@ static bool rw_complex_transition_csr_build(
       size_t out_index = 0;
       if (!complex_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                          &out_index, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         return false;
       }
@@ -1331,6 +1374,7 @@ static bool rw_complex_transition_csr_build(
       counts[i]++;
       total++;
       if (total > UINT32_MAX) {
+        rw_join_plan_free(&plan);
         free(counts);
         qsop_set_error(error, "rankwidth single-mode materialized join has too many transitions");
         return false;
@@ -1341,6 +1385,7 @@ static bool rw_complex_transition_csr_build(
   uint32_t *offsets = malloc((left->len + 1U) * sizeof(*offsets));
   rw_complex_transition32_t *items = total == 0 ? NULL : malloc((size_t)total * sizeof(*items));
   if (offsets == NULL || (total != 0 && items == NULL)) {
+    rw_join_plan_free(&plan);
     free(counts);
     free(offsets);
     free(items);
@@ -1359,9 +1404,10 @@ static bool rw_complex_transition_csr_build(
       const uint64_t *right_rep = rw_complex_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         free(offsets);
         free(items);
@@ -1372,6 +1418,7 @@ static bool rw_complex_transition_csr_build(
       }
       size_t parent_index = 0;
       if (!complex_table_find_signature(out, eval.parent_signature, &parent_index)) {
+        rw_join_plan_free(&plan);
         free(counts);
         free(offsets);
         free(items);
@@ -1387,6 +1434,7 @@ static bool rw_complex_transition_csr_build(
     }
   }
 
+  rw_join_plan_free(&plan);
   free(counts);
   *csr = (rw_complex_transition_csr_t){
       .left_count = (uint32_t)left->len,
@@ -1435,6 +1483,13 @@ static bool rw_complex64_transition_csr_build(
                    "out of memory while building rankwidth double single-mode transition counts");
     return false;
   }
+  rw_join_plan_t plan = {0};
+  if (!rw_join_plan_build(qsop->nvars, pool, left->signatures, left->assignments, left->len,
+                          right->signatures, right->assignments, right->len, outside, words, &plan,
+                          error)) {
+    free(counts);
+    return false;
+  }
 
   uint64_t total = 0;
   for (uint32_t i = 0; i < (uint32_t)left->len; i++) {
@@ -1443,9 +1498,10 @@ static bool rw_complex64_transition_csr_build(
       const uint64_t *right_rep = rw_complex64_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         return false;
       }
@@ -1457,6 +1513,7 @@ static bool rw_complex64_transition_csr_build(
       size_t out_index = 0;
       if (!complex64_table_signature_index(out, eval.parent_signature, parent_assignment, words,
                                            &out_index, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         return false;
       }
@@ -1464,6 +1521,7 @@ static bool rw_complex64_transition_csr_build(
       counts[i]++;
       total++;
       if (total > UINT32_MAX) {
+        rw_join_plan_free(&plan);
         free(counts);
         qsop_set_error(error,
                        "rankwidth double single-mode materialized join has too many transitions");
@@ -1475,6 +1533,7 @@ static bool rw_complex64_transition_csr_build(
   uint32_t *offsets = malloc((left->len + 1U) * sizeof(*offsets));
   rw_complex_transition32_t *items = total == 0 ? NULL : malloc((size_t)total * sizeof(*items));
   if (offsets == NULL || (total != 0 && items == NULL)) {
+    rw_join_plan_free(&plan);
     free(counts);
     free(offsets);
     free(items);
@@ -1493,6 +1552,7 @@ static bool rw_complex64_transition_csr_build(
    * item. */
   uint32_t *back = malloc((left->len == 0 ? 1U : left->len) * sizeof(*back));
   if (back == NULL) {
+    rw_join_plan_free(&plan);
     free(counts);
     free(offsets);
     free(items);
@@ -1510,9 +1570,10 @@ static bool rw_complex64_transition_csr_build(
       const uint64_t *right_rep = rw_complex64_assignment(right, j, words);
       rw_transition_eval_t eval;
       if (!rw_compute_join_transition_sign(
-              qsop->nvars, adj, pool, outside, words, r, left->signatures[i], left_rep,
-              left->assignment_weights[i], right->signatures[j], right_rep,
+              qsop->nvars, adj, pool, &plan, i, j, outside, words, r, left->signatures[i],
+              left_rep, left->assignment_weights[i], right->signatures[j], right_rep,
               right->assignment_weights[j], scratch_sig, &eval, error)) {
+        rw_join_plan_free(&plan);
         free(counts);
         free(offsets);
         free(items);
@@ -1524,6 +1585,7 @@ static bool rw_complex64_transition_csr_build(
       }
       size_t parent_index = 0;
       if (!complex64_table_find_signature(out, eval.parent_signature, &parent_index)) {
+        rw_join_plan_free(&plan);
         free(counts);
         free(offsets);
         free(items);
@@ -1541,6 +1603,7 @@ static bool rw_complex64_transition_csr_build(
     }
   }
 
+  rw_join_plan_free(&plan);
   free(counts);
   free(back);
   *csr = (rw_complex_transition_csr_t){

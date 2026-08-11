@@ -8,6 +8,7 @@
  * an `rw_` prefix added (if it didn't already carry one) where a definition moved to a
  * different translation unit than its callers. */
 
+#include "dlx4sop/bitset.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/simd.h"
 
@@ -166,6 +167,45 @@ typedef struct rw_twist_plan {
   uint32_t c;
   uint64_t forecast_ops; /* 2^{p+c}(p+c+1) + 2^p(p+1) + |U| + |V| */
 } rw_twist_plan_t;
+/* Per-join coordinate plan (docs/table-representation-audit.md, refactor steps 2-3).
+ *
+ * Signatures realized at a cut span a GF(2) space of dimension rho-hat <= min(cut rank, k), so
+ * per join we fix a basis of each child's realized signatures (tracking, for each basis
+ * generator, the representative that introduced it) and precompute three coordinate-level
+ * objects:
+ *   - lcoord/rcoord: each representative's signature as a rho-hat-bit coordinate word;
+ *   - lproj/rproj: the same coordinates pushed through the parent projection
+ *     sigma -> sigma & outside, expressed in a basis of the projected span, so a pair's parent
+ *     signature coordinate is just lproj[i] ^ rproj[j];
+ *   - mfold: the crossing bilinear form chi (lem:chi-well-defined guarantees chi depends on the
+ *     pair of signatures only) evaluated on basis pairs via the cached half-product identity
+ *     chi = |witness_L & sigma_R| mod 2, then folded with each right coordinate, so a pair's
+ *     crossing parity is popcount(lcoord[i] & mfold[j]) & 1.
+ * Per pair this replaces all full-width bitset work by a handful of 64-bit word ops; the
+ * full-width parent-signature intern survives only once per distinct parent coordinate
+ * (sig_memo).  Dimensions are capped by the dense-basis machinery at
+ * RW_DENSE_REFERENCE_MAX_DIM; a join whose realized span exceeds the cap simply leaves the
+ * plan inactive and the callers fall back to the per-pair extrinsic path. */
+typedef struct rw_join_plan {
+  bool active;
+  uint32_t ldim;
+  uint32_t rdim;
+  uint32_t pdim;
+  size_t llen;
+  size_t rlen;
+  uint64_t *lcoord; /* [llen] left signature coordinates in the realized left basis */
+  uint64_t *rcoord; /* [rlen] right signature coordinates in the realized right basis */
+  uint64_t *lproj;  /* [llen] parent-basis coordinates of sigma_L & outside */
+  uint64_t *rproj;  /* [rlen] parent-basis coordinates of sigma_R & outside */
+  uint64_t *mfold;  /* [rlen] crossing form folded with rcoord: parity = |lcoord & mfold| mod 2 */
+  uint32_t *sig_memo; /* [1 << pdim] parent coordinate -> interned pool id (UINT32_MAX = unseen) */
+} rw_join_plan_t;
+static inline uint32_t rw_join_plan_parity(const rw_join_plan_t *plan, size_t i, size_t j) {
+  return qsop_popcount_u64(plan->lcoord[i] & plan->mfold[j]) & 1U;
+}
+static inline uint64_t rw_join_plan_parent_coord(const rw_join_plan_t *plan, size_t i, size_t j) {
+  return plan->lproj[i] ^ plan->rproj[j];
+}
 typedef struct rw_sig_ht {
   uint32_t *slots; /* maps hash bucket → pool index (UINT32_MAX = empty) */
   uint64_t *keys;  /* parallel fingerprint for fast comparison without dereferencing pool */
@@ -232,6 +272,7 @@ bool rw_complex_slots_rehash(rw_complex_table_t *table, qsop_error_t *error);
 void rw_complex_table_free(rw_complex_table_t *table);
 
 bool rw_compute_join_transition_sign(uint32_t nvars, const uint64_t *adj, rw_signature_pool_t *pool,
+                                     rw_join_plan_t *plan, size_t plan_i, size_t plan_j,
                                      const uint64_t *outside, size_t words, uint32_t r,
                                      uint32_t left_signature, const uint64_t *left_rep,
                                      uint32_t left_weight, uint32_t right_signature,
@@ -293,6 +334,19 @@ void rw_fourier_table_free(rw_fourier_table_t *table);
 uint64_t *rw_join_map_assignment(const rw_join_map_t *map, size_t index, size_t words);
 
 void rw_join_map_free(rw_join_map_t *map);
+
+bool rw_join_plan_build(uint32_t nvars, const rw_signature_pool_t *pool, const uint32_t *left_sigs,
+                        const uint64_t *left_assignments, size_t llen, const uint32_t *right_sigs,
+                        const uint64_t *right_assignments, size_t rlen, const uint64_t *outside,
+                        size_t words, rw_join_plan_t *plan, qsop_error_t *error);
+
+void rw_join_plan_free(rw_join_plan_t *plan);
+
+bool rw_join_plan_parent_signature(rw_join_plan_t *plan, rw_signature_pool_t *pool,
+                                   uint64_t parent_coord, uint32_t left_signature,
+                                   uint32_t right_signature, const uint64_t *outside,
+                                   uint64_t *scratch_sig, size_t words, uint32_t *out,
+                                   qsop_error_t *error);
 
 bool rw_record_decomposition_diagnostics(const qsop_instance_t *qsop,
                                          const qsop_rankwidth_decomposition_t *decomposition,
