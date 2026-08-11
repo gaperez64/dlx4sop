@@ -210,9 +210,9 @@ bool qsop_solve_rankwidth_single_mode_options(const qsop_instance_t *qsop,
   int scale_exp2 = 0;
   const qsop_rankwidth_single_mode_options_t o =
       options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
-  const bool ok = rw_solve_single_mode_once(qsop, decomposition, adj, target_mode, &scale_exp2, &re,
-                                            &im, &numeric_error_bound, o.kernel,
-                                            o.materialize_join_max_pairs, stats, trace, error);
+  const bool ok = rw_solve_single_mode_once(
+      qsop, decomposition, adj, target_mode, &scale_exp2, &re, &im, &numeric_error_bound, o.kernel,
+      o.materialize_join_max_pairs, o.memory_budget_bytes, stats, trace, error);
   free(adj);
   if (!ok) {
     return false;
@@ -293,7 +293,7 @@ bool qsop_solve_rankwidth_single_mode_f64_options(
       options != NULL ? *options : (qsop_rankwidth_single_mode_options_t){0};
   const bool ok = rw_solve_single_mode_once_f64(
       qsop, decomposition, adj, target_mode, &scale_exp2, &re, &im, &numeric_error_bound, o.kernel,
-      o.materialize_join_max_pairs, o.simd, stats, trace, error);
+      o.materialize_join_max_pairs, o.memory_budget_bytes, o.simd, stats, trace, error);
   free(adj);
   if (!ok) {
     return false;

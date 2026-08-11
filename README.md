@@ -95,8 +95,10 @@ from source:
   diagnostics and count-table/Fourier modes; useful for comparison and targeted
   low-rank cases. `--rankwidth-single-kernel twist` evaluates a branching join by
   Walsh-Hadamard transforms instead of scanning signature pairs, which reaches base
-  `2^k` whenever the two children interact across a bounded-rank cut; `auto` adopts
-  it per join when it forecasts a win.
+  `2^k` whenever the two children interact across a bounded-rank cut. `pairwise`
+  chooses among the dense, materialized, and streaming scans. `auto` compares that
+  pairwise choice with twist using the same calibrated model that scores
+  `--rankwidth-generate best` decompositions.
 
 ## QSOP Format
 

@@ -369,9 +369,9 @@ static int test_reach_counts(uint64_t *state) {
         }
       }
       if (counts[w] != naive) {
-        fprintf(stderr, "reach counts mismatch at p=%" PRIu32 " w=%zu: %" PRIu64 " != %" PRIu64
-                        "\n",
-                p, w, counts[w], naive);
+        fprintf(stderr,
+                "reach counts mismatch at p=%" PRIu32 " w=%zu: %" PRIu64 " != %" PRIu64 "\n", p, w,
+                counts[w], naive);
         return 1;
       }
     }
@@ -407,16 +407,14 @@ static int test_too_large(void) {
   uint32_t left_signatures[3];
   uint32_t right_signatures[1];
   for (uint32_t i = 0; i < 3U && rc == 0; i++) {
-    const uint64_t bits =
-        signature_bits_of(adj, words, nvars, UINT64_C(1) << i, ((UINT64_C(1) << nvars) - 1U) &
-                                                                   ~left_vars);
+    const uint64_t bits = signature_bits_of(adj, words, nvars, UINT64_C(1) << i,
+                                            ((UINT64_C(1) << nvars) - 1U) & ~left_vars);
     if (!rw_signature_pool_intern(&pool, &bits, &left_signatures[i], &error)) {
       rc = 1;
     }
   }
-  const uint64_t right_bits =
-      signature_bits_of(adj, words, nvars, UINT64_C(1) << 3U,
-                        ((UINT64_C(1) << nvars) - 1U) & ~right_vars);
+  const uint64_t right_bits = signature_bits_of(adj, words, nvars, UINT64_C(1) << 3U,
+                                                ((UINT64_C(1) << nvars) - 1U) & ~right_vars);
   if (rc == 0 && !rw_signature_pool_intern(&pool, &right_bits, &right_signatures[0], &error)) {
     rc = 1;
   }
@@ -450,8 +448,8 @@ static int test_too_large(void) {
         rw_twist_plan_build(nvars, adj, &pool, left_signatures, 3U, right_signatures, 1U,
                             &left_vars, &right_vars, &outside, words, true, 6U, &plan, &error);
     if (status != RW_TWIST_FEASIBLE || plan.c != 3U || plan.p != 3U) {
-      fprintf(stderr, "too-large: feasible geometry refused (status %d, p=%" PRIu32
-                      ", c=%" PRIu32 ")\n",
+      fprintf(stderr,
+              "too-large: feasible geometry refused (status %d, p=%" PRIu32 ", c=%" PRIu32 ")\n",
               (int)status, plan.p, plan.c);
       rc = 1;
     }
@@ -459,6 +457,50 @@ static int test_too_large(void) {
   }
   rw_signature_pool_free(&pool);
   return rc;
+}
+
+static int test_cost_policy(void) {
+  const rw_single_join_forecast_t small =
+      rw_single_join_forecast(QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO, 32U, 32U, 32U, 5U, 5U, 5U, 1U, 1U,
+                              sizeof(double), RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT, 0U);
+  if (!small.feasible || small.selected == RW_SINGLE_JOIN_TWIST) {
+    fputs("cost policy: AUTO selected twist below the planning threshold\n", stderr);
+    return 1;
+  }
+
+  const rw_single_join_forecast_t bounded =
+      rw_single_join_forecast(QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO, 256U, 256U, 256U, 8U, 8U, 8U, 1U,
+                              1U, sizeof(double), RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT, 0U);
+  if (!bounded.feasible || bounded.selected != RW_SINGLE_JOIN_TWIST ||
+      bounded.twist_ns >= bounded.pairwise_ns) {
+    fputs("cost policy: AUTO missed the calibrated bounded-crossing win\n", stderr);
+    return 1;
+  }
+
+  const rw_single_join_forecast_t full_crossing =
+      rw_single_join_forecast(QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO, 1024U, 1024U, 1024U, 10U, 10U, 10U,
+                              10U, 1U, sizeof(double), UINT64_C(4194304), 0U);
+  if (!full_crossing.feasible || full_crossing.selected != RW_SINGLE_JOIN_TWIST) {
+    fputs("cost policy: AUTO missed the calibrated full-crossing win\n", stderr);
+    return 1;
+  }
+
+  const rw_single_join_forecast_t capped =
+      rw_single_join_forecast(QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO, 256U, 256U, 256U, 8U, 8U, 8U, 1U,
+                              1U, sizeof(double), RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT, 1024U);
+  if (!capped.feasible || capped.selected == RW_SINGLE_JOIN_TWIST) {
+    fputs("cost policy: AUTO ignored the twist workspace budget\n", stderr);
+    return 1;
+  }
+
+  const rw_single_join_forecast_t pairwise =
+      rw_single_join_forecast(QSOP_RANKWIDTH_SINGLE_KERNEL_PAIRWISE, 256U, 256U, 256U, 8U, 8U, 8U,
+                              1U, 1U, sizeof(double), RW_MATERIALIZE_JOIN_MAX_PAIRS_DEFAULT, 0U);
+  if (!pairwise.feasible || pairwise.selected == RW_SINGLE_JOIN_TWIST) {
+    fputs("cost policy: pairwise selected twist\n", stderr);
+    return 1;
+  }
+  return 0;
 }
 
 int main(void) {
@@ -469,6 +511,7 @@ int main(void) {
   rc |= test_twisted_pipeline(&state);
   rc |= test_reach_counts(&state);
   rc |= test_too_large();
+  rc |= test_cost_policy();
   if (rc == 0) {
     printf("rankwidth twist plan unit tests passed\n");
   }

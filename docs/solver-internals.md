@@ -349,16 +349,29 @@ where `B` is the crossing parity between the two children.
   Fourier modes carry no sign kernel, so `c` is zero and the join degenerates to a
   single XOR convolution. Refuses above `RW_TWIST_MAX_DIM` (a cap on `p + c`).
 
-Under `auto` the kernels are chosen per join. The dense preflight runs first; the
-twist plan is then built when the pairwise forecast reaches
-`RW_TWIST_AUTO_MIN_PAIRS`, and the transform is adopted only when its forecast is
-a strict win over the cheapest available scan *and* its dense tables fit
-`RW_TWIST_AUTO_MAX_BYTES`. That second condition matters because the transform is
+`pairwise` chooses the least expensive feasible dense, materialized, or streaming
+kernel at each join. `auto` compares that choice with twist. The dense preflight
+runs first. The twist plan is then built when the pairwise forecast reaches
+`RW_TWIST_AUTO_MIN_PAIRS`. The shared cost model adopts the transform only for a
+predicted speedup of at least 10 percent and when its dense tables fit
+`RW_TWIST_AUTO_MAX_BYTES`. The memory condition matters because the transform is
 dense where the pairwise kernels are sparse, so an operation-count win can still
-cost one to two orders of magnitude more peak memory; naming the kernel explicitly
-opts out of the byte budget and is bounded only by the dimension cap. Small joins therefore never pay the
-plan-building passes, and the crossing rank decides the outcome: a bounded-rank
-crossing reaches base `2^k` while a full-rank one stays with the pairwise kernels.
+cost one to two orders of magnitude more peak memory. Naming the kernel explicitly
+opts out of AUTO's built-in byte cap, but still honors an explicit rankwidth memory
+budget and the dimension cap. Small joins therefore never pay the plan-building
+passes. The crossing rank decides the outcome:
+a bounded-rank crossing reaches base `2^k` while a full-rank one stays with the
+pairwise kernels.
+
+For single-Fourier solves, `--rankwidth-generate best` scores complete
+decompositions with this same kernel policy. Its profile includes the cut ranks,
+crossing ranks, predicted child and parent signature counts, chosen join mix,
+solve time, and peak memory. The default progressive search always evaluates the
+left-deep and balanced trees. It admits more expensive generators only while their
+estimated planning cost fits a budget derived from the best predicted solve time,
+capped at five seconds. `--rankwidth-best-search exhaustive` evaluates the full
+developer portfolio. Count-table and all-modes callers retain the previous
+exhaustive entry-count score through the compatibility API.
 
 Which parent coordinates are actually realized is decided exactly -- by direct pair
 marking, or by an exact modular transform above its budget -- never by testing the
@@ -384,7 +397,9 @@ closely tied to the dispatch described above are:
   conditioning options above, and `--branch-shadow`.
 - Rankwidth standalone policy: `--rankwidth-memory-budget-mib`,
   `--rankwidth-memory-policy`, `--rankwidth-join-strategy`,
-  `--rankwidth-single-kernel` (`auto|streaming|materialized|dense|twist`), and
+  `--rankwidth-single-kernel`
+  (`auto|pairwise|streaming|materialized|dense|twist`),
+  `--rankwidth-best-search` (`progressive|exhaustive`), and
   `--rankwidth-fourier-kernel`.
 
 The process reads no solver-tuning environment variables.
@@ -426,6 +441,11 @@ flags or the private `C_*` constants.
   `rankwidth_dense_join_events`, and `rankwidth_twist_join_events` report which
   join kernel ran where; the matching trace phases are
   `rankwidth.single_mode_join_{dense,map,twist}` (plus `_f64`).
+- `rankwidth_predicted_solve_ns`, `rankwidth_predicted_peak_bytes`, the predicted
+  pairwise and twist join counts, and the `rankwidth_planner_*` fields expose the
+  decomposition decision. Per-node `rankwidth.single_join.*` trace records expose
+  the realized structural profile, selected kernel, predicted time and workspace,
+  and actual join time.
 - `branch_delegate_probes`, `branch_conditioning_nodes`,
   `branch_max_cutset_depth`, `branch_last_delegate_miss`, and
   `termination_reason` explain single-Fourier conditioning and refusal.
