@@ -3,8 +3,10 @@
 Lean 4 + Mathlib formalization of the core results of *"Quadratic Sums-of-Powers for
 Fixed-Parameter Tractable Quantum-Circuit Simulation"* (de Colnet, Geerts, Hai, Laarman,
 Lee, Pérez): the correctness and (operation-count) runtime of the rank-decomposition dynamic
-program for quadratic sums-of-powers, its Fourier-mode and linear-layout variants, and the
-coupling to the real circuit amplitude for `{H, T, CZ}` (= Clifford+T, since `S = T²`).
+program for quadratic sums-of-powers, its Fourier-mode and linear-layout variants, the
+coupling to the real circuit amplitude for `{H, T, CZ}` (= Clifford+T, since `S = T²`), and
+the stabilizer-rank join of `sec:stabjoin` — quadratic phase functions, their closure
+properties, the join that keeps the DP tables inside that class, and the magic decomposition.
 
 This directory lives inside the [`dlx4sop`](../..) tool repository, alongside the C
 implementation of the algorithms it formalizes, and is linked directly from the paper.
@@ -37,6 +39,28 @@ implementation of the algorithms it formalizes, and is linked directly from the 
 `δ_C` is the Kronecker delta of Hadamard-free wires. The paper and the paper-facing Lean
 theorems both display it explicitly.
 
+**Stabilizer-rank join layer** (`sec:stabjoin`), in `Formal/Stab/`:
+
+| Paper statement | Lean theorem | File |
+|---|---|---|
+| `def:qpf` (quadratic phase function) | `Stab.QPF`, `Stab.IsQPF` | `Formal/Stab/QPF.lean` |
+| `eq:xor-lift` (`x ⊕ y = x + y − 2xy` on the lifts) | `Stab.lift4_add`, `Stab.zeta4_two_mul` | `Formal/Stab/QPF.lean` |
+| `lem:qpf-closure`(i) (pointwise products) | `Stab.QPF.eval_mul`, `Stab.IsQPF.mul` | `Formal/Stab/QPF.lean` |
+| `eq:parity-lift` / affine substitution (clause (ii)) | `Stab.isQPF_affinePhase`, `isQPF_affineProdSign`, `isQPF_affineIndicator` | `Formal/Stab/Affine.lean` |
+| `lem:qpf-closure`(iii) (sum over one variable) | `Stab.IsQPF.sumOne`, `IsQPF.sumOver` | `Formal/Stab/Closure.lean` |
+| `lem:qpf-closure`(iv) (pushforward along a linear map) | `Stab.IsQPF.pushforward`, `IsQPF.sumLeft` | `Formal/Stab/Closure.lean` |
+| `lem:qpf-closure` (packaged clauses) | `Stab.qpf_closure_spec` | `Formal/Stab/Paper.lean` |
+| `lem:stab-join` (the join stays a single QPF) | `Stab.isQPF_join`, `isQPF_join_point`, `Stab.stab_join_spec` | `Formal/Stab/Join.lean`, `Paper.lean` |
+| `a`-magic / `a`-Clifford vertices | `SopInstance.ACliff`, `AMagic` | `Formal/Stab/Magic.lean` |
+| `η = r/2` ⟹ the quadratic part is a sign | `SopInstance.chi_half`, `selCount_cast` | `Formal/Stab/Magic.lean` |
+| `lem:magic-decomp` (sum of `2^τ` QPFs) | `SopInstance.modeWeight_sum_qpf`, `card_powerset_magicSet`, `Stab.magic_decomp_spec` | `Formal/Stab/Magic.lean`, `Paper.lean` |
+| *Ideal case* — Gottesman–Knill through the SOP lens | `SopInstance.isQPF_modeWeight_of_cliff`, `isQPF_modeWeight_of_even_mode` | `Formal/Stab/Magic.lean` |
+| every even mode factorizes, at every even modulus | `SopInstance.Nhat_even`, `mul_half_eq_zero_of_even` | `Formal/Stab/Magic.lean` |
+| `alg:stabjoin` (`Λ_u` recurrence, three moves) | `Stab.Lam`, `Stab.Move`, `Stab.PointForm`, `Stab.costHybrid` | `Formal/Stab/Hybrid.lean` |
+| `thm:hybrid-dp` (operation count) | `Stab.costHybrid_le_sharp`, `Lam_le_of_pointForm` | `Formal/Stab/Hybrid.lean` |
+| *Ideal case* — `6·|V|` ops, independent of the width | `Stab.costHybrid_clifford_le`, `Stab.clifford_collapse_spec` | `Formal/Stab/Hybrid.lean`, `Paper.lean` |
+| *Bad case* — the hybrid never loses (`|V|·(2+4^k)`) | `Stab.costHybrid_point_le`, `Stab.hybrid_never_loses_spec` | `Formal/Stab/Hybrid.lean`, `Paper.lean` |
+
 ## Scope, stated honestly
 
 * **Runtime** is formalized as operation counts for table states created and join pairs
@@ -51,7 +75,41 @@ theorems both display it explicitly.
 * Out of scope (deferred): the common-root, parity-table, and parity-averaging lemmas and
   gadget universality with its discrete-second-derivative remark. The structural comparisons
   (`lem:sop-minor-line`, graph realization, the `Γ_{h,t}` separation, WMC transfer) and the
-  matrix-multiplication barrier (`thm:join-mm-barrier`) are also out of scope.
+  matrix-multiplication barrier (`thm:join-mm-barrier`) are also out of scope. For the
+  stabilizer-rank join, `thm:join-mm-barrier` is the *negative* statement about arbitrary child
+  tables; `isQPF_join` is the positive statement that its black-box hypothesis fails on the
+  tables the DP actually produces. Only the latter is formalized.
+
+For the stabilizer-rank join specifically:
+
+* **The stabilizer rank `sr` is an abstract parameter** of `Formal/Stab/Hybrid.lean`. Only the
+  elementary `sr(τ) ≤ 2^τ` is proved (`modeWeight_sum_qpf` + `card_powerset_magicSet`), and it
+  follows from the invertibility of `[[1,1],[1,i]]`. The sharper `sr(τ) = O(2^{0.3963 τ})`
+  quoted in the paper is cited literature (Bravyi–Smith–Smolin; Qassim–Pashayan–Gosset) and is
+  **nowhere assumed, axiomatized, or claimed** — no theorem constrains `sr` except through an
+  explicit hypothesis of that theorem.
+* The `O(m²)` description size and `O(m³)` time of the QPF operations are **not** formalized.
+  As elsewhere, runtime is modelled by operation counts — here the `Λ_L · Λ_R` pair scans of
+  `costHybrid` — and never by a machine model. In particular `QPF.mul` stacks constraint
+  systems without re-reducing them, so the Lean `QPF` data is not size-bounded; the paper's
+  `O(m²)` claim presumes Gaussian re-reduction after each operation.
+* "Power of `i`" presupposes `4 ∣ r`, which is an explicit hypothesis (`h4`) everywhere it is
+  needed rather than a field of `SopInstance`. Note this affects only the *QPF* route: at
+  `r = 16` with `a = 2`, `b_v = 1` we get `ω₁₆² = e^{2πi/8}`, not a power of `i`, so
+  `isQPF_modeWeight_of_even_mode` is stated at `r = 8` and the general-`r` forms ask
+  `(r/4) ∣ a.val` resp. `(r/4) ∣ (b v).val` (`ACliff_of_dvd_mode`, `ACliff_of_dvd_b`).
+  The paper's "every even Fourier mode is polynomial on any graph" is nevertheless true at
+  **every** even modulus, for a simpler reason that needs no QPFs: since `η = r/2`, an even
+  mode has `a·η = 0`, so every cross term dies and the mode sum factorizes,
+  `N̂(a) = χ(a·c) · ∏_v (1 + χ(a·b_v))`. That is `SopInstance.Nhat_even`, proved for arbitrary
+  even `r` with no `4 ∣ r` hypothesis.
+* `costHybrid_point_le` carries `1 ≤ k`, which `costMode_le'` does not: `alg:stabjoin`
+  initializes each leaf with two point tables (`Λ_leaf = 2`) while `costMode` charges the
+  deduplicated leaf signature count. The two models differ only when `k = 0`, i.e. when the
+  SOP variable graph is edgeless.
+* `magicSet` is taken over the whole vertex set rather than per subtree, so `τ_u` as a
+  *per-cut* quantity is modelled in `Hybrid.lean` by the abstract `sr : RTree I.V → ℕ` rather
+  than being computed from `Magic.lean`. Wiring the two together is not formalized.
 
 ## Axiom profile — how to check
 
@@ -69,6 +127,11 @@ then in any file:
 import Formal
 #print axioms Formal.Quantum.amplitude_eq_sop_normalized
 #print axioms Formal.SopInstance.rank_dp_spec
+#print axioms Formal.Stab.qpf_closure_spec
+#print axioms Formal.Stab.stab_join_spec
+#print axioms Formal.Stab.magic_decomp_spec
+#print axioms Formal.Stab.clifford_collapse_spec
+#print axioms Formal.Stab.hybrid_never_loses_spec
 -- expected: [propext, Classical.choice, Quot.sound]
 ```
 
