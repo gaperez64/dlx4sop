@@ -495,6 +495,15 @@ typedef struct qsop_branch_policy {
   uint64_t C_rw_probe;
   double rw_min_speedup;         /* select rw only when rw_est * speedup < tw_est (default 1.1) */
   uint64_t rw_memory_penalty_ns; /* extra cost added to rw estimate for memory risk (default 0) */
+  /* ns per QPF stabilizer-list term evaluated, summed over all r modes: the third cost axis, a
+   * peer of C_tw_table and C_rw_table. The QPF terminal wins when C_qpf_term_ns * (sum of the
+   * exact per-mode stabilizer term bounds) undercuts the tw/rw estimates. Calibrated on the
+   * width x magic breakpoint (~250000). */
+  uint64_t C_qpf_term_ns;
+  uint64_t qpf_fixed_overhead_ns; /* fixed qpf overhead (default 20000) */
+  /* Disable the QPF (stabilizer-rank) terminal entirely, mirroring rw_source=NONE for rankwidth.
+   * Leaves the treewidth/rankwidth argmin unchanged; default false (QPF enabled). */
+  bool qpf_disabled;
 } qsop_branch_policy_t;
 
 /* Per-solve options for the branch solver.  Zero-initialize for defaults:

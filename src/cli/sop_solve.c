@@ -1503,6 +1503,10 @@ int main(int argc, char **argv) {
       branch_rw_source_set = true;
       continue;
     }
+    if (strcmp(argv[i], "--branch-no-qpf") == 0) {
+      branch_policy.qpf_disabled = true;
+      continue;
+    }
     if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
       if (i + 1 >= argc) {
         fputs("error: --branch-rw-min-speedup requires a value\n", stderr);
