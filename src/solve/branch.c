@@ -1,6 +1,7 @@
 #include "branch_shadow.h"
 #include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
+#include "qpf_magic.h"
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
@@ -34,6 +35,10 @@
 #define BRANCH_POLICY_DEFAULT_C_TW_TABLE 4UL
 #define BRANCH_POLICY_DEFAULT_C_RW_PROBE 2UL
 #define BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP 1.1
+/* ns per QPF stabilizer-list term (summed over modes). Calibrated on the width x magic breakpoint:
+ * qpf ~250 us/term, which crosses the (retuned) treewidth cost 4*(2^tw * r) near term_sum = 2^(tw-13). */
+#define BRANCH_POLICY_DEFAULT_C_QPF_TERM_NS 250000UL
+#define BRANCH_POLICY_DEFAULT_QPF_FIXED_OVERHEAD_NS 20000UL
 #define BRANCH_SINGLE_DEFAULT_MAX_FALLBACK_VARS 64U
 #define BRANCH_SINGLE_DEFAULT_MAX_SEARCH_NODES UINT64_C(10000000)
 #define BRANCH_SINGLE_DEFAULT_CACHE_BUDGET_MIB 256U
@@ -74,6 +79,10 @@ static qsop_branch_policy_t branch_policy_normalize(const qsop_branch_policy_t *
     p.C_rw_probe = BRANCH_POLICY_DEFAULT_C_RW_PROBE;
   if (p.rw_min_speedup <= 0.0)
     p.rw_min_speedup = BRANCH_POLICY_DEFAULT_RW_MIN_SPEEDUP;
+  if (!p.C_qpf_term_ns)
+    p.C_qpf_term_ns = BRANCH_POLICY_DEFAULT_C_QPF_TERM_NS;
+  if (!p.qpf_fixed_overhead_ns)
+    p.qpf_fixed_overhead_ns = BRANCH_POLICY_DEFAULT_QPF_FIXED_OVERHEAD_NS;
   return p;
 }
 
@@ -342,6 +351,11 @@ typedef struct branch_search_stats {
   uint32_t depth;
   uint32_t decomposition_width;
   uint32_t rankwidth_cutrank_width;
+  uint64_t qpf_max_terms;
+  uint64_t qpf_decompositions;
+  uint64_t qpf_terms;
+  uint64_t qpf_peak_terms;
+  uint32_t qpf_magic_vertices;
   /* Unlike single-fourier's branch_single_mode_state_t, this recursion's branching fallback
    * (see branch_sum_uncached) has no separate max_fallback_vars-style cap of its own -- the
    * root nvars check in qsop_solve_branch is deliberately loose (see BRANCH_ROOT_SANITY_
@@ -349,6 +363,8 @@ typedef struct branch_search_stats {
    * step per component instead. */
   uint32_t max_vars;
 } branch_search_stats_t;
+
+#define BRANCH_QPF_DEFAULT_MAX_TERMS UINT64_C(4096)
 
 #define BRANCH_TREEWIDTH_DELEGATE_MIN_VARS 16U
 #define BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH 14U
@@ -1293,6 +1309,20 @@ static uint64_t branch_treewidth_estimate_ns(const qsop_branch_policy_t *pol, bo
   return est;
 }
 
+/* Nanoseconds for the QPF (stabilizer-rank) terminal: the third cost axis, a peer of
+ * branch_treewidth_estimate_ns. term_sum is the exact stabilizer-list work, summed over all r
+ * modes (sum of qsop_qpf_stabilizer_term_bound). Returns UINT64_MAX when QPF is inapplicable or
+ * unaffordable, so it drops out of the argmin. */
+static uint64_t branch_qpf_estimate_ns(const qsop_branch_policy_t *pol, bool affordable,
+                                       uint64_t term_sum) {
+  if (!affordable || term_sum == UINT64_MAX) {
+    return UINT64_MAX;
+  }
+  uint64_t est = qsop_saturating_mul_u64(pol->C_qpf_term_ns, term_sum);
+  qsop_add_saturating_u64(&est, pol->qpf_fixed_overhead_ns);
+  return est;
+}
+
 /* Nanoseconds for the rankwidth solve. probe_ns is the cost of the decomposition probe: charged
  * before the probe has run, zero afterwards. */
 static uint64_t branch_rankwidth_estimate_ns(const qsop_branch_policy_t *pol, uint64_t rw_table,
@@ -1399,7 +1429,7 @@ static void branch_rankwidth_maybe_prefer_native(
  * generator (D2 optimization: share one min-fill run with the treewidth solver path). */
 static bool branch_try_rankwidth_delegate(
     qsop_instance_t *sub, uint64_t *counts, uint32_t treewidth_width, uint32_t prefix_cut_rank,
-    uint64_t treewidth_dp_work, bool treewidth_available, uint32_t constant_shift,
+    uint64_t treewidth_dp_work, bool treewidth_available, uint64_t qpf_est, uint32_t constant_shift,
     const uint32_t *precomputed_order, branch_search_stats_t *stats,
     branch_rw_decision_data_t *rw_data, bool *out_delegated, qsop_error_t *error) {
   *out_delegated = false;
@@ -1437,8 +1467,10 @@ static bool branch_try_rankwidth_delegate(
       treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
   const uint64_t tw_est = branch_treewidth_estimate_ns(
       pol, treewidth_usable, qsop_saturating_mul_u64(treewidth_dp_work, (uint64_t)sub->r));
+  /* QPF is a peer route in the same argmin: rankwidth must beat the cheaper of treewidth and QPF. */
+  const uint64_t baseline_est = qpf_est < tw_est ? qpf_est : tw_est;
 
-  if (!branch_should_probe_rankwidth(pol, tw_est, sub->nvars, prefix_cut_rank, sub->r)) {
+  if (!branch_should_probe_rankwidth(pol, baseline_est, sub->nvars, prefix_cut_rank, sub->r)) {
     note_rankwidth_skip(stats, "branch.rankwidth_skip_predicted_cost", sub->nvars);
     if (rw_data != NULL) {
       rw_data->veto_reason = "rw_predicted_cost";
@@ -1518,7 +1550,7 @@ static bool branch_try_rankwidth_delegate(
                                                        rankwidth_join_pair_forecast, sig_est, 0);
   const bool within_cutrank_cap = cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
   const bool rankwidth_wins =
-      within_cutrank_cap && (calibrating || branch_rankwidth_wins(pol, rw_est, tw_est));
+      within_cutrank_cap && (calibrating || branch_rankwidth_wins(pol, rw_est, baseline_est));
 
   if (!rankwidth_wins) {
     const bool over_cap = !within_cutrank_cap;
@@ -1589,6 +1621,60 @@ static bool branch_try_rankwidth_delegate(
   return true;
 }
 
+/* Evaluate one component with the QPF (stabilizer-rank) terminal and fold its residue counts into
+ * the caller's accumulator (rotated by the residual's additive constant). The caller has already
+ * confirmed affordability (summed stabilizer term bound within budget) and that QPF is the cost
+ * winner. Native uint64 count pass. */
+static bool branch_run_qpf_on_sub(const qsop_instance_t *sub, uint32_t constant_shift,
+                                  uint64_t *counts, uint32_t peak_magic,
+                                  branch_search_stats_t *stats, qsop_error_t *error) {
+  qsop_result_t *qpf_result = NULL;
+  qsop_solve_stats_t qpf_stats = {0};
+  if (!qsop_solve_qpf(sub, stats->qpf_max_terms, &qpf_result, &qpf_stats, error)) {
+    return false;
+  }
+  uint64_t *qpf_counts = calloc((size_t)sub->r, sizeof(*qpf_counts));
+  if (qpf_counts == NULL) {
+    qsop_result_free(qpf_result);
+    qsop_set_error(error, "out of memory while adopting branch QPF terminal counts");
+    return false;
+  }
+  bool parsed = true;
+  for (uint32_t residue = 0; residue < (uint32_t)sub->r; residue++) {
+    if (qpf_result->counts != NULL) {
+      qpf_counts[residue] = qpf_result->counts[residue];
+    } else {
+      char *end = NULL;
+      qpf_counts[residue] = strtoull(qpf_result->count_strings[residue], &end, 10);
+      if (end == NULL || *end != '\0') {
+        parsed = false;
+        break;
+      }
+    }
+  }
+  if (!parsed || !branch_counts_shift_add((uint32_t)sub->r, counts, qpf_counts, constant_shift,
+                                          stats, error)) {
+    free(qpf_counts);
+    qsop_result_free(qpf_result);
+    if (!parsed) {
+      qsop_set_error(error, "invalid decimal count returned by branch QPF terminal");
+    }
+    return false;
+  }
+  stats->qpf_decompositions += qpf_stats.qpf_decompositions;
+  stats->qpf_terms += qpf_stats.qpf_terms;
+  if (qpf_stats.qpf_max_terms > stats->qpf_peak_terms) {
+    stats->qpf_peak_terms = qpf_stats.qpf_max_terms;
+  }
+  if (peak_magic > stats->qpf_magic_vertices) {
+    stats->qpf_magic_vertices = peak_magic;
+  }
+  qsop_add_saturating_u64(&stats->leaves, assignment_count(sub->nvars));
+  free(qpf_counts);
+  qsop_result_free(qpf_result);
+  return true;
+}
+
 static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                                    branch_search_stats_t *stats, bool *out_delegated,
                                    qsop_error_t *error) {
@@ -1643,6 +1729,35 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   qsop_trace_emit_elapsed(stats->trace, "branch.width_probe", stats->depth,
                           sub_stats.min_fill_width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
+
+  /* QPF terminal cost (the third axis of the delegate's argmin): the exact stabilizer-list work,
+   * summed over all r modes, computed once from the width-probe sub-instance in O(n*r) with no
+   * decomposition. qpf_est feeds the rankwidth decision (rankwidth must beat min(tw,qpf)); if
+   * rankwidth declines and qpf_est < tw_est, the QPF terminal is run below. */
+  uint32_t qpf_peak_magic = 0;
+  uint64_t qpf_term_sum = 0;
+  bool qpf_affordable = !stats->policy.qpf_disabled && stats->count_modulus == 0U &&
+                        qsop_qpf_phase_order_supported((uint64_t)sub.r, QSOP_QPF_CYCLOTOMIC_MAX_ORDER);
+  if (qpf_affordable) {
+    for (uint64_t mode = 0; mode < sub.r; mode++) {
+      const uint32_t m = qsop_magic_vertex_count(&sub, mode);
+      if (m > qpf_peak_magic) {
+        qpf_peak_magic = m;
+      }
+      const uint64_t b = qsop_qpf_stabilizer_term_bound(&sub, mode);
+      if (b == UINT64_MAX || b > stats->qpf_max_terms) {
+        qpf_affordable = false;
+        break;
+      }
+      qpf_term_sum = qpf_term_sum > UINT64_MAX - b ? UINT64_MAX : qpf_term_sum + b;
+    }
+  }
+  const uint64_t qpf_est = branch_qpf_estimate_ns(&stats->policy, qpf_affordable, qpf_term_sum);
+  const bool tw_usable = sub_stats.width_diagnostics_available &&
+                         sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
+  const uint64_t tw_est_local = branch_treewidth_estimate_ns(
+      &stats->policy, tw_usable,
+      qsop_saturating_mul_u64(sub_stats.min_fill_dp_work, (uint64_t)sub.r));
 
   /* Decide whether to use the stats-captured order or the MIN_FILL_MAX_DEGREE order.
    * Use stats order only when treewidth won't be attempted (width > cap): this avoids
@@ -1700,7 +1815,7 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
   branch_rw_decision_data_t *rw_ptr = recording ? &rw_data : NULL;
   if (!branch_try_rankwidth_delegate(&sub, counts, sub_stats.min_fill_width,
                                      sub_stats.prefix_cut_rank, sub_stats.min_fill_dp_work,
-                                     sub_stats.width_diagnostics_available,
+                                     sub_stats.width_diagnostics_available, qpf_est,
                                      (uint32_t)qsop_residual_constant(residual), shared_order,
                                      stats, rw_ptr, &delegated, error)) {
     free(shared_order);
@@ -1757,6 +1872,21 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     }
     free(shared_order);
     free_subinstance(&sub);
+    *out_delegated = true;
+    return true;
+  }
+
+  /* QPF terminal wins the argmin over the non-rankwidth routes: rankwidth declined above, and the
+   * exact stabilizer-list estimate undercuts treewidth (tw_est_local is UINT64_MAX when treewidth
+   * is over its width cap, so QPF also rescues wide low-magic components instead of refusing). */
+  if (qpf_affordable && qpf_est < tw_est_local) {
+    const bool ok_qpf = branch_run_qpf_on_sub(&sub, (uint32_t)qsop_residual_constant(residual),
+                                              counts, qpf_peak_magic, stats, error);
+    free(shared_order);
+    free_subinstance(&sub);
+    if (!ok_qpf) {
+      return false;
+    }
     *out_delegated = true;
     return true;
   }
@@ -1916,7 +2046,8 @@ static void branch_search_free(branch_search_stats_t *search) {
 }
 
 static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count_modulus,
-                                     uint32_t max_vars, qsop_branch_heuristic_t heuristic,
+                                     uint32_t max_vars, uint64_t qpf_max_terms,
+                                     qsop_branch_heuristic_t heuristic,
                                      qsop_branch_rw_source_t rw_source,
                                      const qsop_branch_policy_t *policy, qsop_solve_mode_t mode,
                                      uint64_t *counts, qsop_solve_stats_t *stats,
@@ -1932,6 +2063,7 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
       .mode = mode,
       .count_modulus = count_modulus,
       .max_vars = max_vars,
+      .qpf_max_terms = qpf_max_terms != 0 ? qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS,
   };
 
   if (!qsop_residual_create(qsop, &residual, error) ||
@@ -1984,6 +2116,10 @@ static bool branch_solve_counts_once(const qsop_instance_t *qsop, uint64_t count
     stats->max_residual_prefix_cut_rank = search.max_residual_prefix_cut_rank;
     stats->decomposition_width = search.decomposition_width;
     stats->rankwidth_cutrank_width = search.rankwidth_cutrank_width;
+    stats->qpf_decompositions = search.qpf_decompositions;
+    stats->qpf_terms = search.qpf_terms;
+    stats->qpf_max_terms = search.qpf_peak_terms;
+    stats->qpf_magic_vertices = search.qpf_magic_vertices;
   }
 
   qsop_residual_free(residual);
@@ -2356,6 +2492,9 @@ static bool branch_sum_uncached(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
+  /* The QPF (stabilizer-rank) terminal is priced as a first-class cost axis inside
+   * branch_try_dp_delegate (argmin of the treewidth, rankwidth, and QPF estimates), so no separate
+   * pre-width-probe rescue is needed here. */
   bool delegated = false;
   if (!branch_try_dp_delegate(residual, counts, stats, &delegated, error)) {
     return false;
@@ -2472,6 +2611,7 @@ static bool branch_sum_rec(qsop_residual_t *residual, uint64_t *counts,
 }
 
 static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
+                             uint64_t qpf_max_terms,
                              qsop_branch_heuristic_t heuristic, qsop_branch_rw_source_t rw_source,
                              qsop_result_t **out, qsop_solve_stats_t *stats,
                              qsop_solve_trace_t *trace, qsop_backend_stats_sink_t *sink,
@@ -2514,7 +2654,7 @@ static bool solve_branch_crt(const qsop_instance_t *qsop, uint32_t max_vars,
     qsop_solve_stats_t *stats_for_prime = p == 0 ? stats : NULL;
     qsop_solve_trace_t *trace_for_prime = p == 0 ? trace : NULL;
     qsop_backend_stats_sink_t *sink_for_prime = p == 0 ? sink : NULL;
-    if (!branch_solve_counts_once(qsop, primes[p], max_vars, heuristic, rw_source, NULL,
+    if (!branch_solve_counts_once(qsop, primes[p], max_vars, qpf_max_terms, heuristic, rw_source, NULL,
                                   QSOP_SOLVE_MODE_COUNT_TABLE, &all_counts[p * (size_t)qsop->r],
                                   stats_for_prime, trace_for_prime, sink_for_prime, error)) {
       free(primes);
@@ -2809,7 +2949,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     }
   }
   if (qsop->nvars >= 64U) {
-    return solve_branch_crt(qsop, max_vars, o.heuristic, o.rw_source, out, stats, o.trace, o.sink,
+    return solve_branch_crt(qsop, max_vars, o.qpf_max_terms, o.heuristic, o.rw_source, out, stats, o.trace, o.sink,
                             error);
   }
 
@@ -2825,7 +2965,7 @@ bool qsop_solve_branch(const qsop_instance_t *qsop, uint32_t max_vars,
     return false;
   }
 
-  if (!branch_solve_counts_once(qsop, 0, max_vars, o.heuristic, o.rw_source, &o.policy, o.mode,
+  if (!branch_solve_counts_once(qsop, 0, max_vars, o.qpf_max_terms, o.heuristic, o.rw_source, &o.policy, o.mode,
                                 result->counts, stats, o.trace, o.sink, error)) {
     qsop_result_free(result);
     return false;
@@ -3009,6 +3149,7 @@ typedef struct branch_single_mode_state {
   uint64_t treewidth_delegate_max_dp_work;
   uint64_t cutset_treewidth_delegate_max_dp_work; /* 0 = reuse treewidth_delegate_max_dp_work */
   uint64_t treewidth_delegate_max_memory_mib;     /* 0 = built-in 12 GiB budget */
+  uint64_t qpf_max_terms;
   bool materialized_reduction;
   bool hadamard_reduction_exact;
   bool diagnose_conditioning;
@@ -3922,9 +4063,22 @@ static bool branch_single_mode_delegate_component(
   const uint64_t tw_est =
       branch_treewidth_estimate_ns(&policy, treewidth_usable, sub_stats.min_fill_dp_work);
 
+  /* QPF terminal cost for this single Fourier mode: the third cost axis, a peer of tw/rw. */
+  const uint64_t qpf_budget =
+      options->qpf_max_terms != 0 ? options->qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS;
+  const bool qpf_supported =
+      !policy.qpf_disabled &&
+      qsop_qpf_phase_order_supported((uint64_t)sub->r, QSOP_QPF_CYCLOTOMIC_MAX_ORDER);
+  const uint64_t qpf_bound =
+      qpf_supported ? qsop_qpf_stabilizer_term_bound(sub, target_mode) : UINT64_MAX;
+  const bool qpf_affordable = qpf_supported && qpf_bound != UINT64_MAX && qpf_bound <= qpf_budget;
+  const uint64_t qpf_est = branch_qpf_estimate_ns(&policy, qpf_affordable, qpf_bound);
+  /* Rankwidth must beat the cheaper of treewidth and QPF (clean 3-way argmin). */
+  const uint64_t baseline_est = qpf_est < tw_est ? qpf_est : tw_est;
+
   if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
     const bool probe_worth_it =
-        branch_should_probe_rankwidth(&policy, tw_est, sub->nvars, prefix_cut_rank, 1U);
+        branch_should_probe_rankwidth(&policy, baseline_est, sub->nvars, prefix_cut_rank, 1U);
     if (!probe_worth_it && io_stats != NULL) {
       io_stats->branch_rankwidth_skips++;
     }
@@ -3960,7 +4114,7 @@ static bool branch_single_mode_delegate_component(
             const uint64_t rw_est = branch_rankwidth_estimate_ns(
                 &policy, rankwidth_table, rankwidth_join, rankwidth_table, 0);
             use_rankwidth = cutrank_width <= rw_cap &&
-                            branch_rankwidth_wins(&policy, rw_est, tw_est);
+                            branch_rankwidth_wins(&policy, rw_est, baseline_est);
             if (io_stats != NULL) {
               if (cutrank_width > io_stats->rankwidth_cutrank_width) {
                 io_stats->rankwidth_cutrank_width = cutrank_width;
@@ -3986,6 +4140,7 @@ static bool branch_single_mode_delegate_component(
   }
 
   bool ok;
+  bool used_qpf = false;
   qsop_solve_stats_t delegated = {0};
   if (!setup_ok) {
     ok = false;
@@ -3999,6 +4154,12 @@ static bool branch_single_mode_delegate_component(
                                                 error);
     }
     delegated.rankwidth_delegations++;
+  } else if (qpf_affordable && qpf_est < tw_est) {
+    /* QPF terminal wins the argmin: rankwidth declined and the exact stabilizer-list estimate
+     * undercuts treewidth (which may also be over its width/work/memory cap). Solves this
+     * component's Fourier mode directly. */
+    ok = qsop_solve_qpf_single_mode(sub, target_mode, qpf_budget, out, &delegated, error);
+    used_qpf = true;
   } else if (treewidth_usable && order_width <= tw_cap &&
              branch_treewidth_delegate_peak_bytes(order_width) <= mem_budget_bytes) {
     /* Re-check memory against the *resolved* order width: branch_single_mode_ensure_order can
@@ -4081,7 +4242,7 @@ static bool branch_single_mode_delegate_component(
     free(stats_order);
   }
   if (ok) {
-    if (delegated.treewidth_delegations != 0 || delegated.rankwidth_delegations != 0) {
+    if (used_qpf || delegated.treewidth_delegations != 0 || delegated.rankwidth_delegations != 0) {
       if (out_delegated != NULL) {
         *out_delegated = true;
       }
@@ -4127,6 +4288,7 @@ static bool branch_single_mode_state_init(branch_single_mode_state_t *state,
       .treewidth_delegate_max_dp_work = o.treewidth_delegate_max_dp_work,
       .cutset_treewidth_delegate_max_dp_work = o.cutset_treewidth_delegate_max_dp_work,
       .treewidth_delegate_max_memory_mib = o.treewidth_delegate_max_memory_mib,
+      .qpf_max_terms = o.qpf_max_terms != 0 ? o.qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS,
       .materialized_reduction = o.materialized_reduction && qsop->r >= 2U &&
                                 (qsop->r % 2U) == 0U && (target_mode % 2U) == 1U,
       .hadamard_reduction_exact = qsop->r >= 2U && (qsop->r % 2U) == 0U &&
@@ -4308,6 +4470,59 @@ static bool branch_sum_components_single_mode(qsop_residual_t *residual,
   free(component);
   *out = acc;
   *out_split = true;
+  return true;
+}
+
+static bool branch_try_qpf_terminal_single_mode(qsop_residual_t *residual,
+                                                branch_single_mode_state_t *state,
+                                                bool *out_handled, branch_c64_t *out,
+                                                qsop_error_t *error) {
+  *out_handled = false;
+  const uint32_t active_vars = qsop_residual_active_vars(residual);
+  const uint32_t active_edges = qsop_residual_active_edges(residual);
+  if (state->fallback != QSOP_BRANCH_SINGLE_FALLBACK_AUTO ||
+      state->shadow_mode != QSOP_BRANCH_SHADOW_OFF ||
+      state->max_cutset_depth != 0U ||
+      active_vars <= state->max_fallback_vars || active_vars < 12U || active_edges < active_vars ||
+      !qsop_qpf_phase_order_supported(qsop_residual_modulus(residual), UINT32_MAX)) {
+    return true;
+  }
+
+  qsop_instance_t sub = {0};
+  if (!build_active_residual_subinstance(residual, &sub, error)) {
+    return false;
+  }
+  const uint32_t magic = qsop_magic_vertex_count(&sub, state->target_mode);
+  const uint64_t bound = qsop_qpf_stabilizer_term_bound(&sub, state->target_mode);
+  if (bound == UINT64_MAX || bound > state->qpf_max_terms) {
+    free_subinstance(&sub);
+    return true;
+  }
+
+  qsop_amplitude_t amplitude = {0};
+  qsop_solve_stats_t qpf_stats = {0};
+  const bool ok = qsop_solve_qpf_single_mode(&sub, state->target_mode, state->qpf_max_terms,
+                                              &amplitude, &qpf_stats, error);
+  free_subinstance(&sub);
+  if (!ok) {
+    return false;
+  }
+  const branch_c64_t phase =
+      branch_phase_lookup(&state->phase_cache, qsop_residual_constant(residual));
+  *out = c64_mul(phase, c64_normalize((branch_c64_t){
+                            amplitude.re, amplitude.im, amplitude.scale_exp2}));
+  state->numeric_error_bound += amplitude.numeric_error_bound;
+  if (state->stats != NULL) {
+    state->stats->qpf_decompositions += qpf_stats.qpf_decompositions;
+    state->stats->qpf_terms += qpf_stats.qpf_terms;
+    if (qpf_stats.qpf_max_terms > state->stats->qpf_max_terms) {
+      state->stats->qpf_max_terms = qpf_stats.qpf_max_terms;
+    }
+    if (magic > state->stats->qpf_magic_vertices) {
+      state->stats->qpf_magic_vertices = magic;
+    }
+  }
+  *out_handled = true;
   return true;
 }
 
@@ -4578,7 +4793,8 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
     ok = branch_sum_components_single_mode(residual, state, frame, &did_split, out, error);
     if (ok && !did_split) {
       bool delegated = false;
-      if (branch_delegate_probe_due(residual, state, &frame)) {
+      ok = branch_try_qpf_terminal_single_mode(residual, state, &delegated, out, error);
+      if (ok && !delegated && branch_delegate_probe_due(residual, state, &frame)) {
         if (state->stats != NULL) {
           state->stats->branch_delegate_probes++;
         }
@@ -4587,7 +4803,7 @@ static bool branch_sum_rec_single_mode_node(qsop_residual_t *residual,
         frame.levels_since_delegate_probe = 0U;
         frame.vars_at_last_delegate_probe = qsop_residual_active_vars(residual);
         frame.edges_at_last_delegate_probe = qsop_residual_active_edges(residual);
-      } else if (state->stats != NULL) {
+      } else if (ok && !delegated && state->stats != NULL) {
         state->stats->branch_delegate_probe_skips++;
       }
       if (ok && !delegated) {

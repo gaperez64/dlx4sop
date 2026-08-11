@@ -236,6 +236,7 @@ static int solve_single_k10(uint64_t dp_work_budget, qsop_amplitude_t *amp,
           .max_fallback_vars = 64,
           .rankwidth_delegate_max_width = 1, /* rw_source defaults to none; keep rankwidth out */
           .treewidth_delegate_max_dp_work = dp_work_budget,
+          .policy.qpf_disabled = true, /* isolate the treewidth gate: K10,10 is otherwise QPF's niche */
       },
       amp, stats, &err);
 }
@@ -296,6 +297,7 @@ static int test_single_mode_memory_gate(void) {
       .max_fallback_vars = 64U,
       .treewidth_delegate_max_dp_work = UINT64_MAX,
       .treewidth_delegate_max_memory_mib = 64U, /* >= 2 MiB forecast */
+      .policy.qpf_disabled = true, /* isolate the treewidth memory gate: K15 is otherwise QPF's niche */
   };
   qsop_amplitude_t amp_wide = {0};
   qsop_solve_stats_t wide = {0};
@@ -320,6 +322,7 @@ static int test_single_mode_memory_gate(void) {
       .max_fallback_vars = 64U,
       .treewidth_delegate_max_dp_work = UINT64_MAX,
       .treewidth_delegate_max_memory_mib = 1U, /* < 2 MiB forecast -> memory miss */
+      .policy.qpf_disabled = true,
   };
   qsop_amplitude_t amp_tight = {0};
   qsop_solve_stats_t tstats = {0};
@@ -421,7 +424,12 @@ static bool solve_complete_single(const qsop_instance_t *q,
                                   const qsop_branch_single_mode_options_t *options,
                                   qsop_amplitude_t *amp, qsop_solve_stats_t *stats,
                                   qsop_error_t *error) {
-  return qsop_solve_branch_single_mode(q, 64U, 1U, options, amp, stats, error);
+  /* These tests build complete graphs to exercise the treewidth/cutset/memory mechanisms. A
+   * complete graph (treewidth n-1, zero magic) is exactly QPF's niche, so disable the QPF terminal
+   * here to keep the mechanism under test on the delegation path. */
+  qsop_branch_single_mode_options_t opts = *options;
+  opts.policy.qpf_disabled = true;
+  return qsop_solve_branch_single_mode(q, 64U, 1U, &opts, amp, stats, error);
 }
 
 static int test_materialized_cutset(void) {

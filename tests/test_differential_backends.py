@@ -125,6 +125,7 @@ def parse_residue_vector(output: str) -> list[str] | None:
 def backend_configs(nvars: int, r: int) -> list[tuple[str, list[str]]]:
     """Return (label, args) pairs for all backends to test on this instance."""
     configs = [
+        ("qpf", ["--backend", "qpf", "--qpf-max-terms", "4096"]),
         ("branch", ["--backend", "branch", "--solve-mode", "count-table"]),
         ("branch:fourier",
          ["--backend", "branch", "--solve-mode", "fourier"]),
@@ -832,6 +833,7 @@ def test_branch_single_fourier_refuses_wide_component(exe: pathlib.Path) -> None
     ]
     text = "\n".join(
         [f"p qsop-sign 16 {nvars} {len(edges)}", "n 0", "cst 0"]
+        + [f"u {v} 1" for v in range(nvars)]
         + [f"e {u} {v}" for u, v in edges]
     ) + "\n"
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
@@ -1044,6 +1046,7 @@ def test_single_fourier_default_max_vars(exe: pathlib.Path) -> None:
     ]
     dense_text = "\n".join(
         [f"p qsop-sign 8 30 {len(dense_edges)}", "n 0", "cst 0"]
+        + [f"u {v} 1" for v in range(30)]
         + [f"e {u} {v}" for u, v in dense_edges]
     ) + "\n"
     with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:

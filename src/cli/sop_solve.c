@@ -15,6 +15,7 @@
 
 typedef enum solve_backend {
   SOLVE_BACKEND_BRANCH,
+  SOLVE_BACKEND_QPF,
   SOLVE_BACKEND_RANKWIDTH,
   SOLVE_BACKEND_TREEWIDTH,
 } solve_backend_t;
@@ -50,7 +51,7 @@ typedef struct csv_trace_writer {
 static void print_usage_mode(FILE *file, bool advanced) {
   static const char *const core[] = {
       "--format amplitude|residue-vector|stats",
-      "--backend branch|treewidth|rankwidth",
+      "--backend branch|qpf|treewidth|rankwidth",
       "--solve-mode auto|count-table|fourier|single-fourier",
       "--max-vars N",
       "--fourier-target-mode N",
@@ -70,6 +71,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--rankwidth-dump PATH",
       "--rankwidth-mode count-table|fourier",
       "--treewidth-order min-fill|min-degree|min-fill-max-degree",
+      "--qpf-max-terms N",
   };
   static const char *const kernels[] = {
       "--single-mode-precision auto|double|long-double",
@@ -123,13 +125,13 @@ static void print_usage_mode(FILE *file, bool advanced) {
   if (advanced) {
     dlx4sop_cli_print_usage(file,
                             "usage: sop-solve [--format amplitude|residue-vector|stats] "
-                            "[--backend branch|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
+                            "[--backend branch|qpf|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
                             advanced_sections,
                             sizeof(advanced_sections) / sizeof(advanced_sections[0]));
   } else {
     dlx4sop_cli_print_usage(file,
                             "usage: sop-solve [--format amplitude|residue-vector|stats] "
-                            "[--backend branch|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
+                            "[--backend branch|qpf|treewidth|rankwidth] [--solve-mode MODE] [PATH|-]",
                             short_sections, sizeof(short_sections) / sizeof(short_sections[0]));
   }
 }
@@ -154,6 +156,8 @@ static const char *backend_name(solve_backend_t backend) {
   switch (backend) {
   case SOLVE_BACKEND_BRANCH:
     return "branch";
+  case SOLVE_BACKEND_QPF:
+    return "qpf";
   case SOLVE_BACKEND_RANKWIDTH:
     return "rankwidth";
   case SOLVE_BACKEND_TREEWIDTH:
@@ -294,6 +298,9 @@ static qsop_rankwidth_solve_mode_t rankwidth_mode_from_solve_mode(qsop_solve_mod
 }
 
 static const char *solve_mode_kernel_name(solve_backend_t backend, qsop_solve_mode_t mode) {
+  if (backend == SOLVE_BACKEND_QPF) {
+    return "qpf";
+  }
   if (mode == QSOP_SOLVE_MODE_COUNT_TABLE) {
     return "count-table";
   }
@@ -778,12 +785,24 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_linear_transition_events);
     fprintf(file, "rankwidth_table_assignment_bytes: %" PRIu64 "\n",
             stats->rankwidth_table_assignment_bytes);
-  } else {
+  } else if (backend != SOLVE_BACKEND_QPF) {
     fprintf(file, "treewidth_order: %s\n", treewidth_order_name(treewidth_order));
     fprintf(file, "decomposition_width: %" PRIu32 "\n", stats->decomposition_width);
     fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
     fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
     fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
+  }
+
+  if (backend == SOLVE_BACKEND_QPF || stats->qpf_decompositions != 0U ||
+      stats->qpf_terms != 0U || stats->qpf_rebuilds != 0U || stats->qpf_joins != 0U ||
+      stats->qpf_collapses != 0U) {
+    fprintf(file, "qpf_decompositions: %" PRIu64 "\n", stats->qpf_decompositions);
+    fprintf(file, "qpf_terms: %" PRIu64 "\n", stats->qpf_terms);
+    fprintf(file, "qpf_max_terms: %" PRIu64 "\n", stats->qpf_max_terms);
+    fprintf(file, "qpf_magic_vertices: %" PRIu32 "\n", stats->qpf_magic_vertices);
+    fprintf(file, "qpf_rebuilds: %" PRIu64 "\n", stats->qpf_rebuilds);
+    fprintf(file, "qpf_joins: %" PRIu64 "\n", stats->qpf_joins);
+    fprintf(file, "qpf_collapses: %" PRIu64 "\n", stats->qpf_collapses);
   }
 
   if (ferror(file)) {
@@ -1231,6 +1250,7 @@ int main(int argc, char **argv) {
   qsop_rankwidth_fourier_kernel_t rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
   bool rw_fourier_kernel_set = false;
   uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
+  uint64_t qpf_max_terms = 0; /* 0 = use built-in default */
   solve_output_format_t format = SOLVE_FORMAT_AMPLITUDE;
   solve_trace_format_t trace_format = SOLVE_TRACE_NONE;
 
@@ -1282,6 +1302,16 @@ int main(int argc, char **argv) {
         return 2;
       }
       max_vars_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--qpf-max-terms") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --qpf-max-terms requires an integer value\n", stderr);
+        return 2;
+      }
+      if (!parse_u64_arg("--qpf-max-terms", argv[++i], &qpf_max_terms)) {
+        return 2;
+      }
       continue;
     }
     if (strcmp(argv[i], "--trace") == 0) {
@@ -1471,6 +1501,10 @@ int main(int argc, char **argv) {
         return 2;
       }
       branch_rw_source_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--branch-no-qpf") == 0) {
+      branch_policy.qpf_disabled = true;
       continue;
     }
     if (strcmp(argv[i], "--branch-rw-min-speedup") == 0) {
@@ -1777,6 +1811,8 @@ int main(int argc, char **argv) {
       const char *value = argv[++i];
       if (strcmp(value, "branch") == 0) {
         backend = SOLVE_BACKEND_BRANCH;
+      } else if (strcmp(value, "qpf") == 0) {
+        backend = SOLVE_BACKEND_QPF;
       } else if (strcmp(value, "rankwidth") == 0) {
         backend = SOLVE_BACKEND_RANKWIDTH;
       } else if (strcmp(value, "treewidth") == 0) {
@@ -2043,8 +2079,9 @@ int main(int argc, char **argv) {
     return 2;
   }
   if (single_fourier_mode && backend != SOLVE_BACKEND_TREEWIDTH &&
-      backend != SOLVE_BACKEND_RANKWIDTH && backend != SOLVE_BACKEND_BRANCH) {
-    fputs("error: --solve-mode single-fourier requires --backend treewidth, rankwidth, or "
+      backend != SOLVE_BACKEND_RANKWIDTH && backend != SOLVE_BACKEND_BRANCH &&
+      backend != SOLVE_BACKEND_QPF) {
+    fputs("error: --solve-mode single-fourier requires --backend treewidth, rankwidth, qpf, or "
           "branch\n",
           stderr);
     return 2;
@@ -2274,7 +2311,10 @@ int main(int argc, char **argv) {
   if (single_fourier_mode && !result_ready) {
     qsop_amplitude_t amplitude = {0};
     qsop_solve_stats_t amp_stats = {0};
-    if (backend == SOLVE_BACKEND_RANKWIDTH) {
+    if (backend == SOLVE_BACKEND_QPF) {
+      ok = qsop_solve_qpf_single_mode(qsop, fourier_target_mode, qpf_max_terms, &amplitude,
+                                      &amp_stats, &error);
+    } else if (backend == SOLVE_BACKEND_RANKWIDTH) {
       qsop_rankwidth_decomposition_t *single_mode_decomposition = NULL;
       const uint64_t decomposition_start = qsop_trace_begin(trace_ptr);
       if (rankwidth_decomposition_path != NULL) {
@@ -2303,6 +2343,7 @@ int main(int argc, char **argv) {
       const qsop_rankwidth_single_mode_options_t rankwidth_single_options = {
           .kernel = rw_single_kernel,
           .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+          .qpf_max_terms = qpf_max_terms,
           .simd = simd,
       };
       if (single_mode_precision != SINGLE_MODE_PRECISION_LONG_DOUBLE) {
@@ -2351,6 +2392,7 @@ int main(int argc, char **argv) {
           .cutset_treewidth_delegate_max_dp_work = branch_single_cutset_max_dp_work,
           .treewidth_delegate_max_width = branch_single_delegate_max_width,
           .treewidth_delegate_max_memory_mib = branch_single_delegate_max_memory_mib,
+          .qpf_max_terms = qpf_max_terms,
           .cache_budget_mib = branch_single_cache_budget_mib,
           .cache_min_vars = branch_single_cache_min_vars,
           .materialized_reduction = branch_single_materialized_reduction,
@@ -2421,13 +2463,16 @@ int main(int argc, char **argv) {
   }
 
   if (!result_ready) {
-    if (backend == SOLVE_BACKEND_BRANCH) {
+    if (backend == SOLVE_BACKEND_QPF) {
+      ok = qsop_solve_qpf(qsop, qpf_max_terms, &result, &solve_stats, &error);
+    } else if (backend == SOLVE_BACKEND_BRANCH) {
       ok = qsop_solve_branch(qsop, max_vars,
                              &(qsop_branch_solve_options_t){
                                  .heuristic = branch_heuristic,
                                  .rw_source = branch_rw_source,
                                  .mode = solve_mode,
                                  .policy = branch_policy,
+                                 .qpf_max_terms = qpf_max_terms,
                                  .sink = sink_ptr,
                                  .trace = trace_ptr,
                              },
@@ -2527,6 +2572,7 @@ int main(int argc, char **argv) {
                 .join_strategy = rw_join_strategy,
                 .materialize_join_max_pairs = rw_materialize_join_max_pairs,
                 .fourier_kernel = rw_fourier_kernel,
+                .qpf_max_terms = qpf_max_terms,
             },
             &result, &solve_stats, trace_ptr, &error);
       }
