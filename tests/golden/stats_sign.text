@@ -10,3 +10,7 @@ width_diagnostics: available
 min_fill_width: 1
 min_fill_edges: 0
 prefix_cut_rank: 1
+magic_vertices_mode_1: 1
+magic_mode_classes: available
+magic_mode_class: modes=4 magic_vertices=0 hybrid_term_bound=1
+magic_mode_class: modes=4 magic_vertices=1 hybrid_term_bound=2

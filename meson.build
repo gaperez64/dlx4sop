@@ -36,6 +36,7 @@ dlx4sop_core_sources = files(
     'src/core/qsop.c',
     'src/core/qsop_parse.c',
     'src/core/min_fill.c',
+    'src/core/qpf.c',
     'src/core/qsop_simplify.c',
     'src/core/qsop_stats.c',
     'src/core/qsop_wmc.c',
@@ -43,6 +44,7 @@ dlx4sop_core_sources = files(
     'src/solve/branch.c',
     'src/solve/branch_shadow.c',
     'src/solve/component_key.c',
+    'src/solve/qpf_magic.c',
     'src/solve/rankwidth_tables.c',
     'src/solve/rankwidth_decomp.c',
     'src/solve/rankwidth_cutrank.c',
@@ -52,6 +54,7 @@ dlx4sop_core_sources = files(
     'src/solve/rankwidth_join_plan.c',
     'src/solve/rankwidth_drivers.c',
     'src/solve/rankwidth_join_twist.c',
+    'src/solve/rankwidth_qpf.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
 )
@@ -296,6 +299,22 @@ test_wmc = executable(
 
 test('wmc unit', test_wmc, suite: 'unit')
 
+test_qpf = executable(
+  'test-qpf',
+  'tests/unit/test_qpf.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('qpf unit', test_qpf, suite: 'unit', timeout: 120)
+
+test_qpf_magic = executable(
+  'test-qpf-magic',
+  'tests/unit/test_qpf_magic.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('qpf magic unit', test_qpf_magic, suite: 'unit', timeout: 120)
+
 test_qsop_simplify = executable(
   'test-qsop-simplify',
   'tests/unit/test_qsop_simplify.c',
@@ -367,6 +386,14 @@ test_rankwidth_join = executable(
 )
 
 test('rankwidth join unit', test_rankwidth_join, suite: 'unit', timeout: 120)
+
+test_rankwidth_qpf_join = executable(
+  'test-rankwidth-qpf-join',
+  'tests/unit/test_rankwidth_qpf_join.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('rankwidth qpf join unit', test_rankwidth_qpf_join, suite: 'unit', timeout: 120)
 
 test_rankwidth_decomp = executable(
   'test-rankwidth-decomp',

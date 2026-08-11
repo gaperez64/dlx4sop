@@ -603,7 +603,8 @@ def run_branch_root_treewidth_trace(exe: pathlib.Path) -> None:
 
 def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
     edges = "\n".join(f"e {u} {v}" for u in range(20) for v in range(20, 40))
-    qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{edges}\n"
+    unary = "\n".join(f"u {v} 1" for v in range(40))
+    qsop = f"p qsop-sign 16 40 400\nn 0\ncst 5\n{unary}\n{edges}\n"
     branch = subprocess.run(
         [
             str(exe),
@@ -737,7 +738,8 @@ def run_branch_rankwidth_handoff(exe: pathlib.Path) -> None:
         )
 
     signed_edges = "\n".join(f"e {u} {v}" for u in range(16) for v in range(16, 32))
-    signed_qsop = f"p qsop-sign 8 32 256\nn 0\ncst 5\n{signed_edges}\n"
+    signed_unary = "\n".join(f"u {v} 1" for v in range(32))
+    signed_qsop = f"p qsop-sign 8 32 256\nn 0\ncst 5\n{signed_unary}\n{signed_edges}\n"
     signed_fourier_stats = subprocess.run(
         [
             str(exe),

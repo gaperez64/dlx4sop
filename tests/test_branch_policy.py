@@ -130,6 +130,71 @@ def test_auto_large_residue_vector_uses_single_fourier(sop_solve, tmp):
         raise AssertionError(f"auto did not preflight the count vector:\n{result.stdout}")
 
 
+def test_branch_rankwidth_delegate_uses_twist_model(sop_solve, tmp):
+    """A forced rankwidth delegate must carry the AUTO forecast through execution and stats."""
+    edges = (
+        (0, 5), (0, 8), (0, 11), (1, 2), (1, 10), (1, 13), (1, 22), (1, 23),
+        (1, 25), (1, 26), (2, 5), (2, 10), (2, 22), (2, 27), (3, 9), (3, 16),
+        (3, 20), (4, 13), (4, 19), (4, 20), (4, 29), (5, 8), (5, 19), (5, 20),
+        (5, 24), (5, 27), (6, 14), (6, 21), (7, 10), (7, 19), (7, 24), (7, 28),
+        (8, 11), (8, 15), (9, 23), (9, 26), (10, 12), (10, 23), (12, 21),
+        (12, 28), (13, 16), (13, 17), (13, 19), (13, 22), (14, 24), (14, 26),
+        (15, 29), (16, 20), (17, 22), (18, 20), (19, 22), (20, 21), (20, 26),
+        (23, 25), (24, 27), (24, 29), (26, 27),
+    )
+    qsop = tmp / "branch-twist.qsop"
+    lines = [f"p qsop-sign 8 30 {len(edges)}", "n 0", "cst 0"]
+    lines.extend(f"u {vertex} {(3 * vertex + 1) % 8}" for vertex in range(30))
+    lines.extend(f"e {left} {right}" for left, right in edges)
+    qsop.write_text("\n".join(lines) + "\n")
+
+    branch = subprocess.run(
+        [
+            str(sop_solve), "--backend", "branch", "--solve-mode", "single-fourier",
+            "--branch-rw-source", "from-treewidth", "--branch-no-qpf",
+            "--branch-single-propagate", "off", "--branch-single-delegate-max-width", "1",
+            "--branch-single-fourier-fallback", "delegate-only", "--max-vars", "64",
+            "--format", "stats", str(qsop),
+        ],
+        capture_output=True, text=True, timeout=20.0,
+    )
+    if branch.returncode != 0:
+        raise AssertionError(f"forced rankwidth delegate failed: {branch.stderr}")
+    stats = {
+        key.strip(): value.strip()
+        for line in branch.stdout.splitlines()
+        for key, separator, value in [line.partition(":")]
+        if separator
+    }
+    for field in ("rankwidth_delegations", "rankwidth_twist_join_events",
+                  "rankwidth_predicted_twist_join_events", "rankwidth_predicted_solve_ns"):
+        if int(stats.get(field, "0")) <= 0:
+            raise AssertionError(f"expected positive {field}:\n{branch.stdout}")
+
+    reference = subprocess.run(
+        [
+            str(sop_solve), "--backend", "treewidth", "--solve-mode", "single-fourier",
+            "--max-vars", "64", "--format", "stats", str(qsop),
+        ],
+        capture_output=True, text=True, timeout=20.0,
+    )
+    if reference.returncode != 0:
+        raise AssertionError(f"treewidth reference failed: {reference.stderr}")
+    reference_stats = {
+        key.strip(): value.strip()
+        for line in reference.stdout.splitlines()
+        for key, separator, value in [line.partition(":")]
+        if separator
+    }
+    for component in ("amplitude_re", "amplitude_im"):
+        observed = float(stats[component])
+        expected = float(reference_stats[component])
+        if abs(observed - expected) > 1e-8 * (1.0 + abs(expected)):
+            raise AssertionError(
+                f"branch twist {component} mismatch: {observed} != {expected}"
+            )
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: test_branch_policy.py <sop-solve>", file=sys.stderr)
@@ -145,6 +210,8 @@ def main() -> int:
         ("non_branch_backend_rejects_rw_source", test_non_branch_backend_rejects_rw_source),
         ("auto_large_residue_vector_uses_single_fourier",
          test_auto_large_residue_vector_uses_single_fourier),
+        ("branch_rankwidth_delegate_uses_twist_model",
+         test_branch_rankwidth_delegate_uses_twist_model),
     ]
     failed = []
     with tempfile.TemporaryDirectory() as td:

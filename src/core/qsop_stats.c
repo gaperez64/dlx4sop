@@ -10,6 +10,7 @@
 #include <string.h>
 
 #define QSOP_EXACT_WIDTH_HARD_MAX 16U
+#define QSOP_MAGIC_MODE_ENUMERATION_MAX UINT64_C(1000000)
 
 static bool write_failed(FILE *file, qsop_error_t *error) {
   if (!ferror(file)) {
@@ -43,6 +44,106 @@ static uint32_t first_set_bit_u64(uint64_t value) {
     bit++;
   }
   return bit;
+}
+
+static uint64_t mul_mod_u64(uint64_t left, uint64_t right, uint64_t modulus) {
+#if defined(__SIZEOF_INT128__)
+  return (uint64_t)(((__uint128_t)left * (__uint128_t)right) % (__uint128_t)modulus);
+#else
+  uint64_t out = 0;
+  left %= modulus;
+  while (right != 0) {
+    if ((right & 1U) != 0) {
+      out = out >= modulus - left ? out - (modulus - left) : out + left;
+    }
+    right >>= 1U;
+    if (right != 0) {
+      left = left >= modulus - left ? left - (modulus - left) : left + left;
+    }
+  }
+  return out;
+#endif
+}
+
+uint32_t qsop_magic_vertex_count(const qsop_instance_t *qsop, uint64_t mode) {
+  if (qsop == NULL || qsop->r == 0) {
+    return 0;
+  }
+  const uint64_t four_mode = mul_mod_u64(4U, mode % qsop->r, qsop->r);
+  uint32_t count = 0;
+  for (uint32_t v = 0; v < qsop->nvars; v++) {
+    if (mul_mod_u64(four_mode, qsop->unary[v] % qsop->r, qsop->r) != 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+static uint64_t magic_tiling_bound(uint64_t r, uint32_t magic_vertices) {
+  if (r != 8U || magic_vertices < 6U) {
+    return magic_vertices >= 64U ? UINT64_MAX : UINT64_C(1) << magic_vertices;
+  }
+  uint64_t bound = 1U;
+  for (uint32_t block = 0; block < magic_vertices / 6U; block++) {
+    if (bound > UINT64_MAX / 6U) {
+      return UINT64_MAX;
+    }
+    bound *= 6U;
+  }
+  const uint32_t remainder = magic_vertices % 6U;
+  return bound > (UINT64_MAX >> remainder) ? UINT64_MAX : bound << remainder;
+}
+
+static uint64_t hybrid_term_bound(uint64_t r, uint32_t cutrank, uint32_t magic_vertices) {
+  const uint64_t point = cutrank >= 64U ? UINT64_MAX : UINT64_C(1) << cutrank;
+  const uint64_t stabilizer = magic_tiling_bound(r, magic_vertices);
+  return point < stabilizer ? point : stabilizer;
+}
+
+static bool compute_magic_diagnostics(const qsop_instance_t *qsop,
+                                      const qsop_stats_options_t *options, qsop_stats_t *stats,
+                                      qsop_error_t *error) {
+  if (options == NULL || !options->magic_diagnostics) {
+    return true;
+  }
+  stats->magic_diagnostics_requested = true;
+  stats->magic_vertices_mode1 = qsop_magic_vertex_count(qsop, 1U);
+  if (qsop->r > QSOP_MAGIC_MODE_ENUMERATION_MAX) {
+    return true;
+  }
+
+  const size_t capacity = (size_t)qsop->nvars + 1U;
+  qsop_magic_mode_class_t *classes = calloc(capacity, sizeof(*classes));
+  if (classes == NULL) {
+    qsop_set_error(error, "out of memory while computing magic-mode diagnostics");
+    return false;
+  }
+  for (uint64_t mode = 0; mode < qsop->r; mode++) {
+    const uint32_t magic = qsop_magic_vertex_count(qsop, mode);
+    uint32_t index = 0;
+    while (index < stats->magic_mode_class_count &&
+           classes[index].magic_vertices != magic) {
+      index++;
+    }
+    if (index == stats->magic_mode_class_count) {
+      classes[index].magic_vertices = magic;
+      classes[index].hybrid_term_bound = hybrid_term_bound(qsop->r, stats->prefix_cut_rank, magic);
+      stats->magic_mode_class_count++;
+    }
+    classes[index].mode_count++;
+  }
+  stats->magic_mode_classes = classes;
+  stats->magic_diagnostics_available = true;
+  return true;
+}
+
+void qsop_stats_dispose(qsop_stats_t *stats) {
+  if (stats == NULL) {
+    return;
+  }
+  free(stats->magic_mode_classes);
+  stats->magic_mode_classes = NULL;
+  stats->magic_mode_class_count = 0;
 }
 
 static bool compute_width_diagnostics_with_order(const qsop_instance_t *qsop, qsop_stats_t *stats,
@@ -341,7 +442,10 @@ static bool compute_stats_internal(const qsop_instance_t *qsop, const qsop_stats
   if (!compute_width_diagnostics_with_order(qsop, stats, order, error)) {
     return false;
   }
-  return compute_exact_widths(qsop, options, stats, error);
+  if (!compute_exact_widths(qsop, options, stats, error)) {
+    return false;
+  }
+  return compute_magic_diagnostics(qsop, options, stats, error);
 }
 
 bool qsop_compute_stats_with_options(const qsop_instance_t *qsop,
@@ -388,6 +492,19 @@ bool qsop_stats_write_text(FILE *file, const qsop_stats_t *stats, qsop_error_t *
       fprintf(file, "exact_rankwidth: %" PRIu32 "\n", stats->exact_rankwidth);
     }
   }
+  if (stats->magic_diagnostics_requested) {
+    fprintf(file, "magic_vertices_mode_1: %" PRIu32 "\n", stats->magic_vertices_mode1);
+    fprintf(file, "magic_mode_classes: %s\n",
+            stats->magic_diagnostics_available ? "available" : "skipped");
+    for (uint32_t i = 0; i < stats->magic_mode_class_count; i++) {
+      const qsop_magic_mode_class_t *mode_class = &stats->magic_mode_classes[i];
+      fprintf(file,
+              "magic_mode_class: modes=%" PRIu64 " magic_vertices=%" PRIu32
+              " hybrid_term_bound=%" PRIu64 "\n",
+              mode_class->mode_count, mode_class->magic_vertices,
+              mode_class->hybrid_term_bound);
+    }
+  }
   return !write_failed(file, error);
 }
 
@@ -419,6 +536,22 @@ bool qsop_stats_write_json(FILE *file, const qsop_stats_t *stats, qsop_error_t *
       fprintf(file, ",\"exact_treewidth\":%" PRIu32 ",\"exact_rankwidth\":%" PRIu32,
               stats->exact_treewidth, stats->exact_rankwidth);
     }
+  }
+  if (stats->magic_diagnostics_requested) {
+    fprintf(file,
+            ",\"magic_diagnostics_available\":%s,\"magic_vertices_mode_1\":%" PRIu32
+            ",\"magic_mode_classes\":[",
+            stats->magic_diagnostics_available ? "true" : "false",
+            stats->magic_vertices_mode1);
+    for (uint32_t i = 0; i < stats->magic_mode_class_count; i++) {
+      const qsop_magic_mode_class_t *mode_class = &stats->magic_mode_classes[i];
+      fprintf(file,
+              "%s{\"modes\":%" PRIu64 ",\"magic_vertices\":%" PRIu32
+              ",\"hybrid_term_bound\":%" PRIu64 "}",
+              i == 0 ? "" : ",", mode_class->mode_count, mode_class->magic_vertices,
+              mode_class->hybrid_term_bound);
+    }
+    fputc(']', file);
   }
   fputs("}\n", file);
   return !write_failed(file, error);

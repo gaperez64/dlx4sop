@@ -46,10 +46,12 @@ flowchart TD
     C -->|yes| D[direct terminal evaluation]
     C -->|no| E{disconnected?}
     E -->|yes| F[solve components and combine]
-    E -->|no| G[width probe and two-stage cost model]
-    G -->|treewidth wins| TW[treewidth DP]
-    G -->|rankwidth wins| RW[rankwidth DP]
-    G -->|no delegate| H{fallback allowed and bounded?}
+    E -->|no| G[QPF bound and width preflight]
+    G --> C3{three-way cost model}
+    C3 -->|QPF wins| QT[exact QPF terminal]
+    C3 -->|treewidth wins| TW[treewidth DP]
+    C3 -->|rankwidth wins| RW[rankwidth DP]
+    C3 -->|no delegate| H{fallback allowed and bounded?}
     H -->|small residual| BR[branch on 0 and 1]
     H -->|large single-Fourier residual| CS[bounded cutset conditioning]
     H -->|budget or policy stop| X[graceful refusal]
@@ -102,10 +104,14 @@ For a connected residual, the effective order is:
    directly, as described above.
 3. Split disconnected support graphs, solve each component recursively, and
    convolve count histograms or multiply component amplitudes.
-4. Probe decomposition widths and try DP delegation. Count mode skips this
-   probe below 16 active variables; those small residuals go directly to the
-   branch fallback.
-5. If neither DP is selected, apply the mode-specific branch, conditioning, or
+4. Compute the QPF stabilizer-list bound and the treewidth estimate. An
+   affordable QPF is a peer in the cost comparison, not an unconditional
+   pre-width terminal.
+5. Probe rankwidth only when its optimistic cost can beat the less expensive of
+   QPF and treewidth, then execute the winning admitted delegate. Count mode
+   skips this probe below 16 active variables; those small residuals go directly
+   to the branch fallback.
+6. If neither DP is selected, apply the mode-specific branch, conditioning, or
    refusal rule from the table above.
 
 There are two whole-instance shortcuts. Count-table/all-modes solving can send
@@ -144,26 +150,76 @@ defaults to 24 for the exact count path and raises an unset value to `2^24` for
 single-Fourier/auto; the per-component width, work, and memory checks still
 decide whether delegation is affordable.
 
-## Treewidth-versus-rankwidth cost model
+## Quadratic phase functions and hybrid tables
 
-The cost model is enabled unless `--branch-rw-source none` is used. It answers
-two questions: whether generating a rank decomposition is worth its own cost,
-and, after generation, whether the measured rankwidth forecast beats
-treewidth.
+For a rank-decomposition node `u`, let `rho_u` be its cut-rank, `tau_u` its
+number of magic vertices, and `chi_u` the number of QPF terms retained for its
+table. The hybrid has four exact moves:
+
+```text
+chi_u <= min(stabilizer_terms(tau_u), chi_left * chi_right, 2^rho_u)
+```
+
+- **Rebuild** ignores child representations and decomposes the node's induced
+  unary phase directly.
+- **Join** takes products on disjoint coordinate blocks and adds the bilinear
+  crossing form to the QPF quadratic matrix.
+- **Point** is the existing signature table.
+- **Collapse** conditions every QPF on every boundary signature, sums its
+  internal variables, and returns to point form at any node.
+
+The mode-independent setup Gaussian-eliminates signature rows while carrying
+their preimages. This gives a linear section, rather than the point DP's
+first-seen representative, and makes the join crossing matrix bilinear. Even
+Fourier modes have no crossing sign. The point implementation remains the
+default and is called bit-for-bit whenever existing standalone rankwidth
+admission succeeds; QPF lists are the refusal-rescue path.
+
+The QPF record stores a mod-4 linear phase, an upper-triangular quadratic form,
+and an affine binary subspace. Count mode works in the exact ring
+`Z[zeta_lcm(r,8)][1/2]`, reduces in the cyclotomic power basis, and performs the
+inverse Fourier transform there. The current checked exact limits are
+`lcm(r,8) <= 64` and at most 96 variables; outside them, dispatch uses another
+exact backend.
+
+For `r=8`, groups of six T-equivalent magic phases use the verified six-term
+decomposition obtained from Eq. (5) of
+[Qassim, Pashayan, and Gosset](https://quantum-journal.org/papers/q-2021-12-20-606/);
+remaining magic vertices use the two-term basis. The implemented tiling bound
+is therefore `6^(tau/6) * 2^(tau mod 6)`. The paper's `0.3963` exponent is an
+asymptotic cat-chain construction, not a `(12,27)` finite block; that arithmetic
+conjecture from the implementation plan is deliberately not encoded. The block
+is exhaustively checked against all `2^6` amplitudes in the unit suite.
+
+QPF joins do cubic binary-linear-algebra work in the boundary dimension, so
+they are a coverage feature outside today's cut-rank window, not a blanket
+speed optimization. Statistics expose `qpf_decompositions`, `qpf_rebuilds`,
+`qpf_joins`, `qpf_collapses`, `qpf_terms`, `qpf_max_terms`, and
+`qpf_magic_vertices`.
+
+## Three-way delegation cost model
+
+The model compares QPF, treewidth, and rankwidth. Rankwidth probing is disabled
+by `--branch-rw-source none`. Otherwise the model first asks whether generating
+a rank decomposition is worth its own cost, then compares the measured
+rankwidth forecast with the less expensive of the admitted QPF and treewidth
+routes.
 
 ```mermaid
 flowchart TD
     T[treewidth width and DP work] --> TE[compute tw_est or infinity]
+    M[QPF stabilizer terms] --> QE[compute qpf_est or infinity]
     P[prefix cut-rank: zero or nonzero] --> O[optimistic RW width: zero or one]
     N[component size] --> O
-    O --> Q{optimistic rw_est times speedup below tw_est?}
+    O --> Q{optimistic rw_est times speedup below min tw_est qpf_est?}
     TE --> Q
-    Q -->|no| TW[use treewidth if admitted]
+    QE --> Q
+    Q -->|no| BASE[use less expensive admitted QPF or treewidth route]
     Q -->|yes| GEN[generate rank decomposition]
-    GEN --> FC[measure cut-rank and table / join forecasts]
-    FC --> Q2{within cap and measured rw_est times speedup below tw_est?}
+    GEN --> FC[measure cuts crossing ranks and kernel mix]
+    FC --> Q2{within cap and measured rw_est times speedup below baseline?}
     Q2 -->|yes| RW[use rankwidth]
-    Q2 -->|no| END[use treewidth if admitted; otherwise no delegate]
+    Q2 -->|no| END[use cheaper admitted QPF or treewidth route]
 ```
 
 Define:
@@ -171,8 +227,13 @@ Define:
 - `W_tw` as the effective treewidth work: min-fill
   `sum 2^(bag size)` over elimination steps, multiplied by `r` for
   count-table/all-modes decisions and left unchanged for single-Fourier.
-- `T_rw`, `J_rw`, and `S_rw` as the rankwidth table, join-pair, and signature
-  forecasts. Count tables include their residue axis in `T_rw`.
+- `T_rw`, `J_rw`, and `S_rw` as the count-path rankwidth table, join-pair, and
+  signature forecasts. Count tables include their residue axis in `T_rw`.
+- `T_single` as the calibrated structural forecast for a single-Fourier
+  decomposition. It sums the selected AUTO join costs from the child and parent
+  signature dimensions and crossing rank, and rejects a profile whose predicted
+  live memory exceeds the delegate budget.
+- `Q` as the exact stabilizer-list term bound for the requested QPF mode.
 - `P_rw = C_rw_probe * nvars^2 * ceil(nvars / 64)` as the estimated cost of
   generating a decomposition and measuring its cuts.
 
@@ -181,20 +242,26 @@ The estimates are:
 ```text
 tw_est = tw_fixed_overhead_ns + C_tw_table * W_tw
 
-rw_est = rw_fixed_overhead_ns + rw_memory_penalty_ns
-       + C_rw_table * T_rw
-       + C_rw_join  * J_rw
-       + C_rw_sig   * S_rw
-       + P_rw
+qpf_est = qpf_fixed_overhead_ns + C_qpf_term_ns * Q
 
-rankwidth wins  iff  rw_est * rw_min_speedup < tw_est
+rw_est_count = rw_fixed_overhead_ns + rw_memory_penalty_ns
+             + C_rw_table * T_rw
+             + C_rw_join  * J_rw
+             + C_rw_sig   * S_rw
+             + P_rw
+
+rw_est_single_after_probe = rw_fixed_overhead_ns + T_single
+
+rankwidth wins iff rw_est * rw_min_speedup < min(tw_est, qpf_est)
 ```
 
 An inadmissible backend has an infinite estimate. Before the rankwidth probe,
 `P_rw` is included, the join forecast is zero, and the best feasible generated
 cut-rank is assumed: zero only when the natural-order prefix cut-rank is zero,
-otherwise one. After generation, the real forecasts replace those optimistic
-values and `P_rw` is sunk, so it becomes zero in the second comparison.
+otherwise one. In the count path, the real legacy forecasts replace those
+optimistic values after generation. In the single-Fourier path, the calibrated
+structural forecast replaces them and includes the selected pairwise/twist join
+mix. The probe is sunk in either second comparison.
 
 Natural-order prefix cut-rank is deliberately not used as an estimate or lower
 bound for generated rankwidth. A different order can compress a high prefix
@@ -216,6 +283,8 @@ decomposition nodes and scales as `O(nvars^2 * words)` bit operations.
 | `C_rw_join` | 40 |
 | `C_rw_sig` | 2000 |
 | `C_rw_probe` | 2 |
+| `C_qpf_term_ns` | 250000 |
+| `qpf_fixed_overhead_ns` | 20000 |
 | `rw_min_speedup` | 1.1 |
 | `rw_memory_penalty_ns` | 0 |
 
@@ -384,7 +453,7 @@ they also admit no witness pair from which to rebuild the parent signature.
 closely tied to the dispatch described above are:
 
 - Backend and mode: `--backend`, `--solve-mode`, `--max-vars`,
-  `--treewidth-order`, `--fourier-target-mode`.
+  `--treewidth-order`, `--fourier-target-mode`, `--qpf-max-terms`.
 - Cost policy: `--branch-rw-source`, `--branch-rw-min-speedup`,
   `--branch-rw-fixed-overhead-ns`, `--branch-tw-fixed-overhead-ns`,
   `--branch-rw-memory-penalty-ns`.

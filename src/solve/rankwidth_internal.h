@@ -281,6 +281,18 @@ typedef struct rw_single_join_forecast {
   uint32_t parent_dim;
   uint32_t crossing_rank;
 } rw_single_join_forecast_t;
+
+/* A linear right inverse of the node signature map. basis[i] is a signature-space basis
+ * vector and preimages[i] is the assignment in X_u selected for it. */
+typedef struct rw_linear_section {
+  uint32_t nbits;
+  size_t words;
+  uint32_t dim;
+  uint32_t *pivots;
+  int32_t *pivot_to_index;
+  uint64_t *basis;
+  uint64_t *preimages;
+} rw_linear_section_t;
 static inline uint64_t *node_vars(qsop_rankwidth_decomposition_t *decomposition, uint32_t node) {
   return qsop_bitset_row(decomposition->node_vars, decomposition->words, node);
 }
@@ -361,6 +373,25 @@ rw_single_join_forecast_t rw_single_join_forecast(qsop_rankwidth_single_kernel_t
 
 uint64_t rw_twist_workspace_bytes_dims(uint32_t parent_dim, uint32_t crossing_rank,
                                        size_t value_size);
+
+bool rw_linear_section_build(const qsop_instance_t *qsop,
+                             const qsop_rankwidth_decomposition_t *decomposition,
+                             uint32_t node, const uint64_t *adj, rw_linear_section_t *out,
+                             qsop_error_t *error);
+void rw_linear_section_free(rw_linear_section_t *section);
+bool rw_linear_section_coord(const rw_linear_section_t *section, const uint64_t *signature,
+                             uint64_t *coord, qsop_error_t *error);
+void rw_linear_section_apply(const rw_linear_section_t *section, const uint64_t *coord,
+                             uint64_t *assignment);
+bool rw_qpf_crossing_matrix(const qsop_instance_t *qsop,
+                            const rw_linear_section_t *left,
+                            const rw_linear_section_t *right, const uint64_t *adj,
+                            uint64_t **out_rows, size_t *out_words, qsop_error_t *error);
+bool rw_qpf_hybrid_single_mode(const qsop_instance_t *qsop,
+                               const qsop_rankwidth_decomposition_t *decomposition,
+                               const uint64_t *adj, uint32_t target_mode, uint64_t max_terms,
+                               bool *out_handled, qsop_amplitude_t *out,
+                               qsop_solve_stats_t *stats, qsop_error_t *error);
 
 uint32_t rw_decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                 const uint64_t *adj, qsop_solve_stats_t *stats,
