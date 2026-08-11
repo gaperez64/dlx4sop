@@ -11,6 +11,7 @@
 #include "rankwidth_internal.h"
 #include "trace.h"
 
+#include <assert.h>
 #include <float.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -453,10 +454,11 @@ static uint32_t cross_parity_selected_rows(uint32_t nvars, const uint64_t *adj,
   }
   return parity;
 }
-static uint32_t cross_parity_bitsets_weighted(uint32_t nvars, const uint64_t *adj,
-                                              const uint64_t *left_assignment, uint32_t left_count,
-                                              const uint64_t *right_assignment,
-                                              uint32_t right_count, size_t words) {
+static uint32_t __attribute__((unused))
+cross_parity_bitsets_weighted(uint32_t nvars, const uint64_t *adj,
+                              const uint64_t *left_assignment, uint32_t left_count,
+                              const uint64_t *right_assignment, uint32_t right_count,
+                              size_t words) {
   if (left_count == 0 || right_count == 0) {
     return 0;
   }
@@ -464,6 +466,32 @@ static uint32_t cross_parity_bitsets_weighted(uint32_t nvars, const uint64_t *ad
     return cross_parity_selected_rows(nvars, adj, right_assignment, left_assignment, words);
   }
   return cross_parity_selected_rows(nvars, adj, left_assignment, right_assignment, words);
+}
+/* Crossing parity via the cached half-product.  A right-table signature stores
+ * sigma_R(b) = b^T A[X_R, .] restricted to comp(X_R) (leaves store the bare adjacency row,
+ * which coincides with that restriction; joins mask with `outside` explicitly).  Since
+ * X_L is disjoint from X_R, the bits of sigma_R(b) at vertices of X_L are exactly
+ * (A[X_L, X_R] b)_v, so the crossing parity a^T A[X_L, X_R] b equals
+ * |rep_L AND sigma_R(b)| mod 2: the signature already holds the bilinear form half-applied.
+ * One SIMD intersection popcount replaces the per-vertex adjacency sweep of
+ * cross_parity_bitsets_weighted (docs/table-representation-audit.md, refactor step 1).
+ * Debug builds keep the old sweep as a differential oracle. */
+static uint32_t cross_parity_cached(uint32_t nvars, const uint64_t *adj,
+                                    const uint64_t *left_assignment, uint32_t left_count,
+                                    const uint64_t *right_assignment, uint32_t right_count,
+                                    const uint64_t *right_signature_bits, size_t words,
+                                    const qsop_simd_vtable_t *simd) {
+  const uint32_t parity =
+      qsop_bitset_popcount_intersection_simd(left_assignment, right_signature_bits, words, simd) &
+      1U;
+  assert(parity == cross_parity_bitsets_weighted(nvars, adj, left_assignment, left_count,
+                                                 right_assignment, right_count, words));
+  (void)nvars;
+  (void)adj;
+  (void)left_count;
+  (void)right_assignment;
+  (void)right_count;
+  return parity;
 }
 static bool solve_rankwidth_linear_count_table_mod_once(
     const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
@@ -734,8 +762,9 @@ bool rw_compute_join_transition_sign(uint32_t nvars, const uint64_t *adj, rw_sig
                                      qsop_error_t *error) {
   const qsop_simd_vtable_t *simd = rankwidth_bitset_simd();
   const uint32_t sign = r / 2U;
-  const uint32_t parity = cross_parity_bitsets_weighted(nvars, adj, left_rep, left_weight,
-                                                        right_rep, right_weight, words);
+  const uint32_t parity =
+      cross_parity_cached(nvars, adj, left_rep, left_weight, right_rep, right_weight,
+                          rw_signature_bits(pool, right_signature), words, simd);
   qsop_bitset_copy(scratch_sig, rw_signature_bits(pool, left_signature), words);
   qsop_bitset_xor_simd(scratch_sig, rw_signature_bits(pool, right_signature), words, simd);
   qsop_bitset_and_simd(scratch_sig, outside, words, simd);
@@ -1109,8 +1138,9 @@ static bool build_join_map(const qsop_instance_t *qsop,
       const uint64_t *left_rep = rw_table_assignment(left, i, words);
       const uint64_t *right_rep = rw_table_assignment(right, j, words);
       const uint32_t parity =
-          cross_parity_bitsets_weighted(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
-                                        right->rep_weights[j], words);
+          cross_parity_cached(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
+                              right->rep_weights[j],
+                              rw_signature_bits(pool, right->reps[j].signature), words, simd);
       qsop_bitset_copy(signature, rw_signature_bits(pool, left->reps[i].signature), words);
       qsop_bitset_xor_simd(signature, rw_signature_bits(pool, right->reps[j].signature), words,
                            simd);
@@ -1166,8 +1196,9 @@ static bool build_join_map_arena(const qsop_instance_t *qsop,
       const uint64_t *left_rep = rw_table_assignment(left, i, words);
       const uint64_t *right_rep = rw_table_assignment(right, j, words);
       const uint32_t parity =
-          cross_parity_bitsets_weighted(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
-                                        right->rep_weights[j], words);
+          cross_parity_cached(qsop->nvars, adj, left_rep, left->rep_weights[i], right_rep,
+                              right->rep_weights[j],
+                              rw_signature_bits(pool, right->reps[j].signature), words, simd);
       qsop_bitset_copy(signature, rw_signature_bits(pool, left->reps[i].signature), words);
       qsop_bitset_xor_simd(signature, rw_signature_bits(pool, right->reps[j].signature), words,
                            simd);
