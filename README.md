@@ -95,7 +95,7 @@ from source:
   DP baseline for developer and profiling runs.
 - `sop-solve --backend rankwidth`: decomposition-DP backend with cut-rank
   diagnostics and count-table/Fourier modes; useful for comparison and targeted
-  low-rank cases. Its point-table path is unchanged; an affordable QPF list can
+  low-rank cases. An affordable QPF list can
   rescue an instance rejected by the standalone `--max-vars` gate.
 - `sop-solve --backend qpf --qpf-max-terms 4096`: direct quadratic-phase-function
   solver. Count output uses exact cyclotomic arithmetic (no floating-point or
