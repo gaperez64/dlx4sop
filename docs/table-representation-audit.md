@@ -87,6 +87,33 @@ loop (pure speed, no representation change: compute B on ρ̂_L×ρ̂_R basis pa
 pool retirement; (4) cap or stream the CRT join maps; (5) add a bytes term to
 `table_forecast`.
 
+## Status (2026-08-11)
+
+- **Step 1 — DONE.** `cross_parity_cached` replaces the per-pair adjacency sweep with one
+  intersection popcount against the cached signature (the half-applied bilinear form); the
+  old sweep survives as a debug-build differential oracle.
+- **Step 2 — DONE.** `rw_join_plan_t` (rankwidth_join_plan.c): per join, a basis of each
+  child's realized signatures with generator witnesses, the projected parent coordinate
+  maps, and the crossing form on basis pairs. Every pairwise kernel (count-table CSR +
+  streaming, CRT map builders, all-modes Fourier, single-mode complex in both precisions)
+  now pays O(1) 64-bit word ops per pair; the full-width parent intern runs once per
+  distinct parent coordinate. Joins beyond the dense-basis dimension cap fall back to the
+  extrinsic path. Debug builds chain the oracles (plan parity → cached half-product →
+  original sweep; memoized parent id → fresh intern).
+- **Step 3 — DONE for the CRT count-table path** (the large-n regime the audit flagged).
+  `rw_join_map_entry_t` now carries dense node-local representative indices and *no
+  per-pair assignment* (16 B per pair, down from 16 B + n/8); the map builder populates
+  the parent table's representatives (one witness per distinct parent signature) as a side
+  effect; the per-prime passes rebuild every table keyed by those indices with no
+  signature pool, no interning and no full-width representative storage, and the pool is
+  freed right after the build pass instead of persisting across all primes. The
+  non-CRT pairwise path (nvars < 64, one-word bitsets) keeps pool keys — the extrinsic
+  overhead there is a single word. The all-modes Fourier and single-mode complex paths
+  keep their extrinsic *storage* (their per-pair *compute* is already coordinate-level via
+  step 2).
+- **Steps 4–5 — open.** The CRT path still materializes maps for all join nodes at once
+  (now 16 B/pair) with no pair cap, and `table_forecast` still has no bytes term.
+
 ## Cross-check against the paper
 
 The paper's bounds are unaffected (its `poly(n)` absorbs the extrinsic representation —

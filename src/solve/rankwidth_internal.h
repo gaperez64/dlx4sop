@@ -90,17 +90,24 @@ typedef struct rw_table {
   uint32_t *rep_slots;
   size_t rep_slots_mask; /* (power-of-two capacity) - 1; 0 when unallocated */
 } rw_table_t;
+/* Cached join transitions for the CRT count-table passes (docs/table-representation-audit.md,
+ * refactor step 3).  Entries carry node-local REPRESENTATIVE INDICES into the child and parent
+ * tables rather than interned pool ids, and no per-pair assignment: the builder populates the
+ * parent table's representatives (one witness per DISTINCT parent signature, in first-seen
+ * order) as a side effect, and the per-prime passes rebuild tables keyed by those same dense
+ * indices without touching the signature pool or any full-width bitset.  This drops the map
+ * footprint from 16 B + n/8 B per pair to 16 B per pair. */
 typedef struct rw_join_map_entry {
-  uint32_t left_signature;
-  uint32_t right_signature;
-  uint32_t parent_signature;
+  uint32_t left_rep;
+  uint32_t right_rep;
+  uint32_t parent_rep;
   uint32_t residue_shift;
 } rw_join_map_entry_t;
 typedef struct rw_join_map {
   rw_join_map_entry_t *entries;
-  uint64_t *assignments;
   size_t len;
   size_t cap;
+  uint32_t parent_len; /* distinct parent representatives; per-prime passes prepopulate this many */
 } rw_join_map_t;
 typedef struct rw_transition_eval {
   bool valid;
@@ -331,8 +338,6 @@ bool rw_fourier_slots_rehash(rw_fourier_table_t *table, qsop_error_t *error);
 
 void rw_fourier_table_free(rw_fourier_table_t *table);
 
-uint64_t *rw_join_map_assignment(const rw_join_map_t *map, size_t index, size_t words);
-
 void rw_join_map_free(rw_join_map_t *map);
 
 bool rw_join_plan_build(uint32_t nvars, const rw_signature_pool_t *pool, const uint32_t *left_sigs,
@@ -370,7 +375,7 @@ bool rw_reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error);
 bool rw_reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t value_slots,
                               size_t words, qsop_error_t *error);
 
-bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qsop_error_t *error);
+bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, qsop_error_t *error);
 
 bool rw_reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_error_t *error);
 
@@ -454,6 +459,8 @@ bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *ass
 
 bool rw_table_rep_index(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
                         size_t words, uint32_t *index_out, qsop_error_t *error);
+
+bool rw_table_prepopulate_reps_indexed(rw_table_t *table, size_t count, qsop_error_t *error);
 
 bool rw_table_find_rep_index(const rw_table_t *table, uint32_t signature, uint32_t *index_out);
 
