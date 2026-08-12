@@ -241,6 +241,71 @@ static int solve_single_k10(uint64_t dp_work_budget, qsop_amplitude_t *amp,
       amp, stats, &err);
 }
 
+/* K15 has zero magic and enough treewidth work for the QPF terminal to win the cost model. Verify
+ * that the branch boundary preserves the selected route's statistics and that its result agrees
+ * with the treewidth path. */
+static int test_single_mode_qpf_cost_axis(void) {
+  qsop_instance_t *inst = make_complete(15U);
+  if (inst == NULL) {
+    return 1;
+  }
+  qsop_amplitude_t qpf_amp = {0};
+  qsop_solve_stats_t qpf_stats = {0};
+  qsop_error_t error = {0};
+  if (!qsop_solve_branch_single_mode(
+          inst, 64U, 1U,
+          &(qsop_branch_single_mode_options_t){
+              .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+              .fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY,
+              .treewidth_delegate_max_memory_mib = 64U,
+          },
+          &qpf_amp, &qpf_stats, &error)) {
+    fprintf(stderr, "FAIL single_mode_qpf_cost_axis: QPF solve failed: %s\n", error.message);
+    qsop_free(inst);
+    return 1;
+  }
+  if (qpf_stats.qpf_decompositions == 0U || qpf_stats.qpf_max_terms == 0U ||
+      qpf_stats.treewidth_delegations != 0U || qpf_stats.rankwidth_delegations != 0U) {
+    fprintf(stderr,
+            "FAIL single_mode_qpf_cost_axis: qpf=%" PRIu64 " max_terms=%" PRIu64
+            " tw=%" PRIu64 " rw=%" PRIu64 "\n",
+            qpf_stats.qpf_decompositions, qpf_stats.qpf_max_terms,
+            qpf_stats.treewidth_delegations, qpf_stats.rankwidth_delegations);
+    qsop_free(inst);
+    return 1;
+  }
+
+  qsop_amplitude_t treewidth_amp = {0};
+  qsop_solve_stats_t treewidth_stats = {0};
+  if (!solve_complete_single(
+          inst,
+          &(qsop_branch_single_mode_options_t){
+              .rw_source = QSOP_BRANCH_RW_SOURCE_NONE,
+              .fallback = QSOP_BRANCH_SINGLE_FALLBACK_DELEGATE_ONLY,
+              .treewidth_delegate_max_dp_work = UINT64_MAX,
+              .treewidth_delegate_max_memory_mib = 64U,
+          },
+          &treewidth_amp, &treewidth_stats, &error)) {
+    fprintf(stderr, "FAIL single_mode_qpf_cost_axis: treewidth reference failed\n");
+    qsop_free(inst);
+    return 1;
+  }
+  long double qpf_re = 0.0L;
+  long double qpf_im = 0.0L;
+  long double treewidth_re = 0.0L;
+  long double treewidth_im = 0.0L;
+  if (!qsop_amplitude_normalized(&qpf_amp, inst->norm_h, &qpf_re, &qpf_im) ||
+      !qsop_amplitude_normalized(&treewidth_amp, inst->norm_h, &treewidth_re, &treewidth_im) ||
+      fabsl(qpf_re - treewidth_re) > 1e-9L || fabsl(qpf_im - treewidth_im) > 1e-9L) {
+    fprintf(stderr, "FAIL single_mode_qpf_cost_axis: amplitude differs from treewidth\n");
+    qsop_free(inst);
+    return 1;
+  }
+  qsop_free(inst);
+  fprintf(stderr, "PASS single_mode_qpf_cost_axis\n");
+  return 0;
+}
+
 static int test_single_mode_dp_work_gate(void) {
   qsop_amplitude_t   amp_wide = {0};
   qsop_solve_stats_t wide     = {0};
@@ -608,6 +673,7 @@ int main(void) {
   failures += test_null_out_with_options();
   failures += test_null_qsop_rejected();
   failures += test_unsupported_mode_rejected();
+  failures += test_single_mode_qpf_cost_axis();
   failures += test_single_mode_dp_work_gate();
   failures += test_single_mode_memory_gate();
   failures += test_rankwidth_preprobe_policy();

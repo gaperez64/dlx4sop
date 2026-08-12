@@ -549,6 +549,30 @@ SINGLE_FOURIER_BACKEND_CONFIGS = [
         ],
     ),
     (
+        "rankwidth-twist",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--rankwidth-single-kernel",
+            "twist",
+        ],
+    ),
+    (
+        "rankwidth-double-twist",
+        [
+            "--backend",
+            "rankwidth",
+            "--solve-mode",
+            "single-fourier",
+            "--single-mode-precision",
+            "double",
+            "--rankwidth-single-kernel",
+            "twist",
+        ],
+    ),
+    (
         "rankwidth-double",
         [
             "--backend",

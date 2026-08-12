@@ -2,6 +2,7 @@
 #include "component_key.h"
 #include "dlx4sop/qsop_solve.h"
 #include "qpf_magic.h"
+#include "rankwidth_internal.h"
 #include "dlx4sop/qsop_stats.h"
 #include "dlx4sop/residual.h"
 #include "dlx4sop/residue.h"
@@ -1323,6 +1324,43 @@ static uint64_t branch_qpf_estimate_ns(const qsop_branch_policy_t *pol, bool aff
   return est;
 }
 
+typedef struct {
+  bool applicable;
+  uint64_t term_sum;
+  uint32_t peak_magic;
+} branch_qpf_applicability_t;
+
+/* Keep QPF's correctness and resource conditions separate from route pricing. Count-table solves
+ * are excluded, the phase order must be supported, and every requested Fourier mode must fit the
+ * stabilizer-term budget. Magic vertices affect the bound rather than acting as a separate gate. */
+static branch_qpf_applicability_t branch_qpf_applicability(
+    const qsop_instance_t *sub, const qsop_branch_policy_t *pol, uint64_t count_modulus,
+    bool all_modes, uint64_t target_mode, uint64_t max_terms) {
+  branch_qpf_applicability_t result = {0};
+  result.applicable = !pol->qpf_disabled && count_modulus == 0U &&
+                      qsop_qpf_phase_order_supported((uint64_t)sub->r,
+                                                     QSOP_QPF_CYCLOTOMIC_MAX_ORDER);
+  if (!result.applicable) {
+    return result;
+  }
+
+  const uint64_t first_mode = all_modes ? 0U : target_mode;
+  const uint64_t end_mode = all_modes ? (uint64_t)sub->r : target_mode + 1U;
+  for (uint64_t mode = first_mode; mode < end_mode; mode++) {
+    const uint32_t magic = qsop_magic_vertex_count(sub, mode);
+    if (magic > result.peak_magic) {
+      result.peak_magic = magic;
+    }
+    const uint64_t bound = qsop_qpf_stabilizer_term_bound(sub, mode);
+    if (bound == UINT64_MAX || bound > max_terms) {
+      result.applicable = false;
+      break;
+    }
+    qsop_add_saturating_u64(&result.term_sum, bound);
+  }
+  return result;
+}
+
 /* Nanoseconds for the rankwidth solve. probe_ns is the cost of the decomposition probe: charged
  * before the probe has run, zero afterwards. */
 static uint64_t branch_rankwidth_estimate_ns(const qsop_branch_policy_t *pol, uint64_t rw_table,
@@ -1336,12 +1374,44 @@ static uint64_t branch_rankwidth_estimate_ns(const qsop_branch_policy_t *pol, ui
   return est;
 }
 
-static bool branch_rankwidth_wins(const qsop_branch_policy_t *pol, uint64_t rw_est,
-                                  uint64_t tw_est) {
-  if (tw_est == UINT64_MAX) {
-    return true;
+/* The single-Fourier rankwidth backend has its own per-join calibrated model. Once a decomposition
+ * exists, use that structural forecast instead of pricing every join as a pairwise scan. The
+ * branch-level fixed cost remains separate because it covers route setup outside the DP joins. */
+static uint64_t branch_rankwidth_single_estimate_ns(
+    const qsop_branch_policy_t *pol, const rw_decomposition_score_t *score) {
+  if (score == NULL || !score->single_feasible || score->single_predicted_ns == UINT64_MAX) {
+    return UINT64_MAX;
   }
-  return tw_est != 0 && (double)rw_est * pol->rw_min_speedup < (double)tw_est;
+  return qsop_saturating_add_u64(score->single_predicted_ns, pol->rw_fixed_overhead_ns);
+}
+
+typedef enum {
+  BRANCH_ROUTE_NONE = 0,
+  BRANCH_ROUTE_TREEWIDTH,
+  BRANCH_ROUTE_RANKWIDTH,
+  BRANCH_ROUTE_QPF,
+} branch_route_t;
+
+/* Select the cheapest applicable terminal. An estimate of UINT64_MAX is inapplicable. Treewidth
+ * wins exact ties with QPF, while rankwidth must clear its configured speedup margin. */
+static branch_route_t branch_choose_route(uint64_t tw_est, uint64_t rw_est, uint64_t qpf_est,
+                                          const qsop_branch_policy_t *pol) {
+  branch_route_t route = BRANCH_ROUTE_NONE;
+  uint64_t competing_est = UINT64_MAX;
+  if (tw_est != UINT64_MAX) {
+    route = BRANCH_ROUTE_TREEWIDTH;
+    competing_est = tw_est;
+  }
+  if (qpf_est < competing_est) {
+    route = BRANCH_ROUTE_QPF;
+    competing_est = qpf_est;
+  }
+  if (rw_est != UINT64_MAX &&
+      (competing_est == UINT64_MAX ||
+       (competing_est != 0 && (double)rw_est * pol->rw_min_speedup < (double)competing_est))) {
+    route = BRANCH_ROUTE_RANKWIDTH;
+  }
+  return route;
 }
 
 /* Predicted cost of *deciding* whether rankwidth wins: generate a rank decomposition, then measure
@@ -1354,22 +1424,22 @@ static uint64_t rankwidth_probe_estimate_ns(const qsop_branch_policy_t *pol, uin
   return qsop_saturating_mul_u64(units, pol->C_rw_probe);
 }
 
-/* Is the probe worth running? Natural-order prefix cut-rank is not a lower bound on the width of a
+/* Estimate rankwidth before probing. Natural-order prefix cut-rank is not a lower bound on the width of a
  * generated decomposition: a different order can compress a large prefix rank all the way down to
- * one. Use the minimum feasible generated width -- zero only when the graph's prefix rank is zero,
- * otherwise one -- and omit the join term we cannot know yet. A probe that looks promising under
+ * one. Use the minimum feasible generated width, zero only when the graph's prefix rank is zero and
+ * otherwise one, and omit the join term we cannot know yet. A probe that looks promising under
  * this deliberately best-case estimate is settled honestly by the measured second evaluation,
  * while one that cannot win even in the best case is pure loss. `table_r_factor` is r for the
  * count-table path (whose tables carry a residue axis) and 1 for single-Fourier. */
-static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint64_t tw_est,
-                                          uint32_t nvars, uint32_t prefix_cut_rank,
-                                          uint64_t table_r_factor) {
+static uint64_t branch_rankwidth_preprobe_estimate_ns(const qsop_branch_policy_t *pol,
+                                                      uint32_t nvars,
+                                                      uint32_t prefix_cut_rank,
+                                                      uint64_t table_r_factor) {
   const uint32_t optimistic_width = prefix_cut_rank == 0 ? 0U : 1U;
   const uint64_t rw_sig = binary_assignment_forecast(optimistic_width);
   const uint64_t rw_table = qsop_saturating_mul_u64(rw_sig, table_r_factor);
-  const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rw_table, 0, rw_sig,
-                                                       rankwidth_probe_estimate_ns(pol, nvars));
-  return branch_rankwidth_wins(pol, rw_est, tw_est);
+  return branch_rankwidth_estimate_ns(pol, rw_table, 0, rw_sig,
+                                      rankwidth_probe_estimate_ns(pol, nvars));
 }
 
 /* Public CLI helper for the single-Fourier auto path: true when the unified pre-probe check says a
@@ -1377,14 +1447,16 @@ static bool branch_should_probe_rankwidth(const qsop_branch_policy_t *pol, uint6
  * take. Prefix cut-rank distinguishes only rank zero from a potentially compressible graph; it is
  * not used as an estimate of the generated width. When false, the caller falls into the branch
  * recursion, where rankwidth is probed and the same model decides. Mirrors
- * branch_should_probe_rankwidth exactly -- callers only reach here with treewidth inside its
+ * branch_rankwidth_preprobe_estimate_ns exactly. Callers only reach here with treewidth inside its
  * single-Fourier cap, so treewidth is usable and its tables carry no residue axis (r factor 1). */
 bool qsop_branch_single_treewidth_clearly_preferred(uint32_t prefix_cut_rank, uint32_t nvars,
                                                     uint64_t treewidth_dp_work,
                                                     const qsop_branch_policy_t *policy) {
   const qsop_branch_policy_t pol = branch_policy_normalize(policy);
   const uint64_t tw_est = branch_treewidth_estimate_ns(&pol, true, treewidth_dp_work);
-  return !branch_should_probe_rankwidth(&pol, tw_est, nvars, prefix_cut_rank, 1U);
+  const uint64_t rw_est =
+      branch_rankwidth_preprobe_estimate_ns(&pol, nvars, prefix_cut_rank, 1U);
+  return branch_choose_route(tw_est, rw_est, UINT64_MAX, &pol) != BRANCH_ROUTE_RANKWIDTH;
 }
 
 /* Maximum cutrank width tried during calibration runs. Wider sub-problems are
@@ -1467,10 +1539,10 @@ static bool branch_try_rankwidth_delegate(
       treewidth_available && treewidth_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
   const uint64_t tw_est = branch_treewidth_estimate_ns(
       pol, treewidth_usable, qsop_saturating_mul_u64(treewidth_dp_work, (uint64_t)sub->r));
-  /* QPF is a peer route in the same argmin: rankwidth must beat the cheaper of treewidth and QPF. */
-  const uint64_t baseline_est = qpf_est < tw_est ? qpf_est : tw_est;
+  const uint64_t rw_preprobe_est =
+      branch_rankwidth_preprobe_estimate_ns(pol, sub->nvars, prefix_cut_rank, sub->r);
 
-  if (!branch_should_probe_rankwidth(pol, baseline_est, sub->nvars, prefix_cut_rank, sub->r)) {
+  if (branch_choose_route(tw_est, rw_preprobe_est, qpf_est, pol) != BRANCH_ROUTE_RANKWIDTH) {
     note_rankwidth_skip(stats, "branch.rankwidth_skip_predicted_cost", sub->nvars);
     if (rw_data != NULL) {
       rw_data->veto_reason = "rw_predicted_cost";
@@ -1549,8 +1621,9 @@ static bool branch_try_rankwidth_delegate(
   const uint64_t rw_est = branch_rankwidth_estimate_ns(pol, rankwidth_table_forecast,
                                                        rankwidth_join_pair_forecast, sig_est, 0);
   const bool within_cutrank_cap = cutrank_width <= BRANCH_RANKWIDTH_DELEGATE_MAX_WIDTH;
-  const bool rankwidth_wins =
-      within_cutrank_cap && (calibrating || branch_rankwidth_wins(pol, rw_est, baseline_est));
+  const bool rankwidth_wins = within_cutrank_cap &&
+                              (calibrating || branch_choose_route(tw_est, rw_est, qpf_est, pol) ==
+                                                  BRANCH_ROUTE_RANKWIDTH);
 
   if (!rankwidth_wins) {
     const bool over_cap = !within_cutrank_cap;
@@ -1730,29 +1803,12 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
                           sub_stats.min_fill_width, stats_start);
   const double probe_ms = recording ? branch_ns_to_ms(qsop_trace_elapsed_ns(probe_start_ns)) : 0.0;
 
-  /* QPF terminal cost (the third axis of the delegate's argmin): the exact stabilizer-list work,
-   * summed over all r modes, computed once from the width-probe sub-instance in O(n*r) with no
-   * decomposition. qpf_est feeds the rankwidth decision (rankwidth must beat min(tw,qpf)); if
-   * rankwidth declines and qpf_est < tw_est, the QPF terminal is run below. */
-  uint32_t qpf_peak_magic = 0;
-  uint64_t qpf_term_sum = 0;
-  bool qpf_affordable = !stats->policy.qpf_disabled && stats->count_modulus == 0U &&
-                        qsop_qpf_phase_order_supported((uint64_t)sub.r, QSOP_QPF_CYCLOTOMIC_MAX_ORDER);
-  if (qpf_affordable) {
-    for (uint64_t mode = 0; mode < sub.r; mode++) {
-      const uint32_t m = qsop_magic_vertex_count(&sub, mode);
-      if (m > qpf_peak_magic) {
-        qpf_peak_magic = m;
-      }
-      const uint64_t b = qsop_qpf_stabilizer_term_bound(&sub, mode);
-      if (b == UINT64_MAX || b > stats->qpf_max_terms) {
-        qpf_affordable = false;
-        break;
-      }
-      qpf_term_sum = qpf_term_sum > UINT64_MAX - b ? UINT64_MAX : qpf_term_sum + b;
-    }
-  }
-  const uint64_t qpf_est = branch_qpf_estimate_ns(&stats->policy, qpf_affordable, qpf_term_sum);
+  /* QPF's applicability predicate supplies either a finite peer estimate or UINT64_MAX. The exact
+   * stabilizer-list work is summed over all r modes without constructing a decomposition. */
+  const branch_qpf_applicability_t qpf = branch_qpf_applicability(
+      &sub, &stats->policy, stats->count_modulus, true, 0, stats->qpf_max_terms);
+  const uint64_t qpf_est =
+      branch_qpf_estimate_ns(&stats->policy, qpf.applicable, qpf.term_sum);
   const bool tw_usable = sub_stats.width_diagnostics_available &&
                          sub_stats.min_fill_width <= BRANCH_TREEWIDTH_DELEGATE_MAX_WIDTH;
   const uint64_t tw_est_local = branch_treewidth_estimate_ns(
@@ -1876,12 +1932,11 @@ static bool branch_try_dp_delegate(qsop_residual_t *residual, uint64_t *counts,
     return true;
   }
 
-  /* QPF terminal wins the argmin over the non-rankwidth routes: rankwidth declined above, and the
-   * exact stabilizer-list estimate undercuts treewidth (tw_est_local is UINT64_MAX when treewidth
-   * is over its width cap, so QPF also rescues wide low-magic components instead of refusing). */
-  if (qpf_affordable && qpf_est < tw_est_local) {
+  /* Rankwidth declined above. Choose uniformly between the remaining applicable terminals. */
+  if (branch_choose_route(tw_est_local, UINT64_MAX, qpf_est, &stats->policy) ==
+      BRANCH_ROUTE_QPF) {
     const bool ok_qpf = branch_run_qpf_on_sub(&sub, (uint32_t)qsop_residual_constant(residual),
-                                              counts, qpf_peak_magic, stats, error);
+                                              counts, qpf.peak_magic, stats, error);
     free(shared_order);
     free_subinstance(&sub);
     if (!ok_qpf) {
@@ -2781,8 +2836,9 @@ static bool branch_try_root_treewidth_fast_path(const qsop_instance_t *qsop, qso
   if (qsop_compute_stats(qsop, &root_stats, &stats_err) && root_stats.width_diagnostics_available) {
     const uint64_t tw_est = branch_treewidth_estimate_ns(
         policy, true, qsop_saturating_mul_u64(root_stats.min_fill_dp_work, qsop->r));
-    if (branch_should_probe_rankwidth(policy, tw_est, qsop->nvars, root_stats.prefix_cut_rank,
-                                      qsop->r)) {
+    const uint64_t rw_est = branch_rankwidth_preprobe_estimate_ns(
+        policy, qsop->nvars, root_stats.prefix_cut_rank, qsop->r);
+    if (branch_choose_route(tw_est, rw_est, UINT64_MAX, policy) == BRANCH_ROUTE_RANKWIDTH) {
       free(order);
       return true; /* not handled: let the main recursion probe rankwidth */
     }
@@ -3883,6 +3939,46 @@ static void merge_single_mode_stats(qsop_solve_stats_t *stats,
   stats->signature_entries += delegated->signature_entries;
   stats->join_pairs += delegated->join_pairs;
   stats->join_signature_pairs += delegated->join_signature_pairs;
+  qsop_add_saturating_u64(&stats->rankwidth_dense_join_events,
+                          delegated->rankwidth_dense_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_materialized_join_events,
+                          delegated->rankwidth_materialized_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_streaming_join_events,
+                          delegated->rankwidth_streaming_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_twist_join_events,
+                          delegated->rankwidth_twist_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_predicted_solve_ns,
+                          delegated->rankwidth_predicted_solve_ns);
+  qsop_add_saturating_u64(&stats->rankwidth_predicted_pairwise_join_events,
+                          delegated->rankwidth_predicted_pairwise_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_predicted_twist_join_events,
+                          delegated->rankwidth_predicted_twist_join_events);
+  qsop_add_saturating_u64(&stats->rankwidth_planner_candidates,
+                          delegated->rankwidth_planner_candidates);
+  qsop_add_saturating_u64(&stats->rankwidth_planner_estimated_ns,
+                          delegated->rankwidth_planner_estimated_ns);
+  qsop_add_saturating_u64(&stats->rankwidth_planner_budget_ns,
+                          delegated->rankwidth_planner_budget_ns);
+  qsop_add_saturating_u64(&stats->rankwidth_planner_budget_exhaustions,
+                          delegated->rankwidth_planner_budget_exhaustions);
+  qsop_add_saturating_u64(&stats->rankwidth_streaming_join_candidate_pairs,
+                          delegated->rankwidth_streaming_join_candidate_pairs);
+  qsop_add_saturating_u64(&stats->rankwidth_streaming_join_emitted_pairs,
+                          delegated->rankwidth_streaming_join_emitted_pairs);
+  if (delegated->rankwidth_predicted_peak_bytes > stats->rankwidth_predicted_peak_bytes) {
+    stats->rankwidth_predicted_peak_bytes = delegated->rankwidth_predicted_peak_bytes;
+  }
+  qsop_add_saturating_u64(&stats->qpf_decompositions, delegated->qpf_decompositions);
+  qsop_add_saturating_u64(&stats->qpf_terms, delegated->qpf_terms);
+  qsop_add_saturating_u64(&stats->qpf_collapses, delegated->qpf_collapses);
+  qsop_add_saturating_u64(&stats->qpf_rebuilds, delegated->qpf_rebuilds);
+  qsop_add_saturating_u64(&stats->qpf_joins, delegated->qpf_joins);
+  if (delegated->qpf_max_terms > stats->qpf_max_terms) {
+    stats->qpf_max_terms = delegated->qpf_max_terms;
+  }
+  if (delegated->qpf_magic_vertices > stats->qpf_magic_vertices) {
+    stats->qpf_magic_vertices = delegated->qpf_magic_vertices;
+  }
   if (delegated->max_table_entries > stats->max_table_entries) {
     stats->max_table_entries = delegated->max_table_entries;
   }
@@ -4049,6 +4145,7 @@ static bool branch_single_mode_delegate_component(
   bool use_rankwidth = false;
   qsop_rankwidth_decomposition_t *decomposition = NULL;
   uint32_t cutrank_width = 0;
+  bool rankwidth_feasible = false;
   bool setup_ok = true;
 
   /* Admit the treewidth DP on cost, not raw width: the min-fill DP work must be within budget
@@ -4066,19 +4163,24 @@ static bool branch_single_mode_delegate_component(
   /* QPF terminal cost for this single Fourier mode: the third cost axis, a peer of tw/rw. */
   const uint64_t qpf_budget =
       options->qpf_max_terms != 0 ? options->qpf_max_terms : BRANCH_QPF_DEFAULT_MAX_TERMS;
-  const bool qpf_supported =
-      !policy.qpf_disabled &&
-      qsop_qpf_phase_order_supported((uint64_t)sub->r, QSOP_QPF_CYCLOTOMIC_MAX_ORDER);
-  const uint64_t qpf_bound =
-      qpf_supported ? qsop_qpf_stabilizer_term_bound(sub, target_mode) : UINT64_MAX;
-  const bool qpf_affordable = qpf_supported && qpf_bound != UINT64_MAX && qpf_bound <= qpf_budget;
-  const uint64_t qpf_est = branch_qpf_estimate_ns(&policy, qpf_affordable, qpf_bound);
-  /* Rankwidth must beat the cheaper of treewidth and QPF (clean 3-way argmin). */
-  const uint64_t baseline_est = qpf_est < tw_est ? qpf_est : tw_est;
+  const branch_qpf_applicability_t qpf =
+      branch_qpf_applicability(sub, &policy, 0, false, target_mode, qpf_budget);
+  const uint64_t qpf_est = branch_qpf_estimate_ns(&policy, qpf.applicable, qpf.term_sum);
+  const qsop_rankwidth_decomposition_options_t rankwidth_options = {
+      .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO,
+      .precision = options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE
+                       ? QSOP_RANKWIDTH_SINGLE_PRECISION_LONG_DOUBLE
+                       : QSOP_RANKWIDTH_SINGLE_PRECISION_F64,
+      .best_search = QSOP_RANKWIDTH_BEST_PROGRESSIVE,
+      .even_target_mode = (target_mode & 1U) == 0U,
+      .memory_budget_bytes = mem_budget_bytes,
+  };
 
   if (rw_source != QSOP_BRANCH_RW_SOURCE_NONE) {
-    const bool probe_worth_it =
-        branch_should_probe_rankwidth(&policy, baseline_est, sub->nvars, prefix_cut_rank, 1U);
+    const uint64_t rw_preprobe_est =
+        branch_rankwidth_preprobe_estimate_ns(&policy, sub->nvars, prefix_cut_rank, 1U);
+    const bool probe_worth_it = branch_choose_route(tw_est, rw_preprobe_est, qpf_est, &policy) ==
+                                BRANCH_ROUTE_RANKWIDTH;
     if (!probe_worth_it && io_stats != NULL) {
       io_stats->branch_rankwidth_skips++;
     }
@@ -4096,25 +4198,28 @@ static bool branch_single_mode_delegate_component(
         const bool gen_ok =
             use_from_treewidth
                 ? qsop_rankwidth_decomposition_from_order(sub, order, &decomposition, error)
-                : qsop_rankwidth_decomposition_generate(sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
-                                                        &decomposition, error);
+                : qsop_rankwidth_decomposition_generate_options(
+                      sub, QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT, &rankwidth_options,
+                      &decomposition, error);
         if (!gen_ok) {
           setup_ok = false;
         } else {
-          uint64_t rankwidth_table = 0;
-          uint64_t rankwidth_join = 0;
-          if (!qsop_rankwidth_decomposition_width(sub, decomposition, &cutrank_width, error) ||
-              !qsop_rankwidth_decomposition_forecast(sub, decomposition, &rankwidth_table,
-                                                     &rankwidth_join, error)) {
+          rw_decomposition_score_t rankwidth_score = {0};
+          if (!rw_decomposition_single_score(sub, decomposition, &rankwidth_options,
+                                             &rankwidth_score, error)) {
             setup_ok = false;
           } else {
-            /* Probe is sunk; same inequality as the pre-probe check, with the measured forecasts.
-             * sig_est = 2^cutrank = rankwidth_table (single-Fourier tables omit the r factor). */
-            rankwidth_table = binary_assignment_forecast(cutrank_width);
-            const uint64_t rw_est = branch_rankwidth_estimate_ns(
-                &policy, rankwidth_table, rankwidth_join, rankwidth_table, 0);
-            use_rankwidth = cutrank_width <= rw_cap &&
-                            branch_rankwidth_wins(&policy, rw_est, baseline_est);
+            cutrank_width = rankwidth_score.cutrank_width;
+            rankwidth_feasible = rankwidth_score.single_feasible;
+            const uint64_t rankwidth_table = binary_assignment_forecast(cutrank_width);
+            const uint64_t rankwidth_join = rankwidth_score.join_pair_forecast;
+            /* The probe is sunk. The shared forecast includes the selected AUTO join mix and
+             * rejects decompositions whose predicted live memory exceeds the delegate budget. */
+            const uint64_t rw_est =
+                branch_rankwidth_single_estimate_ns(&policy, &rankwidth_score);
+            use_rankwidth = rankwidth_feasible && cutrank_width <= rw_cap &&
+                            branch_choose_route(tw_est, rw_est, qpf_est, &policy) ==
+                                BRANCH_ROUTE_RANKWIDTH;
             if (io_stats != NULL) {
               if (cutrank_width > io_stats->rankwidth_cutrank_width) {
                 io_stats->rankwidth_cutrank_width = cutrank_width;
@@ -4142,22 +4247,27 @@ static bool branch_single_mode_delegate_component(
   bool ok;
   bool used_qpf = false;
   qsop_solve_stats_t delegated = {0};
+  const qsop_rankwidth_single_mode_options_t rankwidth_solve_options = {
+      .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO,
+      .memory_budget_bytes = mem_budget_bytes,
+      .qpf_max_terms = qpf_budget,
+      .simd = options->simd,
+  };
   if (!setup_ok) {
     ok = false;
   } else if (use_rankwidth) {
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
-      ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                            &delegated, options->trace, error);
+      ok = qsop_solve_rankwidth_single_mode_options(
+          sub, decomposition, max_vars, target_mode, &rankwidth_solve_options, out, &delegated,
+          options->trace, error);
     } else {
-      ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
-                                                options->simd, out, &delegated, options->trace,
-                                                error);
+      ok = qsop_solve_rankwidth_single_mode_f64_options(
+          sub, decomposition, max_vars, target_mode, &rankwidth_solve_options, out, &delegated,
+          options->trace, error);
     }
     delegated.rankwidth_delegations++;
-  } else if (qpf_affordable && qpf_est < tw_est) {
-    /* QPF terminal wins the argmin: rankwidth declined and the exact stabilizer-list estimate
-     * undercuts treewidth (which may also be over its width/work/memory cap). Solves this
-     * component's Fourier mode directly. */
+  } else if (branch_choose_route(tw_est, UINT64_MAX, qpf_est, &policy) == BRANCH_ROUTE_QPF) {
+    /* Rankwidth declined above. QPF is the cheapest remaining applicable terminal. */
     ok = qsop_solve_qpf_single_mode(sub, target_mode, qpf_budget, out, &delegated, error);
     used_qpf = true;
   } else if (treewidth_usable && order_width <= tw_cap &&
@@ -4176,7 +4286,7 @@ static bool branch_single_mode_delegate_component(
           options->trace, error);
     }
     delegated.treewidth_delegations++;
-  } else if (decomposition != NULL && cutrank_width <= rw_cap) {
+  } else if (decomposition != NULL && rankwidth_feasible && cutrank_width <= rw_cap) {
     /* order_width (resolved lazily by branch_single_mode_ensure_order, using
      * QSOP_TREEWIDTH_ORDER_MIN_FILL_MAX_DEGREE) can come out wider than treewidth_width -- the
      * cheap pre-probe estimate from qsop_compute_stats_with_order's plain MIN_FILL pass -- for
@@ -4187,12 +4297,13 @@ static bool branch_single_mode_delegate_component(
      * decomposition, use it rather than refuse. (The DP-work side of the estimate has the same
      * estimate-vs-actual-order gap and is not re-verified here.) */
     if (options->precision == QSOP_BRANCH_SINGLE_PRECISION_LONG_DOUBLE) {
-      ok = qsop_solve_rankwidth_single_mode(sub, decomposition, max_vars, target_mode, out,
-                                            &delegated, options->trace, error);
+      ok = qsop_solve_rankwidth_single_mode_options(
+          sub, decomposition, max_vars, target_mode, &rankwidth_solve_options, out, &delegated,
+          options->trace, error);
     } else {
-      ok = qsop_solve_rankwidth_single_mode_f64(sub, decomposition, max_vars, target_mode,
-                                                options->simd, out, &delegated, options->trace,
-                                                error);
+      ok = qsop_solve_rankwidth_single_mode_f64_options(
+          sub, decomposition, max_vars, target_mode, &rankwidth_solve_options, out, &delegated,
+          options->trace, error);
     }
     delegated.rankwidth_delegations++;
   } else {
@@ -4559,6 +4670,7 @@ static bool branch_try_single_mode_delegate(qsop_residual_t *residual,
       .rankwidth_delegate_max_width = state->rankwidth_delegate_max_width,
       .treewidth_delegate_max_dp_work = dp_work_budget,
       .treewidth_delegate_max_memory_mib = state->treewidth_delegate_max_memory_mib,
+      .qpf_max_terms = state->qpf_max_terms,
       .trace = state->trace,
   };
   /* Diagnostic mode must inspect a legal delegate miss even under delegate-only policy.  The

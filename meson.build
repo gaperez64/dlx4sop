@@ -48,9 +48,12 @@ dlx4sop_core_sources = files(
     'src/solve/rankwidth_tables.c',
     'src/solve/rankwidth_decomp.c',
     'src/solve/rankwidth_cutrank.c',
+    'src/solve/rankwidth_cost.c',
     'src/solve/rankwidth_dp_counts.c',
     'src/solve/rankwidth_dp_complex.c',
+    'src/solve/rankwidth_join_plan.c',
     'src/solve/rankwidth_drivers.c',
+    'src/solve/rankwidth_join_twist.c',
     'src/solve/rankwidth_qpf.c',
     'src/solve/residual.c',
     'src/solve/treewidth.c',
@@ -400,6 +403,14 @@ test_rankwidth_decomp = executable(
 
 test('rankwidth decomposition unit', test_rankwidth_decomp, suite: 'unit', timeout: 120)
 
+test_rankwidth_twist_plan = executable(
+  'test-rankwidth-twist-plan',
+  'tests/unit/test_rankwidth_twist_plan.c',
+  dependencies: dlx4sop_core_dep,
+)
+
+test('rankwidth twist plan unit', test_rankwidth_twist_plan, suite: 'unit', timeout: 120)
+
 test(
   'kernel benchmark smoke',
   bench_kernels,
@@ -678,6 +689,39 @@ if python3.found()
     ],
     depends: sop_solve,
     timeout: 60,
+  )
+  test(
+    'twist join benchmark smoke',
+    python3,
+    args: [
+      files('scripts/bench_twist_join.py'),
+      sop_solve.full_path(),
+      meson.current_build_dir() / 'twist_join_smoke.csv',
+      '--kmin', '4',
+      '--kmax', '6',
+      '--crossings', '0,1',
+      '--timeout', '30',
+      '--kernels', 'streaming,twist,auto',
+    ],
+    depends: sop_solve,
+    timeout: 120,
+  )
+  test(
+    'rankwidth cost calibration smoke',
+    python3,
+    args: [
+      files('scripts/calibrate_rankwidth_cost.py'),
+      sop_solve.full_path(),
+      meson.current_build_dir() / 'rankwidth_cost_smoke.csv',
+      '--kmin', '4',
+      '--kmax', '4',
+      '--crossings', '0,1',
+      '--repetitions', '1',
+      '--timeout', '30',
+      '--no-cgroup',
+    ],
+    depends: sop_solve,
+    timeout: 120,
   )
   test(
     'solver coverage paths smoke',

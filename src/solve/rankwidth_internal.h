@@ -8,6 +8,7 @@
  * an `rw_` prefix added (if it didn't already carry one) where a definition moved to a
  * different translation unit than its callers. */
 
+#include "dlx4sop/bitset.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/simd.h"
 
@@ -20,6 +21,18 @@
 #define RW_DENSE_REFERENCE_MAX_DIM 22U
 #define RW_DENSE_REFERENCE_MAX_VALUES UINT64_C(4194304)
 #define RW_SIG_HT_THRESHOLD 32U /* use linear scan below this; hash table above */
+/* Twist-diagonalized (WHT) single-mode join: cap on p + c (parent-coordinate dimension plus
+ * crossing rank) and the AUTO preflight gate on the naive pair forecast. The transform works
+ * on dense 2^{p+c} tables where the pairwise kernels only hold the sparse child tables, so
+ * AUTO also refuses it past a byte budget -- an operation-count win is not worth an
+ * unannounced jump in peak memory. An explicit --rankwidth-single-kernel twist is bounded by
+ * the dimension cap alone. */
+#define RW_TWIST_MAX_DIM 22U
+#define RW_TWIST_AUTO_MIN_PAIRS UINT64_C(4096)
+#define RW_TWIST_AUTO_MAX_BYTES UINT64_C(536870912)
+#define RW_SINGLE_AUTO_MIN_SPEEDUP_NUM UINT64_C(11)
+#define RW_SINGLE_AUTO_MIN_SPEEDUP_DEN UINT64_C(10)
+#define RW_BEST_OPTIONAL_BUDGET_CAP_NS UINT64_C(5000000000)
 static inline const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
   const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
@@ -56,6 +69,20 @@ struct qsop_rankwidth_decomposition {
   uint32_t cached_cutrank_width;
   uint64_t cached_table_forecast;
   uint64_t cached_join_pair_forecast;
+  bool single_score_cached;
+  bool cached_single_feasible;
+  qsop_rankwidth_single_kernel_t cached_single_kernel;
+  qsop_rankwidth_single_precision_t cached_single_precision;
+  bool cached_single_even_target_mode;
+  uint64_t cached_single_memory_budget_bytes;
+  uint64_t cached_single_predicted_ns;
+  uint64_t cached_single_peak_bytes;
+  uint64_t cached_single_pairwise_joins;
+  uint64_t cached_single_twist_joins;
+  uint64_t planner_candidates;
+  uint64_t planner_estimated_ns;
+  uint64_t planner_budget_ns;
+  uint64_t planner_budget_exhaustions;
 };
 typedef struct rw_entry {
   uint32_t signature;
@@ -80,17 +107,24 @@ typedef struct rw_table {
   uint32_t *rep_slots;
   size_t rep_slots_mask; /* (power-of-two capacity) - 1; 0 when unallocated */
 } rw_table_t;
+/* Cached join transitions for the CRT count-table passes (docs/table-representation-audit.md,
+ * refactor step 3).  Entries carry node-local REPRESENTATIVE INDICES into the child and parent
+ * tables rather than interned pool ids, and no per-pair assignment: the builder populates the
+ * parent table's representatives (one witness per DISTINCT parent signature, in first-seen
+ * order) as a side effect, and the per-prime passes rebuild tables keyed by those same dense
+ * indices without touching the signature pool or any full-width bitset.  This drops the map
+ * footprint from 16 B + n/8 B per pair to 16 B per pair. */
 typedef struct rw_join_map_entry {
-  uint32_t left_signature;
-  uint32_t right_signature;
-  uint32_t parent_signature;
+  uint32_t left_rep;
+  uint32_t right_rep;
+  uint32_t parent_rep;
   uint32_t residue_shift;
 } rw_join_map_entry_t;
 typedef struct rw_join_map {
   rw_join_map_entry_t *entries;
-  uint64_t *assignments;
   size_t len;
   size_t cap;
+  uint32_t parent_len; /* distinct parent representatives; per-prime passes prepopulate this many */
 } rw_join_map_t;
 typedef struct rw_transition_eval {
   bool valid;
@@ -139,6 +173,63 @@ typedef struct rw_dense_basis {
   size_t words;
   uint32_t dim;
 } rw_dense_basis_t;
+typedef enum rw_twist_feasibility {
+  RW_TWIST_FEASIBLE,
+  RW_TWIST_TOO_LARGE,
+  RW_TWIST_ERROR,
+} rw_twist_feasibility_t;
+/* Precomputed join geometry for the twist-diagonalized (WHT) single-mode join
+ * (thm:fast-join-wht / cor:crossing-join): a coordinate basis for the realized parent
+ * signatures (dim p) and a row basis of the crossing block A[X_L, X_R] (dim c = crossing
+ * rank), with the source vertex of each independent crossing row so that the right-side
+ * twist coordinate can be read directly off a right signature's bits. */
+typedef struct rw_twist_plan {
+  rw_dense_basis_t parent_basis;
+  rw_dense_basis_t cross_basis;
+  uint32_t *gen_vertex; /* c entries: vertex in X_L contributing the j-th independent row */
+  uint32_t p;
+  uint32_t c;
+  uint64_t forecast_ops; /* 2^{p+c}(p+c+1) + 2^p(p+1) + |U| + |V| */
+} rw_twist_plan_t;
+/* Per-join coordinate plan (docs/table-representation-audit.md, refactor steps 2-3).
+ *
+ * Signatures realized at a cut span a GF(2) space of dimension rho-hat <= min(cut rank, k), so
+ * per join we fix a basis of each child's realized signatures (tracking, for each basis
+ * generator, the representative that introduced it) and precompute three coordinate-level
+ * objects:
+ *   - lcoord/rcoord: each representative's signature as a rho-hat-bit coordinate word;
+ *   - lproj/rproj: the same coordinates pushed through the parent projection
+ *     sigma -> sigma & outside, expressed in a basis of the projected span, so a pair's parent
+ *     signature coordinate is just lproj[i] ^ rproj[j];
+ *   - mfold: the crossing bilinear form chi (lem:chi-well-defined guarantees chi depends on the
+ *     pair of signatures only) evaluated on basis pairs via the cached half-product identity
+ *     chi = |witness_L & sigma_R| mod 2, then folded with each right coordinate, so a pair's
+ *     crossing parity is popcount(lcoord[i] & mfold[j]) & 1.
+ * Per pair this replaces all full-width bitset work by a handful of 64-bit word ops; the
+ * full-width parent-signature intern survives only once per distinct parent coordinate
+ * (sig_memo).  Dimensions are capped by the dense-basis machinery at
+ * RW_DENSE_REFERENCE_MAX_DIM; a join whose realized span exceeds the cap simply leaves the
+ * plan inactive and the callers fall back to the per-pair extrinsic path. */
+typedef struct rw_join_plan {
+  bool active;
+  uint32_t ldim;
+  uint32_t rdim;
+  uint32_t pdim;
+  size_t llen;
+  size_t rlen;
+  uint64_t *lcoord;   /* [llen] left signature coordinates in the realized left basis */
+  uint64_t *rcoord;   /* [rlen] right signature coordinates in the realized right basis */
+  uint64_t *lproj;    /* [llen] parent-basis coordinates of sigma_L & outside */
+  uint64_t *rproj;    /* [rlen] parent-basis coordinates of sigma_R & outside */
+  uint64_t *mfold;    /* [rlen] crossing form folded with rcoord: parity = |lcoord & mfold| mod 2 */
+  uint32_t *sig_memo; /* [1 << pdim] parent coordinate -> interned pool id (UINT32_MAX = unseen) */
+} rw_join_plan_t;
+static inline uint32_t rw_join_plan_parity(const rw_join_plan_t *plan, size_t i, size_t j) {
+  return qsop_popcount_u64(plan->lcoord[i] & plan->mfold[j]) & 1U;
+}
+static inline uint64_t rw_join_plan_parent_coord(const rw_join_plan_t *plan, size_t i, size_t j) {
+  return plan->lproj[i] ^ plan->rproj[j];
+}
 typedef struct rw_sig_ht {
   uint32_t *slots; /* maps hash bucket → pool index (UINT32_MAX = empty) */
   uint64_t *keys;  /* parallel fingerprint for fast comparison without dereferencing pool */
@@ -156,7 +247,40 @@ typedef struct rw_decomposition_score {
   uint32_t cutrank_width;
   uint64_t table_forecast;
   uint64_t join_pair_forecast;
+  bool single_feasible;
+  uint64_t single_predicted_ns;
+  uint64_t single_peak_bytes;
+  uint64_t single_pairwise_joins;
+  uint64_t single_twist_joins;
 } rw_decomposition_score_t;
+
+typedef enum rw_single_join_kind {
+  RW_SINGLE_JOIN_STREAMING,
+  RW_SINGLE_JOIN_MATERIALIZED,
+  RW_SINGLE_JOIN_DENSE,
+  RW_SINGLE_JOIN_TWIST,
+} rw_single_join_kind_t;
+
+typedef struct rw_single_join_forecast {
+  bool feasible;
+  bool twist_feasible;
+  rw_single_join_kind_t selected;
+  uint64_t pairwise_ns;
+  uint64_t twist_ns;
+  uint64_t selected_ns;
+  uint64_t pairwise_workspace_bytes;
+  uint64_t twist_workspace_bytes;
+  uint64_t selected_workspace_bytes;
+  uint64_t dense_pairs;
+  uint64_t twist_ops;
+  uint64_t left_entries;
+  uint64_t right_entries;
+  uint64_t parent_entries;
+  uint32_t left_dim;
+  uint32_t right_dim;
+  uint32_t parent_dim;
+  uint32_t crossing_rank;
+} rw_single_join_forecast_t;
 
 /* A linear right inverse of the node signature map. basis[i] is a signature-space basis
  * vector and preimages[i] is the assignment in X_u selected for it. */
@@ -217,6 +341,7 @@ bool rw_complex_slots_rehash(rw_complex_table_t *table, qsop_error_t *error);
 void rw_complex_table_free(rw_complex_table_t *table);
 
 bool rw_compute_join_transition_sign(uint32_t nvars, const uint64_t *adj, rw_signature_pool_t *pool,
+                                     rw_join_plan_t *plan, size_t plan_i, size_t plan_j,
                                      const uint64_t *outside, size_t words, uint32_t r,
                                      uint32_t left_signature, const uint64_t *left_rep,
                                      uint32_t left_weight, uint32_t right_signature,
@@ -232,6 +357,22 @@ bool rw_decomposition_score(const qsop_instance_t *qsop,
                             const qsop_rankwidth_decomposition_t *decomposition,
                             const uint64_t *adj, rw_decomposition_score_t *out,
                             qsop_error_t *error);
+
+bool rw_decomposition_single_score(const qsop_instance_t *qsop,
+                                   qsop_rankwidth_decomposition_t *decomposition,
+                                   const qsop_rankwidth_decomposition_options_t *options,
+                                   rw_decomposition_score_t *out, qsop_error_t *error);
+
+rw_single_join_forecast_t rw_single_join_forecast(qsop_rankwidth_single_kernel_t kernel,
+                                                  uint64_t left_entries, uint64_t right_entries,
+                                                  uint64_t parent_entries, uint32_t left_dim,
+                                                  uint32_t right_dim, uint32_t parent_dim,
+                                                  uint32_t crossing_rank, size_t words,
+                                                  size_t value_size, uint64_t materialize_max_pairs,
+                                                  uint64_t memory_budget_bytes);
+
+uint64_t rw_twist_workspace_bytes_dims(uint32_t parent_dim, uint32_t crossing_rank,
+                                       size_t value_size);
 
 bool rw_linear_section_build(const qsop_instance_t *qsop,
                              const qsop_rankwidth_decomposition_t *decomposition,
@@ -294,9 +435,20 @@ bool rw_fourier_slots_rehash(rw_fourier_table_t *table, qsop_error_t *error);
 
 void rw_fourier_table_free(rw_fourier_table_t *table);
 
-uint64_t *rw_join_map_assignment(const rw_join_map_t *map, size_t index, size_t words);
-
 void rw_join_map_free(rw_join_map_t *map);
+
+bool rw_join_plan_build(uint32_t nvars, const rw_signature_pool_t *pool, const uint32_t *left_sigs,
+                        const uint64_t *left_assignments, size_t llen, const uint32_t *right_sigs,
+                        const uint64_t *right_assignments, size_t rlen, const uint64_t *outside,
+                        size_t words, rw_join_plan_t *plan, qsop_error_t *error);
+
+void rw_join_plan_free(rw_join_plan_t *plan);
+
+bool rw_join_plan_parent_signature(rw_join_plan_t *plan, rw_signature_pool_t *pool,
+                                   uint64_t parent_coord, uint32_t left_signature,
+                                   uint32_t right_signature, const uint64_t *outside,
+                                   uint64_t *scratch_sig, size_t words, uint32_t *out,
+                                   qsop_error_t *error);
 
 bool rw_record_decomposition_diagnostics(const qsop_instance_t *qsop,
                                          const qsop_rankwidth_decomposition_t *decomposition,
@@ -320,7 +472,7 @@ bool rw_reserve_entries(rw_table_t *table, size_t needed, qsop_error_t *error);
 bool rw_reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t value_slots,
                               size_t words, qsop_error_t *error);
 
-bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qsop_error_t *error);
+bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, qsop_error_t *error);
 
 bool rw_reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_error_t *error);
 
@@ -380,18 +532,17 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
                                long double *out_re, long double *out_im,
                                long double *out_numeric_error_bound,
                                qsop_rankwidth_single_kernel_t kernel,
-                               uint64_t materialize_join_max_pairs, qsop_solve_stats_t *stats,
-                               qsop_solve_trace_t *trace, qsop_error_t *error);
+                               uint64_t materialize_join_max_pairs, uint64_t memory_budget_bytes,
+                               qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                               qsop_error_t *error);
 
-bool rw_solve_single_mode_once_f64(const qsop_instance_t *qsop,
-                                   const qsop_rankwidth_decomposition_t *decomposition,
-                                   const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2,
-                                   long double *out_re, long double *out_im,
-                                   long double *out_numeric_error_bound,
-                                   qsop_rankwidth_single_kernel_t kernel,
-                                   uint64_t materialize_join_max_pairs,
-                                   const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
-                                   qsop_solve_trace_t *trace, qsop_error_t *error);
+bool rw_solve_single_mode_once_f64(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2, long double *out_re,
+    long double *out_im, long double *out_numeric_error_bound,
+    qsop_rankwidth_single_kernel_t kernel, uint64_t materialize_join_max_pairs,
+    uint64_t memory_budget_bytes, const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool rw_table_add_entry(rw_table_t *table, uint32_t signature, uint32_t residue, uint64_t count,
                         qsop_error_t *error);
@@ -405,6 +556,8 @@ bool rw_table_add_rep(rw_table_t *table, uint32_t signature, const uint64_t *ass
 bool rw_table_rep_index(rw_table_t *table, uint32_t signature, const uint64_t *assignment,
                         size_t words, uint32_t *index_out, qsop_error_t *error);
 
+bool rw_table_prepopulate_reps_indexed(rw_table_t *table, size_t count, qsop_error_t *error);
+
 bool rw_table_find_rep_index(const rw_table_t *table, uint32_t signature, uint32_t *index_out);
 
 uint64_t *rw_table_assignment(const rw_table_t *table, size_t index, size_t words);
@@ -412,5 +565,25 @@ uint64_t *rw_table_assignment(const rw_table_t *table, size_t index, size_t word
 void rw_table_free(rw_table_t *table);
 
 void rw_table_sort(rw_table_t *table);
+
+rw_twist_feasibility_t
+rw_twist_plan_build(uint32_t nvars, const uint64_t *adj, const rw_signature_pool_t *pool,
+                    const uint32_t *left_signatures, size_t left_len,
+                    const uint32_t *right_signatures, size_t right_len, const uint64_t *left_vars,
+                    const uint64_t *right_vars, const uint64_t *outside, size_t words,
+                    bool want_twist, uint32_t max_dim, rw_twist_plan_t *plan, qsop_error_t *error);
+
+void rw_twist_plan_free(rw_twist_plan_t *plan);
+
+bool rw_twist_reach_counts(const uint64_t *occ_left, const uint64_t *occ_right, uint32_t p,
+                           uint64_t *work, uint64_t *counts_out, qsop_error_t *error);
+
+void rw_twist_wht_cols_f64(double *re, double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_cols_l(long double *re, long double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_rows_f64(double *re, double *im, uint32_t p, uint32_t c);
+
+void rw_twist_wht_rows_l(long double *re, long double *im, uint32_t p, uint32_t c);
 
 #endif

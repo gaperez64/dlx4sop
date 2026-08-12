@@ -1,9 +1,9 @@
+#include "../solve/trace.h"
 #include "cli_common.h"
 #include "dlx4sop/min_fill.h"
 #include "dlx4sop/qsop.h"
 #include "dlx4sop/qsop_solve.h"
 #include "dlx4sop/simd.h"
-#include "../solve/trace.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -80,7 +80,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--branch-single-materialized-reduction",
       "--branch-single-diagnose-conditioning",
       "--branch-single-kernel auto|scalar",
-      "--rankwidth-single-kernel auto|streaming|materialized|dense",
+      "--rankwidth-single-kernel auto|pairwise|streaming|materialized|dense|twist",
       "--rankwidth-fourier-kernel auto|streaming|hybrid-even-fwht|dense-reference",
       "--print-kernels",
   };
@@ -108,6 +108,7 @@ static void print_usage_mode(FILE *file, bool advanced) {
       "--rankwidth-memory-policy skip|fallback|hard-error",
       "--rankwidth-join-strategy auto|materialized|streaming",
       "--rankwidth-materialize-join-max-pairs N",
+      "--rankwidth-best-search progressive|exhaustive",
       "--stats-jsonl PATH",
       "--branch-calibrate-backends",
       "--trace csv",
@@ -406,8 +407,7 @@ static bool branch_auto_prepare_treewidth_single(const qsop_instance_t *qsop, ui
     qsop_error_t cut_rank_error = {0};
     if (qsop_prefix_cut_rank(qsop->nvars, qsop->edge_u, qsop->edge_v, qsop->nedges, &cut_rank,
                              &cut_rank_error) &&
-        !qsop_branch_single_treewidth_clearly_preferred(cut_rank, qsop->nvars, dp_work,
-                                                        policy)) {
+        !qsop_branch_single_treewidth_clearly_preferred(cut_rank, qsop->nvars, dp_work, policy)) {
       free(order);
       return false;
     }
@@ -456,8 +456,7 @@ static const char *run_summary_reason_name(bool solved, const qsop_solve_stats_t
   if (!solved &&
       (stats->termination_reason == QSOP_SOLVE_TERMINATION_NONE ||
        stats->termination_reason == QSOP_SOLVE_TERMINATION_OTHER_ERROR) &&
-      diagnostic != NULL &&
-      strstr(diagnostic->message, "pass a larger --max-vars") != NULL) {
+      diagnostic != NULL && strstr(diagnostic->message, "pass a larger --max-vars") != NULL) {
     return "max_vars";
   }
   return reason;
@@ -503,75 +502,67 @@ static void write_run_summary_jsonl(FILE *file, const char *instance, bool solve
     return;
   }
   const char *reason = run_summary_reason_name(solved, stats, diagnostic);
-  const bool refused =
-      !solved && strcmp(reason, "none") != 0 && strcmp(reason, "other_error") != 0;
+  const bool refused = !solved && strcmp(reason, "none") != 0 && strcmp(reason, "other_error") != 0;
   fputs("{\"schema\":\"sop_solve_run_stats_v1\",\"instance\":", file);
   jsonl_write_string(file, instance);
   fputs(",\"status\":", file);
   jsonl_write_string(file, solved ? "solved" : (refused ? "refused" : "error"));
   fputs(",\"reason\":", file);
   jsonl_write_string(file, reason);
-  fprintf(file,
-          ",\"search_nodes\":%" PRIu64 ",\"leaf_assignments\":%" PRIu64
-          ",\"active_vars_at_failure\":%" PRIu32
-          ",\"active_edges_at_failure\":%" PRIu32
-          ",\"cache_hits\":%" PRIu64 ",\"cache_misses\":%" PRIu64
-          ",\"treewidth_delegations\":%" PRIu64
-          ",\"rankwidth_delegations\":%" PRIu64
-          ",\"branch_fallthroughs\":%" PRIu64
-          ",\"branch_propagations\":%" PRIu64 ",\"branch_zero_prunes\":%" PRIu64
-          ",\"branch_materialized_calls\":%" PRIu64
-          ",\"branch_materialized_eliminations\":%" PRIu64
-          ",\"branch_materialized_degree2_merges\":%" PRIu64
-          ",\"branch_materialized_reduction_ns\":%" PRIu64
-          ",\"branch_conditioning_nodes\":%" PRIu64
-          ",\"branch_conditioning_lookaheads\":%" PRIu64
-          ",\"branch_delegate_probes\":%" PRIu64
-          ",\"branch_delegate_probe_skips\":%" PRIu64
-          ",\"branch_cutset_size\":%" PRIu64
-          ",\"branch_max_cutset_depth\":%" PRIu32
-          ",\"branch_cutset_initial_vars\":%" PRIu32
-          ",\"branch_cutset_initial_edges\":%" PRIu32
-          ",\"branch_cutset_final_vars\":%" PRIu32
-          ",\"branch_cutset_final_edges\":%" PRIu32
-          ",\"branch_cutset_stagnant_levels\":%" PRIu32
-          ",\"branch_last_delegate_miss\":%" PRIu32
-          ",\"branch_shadow_builds\":%" PRIu64
-          ",\"branch_shadow_skips\":%" PRIu64
-          ",\"branch_shadow_selected\":%" PRIu64
-          ",\"branch_shadow_max_source_vars\":%" PRIu32
-          ",\"branch_shadow_max_core_vars\":%" PRIu32
-          ",\"branch_shadow_build_ns\":%" PRIu64
-          ",\"treewidth_factor_scope_tests\":%" PRIu64
-          ",\"treewidth_factor_bucket_visits\":%" PRIu64
-          ",\"treewidth_factor_multiplications\":%" PRIu64
-          ",\"treewidth_factor_allocations\":%" PRIu64
-          ",\"treewidth_factor_discovery_ns\":%" PRIu64
-          ",\"treewidth_numeric_join_ns\":%" PRIu64
-          ",\"treewidth_sum_out_ns\":%" PRIu64
-          ",\"treewidth_peak_live_bytes\":%" PRIu64
-          ",\"treewidth_pool_retained_bytes\":%" PRIu64
-          ",\"treewidth_largest_allocation_bytes\":%" PRIu64,
-          stats->search_nodes, stats->leaf_assignments, stats->failure_active_vars,
-          stats->failure_active_edges, stats->cache_hits, stats->cache_misses,
-          stats->treewidth_delegations, stats->rankwidth_delegations, stats->branch_fallthroughs,
-          stats->branch_propagations, stats->branch_zero_prunes,
-          stats->branch_materialized_calls, stats->branch_materialized_eliminations,
-          stats->branch_materialized_degree2_merges, stats->branch_materialized_reduction_ns,
-          stats->branch_conditioning_nodes, stats->branch_conditioning_lookaheads,
-          stats->branch_delegate_probes, stats->branch_delegate_probe_skips,
-          stats->branch_cutset_size, stats->branch_max_cutset_depth,
-          stats->branch_cutset_initial_vars, stats->branch_cutset_initial_edges,
-          stats->branch_cutset_final_vars, stats->branch_cutset_final_edges,
-          stats->branch_cutset_stagnant_levels, stats->branch_last_delegate_miss,
-          stats->branch_shadow_builds, stats->branch_shadow_skips, stats->branch_shadow_selected,
-          stats->branch_shadow_max_source_vars, stats->branch_shadow_max_core_vars,
-          stats->branch_shadow_build_ns,
-          stats->treewidth_factor_scope_tests, stats->treewidth_factor_bucket_visits,
-          stats->treewidth_factor_multiplications, stats->treewidth_factor_allocations,
-          stats->treewidth_factor_discovery_ns, stats->treewidth_numeric_join_ns,
-          stats->treewidth_sum_out_ns, stats->treewidth_peak_live_bytes,
-          stats->treewidth_pool_retained_bytes, stats->treewidth_largest_allocation_bytes);
+  fprintf(
+      file,
+      ",\"search_nodes\":%" PRIu64 ",\"leaf_assignments\":%" PRIu64
+      ",\"active_vars_at_failure\":%" PRIu32 ",\"active_edges_at_failure\":%" PRIu32
+      ",\"cache_hits\":%" PRIu64 ",\"cache_misses\":%" PRIu64 ",\"treewidth_delegations\":%" PRIu64
+      ",\"rankwidth_delegations\":%" PRIu64 ",\"branch_fallthroughs\":%" PRIu64
+      ",\"branch_propagations\":%" PRIu64 ",\"branch_zero_prunes\":%" PRIu64
+      ",\"branch_materialized_calls\":%" PRIu64 ",\"branch_materialized_eliminations\":%" PRIu64
+      ",\"branch_materialized_degree2_merges\":%" PRIu64
+      ",\"branch_materialized_reduction_ns\":%" PRIu64 ",\"branch_conditioning_nodes\":%" PRIu64
+      ",\"branch_conditioning_lookaheads\":%" PRIu64 ",\"branch_delegate_probes\":%" PRIu64
+      ",\"branch_delegate_probe_skips\":%" PRIu64 ",\"branch_cutset_size\":%" PRIu64
+      ",\"branch_max_cutset_depth\":%" PRIu32 ",\"branch_cutset_initial_vars\":%" PRIu32
+      ",\"branch_cutset_initial_edges\":%" PRIu32 ",\"branch_cutset_final_vars\":%" PRIu32
+      ",\"branch_cutset_final_edges\":%" PRIu32 ",\"branch_cutset_stagnant_levels\":%" PRIu32
+      ",\"branch_last_delegate_miss\":%" PRIu32 ",\"branch_shadow_builds\":%" PRIu64
+      ",\"branch_shadow_skips\":%" PRIu64 ",\"branch_shadow_selected\":%" PRIu64
+      ",\"branch_shadow_max_source_vars\":%" PRIu32 ",\"branch_shadow_max_core_vars\":%" PRIu32
+      ",\"branch_shadow_build_ns\":%" PRIu64 ",\"treewidth_factor_scope_tests\":%" PRIu64
+      ",\"treewidth_factor_bucket_visits\":%" PRIu64
+      ",\"treewidth_factor_multiplications\":%" PRIu64 ",\"treewidth_factor_allocations\":%" PRIu64
+      ",\"treewidth_factor_discovery_ns\":%" PRIu64 ",\"treewidth_numeric_join_ns\":%" PRIu64
+      ",\"treewidth_sum_out_ns\":%" PRIu64 ",\"treewidth_peak_live_bytes\":%" PRIu64
+      ",\"treewidth_pool_retained_bytes\":%" PRIu64
+      ",\"treewidth_largest_allocation_bytes\":%" PRIu64
+      ",\"rankwidth_predicted_solve_ns\":%" PRIu64 ",\"rankwidth_predicted_peak_bytes\":%" PRIu64
+      ",\"rankwidth_predicted_pairwise_join_events\":%" PRIu64
+      ",\"rankwidth_predicted_twist_join_events\":%" PRIu64
+      ",\"rankwidth_planner_candidates\":%" PRIu64 ",\"rankwidth_planner_estimated_ns\":%" PRIu64
+      ",\"rankwidth_planner_budget_ns\":%" PRIu64
+      ",\"rankwidth_planner_budget_exhaustions\":%" PRIu64,
+      stats->search_nodes, stats->leaf_assignments, stats->failure_active_vars,
+      stats->failure_active_edges, stats->cache_hits, stats->cache_misses,
+      stats->treewidth_delegations, stats->rankwidth_delegations, stats->branch_fallthroughs,
+      stats->branch_propagations, stats->branch_zero_prunes, stats->branch_materialized_calls,
+      stats->branch_materialized_eliminations, stats->branch_materialized_degree2_merges,
+      stats->branch_materialized_reduction_ns, stats->branch_conditioning_nodes,
+      stats->branch_conditioning_lookaheads, stats->branch_delegate_probes,
+      stats->branch_delegate_probe_skips, stats->branch_cutset_size, stats->branch_max_cutset_depth,
+      stats->branch_cutset_initial_vars, stats->branch_cutset_initial_edges,
+      stats->branch_cutset_final_vars, stats->branch_cutset_final_edges,
+      stats->branch_cutset_stagnant_levels, stats->branch_last_delegate_miss,
+      stats->branch_shadow_builds, stats->branch_shadow_skips, stats->branch_shadow_selected,
+      stats->branch_shadow_max_source_vars, stats->branch_shadow_max_core_vars,
+      stats->branch_shadow_build_ns, stats->treewidth_factor_scope_tests,
+      stats->treewidth_factor_bucket_visits, stats->treewidth_factor_multiplications,
+      stats->treewidth_factor_allocations, stats->treewidth_factor_discovery_ns,
+      stats->treewidth_numeric_join_ns, stats->treewidth_sum_out_ns,
+      stats->treewidth_peak_live_bytes, stats->treewidth_pool_retained_bytes,
+      stats->treewidth_largest_allocation_bytes, stats->rankwidth_predicted_solve_ns,
+      stats->rankwidth_predicted_peak_bytes, stats->rankwidth_predicted_pairwise_join_events,
+      stats->rankwidth_predicted_twist_join_events, stats->rankwidth_planner_candidates,
+      stats->rankwidth_planner_estimated_ns, stats->rankwidth_planner_budget_ns,
+      stats->rankwidth_planner_budget_exhaustions);
   fputs(",\"diagnostic\":", file);
   if (!solved && diagnostic != NULL && diagnostic->message[0] != '\0') {
     jsonl_write_string(file, diagnostic->message);
@@ -678,16 +669,14 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
     fprintf(file, "leaf_assignments: %" PRIu64 "\n", stats->leaf_assignments);
     if (stats->branch_materialized_calls != 0U || stats->branch_conditioning_nodes != 0U ||
         stats->branch_delegate_probe_skips != 0U) {
-      fprintf(file, "branch_materialized_calls: %" PRIu64 "\n",
-              stats->branch_materialized_calls);
+      fprintf(file, "branch_materialized_calls: %" PRIu64 "\n", stats->branch_materialized_calls);
       fprintf(file, "branch_materialized_eliminations: %" PRIu64 "\n",
               stats->branch_materialized_eliminations);
       fprintf(file, "branch_materialized_degree2_merges: %" PRIu64 "\n",
               stats->branch_materialized_degree2_merges);
       fprintf(file, "branch_materialized_reduction_ns: %" PRIu64 "\n",
               stats->branch_materialized_reduction_ns);
-      fprintf(file, "branch_conditioning_nodes: %" PRIu64 "\n",
-              stats->branch_conditioning_nodes);
+      fprintf(file, "branch_conditioning_nodes: %" PRIu64 "\n", stats->branch_conditioning_nodes);
       fprintf(file, "branch_conditioning_lookaheads: %" PRIu64 "\n",
               stats->branch_conditioning_lookaheads);
       fprintf(file, "branch_delegate_probes: %" PRIu64 "\n", stats->branch_delegate_probes);
@@ -740,6 +729,24 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
         fprintf(file, "rankwidth_join_pair_forecast: %" PRIu64 "\n",
                 stats->rankwidth_join_pair_forecast);
       }
+      if (stats->rankwidth_delegations != 0) {
+        fprintf(file, "rankwidth_dense_join_events: %" PRIu64 "\n",
+                stats->rankwidth_dense_join_events);
+        fprintf(file, "rankwidth_materialized_join_events: %" PRIu64 "\n",
+                stats->rankwidth_materialized_join_events);
+        fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
+                stats->rankwidth_streaming_join_events);
+        fprintf(file, "rankwidth_twist_join_events: %" PRIu64 "\n",
+                stats->rankwidth_twist_join_events);
+        fprintf(file, "rankwidth_predicted_solve_ns: %" PRIu64 "\n",
+                stats->rankwidth_predicted_solve_ns);
+        fprintf(file, "rankwidth_predicted_peak_bytes: %" PRIu64 "\n",
+                stats->rankwidth_predicted_peak_bytes);
+        fprintf(file, "rankwidth_predicted_pairwise_join_events: %" PRIu64 "\n",
+                stats->rankwidth_predicted_pairwise_join_events);
+        fprintf(file, "rankwidth_predicted_twist_join_events: %" PRIu64 "\n",
+                stats->rankwidth_predicted_twist_join_events);
+      }
       fprintf(file, "table_entries: %" PRIu64 "\n", stats->table_entries);
       fprintf(file, "max_table_entries: %" PRIu64 "\n", stats->max_table_entries);
       fprintf(file, "join_pairs: %" PRIu64 "\n", stats->join_pairs);
@@ -777,6 +784,22 @@ static bool write_solver_stats(FILE *file, solve_backend_t backend, const qsop_s
             stats->rankwidth_materialized_join_events);
     fprintf(file, "rankwidth_streaming_join_events: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_events);
+    fprintf(file, "rankwidth_twist_join_events: %" PRIu64 "\n", stats->rankwidth_twist_join_events);
+    fprintf(file, "rankwidth_predicted_solve_ns: %" PRIu64 "\n",
+            stats->rankwidth_predicted_solve_ns);
+    fprintf(file, "rankwidth_predicted_peak_bytes: %" PRIu64 "\n",
+            stats->rankwidth_predicted_peak_bytes);
+    fprintf(file, "rankwidth_predicted_pairwise_join_events: %" PRIu64 "\n",
+            stats->rankwidth_predicted_pairwise_join_events);
+    fprintf(file, "rankwidth_predicted_twist_join_events: %" PRIu64 "\n",
+            stats->rankwidth_predicted_twist_join_events);
+    fprintf(file, "rankwidth_planner_candidates: %" PRIu64 "\n",
+            stats->rankwidth_planner_candidates);
+    fprintf(file, "rankwidth_planner_estimated_ns: %" PRIu64 "\n",
+            stats->rankwidth_planner_estimated_ns);
+    fprintf(file, "rankwidth_planner_budget_ns: %" PRIu64 "\n", stats->rankwidth_planner_budget_ns);
+    fprintf(file, "rankwidth_planner_budget_exhaustions: %" PRIu64 "\n",
+            stats->rankwidth_planner_budget_exhaustions);
     fprintf(file, "rankwidth_streaming_join_candidate_pairs: %" PRIu64 "\n",
             stats->rankwidth_streaming_join_candidate_pairs);
     fprintf(file, "rankwidth_streaming_join_emitted_pairs: %" PRIu64 "\n",
@@ -1247,6 +1270,8 @@ int main(int argc, char **argv) {
   qsop_rankwidth_join_strategy_t rw_join_strategy = QSOP_RANKWIDTH_JOIN_AUTO;
   qsop_rankwidth_single_kernel_t rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO;
   bool rw_single_kernel_set = false;
+  qsop_rankwidth_best_search_t rw_best_search = QSOP_RANKWIDTH_BEST_PROGRESSIVE;
+  bool rw_best_search_set = false;
   qsop_rankwidth_fourier_kernel_t rw_fourier_kernel = QSOP_RANKWIDTH_FOURIER_KERNEL_AUTO;
   bool rw_fourier_kernel_set = false;
   uint64_t rw_materialize_join_max_pairs = 0; /* 0 = use built-in default */
@@ -1410,27 +1435,52 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[i], "--rankwidth-single-kernel") == 0) {
       if (i + 1 >= argc) {
-        fputs("error: --rankwidth-single-kernel requires auto|streaming|materialized|dense\n",
+        fputs("error: --rankwidth-single-kernel requires "
+              "auto|pairwise|streaming|materialized|dense|twist\n",
               stderr);
         return 2;
       }
       const char *val = argv[++i];
       if (strcmp(val, "auto") == 0) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO;
+      } else if (strcmp(val, "pairwise") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_PAIRWISE;
       } else if (strcmp(val, "streaming") == 0) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_STREAMING;
       } else if (strcmp(val, "materialized") == 0) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED;
       } else if (strcmp(val, "dense") == 0) {
         rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE;
+      } else if (strcmp(val, "twist") == 0) {
+        rw_single_kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST;
       } else {
         fprintf(stderr,
                 "error: unknown rankwidth single-mode kernel '%s' "
-                "(expected auto|streaming|materialized|dense)\n",
+                "(expected auto|pairwise|streaming|materialized|dense|twist)\n",
                 val);
         return 2;
       }
       rw_single_kernel_set = true;
+      continue;
+    }
+    if (strcmp(argv[i], "--rankwidth-best-search") == 0) {
+      if (i + 1 >= argc) {
+        fputs("error: --rankwidth-best-search requires progressive|exhaustive\n", stderr);
+        return 2;
+      }
+      const char *val = argv[++i];
+      if (strcmp(val, "progressive") == 0) {
+        rw_best_search = QSOP_RANKWIDTH_BEST_PROGRESSIVE;
+      } else if (strcmp(val, "exhaustive") == 0) {
+        rw_best_search = QSOP_RANKWIDTH_BEST_EXHAUSTIVE;
+      } else {
+        fprintf(stderr,
+                "error: unknown rankwidth BEST search '%s' "
+                "(expected progressive|exhaustive)\n",
+                val);
+        return 2;
+      }
+      rw_best_search_set = true;
       continue;
     }
     if (strcmp(argv[i], "--rankwidth-fourier-kernel") == 0) {
@@ -1598,8 +1648,7 @@ int main(int argc, char **argv) {
         fputs("error: --branch-single-cutset-depth requires a value\n", stderr);
         return 2;
       }
-      if (!parse_u32_arg("--branch-single-cutset-depth", argv[++i],
-                         &branch_single_cutset_depth))
+      if (!parse_u32_arg("--branch-single-cutset-depth", argv[++i], &branch_single_cutset_depth))
         return 2;
       branch_single_option_set = true;
       continue;
@@ -2040,6 +2089,10 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-single-kernel requires --backend rankwidth\n", stderr);
     return 2;
   }
+  if (backend != SOLVE_BACKEND_RANKWIDTH && rw_best_search_set) {
+    fputs("error: --rankwidth-best-search requires --backend rankwidth\n", stderr);
+    return 2;
+  }
   if (rankwidth_mode_set && solve_mode_set && !solve_mode_auto &&
       rankwidth_mode != rankwidth_mode_from_solve_mode(solve_mode)) {
     fputs("error: --solve-mode conflicts with --rankwidth-mode\n", stderr);
@@ -2061,6 +2114,10 @@ int main(int argc, char **argv) {
     fputs("error: --rankwidth-single-kernel requires --solve-mode single-fourier\n", stderr);
     return 2;
   }
+  if (rw_best_search_set && !single_fourier_mode) {
+    fputs("error: --rankwidth-best-search requires --solve-mode single-fourier\n", stderr);
+    return 2;
+  }
   if (backend != SOLVE_BACKEND_TREEWIDTH && treewidth_order_set) {
     fputs("error: --treewidth-order requires --backend treewidth\n", stderr);
     return 2;
@@ -2068,6 +2125,11 @@ int main(int argc, char **argv) {
   if (rankwidth_decomposition_path != NULL && rankwidth_generator_set) {
     fputs("error: --rankwidth-generate cannot be combined with --rankwidth-decomposition\n",
           stderr);
+    return 2;
+  }
+  if (rw_best_search_set &&
+      (!rankwidth_generator_set || rankwidth_generator != QSOP_RANKWIDTH_GENERATOR_BEST)) {
+    fputs("error: --rankwidth-best-search requires --rankwidth-generate best\n", stderr);
     return 2;
   }
   if (include_result && format != SOLVE_FORMAT_STATS) {
@@ -2329,8 +2391,17 @@ int main(int argc, char **argv) {
                                                      &single_mode_decomposition, &error);
         fclose(decomposition_file);
       } else {
-        ok = qsop_rankwidth_decomposition_generate(qsop, rankwidth_generator,
-                                                   &single_mode_decomposition, &error);
+        const qsop_rankwidth_decomposition_options_t decomposition_options = {
+            .kernel = rw_single_kernel,
+            .precision = single_mode_precision == SINGLE_MODE_PRECISION_LONG_DOUBLE
+                             ? QSOP_RANKWIDTH_SINGLE_PRECISION_LONG_DOUBLE
+                             : QSOP_RANKWIDTH_SINGLE_PRECISION_F64,
+            .best_search = rw_best_search,
+            .even_target_mode = (fourier_target_mode % 2U) == 0U,
+            .memory_budget_bytes = rw_memory_budget_bytes,
+        };
+        ok = qsop_rankwidth_decomposition_generate_options(
+            qsop, rankwidth_generator, &decomposition_options, &single_mode_decomposition, &error);
       }
       qsop_trace_emit_elapsed(trace_ptr, "rankwidth.decomposition_generation", 0, qsop->nvars,
                               decomposition_start);
@@ -2343,6 +2414,7 @@ int main(int argc, char **argv) {
       const qsop_rankwidth_single_mode_options_t rankwidth_single_options = {
           .kernel = rw_single_kernel,
           .materialize_join_max_pairs = rw_materialize_join_max_pairs,
+          .memory_budget_bytes = rw_memory_budget_bytes,
           .qpf_max_terms = qpf_max_terms,
           .simd = simd,
       };

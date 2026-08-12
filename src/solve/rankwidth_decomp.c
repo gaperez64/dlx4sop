@@ -34,6 +34,68 @@ static int compare_decomposition_scores(rw_decomposition_score_t left,
   }
   return 0;
 }
+
+static int compare_single_decomposition_scores(rw_decomposition_score_t left,
+                                               rw_decomposition_score_t right) {
+  if (left.single_feasible != right.single_feasible) {
+    return left.single_feasible ? -1 : 1;
+  }
+  if (!left.single_feasible) {
+    return compare_decomposition_scores(left, right);
+  }
+  const uint64_t right_threshold = (right.single_predicted_ns / RW_SINGLE_AUTO_MIN_SPEEDUP_NUM) *
+                                       RW_SINGLE_AUTO_MIN_SPEEDUP_DEN +
+                                   ((right.single_predicted_ns % RW_SINGLE_AUTO_MIN_SPEEDUP_NUM) *
+                                    RW_SINGLE_AUTO_MIN_SPEEDUP_DEN) /
+                                       RW_SINGLE_AUTO_MIN_SPEEDUP_NUM;
+  const uint64_t left_threshold =
+      (left.single_predicted_ns / RW_SINGLE_AUTO_MIN_SPEEDUP_NUM) * RW_SINGLE_AUTO_MIN_SPEEDUP_DEN +
+      ((left.single_predicted_ns % RW_SINGLE_AUTO_MIN_SPEEDUP_NUM) *
+       RW_SINGLE_AUTO_MIN_SPEEDUP_DEN) /
+          RW_SINGLE_AUTO_MIN_SPEEDUP_NUM;
+  if (left.single_predicted_ns <= right_threshold) {
+    return -1;
+  }
+  if (right.single_predicted_ns <= left_threshold) {
+    return 1;
+  }
+  if (left.single_peak_bytes != right.single_peak_bytes) {
+    return left.single_peak_bytes < right.single_peak_bytes ? -1 : 1;
+  }
+  return compare_decomposition_scores(left, right);
+}
+
+static uint64_t generator_estimated_ns(const qsop_instance_t *qsop,
+                                       qsop_rankwidth_generator_t generator) {
+  const uint64_t n = qsop->nvars;
+  const uint64_t words = ((uint64_t)qsop->nvars + 63U) / 64U;
+  uint64_t cube = qsop_saturating_mul_u64(qsop_saturating_mul_u64(n, n), n);
+  cube = qsop_saturating_mul_u64(cube, words == 0U ? 1U : words);
+  switch (generator) {
+  case QSOP_RANKWIDTH_GENERATOR_MIN_FILL:
+    return qsop_saturating_mul_u64(cube, 1U);
+  case QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH:
+    return qsop_saturating_mul_u64(cube, 2U);
+  case QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT:
+    return qsop_saturating_mul_u64(cube, 4U);
+  case QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH:
+    return qsop_saturating_mul_u64(cube, n > 1U ? n : 1U);
+  default:
+    return qsop_saturating_mul_u64(qsop_saturating_mul_u64(n, n), words == 0U ? 1U : words);
+  }
+}
+
+static bool cache_single_score_if_requested(const qsop_instance_t *qsop,
+                                            qsop_rankwidth_decomposition_t *decomposition,
+                                            const qsop_rankwidth_decomposition_options_t *options,
+                                            qsop_error_t *error) {
+  if (options == NULL) {
+    return true;
+  }
+  rw_decomposition_score_t score = {0};
+  return rw_decomposition_single_score(qsop, decomposition, options, &score, error);
+}
+
 static void set_parse_error(qsop_error_t *error, const char *path, size_t line, const char *fmt,
                             ...) {
   if (error == NULL) {
@@ -100,8 +162,7 @@ typedef struct rw_validation_frame {
 } rw_validation_frame_t;
 
 static bool validate_decomposition_nodes(qsop_rankwidth_decomposition_t *decomposition,
-                                         uint8_t *state, uint8_t *seen_var,
-                                         qsop_error_t *error) {
+                                         uint8_t *state, uint8_t *seen_var, qsop_error_t *error) {
   const size_t stack_capacity = (size_t)decomposition->nnodes + 1U;
   rw_validation_frame_t *stack = calloc(stack_capacity, sizeof(*stack));
   if (stack == NULL) {
@@ -748,66 +809,6 @@ static bool generate_left_deep_search(const qsop_instance_t *qsop, const uint32_
   *out = decomp;
   return true;
 }
-static bool make_left_deep_generated_decomposition(const qsop_instance_t *qsop,
-                                                   qsop_rankwidth_decomposition_t **out,
-                                                   qsop_error_t *error) {
-  if (qsop == NULL || out == NULL) {
-    qsop_set_error(error, "internal error: null left-deep rankwidth generation argument");
-    return false;
-  }
-  *out = NULL;
-
-  qsop_rankwidth_decomposition_t *decomposition = calloc(1, sizeof(*decomposition));
-  if (decomposition == NULL) {
-    qsop_set_error(error, "out of memory while allocating left-deep rankwidth decomposition");
-    return false;
-  }
-
-  const size_t words = qsop_bitset_words(qsop->nvars);
-  decomposition->nvars = qsop->nvars;
-  decomposition->words = words;
-  decomposition->nnodes = 2U * qsop->nvars - 1U;
-  decomposition->nodes = calloc(decomposition->nnodes, sizeof(*decomposition->nodes));
-  decomposition->node_vars = calloc((size_t)decomposition->nnodes * decomposition->words,
-                                    sizeof(*decomposition->node_vars));
-  decomposition->postorder = calloc(decomposition->nnodes, sizeof(*decomposition->postorder));
-  if (decomposition->nodes == NULL || decomposition->node_vars == NULL ||
-      decomposition->postorder == NULL) {
-    qsop_rankwidth_decomposition_free(decomposition);
-    qsop_set_error(error, "out of memory while allocating left-deep rankwidth decomposition nodes");
-    return false;
-  }
-
-  for (uint32_t i = 0; i < qsop->nvars; i++) {
-    decomposition->nodes[i] = (rw_node_t){
-        .kind = RW_NODE_LEAF,
-        .var = i,
-    };
-  }
-  if (qsop->nvars == 1U) {
-    decomposition->root = 0;
-  } else {
-    uint32_t current = 0;
-    uint32_t next_join = qsop->nvars;
-    for (uint32_t i = 1; i < qsop->nvars; i++) {
-      const uint32_t node = next_join++;
-      decomposition->nodes[node] = (rw_node_t){
-          .kind = RW_NODE_JOIN,
-          .left = current,
-          .right = i,
-      };
-      current = node;
-    }
-    decomposition->root = current;
-  }
-
-  if (!validate_decomposition(decomposition, error)) {
-    qsop_rankwidth_decomposition_free(decomposition);
-    return false;
-  }
-  *out = decomposition;
-  return true;
-}
 static bool make_fill_in_and_parents(const qsop_instance_t *qsop, const uint32_t *order,
                                      uint64_t *fill, uint32_t *parent_pos, qsop_error_t *error) {
   const uint32_t n = qsop->nvars;
@@ -1299,10 +1300,10 @@ bool qsop_rankwidth_decomposition_from_order(const qsop_instance_t *qsop, const 
   *out = decomposition;
   return true;
 }
-bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
-                                           qsop_rankwidth_generator_t generator,
-                                           qsop_rankwidth_decomposition_t **out,
-                                           qsop_error_t *error) {
+bool qsop_rankwidth_decomposition_generate_options(
+    const qsop_instance_t *qsop, qsop_rankwidth_generator_t generator,
+    const qsop_rankwidth_decomposition_options_t *options, qsop_rankwidth_decomposition_t **out,
+    qsop_error_t *error) {
   if (qsop == NULL || out == NULL) {
     qsop_set_error(error, "internal error: null rankwidth decomposition generation argument");
     return false;
@@ -1314,46 +1315,117 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       qsop_set_error(error, "out of memory while allocating empty rankwidth decomposition");
       return false;
     }
+    if (!cache_single_score_if_requested(qsop, empty, options, error)) {
+      qsop_rankwidth_decomposition_free(empty);
+      return false;
+    }
     *out = empty;
     return true;
   }
 
   if (generator == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
-    return make_from_treewidth_decomposition(qsop, out, error);
+    qsop_rankwidth_decomposition_t *decomposition = NULL;
+    if (!make_from_treewidth_decomposition(qsop, &decomposition, error)) {
+      return false;
+    }
+    if (!cache_single_score_if_requested(qsop, decomposition, options, error)) {
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    *out = decomposition;
+    return true;
   }
 
-  /* BEST: generate all base generators (including search), return lowest forecast. */
+  /* A NULL options pointer is the compatibility path used by count-table/all-modes callers.
+   * It retains the exhaustive legacy BEST score. Single-Fourier callers pass their kernel policy
+   * and use the progressive calibrated score below. */
   if (generator == QSOP_RANKWIDTH_GENERATOR_BEST) {
     static const qsop_rankwidth_generator_t kCandidates[] = {
-        QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,       QSOP_RANKWIDTH_GENERATOR_BALANCED,
-        QSOP_RANKWIDTH_GENERATOR_MIN_FILL,        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,
-        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
+        QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP,      QSOP_RANKWIDTH_GENERATOR_BALANCED,
+        QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH, QSOP_RANKWIDTH_GENERATOR_MIN_FILL,
+        QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT,   QSOP_RANKWIDTH_GENERATOR_MIN_FILL_SEARCH,
     };
     const size_t ncandidates = sizeof(kCandidates) / sizeof(kCandidates[0]);
     qsop_rankwidth_decomposition_t *winner = NULL;
+    rw_decomposition_score_t winner_score = {0};
     uint64_t winner_max = UINT64_MAX, winner_pairs = UINT64_MAX;
+    uint64_t planner_estimated_ns = 0U;
+    uint64_t optional_estimated_ns = 0U;
+    uint64_t planner_budget_ns = 0U;
+    uint64_t planner_candidates = 0U;
+    uint64_t planner_budget_exhaustions = 0U;
     for (size_t k = 0; k < ncandidates; k++) {
+      if (options == NULL && kCandidates[k] == QSOP_RANKWIDTH_GENERATOR_FROM_TREEWIDTH) {
+        continue;
+      }
+      const bool cheap = kCandidates[k] == QSOP_RANKWIDTH_GENERATOR_LEFT_DEEP ||
+                         kCandidates[k] == QSOP_RANKWIDTH_GENERATOR_BALANCED;
+      const uint64_t candidate_estimated_ns = generator_estimated_ns(qsop, kCandidates[k]);
+      if (options != NULL && options->best_search != QSOP_RANKWIDTH_BEST_EXHAUSTIVE && !cheap) {
+        if (winner != NULL && planner_budget_ns == 0U) {
+          planner_budget_ns = winner_score.single_predicted_ns / 5U;
+          if (planner_budget_ns > RW_BEST_OPTIONAL_BUDGET_CAP_NS) {
+            planner_budget_ns = RW_BEST_OPTIONAL_BUDGET_CAP_NS;
+          }
+        }
+        if (candidate_estimated_ns > planner_budget_ns ||
+            optional_estimated_ns > planner_budget_ns - candidate_estimated_ns) {
+          planner_budget_exhaustions++;
+          continue;
+        }
+      }
       qsop_rankwidth_decomposition_t *cand = NULL;
-      if (!qsop_rankwidth_decomposition_generate(qsop, kCandidates[k], &cand, error)) {
+      if (!qsop_rankwidth_decomposition_generate_options(qsop, kCandidates[k], options, &cand,
+                                                         error)) {
         qsop_rankwidth_decomposition_free(winner);
         return false;
       }
-      uint64_t cand_max = 0, cand_pairs = 0;
-      if (!qsop_rankwidth_decomposition_forecast(qsop, cand, &cand_max, &cand_pairs, error)) {
+      planner_candidates++;
+      planner_estimated_ns = qsop_saturating_add_u64(planner_estimated_ns, candidate_estimated_ns);
+      if (!cheap) {
+        optional_estimated_ns =
+            qsop_saturating_add_u64(optional_estimated_ns, candidate_estimated_ns);
+      }
+      rw_decomposition_score_t cand_score = {0};
+      uint64_t cand_max = 0U, cand_pairs = 0U;
+      const bool scored =
+          options == NULL
+              ? qsop_rankwidth_decomposition_forecast(qsop, cand, &cand_max, &cand_pairs, error)
+              : rw_decomposition_single_score(qsop, cand, options, &cand_score, error);
+      if (!scored) {
         qsop_rankwidth_decomposition_free(cand);
         qsop_rankwidth_decomposition_free(winner);
         return false;
       }
-      if (winner == NULL || cand_max < winner_max ||
-          (cand_max == winner_max && cand_pairs < winner_pairs)) {
+      const bool take =
+          winner == NULL ||
+          (options == NULL
+               ? (cand_max < winner_max || (cand_max == winner_max && cand_pairs < winner_pairs))
+               : compare_single_decomposition_scores(cand_score, winner_score) < 0);
+      if (take) {
         qsop_rankwidth_decomposition_free(winner);
         winner = cand;
         winner_max = cand_max;
         winner_pairs = cand_pairs;
+        winner_score = cand_score;
       } else {
         qsop_rankwidth_decomposition_free(cand);
       }
     }
+    if (winner == NULL) {
+      qsop_set_error(error, "rankwidth BEST found no feasible decomposition candidate");
+      return false;
+    }
+    if (options != NULL && !winner_score.single_feasible) {
+      qsop_rankwidth_decomposition_free(winner);
+      qsop_set_error(error,
+                     "rankwidth BEST found no decomposition within the single-mode memory limit");
+      return false;
+    }
+    winner->planner_candidates = planner_candidates;
+    winner->planner_estimated_ns = planner_estimated_ns;
+    winner->planner_budget_ns = planner_budget_ns;
+    winner->planner_budget_exhaustions = planner_budget_exhaustions;
     *out = winner;
     return true;
   }
@@ -1372,9 +1444,18 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
       free(mfs_order);
       return false;
     }
-    const bool ok = generate_left_deep_search(qsop, mfs_order, out, error);
+    qsop_rankwidth_decomposition_t *decomposition = NULL;
+    const bool ok = generate_left_deep_search(qsop, mfs_order, &decomposition, error);
     free(mfs_order);
-    return ok;
+    if (!ok) {
+      return false;
+    }
+    if (!cache_single_score_if_requested(qsop, decomposition, options, error)) {
+      qsop_rankwidth_decomposition_free(decomposition);
+      return false;
+    }
+    *out = decomposition;
+    return true;
   }
 
   uint32_t *order = calloc(qsop->nvars, sizeof(*order));
@@ -1499,61 +1580,22 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
     return false;
   }
 
-  if (generator == QSOP_RANKWIDTH_GENERATOR_MIN_FILL_CUT && adj != NULL) {
-    rw_decomposition_score_t selected_score = {0};
-    if (!rw_decomposition_score(qsop, decomposition, adj, &selected_score, error)) {
-      free(adj);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
-    }
-
-    qsop_rankwidth_decomposition_t *min_fill = NULL;
-    if (!qsop_rankwidth_decomposition_generate(qsop, QSOP_RANKWIDTH_GENERATOR_MIN_FILL, &min_fill,
-                                               error)) {
-      free(adj);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
-    }
-    rw_decomposition_score_t min_fill_score = {0};
-    if (!rw_decomposition_score(qsop, min_fill, adj, &min_fill_score, error)) {
-      free(adj);
-      qsop_rankwidth_decomposition_free(min_fill);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
-    }
-    if (compare_decomposition_scores(min_fill_score, selected_score) < 0) {
-      qsop_rankwidth_decomposition_free(decomposition);
-      decomposition = min_fill;
-      min_fill = NULL;
-      selected_score = min_fill_score;
-    }
-    qsop_rankwidth_decomposition_free(min_fill);
-
-    qsop_rankwidth_decomposition_t *left_deep = NULL;
-    if (!make_left_deep_generated_decomposition(qsop, &left_deep, error)) {
-      free(adj);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
-    }
-    rw_decomposition_score_t left_deep_score = {0};
-    if (!rw_decomposition_score(qsop, left_deep, adj, &left_deep_score, error)) {
-      free(adj);
-      qsop_rankwidth_decomposition_free(left_deep);
-      qsop_rankwidth_decomposition_free(decomposition);
-      return false;
-    }
-    if (compare_decomposition_scores(left_deep_score, selected_score) <= 0) {
-      qsop_rankwidth_decomposition_free(decomposition);
-      decomposition = left_deep;
-      left_deep = NULL;
-    }
-    qsop_rankwidth_decomposition_free(left_deep);
-  }
-
   free(adj);
+  if (!cache_single_score_if_requested(qsop, decomposition, options, error)) {
+    qsop_rankwidth_decomposition_free(decomposition);
+    return false;
+  }
   *out = decomposition;
   return true;
 }
+
+bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
+                                           qsop_rankwidth_generator_t generator,
+                                           qsop_rankwidth_decomposition_t **out,
+                                           qsop_error_t *error) {
+  return qsop_rankwidth_decomposition_generate_options(qsop, generator, NULL, out, error);
+}
+
 void qsop_rankwidth_decomposition_free(qsop_rankwidth_decomposition_t *decomposition) {
   if (decomposition == NULL) {
     return;

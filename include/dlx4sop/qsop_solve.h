@@ -91,6 +91,10 @@ typedef struct qsop_solve_stats {
   uint64_t max_table_entries;
   uint64_t signature_entries;
   uint64_t max_signature_entries;
+  /* Arithmetic work charged to the certified numeric error bound. For the pairwise kernels
+   * this is the number of child-state pairs scanned; the twist kernel replaces the scan with
+   * Walsh-Hadamard transforms, so there it counts butterflies, pointwise products and binned
+   * rows instead. rankwidth_twist_join_events discriminates the two regimes. */
   uint64_t join_pairs;
   uint64_t join_signature_pairs;
 
@@ -105,6 +109,15 @@ typedef struct qsop_solve_stats {
   uint64_t rankwidth_dense_join_events;
   uint64_t rankwidth_materialized_join_events;
   uint64_t rankwidth_streaming_join_events;
+  uint64_t rankwidth_twist_join_events;
+  uint64_t rankwidth_predicted_solve_ns;
+  uint64_t rankwidth_predicted_peak_bytes;
+  uint64_t rankwidth_predicted_pairwise_join_events;
+  uint64_t rankwidth_predicted_twist_join_events;
+  uint64_t rankwidth_planner_candidates;
+  uint64_t rankwidth_planner_estimated_ns;
+  uint64_t rankwidth_planner_budget_ns;
+  uint64_t rankwidth_planner_budget_exhaustions;
   uint64_t rankwidth_streaming_join_candidate_pairs;
   uint64_t rankwidth_streaming_join_emitted_pairs;
   uint64_t rankwidth_linear_transition_events;
@@ -242,7 +255,32 @@ typedef enum qsop_rankwidth_single_kernel {
   QSOP_RANKWIDTH_SINGLE_KERNEL_STREAMING,
   QSOP_RANKWIDTH_SINGLE_KERNEL_MATERIALIZED,
   QSOP_RANKWIDTH_SINGLE_KERNEL_DENSE,
+  QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST, /* Walsh-Hadamard twist-diagonalized join */
+  /* Choose the cheapest calibrated dense, materialized, or streaming pairwise join. */
+  QSOP_RANKWIDTH_SINGLE_KERNEL_PAIRWISE,
 } qsop_rankwidth_single_kernel_t;
+
+typedef enum qsop_rankwidth_single_precision {
+  QSOP_RANKWIDTH_SINGLE_PRECISION_F64,
+  QSOP_RANKWIDTH_SINGLE_PRECISION_LONG_DOUBLE,
+} qsop_rankwidth_single_precision_t;
+
+typedef enum qsop_rankwidth_best_search {
+  QSOP_RANKWIDTH_BEST_PROGRESSIVE,
+  QSOP_RANKWIDTH_BEST_EXHAUSTIVE,
+} qsop_rankwidth_best_search_t;
+
+/* Options used when BEST scores decompositions for a single-Fourier solve. Zero initialization
+ * selects AUTO, f64, an odd target mode, progressive search, the built-in memory policy, and the
+ * built-in planner budget. Other generators ignore best_search but still cache the requested
+ * policy's score. */
+typedef struct qsop_rankwidth_decomposition_options {
+  qsop_rankwidth_single_kernel_t kernel;
+  qsop_rankwidth_single_precision_t precision;
+  qsop_rankwidth_best_search_t best_search;
+  bool even_target_mode;
+  uint64_t memory_budget_bytes;
+} qsop_rankwidth_decomposition_options_t;
 
 typedef enum qsop_treewidth_order {
   QSOP_TREEWIDTH_ORDER_MIN_FILL,
@@ -274,6 +312,7 @@ typedef struct qsop_rankwidth_solve_options {
 typedef struct qsop_rankwidth_single_mode_options {
   qsop_rankwidth_single_kernel_t kernel; /* default AUTO */
   uint64_t materialize_join_max_pairs;   /* 0 = use built-in default */
+  uint64_t memory_budget_bytes;          /* 0 = no explicit limit */
   uint64_t qpf_max_terms;                /* 0 = 4096 */
   /* Used by contiguous complex kernels and rankwidth's integer bitset work. Signature-keyed CSR
    * gathers remain scalar because their output writes are scattered. */
@@ -388,6 +427,11 @@ bool qsop_rankwidth_decomposition_generate(const qsop_instance_t *qsop,
                                            qsop_rankwidth_generator_t generator,
                                            qsop_rankwidth_decomposition_t **out,
                                            qsop_error_t *error);
+
+bool qsop_rankwidth_decomposition_generate_options(
+    const qsop_instance_t *qsop, qsop_rankwidth_generator_t generator,
+    const qsop_rankwidth_decomposition_options_t *options, qsop_rankwidth_decomposition_t **out,
+    qsop_error_t *error);
 
 /* Build a from-treewidth rankwidth decomposition from a precomputed elimination order,
  * avoiding a second min-fill run when the caller already holds a treewidth order. */

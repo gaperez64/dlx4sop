@@ -24,9 +24,6 @@
 uint64_t *rw_table_assignment(const rw_table_t *table, size_t index, size_t words) {
   return qsop_bitset_row(table->assignments, words, (uint32_t)index);
 }
-uint64_t *rw_join_map_assignment(const rw_join_map_t *map, size_t index, size_t words) {
-  return qsop_bitset_row(map->assignments, words, (uint32_t)index);
-}
 uint64_t *rw_fourier_assignment(const rw_fourier_table_t *table, size_t index, size_t words) {
   return qsop_bitset_row(table->assignments, words, (uint32_t)index);
 }
@@ -242,7 +239,10 @@ bool rw_reserve_reps(rw_table_t *table, size_t needed, size_t words, qsop_error_
     return false;
   }
   rw_signature_rep_t *reps = calloc(new_cap, sizeof(*reps));
-  uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
+  /* words == 0 requests an index-keyed table with no assignment payload (see
+   * rw_table_prepopulate_reps_indexed); allocate one dummy word so a zero-size calloc cannot
+   * masquerade as out-of-memory. */
+  uint64_t *assignments = calloc(words == 0 ? 1U : new_cap * words, sizeof(*assignments));
   uint32_t *rep_weights = calloc(new_cap, sizeof(*rep_weights));
   if (reps == NULL || assignments == NULL || rep_weights == NULL) {
     free(reps);
@@ -534,7 +534,7 @@ void rw_build_sig_range_index_into(const rw_table_t *table, uint32_t max_sig, ui
     ends[sig] = (uint32_t)(i + 1U);
   }
 }
-bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qsop_error_t *error) {
+bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, qsop_error_t *error) {
   if (needed <= map->cap) {
     return true;
   }
@@ -547,26 +547,16 @@ bool rw_reserve_join_map(rw_join_map_t *map, size_t needed, size_t words, qsop_e
     }
     new_cap *= 2U;
   }
-  if (words != 0 && new_cap > SIZE_MAX / words / sizeof(uint64_t)) {
-    qsop_set_error(error, "rankwidth join assignment map is too large");
+  if (new_cap > SIZE_MAX / sizeof(rw_join_map_entry_t)) {
+    qsop_set_error(error, "rankwidth join map is too large");
     return false;
   }
-  rw_join_map_entry_t *entries = calloc(new_cap, sizeof(*entries));
-  uint64_t *assignments = calloc(new_cap * words, sizeof(*assignments));
-  if (entries == NULL || assignments == NULL) {
-    free(entries);
-    free(assignments);
+  rw_join_map_entry_t *entries = realloc(map->entries, new_cap * sizeof(*entries));
+  if (entries == NULL) {
     qsop_set_error(error, "out of memory while growing rankwidth join map");
     return false;
   }
-  if (map->len != 0) {
-    memcpy(entries, map->entries, map->len * sizeof(*entries));
-    memcpy(assignments, map->assignments, map->len * words * sizeof(*assignments));
-  }
-  free(map->entries);
-  free(map->assignments);
   map->entries = entries;
-  map->assignments = assignments;
   map->cap = new_cap;
   return true;
 }
@@ -575,8 +565,27 @@ void rw_join_map_free(rw_join_map_t *map) {
     return;
   }
   free(map->entries);
-  free(map->assignments);
   *map = (rw_join_map_t){0};
+}
+/* Rebuild a table's representative rows as bare dense indices: reps[i].signature == i, no
+ * assignment or weight payload.  The per-prime CRT passes key every table this way -- entry
+ * keys, join-map indices and the compact range index all agree on the same node-local row
+ * numbers, so neither the signature pool nor any full-width representative is needed once the
+ * maps exist (docs/table-representation-audit.md, refactor step 3). */
+bool rw_table_prepopulate_reps_indexed(rw_table_t *table, size_t count, qsop_error_t *error) {
+  if (count > UINT32_MAX) {
+    qsop_set_error(error, "rankwidth indexed table has too many representatives");
+    return false;
+  }
+  if (!rw_reserve_reps(table, count, 0, error)) {
+    return false;
+  }
+  for (size_t i = 0; i < count; i++) {
+    table->reps[i] = (rw_signature_rep_t){.signature = (uint32_t)i};
+    table->rep_weights[i] = 0;
+  }
+  table->reps_len = count;
+  return rw_rep_slots_rehash(table, error);
 }
 bool rw_reserve_fourier_table(rw_fourier_table_t *table, size_t needed, uint32_t value_slots,
                               size_t words, qsop_error_t *error) {
