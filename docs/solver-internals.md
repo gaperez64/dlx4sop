@@ -1,38 +1,38 @@
 # Solver internals
 
-This guide describes `sop-solve` dispatch, the branch backend, and the models
-used by its dynamic programming (DP) delegates. The delegates are treewidth,
-rank-width, and quadratic phase function (QPF) methods. See the
-[README](../README.md) for normal command-line usage and the QSOP format.
+This guide explains how `sop-solve` chooses a solver. It covers the branch
+backend and its treewidth, rank-width, and quadratic phase function (QPF)
+delegates. See the [README](../README.md) for the QSOP format and normal CLI
+usage.
 
 ## Implementation and references
 
-Treewidth orders use the in-tree [min-fill implementation](../src/core/min_fill.c),
-including min-degree and max-degree tie breakers. The relevant upper-bound
-heuristics are described by Bodlaender and Koster,
+Treewidth orders come from the in-tree
+[min-fill implementation](../src/core/min_fill.c). It includes min-degree and
+max-degree tie breakers. For the underlying upper-bound heuristics, see
+Bodlaender and Koster,
 [*Treewidth computations I. Upper bounds*](https://doi.org/10.1016/j.ic.2009.03.008),
 *Information and Computation* 208(3), 2010.
 
-Rank decompositions use the in-tree
+Rank decompositions come from the in-tree
 [rank-decomposition generators](../src/solve/rankwidth_decomp.c). The
 `from-treewidth`, `min-fill-cut`, adjacent-swap, and best-of-candidates builders
-are project-specific heuristics based on the cut-rank framework of Oum and
-Seymour,
+are project-specific. They use the cut-rank framework of Oum and Seymour,
 [*Approximating clique-width and branch-width*](https://doi.org/10.1016/j.jctb.2005.10.006),
 *Journal of Combinatorial Theory, Series B* 96(4), 2006.
 
 The whole-amplitude simplifier implements the path-sum `[HH]` and `[omega]`
-rules in [`qsop_simplify.c`](../src/core/qsop_simplify.c). Their use before a
-complete solver follows Huang et al.,
+rules in [`qsop_simplify.c`](../src/core/qsop_simplify.c). For these rules and
+their use before a complete solver, see Huang et al.,
 [*Equivalence Checking of Quantum Circuits via Path-Sum and Weighted Model
 Counting*](https://doi.org/10.1007/978-3-032-22749-2_21), TACAS 2026, pp.
 419--439.
 
-## Architecture at a glance
+## Dispatch
 
-The branch backend is an orchestrator. It simplifies a residual QSOP, splits
-disconnected components, delegates admitted components, and branches or
-conditions only when no delegate wins.
+The branch backend is a dispatcher, not another DP algorithm. It simplifies
+the residual QSOP and splits disconnected components. It sends each component
+to the cheapest admitted delegate. If none wins, it branches or conditions.
 
 ```mermaid
 flowchart TD
@@ -49,22 +49,24 @@ flowchart TD
     H -->|none| I{bounded fallback?}
     I -->|small| BR[residual branching]
     I -->|large single-Fourier| CS[cutset conditioning]
-    I -->|budget stop| X[graceful refusal]
+    I -->|budget stop| X[refusal]
 ```
 
-Let the active residual phase be
+The active residual phase is
 
 ```text
 P(x) = c + sum_v a_v x_v + (r/2) sum_{uv in E} x_u x_v  (mod r).
 ```
 
-If no active variables remain, earlier assignments have already been absorbed
-into `c`. The histogram has one assignment in bucket `c`, and Fourier mode `t`
-is `omega^(t*c)`. If variables remain but `E` is empty, each variable contributes
-independently. The count path cyclically convolves by
-`delta_0 + delta_a_v`, while the single-Fourier path evaluates
-`omega^(t*c) * product_v (1 + omega^(t*a_v))`. Unary phases and assignment
-multiplicity therefore still matter in an edge-free residual.
+The solver handles two terminal cases directly:
+
+- With no active variables, earlier assignments are part of `c`. The histogram
+  has one assignment in bucket `c`. Fourier mode `t` is `omega^(t*c)`.
+- With variables but no edges, the variables are independent. The count path
+  convolves by `delta_0 + delta_a_v` for each variable. The single-Fourier path
+  computes `omega^(t*c) * product_v (1 + omega^(t*a_v))`.
+
+An edge-free residual can still have unary phases and many assignments.
 
 The two result shapes have different resource profiles:
 
@@ -73,10 +75,10 @@ The two result shapes have different resource profiles:
 | count-table or all modes | exact count histogram | DP tables carry a factor of `r` | branch within `--max-vars`, otherwise refuse |
 | single-Fourier | one coefficient and a certified numeric bound | no `r`-sized table | branch through the fallback limit, then condition within budgets or refuse |
 
-With `--backend branch`, `--solve-mode auto` prefers exact counting when it is
-practical. Width and count-vector preflights can select single-Fourier directly,
-and safe count-path refusals are retried there. `--format residue-vector`
-requests the exact count-table path.
+With `--backend branch`, `--solve-mode auto` uses exact counting when practical.
+Width and count-vector preflights may choose single-Fourier first. The solver
+also retries safe count-path refusals in single-Fourier mode.
+`--format residue-vector` always requests the exact count-table path.
 
 For each connected residual, dispatch proceeds as follows:
 
@@ -97,7 +99,7 @@ the orchestrator.
 
 ## Delegation admission
 
-These are branch-backend limits. Explicit standalone backends have their own
+These limits apply to the branch backend. Direct backends have separate
 resource controls.
 
 | Delegate | Count-table or all-modes path | Single-Fourier path |
@@ -105,12 +107,12 @@ resource controls.
 | treewidth | min-fill width at most 14, plus a width-18 root fast path through 2500 variables | min-fill width at most 26, DP work at most `4.0e9`, and forecast memory at most 12 GiB |
 | rank-width | generated cut-rank at most 12 | generated cut-rank at most 12 |
 
-The single-Fourier CLI fast path admits a direct treewidth root through width
-25. Width 26 enters the branch path. Treewidth follows the elimination-order
-convention, so a width-`w` factor can contain `w + 1` variables. The admission
-forecast uses `2^w * 128 bytes`, where 128 bytes is a calibrated peak factor
-that includes live join intermediates. An over-budget component becomes a
-delegate miss before allocation.
+The single-Fourier CLI fast path sends a root of width 25 or less straight to
+treewidth. Width 26 enters the branch path. Treewidth follows the
+elimination-order convention, so a width-`w` factor may contain `w + 1`
+variables. The memory forecast is `2^w * 128 bytes`. The 128-byte factor is a
+calibrated peak estimate that includes live join data. The solver rejects an
+over-budget delegate before allocation.
 
 `--max-vars` is an exhaustive-search bound, not a width bound. The CLI defaults
 to 24 on the exact count path and raises an unset value to `2^24` for
@@ -121,18 +123,16 @@ low-width components.
 
 ### Applicability and route selection
 
-Treewidth and rank-width are universal once their admission checks pass. QPF
-has a separate applicability predicate. It requires a compatible result path,
-a supported phase order, and a stabilizer-term bound within
-`--qpf-max-terms` for every requested Fourier mode. Magic vertices increase
-that term bound rather than acting as a separate gate. An inapplicable or
-inadmissible route receives the estimate `UINT64_MAX` and drops out of the
-comparison.
+Treewidth and rank-width apply whenever they pass their admission checks. QPF
+also needs a compatible result path, a supported phase order, and a
+stabilizer-term bound within `--qpf-max-terms` for every requested Fourier
+mode. Magic vertices raise this bound; they are not a separate gate. A route
+that fails either check gets the estimate `UINT64_MAX` and is ignored.
 
-One chooser computes the minimum, or `argmin`, of `tw_est`, `rw_est`, and `qpf_est`.
-Treewidth wins an exact tie with QPF. Rank-width must clear
-`rw_min_speedup` against the least expensive competitor. The same chooser is
-used before and after a rank-decomposition probe.
+A shared function chooses the lowest of `tw_est`, `rw_est`, and `qpf_est`.
+Treewidth wins an exact tie with QPF. Rank-width must beat the cheapest other
+route by `rw_min_speedup`. The solver runs this choice before and after a
+rank-decomposition probe.
 
 Define:
 
@@ -163,13 +163,12 @@ rw_est_single_after_probe = rw_fixed_overhead_ns + T_single
 rank-width wins iff rw_est * rw_min_speedup < min(tw_est, qpf_est)
 ```
 
-Before probing, the estimate includes `P_rw`, omits the unknown join work, and
-uses the best feasible generated cut-rank. That cut-rank is zero when the
-natural-order prefix cut-rank is zero and one otherwise. Prefix cut-rank is not
-treated as a lower bound because another order can compress it. After probing,
-the count path substitutes measured structural forecasts, while the
-single-Fourier path substitutes the complete per-join profile. Probe cost is
-sunk in the second comparison.
+Before the probe, the estimate includes `P_rw` and leaves out unknown join
+work. It assumes the best feasible cut-rank: zero when the natural-order prefix
+cut-rank is zero, and one otherwise. The prefix value is not a lower bound;
+another order can compress it. After the probe, the count path uses measured
+structure and the single-Fourier path uses the full join profile. The second
+comparison omits the probe cost because it has already been paid.
 
 The default policy is:
 
@@ -187,8 +186,8 @@ The default policy is:
 | `rw_min_speedup` | 1.1 |
 | `rw_memory_penalty_ns` | 0 |
 
-Fixed overheads, the speedup threshold, and the memory penalty have
-`--branch-tw-*` or `--branch-rw-*` flags. The five `C_*` defaults are private
+The fixed overheads, speedup threshold, and memory penalty have
+`--branch-tw-*` or `--branch-rw-*` flags. The five `C_*` values are private
 constants in [`branch.c`](../src/solve/branch.c).
 
 The CLI default `--branch-rw-source auto` derives a rank decomposition from the
@@ -197,9 +196,9 @@ treewidth elimination tree. `from-treewidth` selects the same source explicitly,
 `none` disables rank-width probing. The zero-initialized library API defaults
 to `none`.
 
-Treewidth preflight uses plain min-fill. The selected solve resolves a
-`min-fill-max-degree` order lazily and rechecks width and memory. If that order
-is no longer admitted but an already generated rank decomposition is admitted,
+Treewidth preflight uses plain min-fill. The solve builds a
+`min-fill-max-degree` order only when needed, then checks width and memory
+again. If that order fails but an existing rank decomposition passes,
 single-Fourier dispatch can use rank-width instead.
 
 ### Quadratic phase function tables
@@ -211,19 +210,19 @@ magic vertices, and `chi_u` the number of retained QPF terms. The hybrid bound i
 chi_u <= min(stabilizer_terms(tau_u), chi_left * chi_right, 2^rho_u).
 ```
 
-A node may rebuild a QPF list from its unary phase, join child lists and their
-crossing form, retain the point signature table, or collapse QPF terms back to
-points. The record stores a mod-4 linear phase, an upper-triangular quadratic
+A node can rebuild a QPF list from its unary phase, join child lists and their
+crossing form, keep the point signature table, or collapse QPF terms back to
+points. A QPF record stores a mod-4 linear phase, an upper-triangular quadratic
 form, and an affine binary subspace. Count mode uses exact arithmetic in
-`Z[zeta_lcm(r,8)][1/2]` within the checked limits `lcm(r,8) <= 64` and 96
+`Z[zeta_lcm(r,8)][1/2]`. The checked limits are `lcm(r,8) <= 64` and 96
 variables.
 
 For `r = 8`, groups of six T-equivalent phases use the verified six-term
 decomposition from Eq. (5) of
 [Qassim, Pashayan, and Gosset](https://quantum-journal.org/papers/q-2021-12-20-606/).
-Remaining magic vertices use the two-term basis, giving the implemented bound
+Other magic vertices use the two-term basis. This gives the bound
 `6^(tau/6) * 2^(tau mod 6)`. QPF joins require cubic binary linear algebra in
-the boundary dimension, so the term budget remains the controlling resource.
+the boundary dimension, so the term budget is still the main limit.
 
 ### Rank-width join kernels
 
@@ -242,16 +241,16 @@ where `B` is the crossing parity. The available kernels are:
   Walsh-Hadamard transforms over the parent dimension `p` and twist dimension
   `c`.
 
-The twist cost is `O(2^(p+c)(p+c) + |U| + |V|)` rather than the pairwise
-`|U| * |V|`. Even Fourier modes have `c = 0` and reduce to one XOR convolution.
-The implementation caps `p + c` at 22.
+Twist costs `O(2^(p+c)(p+c) + |U| + |V|)`. A pairwise join costs
+`|U| * |V|`. Even Fourier modes have `c = 0`, so twist becomes one XOR
+convolution. The implementation caps `p + c` at 22.
 
 `pairwise` chooses among streaming, materialized, and dense. `auto` compares
-that choice with twist through the same model used to score
-`--rankwidth-generate best`. Auto builds a twist plan only from 4096 forecast
-pairs, requires at least a 10 percent predicted speedup, and caps twist
-workspace at 512 MiB. An explicit `twist` request removes the auto workspace
-cap but still obeys the dimension cap and any explicit rank-width memory budget.
+that choice with twist using the model for `--rankwidth-generate best`. It
+builds a twist plan only at 4096 or more forecast pairs, requires a predicted
+speedup of at least 10 percent, and caps twist workspace at 512 MiB. An
+explicit `twist` request removes this workspace cap. The dimension cap and any
+explicit rank-width memory budget still apply.
 
 `--rankwidth-generate best` profiles complete decompositions with the selected
 join policy. Progressive search always evaluates left-deep and balanced trees,
@@ -259,14 +258,14 @@ then admits more expensive generators while their planning estimate fits a
 budget capped at five seconds. `--rankwidth-best-search exhaustive` evaluates
 the full generator portfolio.
 
-Reachable parent coordinates are determined exactly by pair marking or an exact
-modular transform. Numerical magnitude is never used as a reachability test.
+Pair marking or an exact modular transform finds reachable parent coordinates.
+The solver never uses numerical magnitude to test reachability.
 
 ## Single-Fourier fallback and conditioning
 
 Odd Fourier modes first apply exact degree-0/1 propagation when the unary
-coefficient is `0` or `r/2`. Propagation can cascade, expose a delegate, or prove
-the subtree zero. Even target modes disable this identity.
+coefficient is `0` or `r/2`. This can cascade, expose a delegate, or prove the
+subtree zero. The identity does not apply to even target modes.
 
 When a connected component has no delegate:
 
@@ -276,19 +275,19 @@ When a connected component has no delegate:
 - A larger component uses bounded cutset conditioning when
   `--branch-single-cutset-depth` is nonzero.
 
-The CLI enables depth 16 and permits 30 consecutive stagnant levels. The
-zero-initialized library API leaves conditioning off. At each node, lookahead
-chooses the variable with the best lexicographic child score. The score favors
-exact-zero children, then smaller worst-child components, variable counts, and
-edge counts. Enabled propagation and optional materialized `[HH]` reduction run
-inside lookahead. Delegation is re-probed as residuals shrink.
+The CLI uses depth 16 and permits 30 stagnant levels. The zero-initialized
+library API leaves conditioning off. At each node, lookahead scores both
+children of each candidate. It prefers exact-zero children, then smaller
+worst-child components, variable counts, and edge counts. Enabled propagation
+and optional materialized `[HH]` reduction run during lookahead. The solver
+rechecks delegation as residuals shrink.
 
-The default shortlist ranks Hadamard unlock counts and then degree. An unlock
-is a neighbor that is one pin away from an exact `[HH]` reduction. If the
-shortlist has no unlock signal, `--branch-shadow auto|on` can use a coefficient-free shadow
-graph that removes degree-0/1 vertices and series-reduces degree-2 vertices.
-The shadow graph only ranks real candidates. It is never solved or passed to a
-delegate. The CLI default is `off`.
+The default shortlist ranks Hadamard unlock counts, then degree. An unlock is a
+neighbor one pin away from an exact `[HH]` reduction. If there is no unlock
+signal, `--branch-shadow auto|on` can use a coefficient-free shadow graph. The
+graph removes degree-0/1 vertices and series-reduces degree-2 vertices. It only
+ranks real candidates; the solver never sends it to a delegate. The CLI
+default is `off`.
 
 Important conditioning defaults are:
 
@@ -303,14 +302,13 @@ Important conditioning defaults are:
 | `--branch-single-cache-budget-mib` | 256 |
 | `--branch-single-cache-min-vars` | 12 |
 
-Budget exhaustion produces a clean refusal instead of unbounded recursion.
+The solver refuses when a budget runs out.
 
 ## Weighted model counting export
 
-`sop2wmc --encoding auto` uses `peel1` preprocessing unless overridden and
-selects `amp-soft` or `amp-block` from structural coverage and estimated output
-size. WPCNF is the weighted DIMACS CNF format consumed by weighted model
-counters. The concrete encodings are:
+`sop2wmc --encoding auto` uses `peel1` preprocessing unless disabled. It chooses
+`amp-soft` or `amp-block` from structural coverage and expected output size.
+WPCNF is weighted DIMACS CNF. The concrete encodings are:
 
 | Encoding | Contract |
 | --- | --- |
@@ -333,14 +331,13 @@ For residue encodings,
 raw_amplitude = sum_k counts[k] * exp(2*pi*i*k/r).
 ```
 
-Metadata comments record the selected encoding, variable map, normalization,
-and reconstruction rule. Advanced preprocessing, Fourier-inner, and block
-threshold controls are listed by `sop2wmc --help`.
+Metadata comments record the encoding, variable map, normalization, and
+reconstruction rule. Run `sop2wmc --help` for preprocessing, Fourier-inner,
+and block-threshold options.
 
 ## Runtime controls
 
-`sop-solve --help-advanced` is the authoritative flag summary. The main groups
-are:
+Run `sop-solve --help-advanced` for the full flag list. The main groups are:
 
 - Backend and mode: `--backend`, `--solve-mode`, `--max-vars`,
   `--treewidth-order`, `--fourier-target-mode`, and `--qpf-max-terms`.
@@ -364,16 +361,16 @@ build/sop-solve --backend branch --solve-mode count-table \
   --branch-calibrate-backends --stats-jsonl calib.jsonl instance.qsop
 ```
 
-Calibration bypasses the cost inequality while retaining delegate caps. JSONL
-records contain treewidth and rank-width forecasts, actual times, probe time,
-and decomposition-generation time. Twist calibration uses
-`scripts/calibrate_rankwidth_cost.py`, which records per-join structure,
-predicted costs, workspace, and realized join times.
+Calibration ignores the cost comparison but keeps delegate caps. JSONL records
+contain forecasts, actual times, probe time, and decomposition-generation time
+for both DP backends. For twist calibration, use
+`scripts/calibrate_rankwidth_cost.py`. It records join structure, predicted
+cost, workspace, and actual time.
 
 ## Observing a run
 
 `--format stats` reports delegate counts, skips, widths, table and join work,
-QPF activity, and conditioning termination. The principal rank-width fields are
+QPF activity, and conditioning termination. The main rank-width fields are
 `rankwidth_predicted_solve_ns`, `rankwidth_predicted_peak_bytes`, predicted
 pairwise and twist join counts, and the `rankwidth_planner_*` counters.
 `rankwidth_streaming_join_events`, `rankwidth_materialized_join_events`,
@@ -385,7 +382,7 @@ join, this means Walsh-Hadamard butterflies and binned rows rather than child
 signature pairs.
 
 `--trace csv` writes `phase,depth,items,elapsed_ns` records to stderr. Per-node
-`rankwidth.single_join.*` phases expose structural dimensions, predicted time,
-workspace, selected kernel, and actual join time. `--stats-jsonl PATH` adds
-per-decision route and veto data. Conditioning child records require
+`rankwidth.single_join.*` phases report dimensions, predicted time, workspace,
+the selected kernel, and actual join time. `--stats-jsonl PATH` adds route and
+veto data for each decision. Conditioning child records require
 `--branch-single-diagnose-conditioning`.

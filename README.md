@@ -10,6 +10,22 @@ branch backend simplifies and splits each residual, then chooses among
 treewidth, rank-width, and quadratic phase function (QPF) methods by estimated
 cost. It branches or conditions only when no admitted delegate wins.
 
+```mermaid
+flowchart LR
+    QASM[OpenQASM 2.0] -->|qasm2sop| QSOP[(QSOP IR)]
+    QSOP -->|sop2wmc| WPCNF[CNF / WPCNF] --> WMC[external model counter]
+    QSOP -->|sop-solve| BR[branch backend]
+    BR --> RS[reduce and split residuals]
+    RS --> ROUTE{admission and cost model}
+    ROUTE --> TW[treewidth DP]
+    ROUTE --> RW[rank-width DP]
+    ROUTE --> QPF[QPF solver]
+    ROUTE -->|no admitted route| FB[branching / conditioning]
+    QSOP -. direct backend .-> TW
+    QSOP -. direct backend .-> RW
+    QSOP -. direct backend .-> QPF
+```
+
 ## Tools
 
 - `qasm2sop` imports supported OpenQASM 2.0 circuits into QSOP.

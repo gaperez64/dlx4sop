@@ -39,7 +39,10 @@ implementation of the algorithms it formalizes, and is linked directly from the 
 `δ_C` is the Kronecker delta of Hadamard-free wires. The paper and the paper-facing Lean
 theorems both display it explicitly.
 
-**Stabilizer-rank join layer** (`sec:stabjoin`), in `Formal/Stab/`:
+**Stabilizer-rank join layer** (`sec:stabjoin`), in `Formal/Stab/`. The paper keeps the
+quadratic-phase-function development, `cor:gottesman-knill` and `alg:stabjoin` in the body,
+and puts the cost model (`thm:hybrid-dp`), the strategy semantics, the optimizer and
+`cor:stabjoin` in its appendix; the Lean layout does not follow that split.
 
 | Paper statement | Lean theorem | File |
 |---|---|---|
@@ -54,11 +57,11 @@ theorems both display it explicitly.
 | `a`-magic / `a`-Clifford vertices | `SopInstance.ACliff`, `AMagic` | `Formal/Stab/Magic.lean` |
 | `η = r/2` ⟹ the quadratic part is a sign | `SopInstance.chi_half`, `selCount_cast` | `Formal/Stab/Magic.lean` |
 | `lem:magic-decomp` (sum of `2^τ` QPFs) | `SopInstance.modeWeight_sum_qpf`, `card_powerset_magicSet`, `Stab.magic_decomp_spec` | `Formal/Stab/Magic.lean`, `Paper.lean` |
-| *Ideal case* — Gottesman–Knill through the SOP lens | `SopInstance.isQPF_modeWeight_of_cliff`, `isQPF_modeWeight_of_even_mode` | `Formal/Stab/Magic.lean` |
-| every even mode factorizes, at every even modulus | `SopInstance.Nhat_even`, `mul_half_eq_zero_of_even` | `Formal/Stab/Magic.lean` |
+| `cor:gottesman-knill` (Gottesman–Knill through the SOP lens) | `SopInstance.isQPF_modeWeight_of_cliff`, `isQPF_modeWeight_of_even_mode` | `Formal/Stab/Magic.lean` |
+| `prop:even-modes` (every even mode factorizes, at every even modulus) | `SopInstance.Nhat_even`, `mul_half_eq_zero_of_even` | `Formal/Stab/Magic.lean` |
 | `alg:stabjoin` (`Λ_u` recurrence, three moves) | `Stab.Lam`, `Stab.Move`, `Stab.PointForm`, `Stab.costHybrid` | `Formal/Stab/Hybrid.lean` |
 | `thm:hybrid-dp` (operation count) | `Stab.costHybrid_le_sharp`, `Lam_le_of_pointForm` | `Formal/Stab/Hybrid.lean` |
-| *Ideal case* — `6·|V|` ops, independent of the width | `Stab.costHybrid_clifford_le`, `Stab.clifford_collapse_spec` | `Formal/Stab/Hybrid.lean`, `Paper.lean` |
+| `cor:gottesman-knill`, cost half — `6·|V|` ops, independent of the width | `Stab.costHybrid_clifford_le`, `Stab.clifford_collapse_spec` | `Formal/Stab/Hybrid.lean`, `Paper.lean` |
 | *Bad case* — the hybrid never loses (`|V|·(2+4^k)`) | `Stab.costHybrid_point_le`, `Stab.hybrid_never_loses_spec` | `Formal/Stab/Hybrid.lean`, `Paper.lean` |
 
 ## Scope, stated honestly
@@ -88,6 +91,10 @@ For the stabilizer-rank join specifically:
   quoted in the paper is cited literature (Bravyi–Smith–Smolin; Qassim–Pashayan–Gosset) and is
   **nowhere assumed, axiomatized, or claimed** — no theorem constrains `sr` except through an
   explicit hypothesis of that theorem.
+* The `Move` type is `join | rebuild | point`. The paper's **`Materialize`** move and the
+  strategy optimizer that chooses where to spend each price are **not** formalized, and
+  neither is `cor:stabjoin`, the magic-focused-width guarantee, which needs the materialize
+  cost. Those live in the paper's appendix.
 * The `O(m²)` description size and `O(m³)` time of the QPF operations are **not** formalized.
   As elsewhere, runtime is modelled by operation counts — here the `Λ_L · Λ_R` pair scans of
   `costHybrid` — and never by a machine model. In particular `QPF.mul` stacks constraint
@@ -110,6 +117,27 @@ For the stabilizer-rank join specifically:
 * `magicSet` is taken over the whole vertex set rather than per subtree, so `τ_u` as a
   *per-cut* quantity is modelled in `Hybrid.lean` by the abstract `sr : RTree I.V → ℕ` rather
   than being computed from `Magic.lean`. Wiring the two together is not formalized.
+
+## Renaming a declaration breaks the paper
+
+The paper's `[Lean✓]` badges name declarations, not line numbers:
+
+```latex
+\lean{Formal/Paper.lean}{rank_dp_spec}
+```
+
+`scripts/lean_anchors.py` in the paper repository scans this tree **at `origin/main`** and
+writes the `path:name → line` map the badges resolve through. Two consequences for anyone
+editing here:
+
+* **Renaming or removing a badged declaration breaks the paper build** — loudly, with a
+  LaTeX warning and a visible red `[Lean?]` in the PDF, which is the point. Moving a
+  declaration within its file is free; the map is regenerated.
+* **Work only resolves once it is merged to `main`.** Badges point at `blob/main`, so a
+  declaration living on a branch is a dead link for every reader.
+
+The paper-facing wrappers in `Formal/Paper.lean` and `Formal/Stab/Paper.lean` are the
+intended badge targets, since their docstrings name the paper statement they package.
 
 ## Axiom profile — how to check
 
