@@ -37,6 +37,7 @@ _FORCE_CUTSET_ARGS = [
     "--format", "stats",
     "--solve-mode", "single-fourier",
     "--branch-rw-source", "none",
+    "--branch-no-qpf",
     "--branch-single-delegate-max-dp-work", "1",
     "--branch-single-max-fallback-vars", "5",
     "--branch-single-cutset-depth", "60",

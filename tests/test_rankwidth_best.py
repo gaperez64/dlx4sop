@@ -33,6 +33,28 @@ def run_solver(exe: pathlib.Path, qsop_text: str, generator: str,
                           stderr=subprocess.PIPE, text=True)
 
 
+def run_single_best(exe: pathlib.Path, qsop_text: str, kernel: str,
+                    search: str) -> subprocess.CompletedProcess:
+    with tempfile.NamedTemporaryFile(suffix=".qsop", mode="w", delete=False) as f:
+        f.write(qsop_text)
+        qsop_path = f.name
+    args = [str(exe), "--backend", "rankwidth", "--solve-mode", "single-fourier",
+            "--max-vars", "64", "--rankwidth-generate", "best",
+            "--rankwidth-single-kernel", kernel, "--rankwidth-best-search", search,
+            "--format", "stats", qsop_path]
+    return subprocess.run(args, check=False, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+
+
+def parse_stats(text: str) -> dict[str, str]:
+    result = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition(": ")
+        if separator:
+            result[key] = value
+    return result
+
+
 def test_best_agrees_with_an_individual_generator(exe: pathlib.Path) -> None:
     """best must produce a residue vector that equals one of the 4 individual generators."""
     base_generators = ["left-deep", "balanced", "min-fill", "min-fill-cut"]
@@ -97,6 +119,33 @@ def test_best_forecast_not_worse_than_individuals(exe: pathlib.Path) -> None:
             )
 
 
+def test_single_best_policy_and_search(exe: pathlib.Path) -> None:
+    """Single-mode BEST reports its cost profile and both search modes preserve the answer."""
+    qsop_text = make_cycle_qsop(12, 8)
+    progressive = run_single_best(exe, qsop_text, "auto", "progressive")
+    exhaustive = run_single_best(exe, qsop_text, "auto", "exhaustive")
+    pairwise = run_single_best(exe, qsop_text, "pairwise", "progressive")
+    for label, result in (("progressive", progressive), ("exhaustive", exhaustive),
+                          ("pairwise", pairwise)):
+        assert result.returncode == 0, f"{label} single-mode BEST failed: {result.stderr}"
+        stats = parse_stats(result.stdout)
+        assert int(stats["rankwidth_predicted_solve_ns"]) > 0
+        assert int(stats["rankwidth_predicted_peak_bytes"]) > 0
+        assert int(stats["rankwidth_planner_candidates"]) >= 2
+
+    pstats = parse_stats(progressive.stdout)
+    estats = parse_stats(exhaustive.stdout)
+    pair_stats = parse_stats(pairwise.stdout)
+    for field in ("amplitude_re", "amplitude_im"):
+        assert abs(float(pstats[field]) - float(estats[field])) <= 1e-8
+        assert abs(float(pstats[field]) - float(pair_stats[field])) <= 1e-8
+    assert int(pair_stats["rankwidth_predicted_twist_join_events"]) == 0
+    assert int(pair_stats["rankwidth_twist_join_events"]) == 0
+    assert int(estats["rankwidth_planner_candidates"]) >= int(
+        pstats["rankwidth_planner_candidates"]
+    )
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 3:
         print(f"usage: {argv[0]} <sop-solve> <source-root>")
@@ -106,6 +155,7 @@ def main(argv: list[str]) -> None:
     test_best_agrees_with_an_individual_generator(exe)
     test_best_cycle_agrees_with_individual(exe)
     test_best_forecast_not_worse_than_individuals(exe)
+    test_single_best_policy_and_search(exe)
 
     print("all rankwidth best tests passed")
 

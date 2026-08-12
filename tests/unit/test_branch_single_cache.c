@@ -105,6 +105,7 @@ static bool solve(const qsop_instance_t *q, uint32_t target_mode, uint32_t cache
       .cache_min_vars = cache_min_vars,
       .treewidth_delegate_max_width = 1,
       .rankwidth_delegate_max_width = 1,
+      .policy.qpf_disabled = true, /* exercise the residual cache path, not the QPF terminal */
   };
   qsop_error_t error = {0};
   if (!qsop_solve_branch_single_mode(q, 64U, target_mode, &options, amp, stats, &error)) {

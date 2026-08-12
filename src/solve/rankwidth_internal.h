@@ -30,6 +30,9 @@
 #define RW_TWIST_MAX_DIM 22U
 #define RW_TWIST_AUTO_MIN_PAIRS UINT64_C(4096)
 #define RW_TWIST_AUTO_MAX_BYTES UINT64_C(536870912)
+#define RW_SINGLE_AUTO_MIN_SPEEDUP_NUM UINT64_C(11)
+#define RW_SINGLE_AUTO_MIN_SPEEDUP_DEN UINT64_C(10)
+#define RW_BEST_OPTIONAL_BUDGET_CAP_NS UINT64_C(5000000000)
 static inline const qsop_simd_vtable_t *rankwidth_bitset_simd(void) {
   static _Atomic(const qsop_simd_vtable_t *) cached;
   const qsop_simd_vtable_t *simd = atomic_load_explicit(&cached, memory_order_acquire);
@@ -66,6 +69,20 @@ struct qsop_rankwidth_decomposition {
   uint32_t cached_cutrank_width;
   uint64_t cached_table_forecast;
   uint64_t cached_join_pair_forecast;
+  bool single_score_cached;
+  bool cached_single_feasible;
+  qsop_rankwidth_single_kernel_t cached_single_kernel;
+  qsop_rankwidth_single_precision_t cached_single_precision;
+  bool cached_single_even_target_mode;
+  uint64_t cached_single_memory_budget_bytes;
+  uint64_t cached_single_predicted_ns;
+  uint64_t cached_single_peak_bytes;
+  uint64_t cached_single_pairwise_joins;
+  uint64_t cached_single_twist_joins;
+  uint64_t planner_candidates;
+  uint64_t planner_estimated_ns;
+  uint64_t planner_budget_ns;
+  uint64_t planner_budget_exhaustions;
 };
 typedef struct rw_entry {
   uint32_t signature;
@@ -200,11 +217,11 @@ typedef struct rw_join_plan {
   uint32_t pdim;
   size_t llen;
   size_t rlen;
-  uint64_t *lcoord; /* [llen] left signature coordinates in the realized left basis */
-  uint64_t *rcoord; /* [rlen] right signature coordinates in the realized right basis */
-  uint64_t *lproj;  /* [llen] parent-basis coordinates of sigma_L & outside */
-  uint64_t *rproj;  /* [rlen] parent-basis coordinates of sigma_R & outside */
-  uint64_t *mfold;  /* [rlen] crossing form folded with rcoord: parity = |lcoord & mfold| mod 2 */
+  uint64_t *lcoord;   /* [llen] left signature coordinates in the realized left basis */
+  uint64_t *rcoord;   /* [rlen] right signature coordinates in the realized right basis */
+  uint64_t *lproj;    /* [llen] parent-basis coordinates of sigma_L & outside */
+  uint64_t *rproj;    /* [rlen] parent-basis coordinates of sigma_R & outside */
+  uint64_t *mfold;    /* [rlen] crossing form folded with rcoord: parity = |lcoord & mfold| mod 2 */
   uint32_t *sig_memo; /* [1 << pdim] parent coordinate -> interned pool id (UINT32_MAX = unseen) */
 } rw_join_plan_t;
 static inline uint32_t rw_join_plan_parity(const rw_join_plan_t *plan, size_t i, size_t j) {
@@ -230,7 +247,52 @@ typedef struct rw_decomposition_score {
   uint32_t cutrank_width;
   uint64_t table_forecast;
   uint64_t join_pair_forecast;
+  bool single_feasible;
+  uint64_t single_predicted_ns;
+  uint64_t single_peak_bytes;
+  uint64_t single_pairwise_joins;
+  uint64_t single_twist_joins;
 } rw_decomposition_score_t;
+
+typedef enum rw_single_join_kind {
+  RW_SINGLE_JOIN_STREAMING,
+  RW_SINGLE_JOIN_MATERIALIZED,
+  RW_SINGLE_JOIN_DENSE,
+  RW_SINGLE_JOIN_TWIST,
+} rw_single_join_kind_t;
+
+typedef struct rw_single_join_forecast {
+  bool feasible;
+  bool twist_feasible;
+  rw_single_join_kind_t selected;
+  uint64_t pairwise_ns;
+  uint64_t twist_ns;
+  uint64_t selected_ns;
+  uint64_t pairwise_workspace_bytes;
+  uint64_t twist_workspace_bytes;
+  uint64_t selected_workspace_bytes;
+  uint64_t dense_pairs;
+  uint64_t twist_ops;
+  uint64_t left_entries;
+  uint64_t right_entries;
+  uint64_t parent_entries;
+  uint32_t left_dim;
+  uint32_t right_dim;
+  uint32_t parent_dim;
+  uint32_t crossing_rank;
+} rw_single_join_forecast_t;
+
+/* A linear right inverse of the node signature map. basis[i] is a signature-space basis
+ * vector and preimages[i] is the assignment in X_u selected for it. */
+typedef struct rw_linear_section {
+  uint32_t nbits;
+  size_t words;
+  uint32_t dim;
+  uint32_t *pivots;
+  int32_t *pivot_to_index;
+  uint64_t *basis;
+  uint64_t *preimages;
+} rw_linear_section_t;
 static inline uint64_t *node_vars(qsop_rankwidth_decomposition_t *decomposition, uint32_t node) {
   return qsop_bitset_row(decomposition->node_vars, decomposition->words, node);
 }
@@ -295,6 +357,41 @@ bool rw_decomposition_score(const qsop_instance_t *qsop,
                             const qsop_rankwidth_decomposition_t *decomposition,
                             const uint64_t *adj, rw_decomposition_score_t *out,
                             qsop_error_t *error);
+
+bool rw_decomposition_single_score(const qsop_instance_t *qsop,
+                                   qsop_rankwidth_decomposition_t *decomposition,
+                                   const qsop_rankwidth_decomposition_options_t *options,
+                                   rw_decomposition_score_t *out, qsop_error_t *error);
+
+rw_single_join_forecast_t rw_single_join_forecast(qsop_rankwidth_single_kernel_t kernel,
+                                                  uint64_t left_entries, uint64_t right_entries,
+                                                  uint64_t parent_entries, uint32_t left_dim,
+                                                  uint32_t right_dim, uint32_t parent_dim,
+                                                  uint32_t crossing_rank, size_t words,
+                                                  size_t value_size, uint64_t materialize_max_pairs,
+                                                  uint64_t memory_budget_bytes);
+
+uint64_t rw_twist_workspace_bytes_dims(uint32_t parent_dim, uint32_t crossing_rank,
+                                       size_t value_size);
+
+bool rw_linear_section_build(const qsop_instance_t *qsop,
+                             const qsop_rankwidth_decomposition_t *decomposition,
+                             uint32_t node, const uint64_t *adj, rw_linear_section_t *out,
+                             qsop_error_t *error);
+void rw_linear_section_free(rw_linear_section_t *section);
+bool rw_linear_section_coord(const rw_linear_section_t *section, const uint64_t *signature,
+                             uint64_t *coord, qsop_error_t *error);
+void rw_linear_section_apply(const rw_linear_section_t *section, const uint64_t *coord,
+                             uint64_t *assignment);
+bool rw_qpf_crossing_matrix(const qsop_instance_t *qsop,
+                            const rw_linear_section_t *left,
+                            const rw_linear_section_t *right, const uint64_t *adj,
+                            uint64_t **out_rows, size_t *out_words, qsop_error_t *error);
+bool rw_qpf_hybrid_single_mode(const qsop_instance_t *qsop,
+                               const qsop_rankwidth_decomposition_t *decomposition,
+                               const uint64_t *adj, uint32_t target_mode, uint64_t max_terms,
+                               bool *out_handled, qsop_amplitude_t *out,
+                               qsop_solve_stats_t *stats, qsop_error_t *error);
 
 uint32_t rw_decomposition_width(const qsop_rankwidth_decomposition_t *decomposition,
                                 const uint64_t *adj, qsop_solve_stats_t *stats,
@@ -435,18 +532,17 @@ bool rw_solve_single_mode_once(const qsop_instance_t *qsop,
                                long double *out_re, long double *out_im,
                                long double *out_numeric_error_bound,
                                qsop_rankwidth_single_kernel_t kernel,
-                               uint64_t materialize_join_max_pairs, qsop_solve_stats_t *stats,
-                               qsop_solve_trace_t *trace, qsop_error_t *error);
+                               uint64_t materialize_join_max_pairs, uint64_t memory_budget_bytes,
+                               qsop_solve_stats_t *stats, qsop_solve_trace_t *trace,
+                               qsop_error_t *error);
 
-bool rw_solve_single_mode_once_f64(const qsop_instance_t *qsop,
-                                   const qsop_rankwidth_decomposition_t *decomposition,
-                                   const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2,
-                                   long double *out_re, long double *out_im,
-                                   long double *out_numeric_error_bound,
-                                   qsop_rankwidth_single_kernel_t kernel,
-                                   uint64_t materialize_join_max_pairs,
-                                   const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
-                                   qsop_solve_trace_t *trace, qsop_error_t *error);
+bool rw_solve_single_mode_once_f64(
+    const qsop_instance_t *qsop, const qsop_rankwidth_decomposition_t *decomposition,
+    const uint64_t *adj, uint32_t target_mode, int *out_scale_exp2, long double *out_re,
+    long double *out_im, long double *out_numeric_error_bound,
+    qsop_rankwidth_single_kernel_t kernel, uint64_t materialize_join_max_pairs,
+    uint64_t memory_budget_bytes, const qsop_simd_vtable_t *simd, qsop_solve_stats_t *stats,
+    qsop_solve_trace_t *trace, qsop_error_t *error);
 
 bool rw_table_add_entry(rw_table_t *table, uint32_t signature, uint32_t residue, uint64_t count,
                         qsop_error_t *error);
@@ -470,14 +566,12 @@ void rw_table_free(rw_table_t *table);
 
 void rw_table_sort(rw_table_t *table);
 
-rw_twist_feasibility_t rw_twist_plan_build(uint32_t nvars, const uint64_t *adj,
-                                           const rw_signature_pool_t *pool,
-                                           const uint32_t *left_signatures, size_t left_len,
-                                           const uint32_t *right_signatures, size_t right_len,
-                                           const uint64_t *left_vars, const uint64_t *right_vars,
-                                           const uint64_t *outside, size_t words, bool want_twist,
-                                           uint32_t max_dim, rw_twist_plan_t *plan,
-                                           qsop_error_t *error);
+rw_twist_feasibility_t
+rw_twist_plan_build(uint32_t nvars, const uint64_t *adj, const rw_signature_pool_t *pool,
+                    const uint32_t *left_signatures, size_t left_len,
+                    const uint32_t *right_signatures, size_t right_len, const uint64_t *left_vars,
+                    const uint64_t *right_vars, const uint64_t *outside, size_t words,
+                    bool want_twist, uint32_t max_dim, rw_twist_plan_t *plan, qsop_error_t *error);
 
 void rw_twist_plan_free(rw_twist_plan_t *plan);
 

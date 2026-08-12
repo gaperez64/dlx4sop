@@ -123,6 +123,7 @@ int main(void) {
   uint64_t total_scalar_fallback_ops = 0;
   uint64_t twist_events_even = 0;
   uint64_t twist_events_odd = 0;
+  uint64_t auto_twist_events = 0;
 
   for (uint32_t trial = 0; trial < 320U; trial++) {
     const uint64_t r = moduli[xorshift(&seed) % 4U];
@@ -163,14 +164,22 @@ int main(void) {
      * odd modes the twisted kernel. */
     const qsop_rankwidth_single_mode_options_t twist_options = {
         .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_TWIST};
+    const qsop_rankwidth_single_mode_options_t pairwise_options = {
+        .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_PAIRWISE, .simd = native};
+    const qsop_rankwidth_single_mode_options_t auto_options = {
+        .kernel = QSOP_RANKWIDTH_SINGLE_KERNEL_AUTO, .simd = native};
 
     qsop_amplitude_t native_amp = {0};
     qsop_amplitude_t scalar_amp = {0};
     qsop_amplitude_t wide_amp = {0};
     qsop_amplitude_t twist_amp = {0};
+    qsop_amplitude_t pairwise_amp = {0};
+    qsop_amplitude_t auto_amp = {0};
     qsop_solve_stats_t native_stats = {0};
     qsop_solve_stats_t scalar_stats = {0};
     qsop_solve_stats_t twist_stats = {0};
+    qsop_solve_stats_t pairwise_stats = {0};
+    qsop_solve_stats_t auto_stats = {0};
     const bool ok =
         qsop_solve_rankwidth_single_mode_f64_options(q, decomposition, MAX_VARS + 1U, target_mode,
                                                      &native_options, &native_amp, &native_stats,
@@ -182,7 +191,13 @@ int main(void) {
                                          NULL, NULL, &error) &&
         qsop_solve_rankwidth_single_mode_options(q, decomposition, MAX_VARS + 1U, target_mode,
                                                  &twist_options, &twist_amp, &twist_stats, NULL,
-                                                 &error);
+                                                 &error) &&
+        qsop_solve_rankwidth_single_mode_f64_options(q, decomposition, MAX_VARS + 1U, target_mode,
+                                                     &pairwise_options, &pairwise_amp,
+                                                     &pairwise_stats, NULL, &error) &&
+        qsop_solve_rankwidth_single_mode_f64_options(q, decomposition, MAX_VARS + 1U, target_mode,
+                                                     &auto_options, &auto_amp, &auto_stats, NULL,
+                                                     &error);
     if (!ok) {
       fprintf(stderr, "trial %" PRIu32 ": solve failed: %s\n", trial, error.message);
       qsop_rankwidth_decomposition_free(decomposition);
@@ -197,6 +212,13 @@ int main(void) {
     } else {
       twist_events_odd += twist_stats.rankwidth_twist_join_events;
     }
+    auto_twist_events += auto_stats.rankwidth_twist_join_events;
+    if (pairwise_stats.rankwidth_twist_join_events != 0U) {
+      fprintf(stderr, "trial %" PRIu32 ": pairwise policy selected a twist join\n", trial);
+      qsop_rankwidth_decomposition_free(decomposition);
+      qsop_free(q);
+      return 1;
+    }
     /* Forcing the scalar vtable must never take the vectorized branch. */
     if (scalar_stats.simd_vectorized_ops != 0) {
       fprintf(stderr, "trial %" PRIu32 ": scalar vtable reported %" PRIu64 " vectorized ops\n",
@@ -209,12 +231,10 @@ int main(void) {
     const struct {
       const char *label;
       const qsop_amplitude_t *amp;
-    } cases[] = {
-        {"f64/native", &native_amp},
-        {"f64/scalar", &scalar_amp},
-        {"long-double", &wide_amp},
-        {"long-double/twist", &twist_amp}};
-    for (uint32_t i = 0; i < 4U; i++) {
+    } cases[] = {{"f64/native", &native_amp},     {"f64/scalar", &scalar_amp},
+                 {"long-double", &wide_amp},      {"long-double/twist", &twist_amp},
+                 {"f64/pairwise", &pairwise_amp}, {"f64/auto", &auto_amp}};
+    for (uint32_t i = 0; i < 6U; i++) {
       if (!agrees(cases[i].amp, want_re, want_im)) {
         fprintf(stderr,
                 "trial %" PRIu32 " (r=%" PRIu64 " n=%" PRIu32 " density=%" PRIu32 " mode=%" PRIu32
@@ -255,12 +275,16 @@ int main(void) {
             twist_events_even, twist_events_odd);
     return 1;
   }
+  if (auto_twist_events == 0U) {
+    fputs("AUTO never selected a twist join\n", stderr);
+    return 1;
+  }
 
   fprintf(stderr,
-          "rankwidth join tests passed (%" PRIu32 " instances, %" PRIu64 " vectorized ops, %"
-          PRIu64 " scalar-fallback ops, %" PRIu64 "/%" PRIu64
-          " even/odd twist joins, kernel %s)\n",
+          "rankwidth join tests passed (%" PRIu32 " instances, %" PRIu64 " vectorized ops, %" PRIu64
+          " scalar-fallback ops, %" PRIu64 "/%" PRIu64 " even/odd forced twist joins, %" PRIu64
+          " AUTO twist joins, kernel %s)\n",
           trials, total_vectorized_ops, total_scalar_fallback_ops, twist_events_even,
-          twist_events_odd, qsop_simd_kernel_name(native));
+          twist_events_odd, auto_twist_events, qsop_simd_kernel_name(native));
   return 0;
 }

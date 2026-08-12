@@ -7,6 +7,12 @@
 #include <stdint.h>
 #include <stdio.h>
 
+typedef struct qsop_magic_mode_class {
+  uint32_t magic_vertices;
+  uint64_t mode_count;
+  uint64_t hybrid_term_bound;
+} qsop_magic_mode_class_t;
+
 typedef struct qsop_stats {
   uint64_t r;
   uint32_t nvars;
@@ -27,12 +33,25 @@ typedef struct qsop_stats {
   uint32_t exact_width_max_vars;
   uint32_t exact_treewidth;
   uint32_t exact_rankwidth;
+  bool magic_diagnostics_requested;
+  bool magic_diagnostics_available;
+  uint32_t magic_vertices_mode1;
+  uint32_t magic_mode_class_count;
+  qsop_magic_mode_class_t *magic_mode_classes;
 } qsop_stats_t;
 
 typedef struct qsop_stats_options {
   bool exact_widths;
   uint32_t exact_width_max_vars;
+  bool magic_diagnostics;
 } qsop_stats_options_t;
+
+/* Definition 2 / Section 5: v is a-magic exactly when omega_r^(a*b_v) is not a fourth root of
+ * unity, equivalently 4*a*b_v != 0 (mod r). */
+uint32_t qsop_magic_vertex_count(const qsop_instance_t *qsop, uint64_t mode);
+
+/* Releases optional dynamically-sized diagnostics. Safe on zero-initialized stats. */
+void qsop_stats_dispose(qsop_stats_t *stats);
 
 bool qsop_compute_stats(const qsop_instance_t *qsop, qsop_stats_t *stats, qsop_error_t *error);
 

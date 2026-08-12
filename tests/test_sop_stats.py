@@ -126,6 +126,7 @@ def run_large_width_diagnostics(exe: pathlib.Path) -> None:
         "min_fill_width: 1",
         "min_fill_edges: 0",
         "prefix_cut_rank: 1",
+        "magic_vertices_mode_1: 0",
     }
     if completed.returncode != 0 or not expected_parts.issubset(set(completed.stdout.splitlines())):
         raise AssertionError(f"large width diagnostics failed\n{completed.stdout}\n{completed.stderr}")
@@ -143,8 +144,40 @@ def run_large_width_diagnostics(exe: pathlib.Path) -> None:
         or '"variables":66' not in json_result.stdout
         or '"width_diagnostics_available":true' not in json_result.stdout
         or '"prefix_cut_rank":1' not in json_result.stdout
+        or '"magic_vertices_mode_1":0' not in json_result.stdout
     ):
         raise AssertionError(f"large JSON width diagnostics failed\n{json_result.stdout}\n{json_result.stderr}")
+
+
+def run_magic_diagnostics(exe: pathlib.Path) -> None:
+    cases = [
+        (16, 4, 12),  # mode 2 is among the 12 magic modes despite being even
+        (8, 4, 4),    # at r=8 exactly the odd modes are magic
+        (6, 2, 4),
+    ]
+    for modulus, expected_nonmagic_modes, expected_magic_modes in cases:
+        qsop = f"p qsop-sign {modulus} 1 0\nn 0\ncst 0\nu 0 1\n"
+        completed = subprocess.run(
+            [str(exe), "--json", "-"],
+            input=qsop,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(completed.stderr)
+        import json
+
+        parsed = json.loads(completed.stdout)
+        by_magic = {
+            item["magic_vertices"]: item["modes"]
+            for item in parsed["magic_mode_classes"]
+        }
+        if by_magic != {0: expected_nonmagic_modes, 1: expected_magic_modes}:
+            raise AssertionError(
+                f"r={modulus}: unexpected magic-mode classes: {parsed}"
+            )
 
 
 def run_exact_widths(exe: pathlib.Path) -> None:
@@ -286,6 +319,7 @@ def main() -> int:
     run_stats(exe, source_root, ["--format", "text"], "stats_sign.text")
     run_cli_paths(exe, source_root)
     run_large_width_diagnostics(exe)
+    run_magic_diagnostics(exe)
     run_exact_widths(exe)
     return 0
 
