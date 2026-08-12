@@ -83,9 +83,9 @@ theorem magic_decomp_spec (I : SopInstance) (h4 : 4 ∣ I.r) (a : ZMod I.r) :
 the whole mode-`a` weight is a *single* QPF, and the always-`Rebuild` strategy runs
 `alg:stabjoin` in `6·|V|` operations — linear in `n` and **independent of the rank-width**,
 where the naive join of `thm:fourier-speedup` still pays `4^k` per internal vertex. -/
-theorem clifford_collapse_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Move)
+theorem clifford_collapse_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step)
     (D : RankDecomp I) (h4 : 4 ∣ I.r) (a : ZMod I.r) (hc : ∀ v, I.ACliff a v)
-    (hsr : ∀ u, sr u ≤ 1) (hS : ∀ u, S u = Move.rebuild) :
+    (hsr : ∀ u, sr u ≤ 1) (hS : ∀ u, S u = Step.rebuild) :
     IsQPF (fun z : I.V → ZMod 2 => I.chi (a * I.phi z))
       ∧ costHybrid I sr S D.tree ≤ 6 * Fintype.card I.V :=
   ⟨I.isQPF_modeWeight_of_cliff h4 a hc, costHybrid_clifford_le I sr S D hsr hS⟩
@@ -95,7 +95,7 @@ keeps at most `2^{ρ_u}` phase functions at every cut and performs exactly the p
 signature scan of `thm:fourier-speedup`, so it meets the same `|V| · (2 + 4^k)` operation count
 as `SopInstance.costMode_le'`.  (`1 ≤ k` only excludes the degenerate edgeless case where every
 cut has rank zero; see the scope note in `Formal.Stab.Hybrid`.) -/
-theorem hybrid_never_loses_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Move)
+theorem hybrid_never_loses_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step)
     (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) (hk : 1 ≤ k)
     (hpf : PointForm I S D.tree) :
     (∀ u, RTree.Subtree u D.tree → Lam I sr S u ≤ 2 ^ k)
