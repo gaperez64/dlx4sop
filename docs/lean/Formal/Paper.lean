@@ -3,6 +3,7 @@ Copyright (c) 2026 Alfons Laarman. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Alfons Laarman
 -/
+import Formal.Core.Histogram
 import Formal.Core.LinearLayout
 import Formal.Quantum.Capstone
 
@@ -42,6 +43,29 @@ theorem fourier_mode_spec (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k)
     I.chi (a * I.c) * I.Aalg a D.tree 0 = I.Nhat a
       ∧ I.costMode D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) := by
   exact ⟨I.Aalg_root D a, I.costMode_le' D hw⟩
+
+/-- **`cor:histogram-one-mode`, formalized clauses.** For `r = 2^m` the single mode `a = 1`
+already determines the whole residue histogram, at the same `|V| * (2 + 4^k)` operation count
+that one amplitude costs. The clauses are: the mode-1 root value expands over
+`1, ω, …, ω^{r/2-1}` with the count differences as coefficients; those integer coefficients are
+unique, so `Δ` is read off the expansion; the complementary sums are the histogram of the linear
+part of `f`, needing neither the graph nor the decomposition; and the counts follow over `ℤ`.
+Only the uniqueness clause uses `r = 2^m`. -/
+theorem histogram_one_mode_spec (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k)
+    {m : ℕ} (hm1 : 1 ≤ m) (hm : I.r = 2 ^ m) :
+    I.chi I.c * I.Aalg 1 D.tree 0
+        = ∑ j ∈ Finset.range (I.r / 2), (I.Delta (j : ZMod I.r) : ℂ) * I.omega ^ j
+      ∧ (∀ a b : ℕ → ℤ,
+          (∑ j ∈ Finset.range (I.r / 2), (a j : ℂ) * I.omega ^ j)
+            = (∑ j ∈ Finset.range (I.r / 2), (b j : ℂ) * I.omega ^ j) →
+          ∀ j ∈ Finset.range (I.r / 2), a j = b j)
+      ∧ (∀ j : ZMod I.r, I.Mlin j = I.N j + I.N (j + I.half))
+      ∧ (∀ j : ZMod I.r, 2 * (I.N j : ℤ) = (I.Mlin j : ℤ) + I.Delta j
+          ∧ 2 * (I.N (j + I.half) : ℤ) = (I.Mlin j : ℤ) - I.Delta j)
+      ∧ I.costMode D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) := by
+  refine ⟨?_, I.coords_unique hm1 hm, I.Mlin_eq_N_add, I.N_recovered, I.costMode_le' D hw⟩
+  rw [I.single_amplitude D]
+  exact I.S_eq_sum_Delta
 
 /-- **`thm:linear-layout-fourier`, formalized clause.** For every (including zero) prefix
 cut-rank bound `k`, a covering duplicate-free layout computes mode `a` correctly and has

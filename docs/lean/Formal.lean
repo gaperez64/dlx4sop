@@ -8,6 +8,7 @@ import Formal.Core.DPCorrect
 import Formal.Core.Width
 import Formal.Core.Cost
 import Formal.Core.Fourier
+import Formal.Core.Histogram
 import Formal.Core.LinearLayout
 import Formal.Quantum.Capstone
 import Formal.Paper
@@ -22,6 +23,8 @@ import Formal.Stab.Paper
 * `Formal.SopInstance.card_sig_image_le` — ≤ 2^k signatures per cut
 * `Formal.SopInstance.costFull_le`, `costMode_le'` — op-count runtime (thm:sop-rw / fourier)
 * `Formal.SopInstance.single_amplitude`, `N_inversion` — Fourier mode-1 / inversion
+* `Formal.SopInstance.S_eq_sum_Delta`, `coords_unique`, `Mlin_eq_N_add`, `N_recovered` — the
+  whole histogram from mode 1 alone when `r = 2^m` (cor:histogram-one-mode)
 * `Formal.SopInstance.costMode_layout_le` — linear-layout base-2 bound (cor:lrw)
 * `Formal.Quantum.amplitude_eq_sop`, `amplitude_by_rank_dp` — the honest capstone
 * `Formal.SopInstance.rank_dp_spec`, `fourier_mode_spec`, `linear_fourier_mode_spec` and

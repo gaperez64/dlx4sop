@@ -24,6 +24,8 @@ implementation of the algorithms it formalizes, and is linked directly from the 
 | `thm:fourier-speedup` per-mode (value and `≤ n·(2+4^k)`) | `SopInstance.fourier_mode_spec` | `Formal/Paper.lean` |
 | DFT inversion (eq:inverse-dft) | `SopInstance.N_inversion`, `SopInstance.sum_chi` | `Formal/Core/Fourier.lean` |
 | `cor:single-amplitude` (mode 1 computes `S(f)`) | `SopInstance.single_amplitude`, `SopInstance.Aalg_root` | `Formal/Core/Fourier.lean` |
+| `cor:histogram-one-mode` (for `r = 2^m`, mode 1 gives the whole histogram) | `SopInstance.histogram_one_mode_spec` | `Formal/Paper.lean` |
+| … its four pieces (expansion, coordinate uniqueness, linear-part sums, recovery) | `SopInstance.S_eq_sum_Delta`, `coords_unique`, `Mlin_eq_N_add`, `N_recovered` | `Formal/Core/Histogram.lean` |
 | `thm:linear-layout-fourier` (mode value and base 2, including `k=0`) | `SopInstance.linear_fourier_mode_spec` | `Formal/Paper.lean` |
 
 **Quantum layer** (the honest capstone, about the real amplitude):
