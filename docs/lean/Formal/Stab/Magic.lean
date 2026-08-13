@@ -115,20 +115,10 @@ open Stab
 
 variable (I : SopInstance)
 
-/-! ## Step 1: the quarter and half powers of `ω_r`, and the `η = r/2` sign rule -/
+/-! ## Step 1: the quarter power of `ω_r`, and the `η = r/2` sign rule
 
-/-- `ω_r^{r/2} = −1`.  The half power of the root of unity is the sign; this is the analytic
-half of the `η = r/2` reduction `Formal.half_mul_reduce`. -/
-theorem omega_pow_half : I.omega ^ (I.r / 2) = -1 := by
-  obtain ⟨k, hk⟩ := I.hr
-  have hr0 := I.hr0
-  have hr2 : I.r / 2 = k := by omega
-  have hk0 : (k : ℂ) ≠ 0 := Nat.cast_ne_zero.mpr (by omega)
-  have hrC : (I.r : ℂ) = 2 * (k : ℂ) := by rw [hk]; push_cast; ring
-  have hmul : ((I.r / 2 : ℕ) : ℂ) * (2 * (Real.pi : ℂ) * Complex.I / (I.r : ℂ))
-      = (Real.pi : ℂ) * Complex.I := by
-    rw [hr2, hrC]; field_simp
-  rw [SopInstance.omega, ← Complex.exp_nat_mul, hmul, Complex.exp_pi_mul_I]
+The half power `omega_pow_half` is a fact about `ω_r` alone, so it lives with `omega_pow_r`
+and `omega_pow_mod` in `Formal/Core/Fourier.lean`. -/
 
 /-- `ω_r^{r/4} = i` when `4 ∣ r`.  This is what makes "the unary phase is a power of `i`"
 (`ACliff`) an honest statement about `ω_r`, and it needs `4 ∣ r` — for `{H,T,CZ}`, `r = 8`. -/

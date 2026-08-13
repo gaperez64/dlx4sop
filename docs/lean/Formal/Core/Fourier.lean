@@ -42,6 +42,19 @@ theorem omega_pow_mod (m : ℕ) : I.omega ^ (m % I.r) = I.omega ^ m := by
   conv_rhs => rw [← Nat.div_add_mod m I.r]
   rw [pow_add, pow_mul, I.omega_pow_r, one_pow, one_mul]
 
+/-- `ω_r^{r/2} = −1`.  The half power of the root of unity is the sign; this is the analytic
+half of the `η = r/2` reduction `Formal.half_mul_reduce`. -/
+theorem omega_pow_half : I.omega ^ (I.r / 2) = -1 := by
+  obtain ⟨k, hk⟩ := I.hr
+  have hr0 := I.hr0
+  have hr2 : I.r / 2 = k := by omega
+  have hk0 : (k : ℂ) ≠ 0 := Nat.cast_ne_zero.mpr (by omega)
+  have hrC : (I.r : ℂ) = 2 * (k : ℂ) := by rw [hk]; push_cast; ring
+  have hmul : ((I.r / 2 : ℕ) : ℂ) * (2 * (Real.pi : ℂ) * Complex.I / (I.r : ℂ))
+      = (Real.pi : ℂ) * Complex.I := by
+    rw [hr2, hrC]; field_simp
+  rw [SopInstance.omega, ← Complex.exp_nat_mul, hmul, Complex.exp_pi_mul_I]
+
 /-- `χ` is additive: it is a character of the group `(ZMod r, +)`. -/
 theorem chi_add (x y : ZMod I.r) : I.chi (x + y) = I.chi x * I.chi y := by
   simp only [chi]
