@@ -7,7 +7,7 @@ import Formal.Core.DPCorrect
 import Formal.Foundations.CutRank
 
 /-!
-# The signature-count bound at a cut (`lem:signatures-le-2^k`)
+# The signature-count bound at a cut (the `2^k` count inside `thm:dp-correct`)
 
 For a subtree `u` with vertex set `X = u.verts`, the boundary signatures `sig u z` of the
 supported assignments `z` all lie in the row space of the `F₂` cut matrix `A[X, X̄]`: the
@@ -56,7 +56,7 @@ theorem sig_eq_recover_vecMul (u : RTree I.V) (z : I.V → ZMod 2) :
         = ∑ v : {x // x ∈ u.verts}, z v.1 * I.adj v.1 w
     exact (Finset.sum_coe_sort u.verts (fun v => z v * I.adj v w)).symm
 
-/-- **`lem:signatures-le-2^k`.** A width bound `ρ(X_u) ≤ k` bounds the number of distinct
+/-- **The `2^k` signature count.** A width bound `ρ(X_u) ≤ k` bounds the number of distinct
 boundary signatures over the supported assignments by `2 ^ k`. -/
 theorem card_sig_image_le (u : RTree I.V) {k : ℕ} (hk : I.cutRankOf u.verts ≤ k) :
     ((I.suppFin u).image (I.sig u)).card ≤ 2 ^ k := by

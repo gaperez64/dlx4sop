@@ -21,7 +21,7 @@ namespace SopInstance
 
 variable (I : SopInstance)
 
-/-- **`thm:sop-rw`, formalized clauses.** The full rank-decomposition DP returns every
+/-- **`thm:dp-correct`, formalized clauses.** The full rank-decomposition DP returns every
 residue count, each subtree table has at most `r * 2^k` occupied states, and the semantic
 initialization/join-pair count is at most `|V| * (2 + (r * 2^k)^2)`. -/
 theorem rank_dp_spec (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) :
