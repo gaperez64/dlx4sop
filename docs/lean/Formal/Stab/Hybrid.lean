@@ -6,239 +6,202 @@ Authors: Alfons Laarman
 import Formal.Core.Cost
 
 /-!
-# The hybrid stabilizer/rank-width DP (`alg:stabjoin`, `thm:hybrid-dp`)
+# The stabilizer-rank optimization (`alg:stabjoin`, `thm:hybrid-dp`)
 
-`alg:stabjoin` runs the per-mode DP of `Formal.Core.Cost` but represents the mode-`a` table at a
-subtree `u` as a *list* of quadratic phase functions (`Formal.Stab.QPF`) summing to that table.
-The only quantity the runtime depends on is the length `Λ_u` of that list, and at every internal
-vertex the algorithm may pick one of three steps:
+`alg:stabjoin` is the per-mode DP of `Formal.Core.Cost` with a *one-way switch*. A strategy is an
+antichain `B` of decomposition vertices. At a vertex of `B` the mode-`a` table is built straight
+from the instance as a sum of at most `sr(τ_b)` quadratic phase functions (`Formal.Stab.Magic`)
+and evaluated on all `2^{ρ_b}` cut signatures; nothing below that vertex is computed. Everywhere
+else the ordinary join of `thm:fourier-speedup` runs on ordinary tables. The switch from the
+magic price to the width price therefore happens at most once on each rootward branch, and never
+reverses.
 
-* `Step.join` — multiply the children's lists termwise, `Λ_u ≤ Λ_L · Λ_R`;
-* `Step.rebuild` — throw the children away and re-derive the table from the instance, giving
-  `Λ_u ≤ sr(τ_u)` decompositions of the magic part below `u`;
-* `Step.point` — a join restricted to *point* tables, where equal supports are merged by
-  hashing, so `Λ_u ≤ 2^{ρ_u}` (`ρ_u` the cut rank).
+We represent the antichain by its indicator `S : RTree I.V → Bool`. The recursion prunes by
+construction: `costSwitch` stops descending wherever `S` fires, so the vertices that actually pay
+the magic price are exactly those where `S` fires with no strict ancestor doing so. No separate
+well-formedness condition on `S` is needed.
 
-This file formalizes exactly that recurrence and the two extremal claims of `thm:hybrid-dp`:
-the hybrid never loses against the plain per-mode join (`costHybrid_point_le`, matching
-`SopInstance.costMode_le'`), and it collapses to *linear, width-independent* cost on Clifford
-instances (`costHybrid_clifford_le`).
+`costSwitch` is `eq:total-cost` term for term, and this file proves the three claims the paper
+makes about it:
+
+* `costSwitch_false_eq_costMode` — with no switch at all the cost *is* `costMode`, so
+  `hybrid_never_loses_spec` inherits `SopInstance.costMode_le'` verbatim;
+* `costSwitch_clifford_le` — switching at the root of a Clifford instance costs at most `2`
+  operations, independently of the width;
+* `costOpt_le` with `costSwitch_bestS` — the postorder recurrence `eq:switch-recurrence` returns
+  the exact minimum over antichains, and `bestS` attains it.
 
 ## Scope
 
-* The stabilizer rank is an **abstract parameter** `sr : RTree I.V → ℕ`. The quantitative
-  upper bound on `sr(τ)` quoted in the paper is cited literature; it is neither assumed nor
-  axiomatized anywhere in this development, and no theorem below constrains `sr` except by an
-  explicit hypothesis of that theorem (as in `costHybrid_clifford_le`).
-* Only the operation count is modelled, exactly as in `Formal.Core.Cost`: `2` per leaf and
-  `Λ_L · Λ_R` per internal vertex. Soundness of the three steps — that the list really does sum
-  to the DP table — is the content of `Formal.Stab.QPF`, `Formal.Stab.Closure`,
-  `Formal.Stab.Join` and `Formal.Stab.Magic`, and is out of scope here.
-* `costHybrid_point_le` carries a hypothesis `1 ≤ k` that `SopInstance.costMode_le'` does not.
-  This is not slack in the proof: `alg:stabjoin` initializes every leaf with *two* point tables
-  (`Λ_leaf = 2`), whereas `costMode` charges the already-deduplicated leaf signature count
-  `statesSig`, which is `1` at an isolated vertex. The two models therefore differ by a constant
-  exactly when `k = 0`, i.e. when every cut has rank zero and the SOP variable graph is
-  edgeless. We state the hypothesis rather than hide the discrepancy.
+* The stabilizer rank is an **abstract parameter** `sr : RTree I.V → ℕ`. The quantitative upper
+  bound on `sr(τ)` quoted in the paper is cited literature; it is neither assumed nor axiomatized
+  anywhere in this development, and no theorem below constrains `sr` except by an explicit
+  hypothesis of that theorem (as in `costSwitch_clifford_le`). In particular the optimizer results
+  hold for *every* `sr`, matching the paper's claim that the recurrence needs no hypothesis on the
+  price.
+* Only the operation count is modelled, exactly as in `Formal.Core.Cost`. Soundness of the switch
+  — that the QPF sum really does evaluate to the DP table — is the content of `Formal.Stab.QPF`,
+  `Formal.Stab.Closure`, `Formal.Stab.Join` and `Formal.Stab.Magic`, and is out of scope here.
+* The paper's `O(n)` running time for the recurrence is a statement about a machine model and is
+  not formalized. What is formalized is that the recurrence returns the exact minimum.
 -/
 
 namespace Formal
 namespace Stab
 
-/-- The three steps available at an internal vertex of `alg:stabjoin`: termwise `join` of the
-children's lists, `rebuild` from the instance via a stabilizer decomposition, or a `point`
-join with hash merging of equal supports. -/
-inductive Step
-  | join
-  | rebuild
-  | point
-  deriving DecidableEq
+open SopInstance
 
-/-- `Λ_u`: the number of quadratic phase functions kept at subtree `u` by `alg:stabjoin` under
-the step strategy `S` and the abstract stabilizer-rank function `sr`. A leaf emits the two
-point tables `x_v = 0, 1`; an internal vertex pays according to its step. -/
-noncomputable def Lam (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step) :
-    RTree I.V → ℕ
-  | .leaf _ => 2
+variable (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Bool)
+
+/-- The charge at a switch vertex `b`: building the QPF sum costs `sr(τ_b)` and evaluating it on
+the `2^{ρ_b}` cut signatures costs `sr(τ_b) · 2^{ρ_b}`, the two terms of the first sum of
+`eq:total-cost`. -/
+noncomputable def switchCharge (u : RTree I.V) : ℕ := sr u * (1 + I.statesSig u)
+
+/-- Operation count of `alg:stabjoin` under the antichain with indicator `S`, in the model of
+`SopInstance.costMode`. A switch vertex pays `switchCharge` and prunes its subtree; every other
+internal vertex pays the ordinary pair scan `statesSig L · statesSig R`; every other leaf pays the
+`2` of the ordinary leaf initialization. This is `eq:total-cost`. -/
+noncomputable def costSwitch : RTree I.V → ℕ
+  | .leaf v => if S (.leaf v) then switchCharge I sr (.leaf v) else 2
   | .node L R =>
-    match S (.node L R) with
-    | .rebuild => sr (.node L R)
-    | .join    => Lam I sr S L * Lam I sr S R
-    | .point   => min (Lam I sr S L * Lam I sr S R) (I.statesSig (.node L R))
+    if S (.node L R) then switchCharge I sr (.node L R)
+    else costSwitch L + costSwitch R + I.statesSig L * I.statesSig R
 
-variable (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step)
+@[simp] theorem costSwitch_leaf (v : I.V) :
+    costSwitch I sr S (.leaf v)
+      = if S (.leaf v) then switchCharge I sr (.leaf v) else 2 := rfl
 
-/-- Leaf initialization of `alg:stabjoin`: two point tables, so `Λ_leaf = 2`. -/
-@[simp] theorem Lam_leaf (v : I.V) : Lam I sr S (.leaf v) = 2 := rfl
+@[simp] theorem costSwitch_node (L R : RTree I.V) :
+    costSwitch I sr S (.node L R)
+      = if S (.node L R) then switchCharge I sr (.node L R)
+        else costSwitch I sr S L + costSwitch I sr S R + I.statesSig L * I.statesSig R := rfl
 
-/-- The `Rebuild` annotation of `alg:stabjoin`: `Λ_u ≤ sr(τ_u)`, the stabilizer rank of the
-magic part below `u`. -/
-theorem Lam_node_rebuild {L R : RTree I.V} (h : S (.node L R) = Step.rebuild) :
-    Lam I sr S (.node L R) = sr (.node L R) := by
-  rw [Lam, h]
+/-! ## The empty antichain: the ordinary DP, unchanged -/
 
-/-- The `Join` annotation of `alg:stabjoin`: a termwise product of the children's lists,
-`Λ_u ≤ Λ_L · Λ_R`. -/
-theorem Lam_node_join {L R : RTree I.V} (h : S (.node L R) = Step.join) :
-    Lam I sr S (.node L R) = Lam I sr S L * Lam I sr S R := by
-  rw [Lam, h]
-
-/-- The `Point` annotation of `alg:stabjoin`: a join whose equal supports are merged by hashing,
-so the list is additionally capped by the number of occupied signatures at the cut. -/
-theorem Lam_node_point {L R : RTree I.V} (h : S (.node L R) = Step.point) :
-    Lam I sr S (.node L R)
-      = min (Lam I sr S L * Lam I sr S R) (I.statesSig (.node L R)) := by
-  rw [Lam, h]
-
-/-- The `2^{ρ_u}` half of the `Point` step: after hash merging at most one entry survives per
-occupied boundary signature. -/
-theorem Lam_node_point_le {L R : RTree I.V} (h : S (.node L R) = Step.point) :
-    Lam I sr S (.node L R) ≤ I.statesSig (.node L R) := by
-  rw [Lam_node_point I sr S h]
-  exact min_le_right _ _
-
-/-! ## Point form -/
-
-/-- `PointForm S u`: every internal vertex of the subtree `u` takes the `Point` step. This is
-the side condition of `alg:stabjoin` under which the point tables are never destroyed, and hence
-under which the `2^{ρ_u}` bound of `thm:hybrid-dp` is legitimate. -/
-def PointForm (I : SopInstance) (S : RTree I.V → Step) : RTree I.V → Prop
-  | .leaf _ => True
-  | .node L R => S (.node L R) = Step.point ∧ PointForm I S L ∧ PointForm I S R
-
-@[simp] theorem PointForm_leaf (v : I.V) : PointForm I S (.leaf v) := trivial
-
-/-- Point form at a node is the step at the node together with point form at both children. -/
-theorem PointForm_node {L R : RTree I.V} :
-    PointForm I S (.node L R)
-      ↔ S (.node L R) = Step.point ∧ PointForm I S L ∧ PointForm I S R := Iff.rfl
-
-/-- Point form is hereditary: every subtree of a point-form tree is itself in point form. -/
-theorem PointForm_of_subtree {u t : RTree I.V} (hst : RTree.Subtree u t) :
-    PointForm I S t → PointForm I S u := by
-  induction hst with
-  | refl => exact id
-  | left _ ih => exact fun h => ih (PointForm_node I S |>.mp h).2.1
-  | right _ ih => exact fun h => ih (PointForm_node I S |>.mp h).2.2
-
-/-- **The `2^{ρ_u}` clause of `thm:hybrid-dp`.** In point form the list at `u` is capped by the
-number of occupied boundary signatures at the cut of `u`; the `max 2` covers only the leaf case,
-where `alg:stabjoin` always emits its two point tables. -/
-theorem Lam_le_of_pointForm {u : RTree I.V} (h : PointForm I S u) :
-    Lam I sr S u ≤ max 2 (I.statesSig u) := by
-  cases u with
-  | leaf v => rw [Lam_leaf]; exact le_max_left _ _
-  | node L R =>
-      exact le_trans (Lam_node_point_le I sr S (PointForm_node I S |>.mp h).1)
-        (le_max_right _ _)
-
-/-! ## The operation count of `alg:stabjoin` -/
-
-/-- Operation count of `alg:stabjoin`, in the model of `SopInstance.costMode`: `2` per leaf, and a
-pair scan `Λ_L · Λ_R` of the two children's lists per internal vertex. -/
-noncomputable def costHybrid (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step) :
-    RTree I.V → ℕ
-  | .leaf _ => 2
-  | .node L R => costHybrid I sr S L + costHybrid I sr S R + Lam I sr S L * Lam I sr S R
-
-@[simp] theorem costHybrid_leaf (v : I.V) : costHybrid I sr S (.leaf v) = 2 := rfl
-
-@[simp] theorem costHybrid_node (L R : RTree I.V) :
-    costHybrid I sr S (.node L R)
-      = costHybrid I sr S L + costHybrid I sr S R + Lam I sr S L * Lam I sr S R := rfl
-
-/-- Sharp form of the hybrid runtime bound (`thm:hybrid-dp`): if every subtree keeps a list of
-length at most `B`, then `costHybrid ≤ 2·#leaves + #nodes·B²`. This mirrors
-`SopInstance.costMode_le_sharp`, with the uniform list bound `B` in place of `2^k`. -/
-theorem costHybrid_le_sharp {B : ℕ} :
-    ∀ t : RTree I.V, (∀ u, RTree.Subtree u t → Lam I sr S u ≤ B) →
-      costHybrid I sr S t ≤ 2 * t.leafCount + t.nodeCount * (B * B) := by
+/-- **`thm:hybrid-dp`, the `B = ∅` endpoint.** With no switch anywhere, `alg:stabjoin` performs
+exactly the operations of the per-mode DP: the two definitions agree at every leaf and at every
+internal vertex. This is the paper's "choosing `B = ∅` recovers `thm:fourier-speedup` exactly". -/
+theorem costSwitch_false_eq_costMode :
+    ∀ t : RTree I.V, costSwitch I sr (fun _ => false) t = I.costMode t := by
   intro t
   induction t with
-  | leaf _ => intro _; simp
+  | leaf v => simp
+  | node L R ihL ihR => simp [ihL, ihR]
+
+/-- **The optimization never loses.** Under a width-`k` decomposition the empty antichain meets
+the same `|V| · (2 + 4^k)` operation count as `SopInstance.costMode_le'`. Unlike the earlier
+list-based model this carries no `1 ≤ k` hypothesis: the two cost functions are equal, not merely
+comparable. -/
+theorem costSwitch_false_le (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) :
+    costSwitch I sr (fun _ => false) D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) := by
+  rw [costSwitch_false_eq_costMode]
+  exact I.costMode_le' D hw
+
+/-! ## The root switch: the Clifford collapse -/
+
+/-- The root cut of a covering decomposition is empty, so its cut matrix has no columns and its
+rank is `0`. -/
+theorem cutRankOf_verts_root (D : RankDecomp I) : I.cutRankOf D.tree.verts = 0 := by
+  have hempty : IsEmpty {w // w ∉ D.tree.verts} := by
+    constructor
+    rintro ⟨w, hw⟩
+    rw [D.covers] at hw
+    exact hw (Finset.mem_univ w)
+  have hle := Matrix.rank_le_card_width (I.cutMatrix D.tree.verts)
+  have hcard : Fintype.card {w // w ∉ D.tree.verts} = 0 := by
+    simp [Fintype.card_eq_zero]
+  simpa [SopInstance.cutRankOf, hcard] using hle
+
+/-- At the root only the empty signature occurs. -/
+theorem statesSig_root (D : RankDecomp I) : I.statesSig D.tree ≤ 1 := by
+  have := I.statesSig_le (k := 0) (le_of_eq (cutRankOf_verts_root I D))
+  simpa using this
+
+/-- **`thm:hybrid-dp`, the root-switch endpoint (Gottesman–Knill).** On an instance with no
+`a`-magic vertex — `sr ≤ 1` — switching at the root evaluates the whole mode sum in at most `2`
+operations, on any graph and at any rank-width, where the ordinary join of
+`SopInstance.costMode_le'` still pays `4^k` per internal vertex. -/
+theorem costSwitch_clifford_le (D : RankDecomp I) (hsr : ∀ u, sr u ≤ 1) :
+    costSwitch I sr (fun _ => true) D.tree ≤ 2 := by
+  have hcharge : switchCharge I sr D.tree ≤ 2 := by
+    have h1 : sr D.tree ≤ 1 := hsr D.tree
+    have h2 : 1 + I.statesSig D.tree ≤ 2 := by
+      have := statesSig_root I D
+      omega
+    calc switchCharge I sr D.tree = sr D.tree * (1 + I.statesSig D.tree) := rfl
+      _ ≤ 1 * 2 := Nat.mul_le_mul h1 h2
+      _ = 2 := by norm_num
+  cases htree : D.tree with
+  | leaf v => rw [htree] at hcharge; simpa using hcharge
+  | node L R => rw [htree] at hcharge; simpa using hcharge
+
+/-! ## The optimizer: `eq:switch-recurrence` -/
+
+/-- The postorder recurrence of `eq:switch-recurrence`: at every vertex, take the cheaper of
+switching here and pruning, or paying the ordinary join above the children's optima. -/
+noncomputable def costOpt : RTree I.V → ℕ
+  | .leaf v => min (switchCharge I sr (.leaf v)) 2
+  | .node L R =>
+    min (switchCharge I sr (.node L R)) (costOpt L + costOpt R + I.statesSig L * I.statesSig R)
+
+@[simp] theorem costOpt_leaf (v : I.V) :
+    costOpt I sr (.leaf v) = min (switchCharge I sr (.leaf v)) 2 := rfl
+
+@[simp] theorem costOpt_node (L R : RTree I.V) :
+    costOpt I sr (.node L R)
+      = min (switchCharge I sr (.node L R))
+          (costOpt I sr L + costOpt I sr R + I.statesSig L * I.statesSig R) := rfl
+
+/-- **The recurrence is a lower bound.** No antichain beats `costOpt`, whatever the price `sr`. -/
+theorem costOpt_le : ∀ t : RTree I.V, costOpt I sr t ≤ costSwitch I sr S t := by
+  intro t
+  induction t with
+  | leaf v =>
+      by_cases h : S (.leaf v) = true <;> simp [h]
   | node L R ihL ihR =>
-      intro h
-      have hL := ihL (fun u hu => h u (RTree.Subtree.left hu))
-      have hR := ihR (fun u hu => h u (RTree.Subtree.right hu))
-      have hsL : Lam I sr S L ≤ B := h L (RTree.Subtree.left (RTree.Subtree.refl L))
-      have hsR : Lam I sr S R ≤ B := h R (RTree.Subtree.right (RTree.Subtree.refl R))
-      calc costHybrid I sr S (RTree.node L R)
-          = costHybrid I sr S L + costHybrid I sr S R + Lam I sr S L * Lam I sr S R := rfl
-        _ ≤ (2 * L.leafCount + L.nodeCount * (B * B))
-              + (2 * R.leafCount + R.nodeCount * (B * B))
-              + B * B :=
-            Nat.add_le_add (Nat.add_le_add hL hR) (Nat.mul_le_mul hsL hsR)
-        _ = 2 * (RTree.node L R).leafCount + (RTree.node L R).nodeCount * (B * B) := by
-            rw [RTree.leafCount_node, RTree.nodeCount_node]; ring
+      by_cases h : S (.node L R) = true
+      · simp [h]
+      · simp only [costSwitch_node, costOpt_node, h, Bool.not_eq_true] at *
+        refine le_trans (min_le_right _ _) ?_
+        exact Nat.add_le_add (Nat.add_le_add ihL ihR) le_rfl
 
-/-! ## The bad case: point form is never worse than the plain per-mode join -/
+/-- The antichain the recurrence selects: switch exactly where switching is no dearer than
+computing the subtree. Defining it by the same recursion avoids gluing per-subtree witnesses into
+a total indicator. -/
+noncomputable def bestS : RTree I.V → Bool
+  | .leaf v => decide (switchCharge I sr (.leaf v) ≤ 2)
+  | .node L R =>
+    decide (switchCharge I sr (.node L R)
+      ≤ costOpt I sr L + costOpt I sr R + I.statesSig L * I.statesSig R)
 
-/-- Under a width-`k` decomposition a point-form strategy keeps at most `2^k` phase functions at
-*every* subtree: `2^{ρ_u} ≤ 2^k` signatures survive the hash merge, and the two leaf tables also
-fit since `1 ≤ k`. -/
-theorem Lam_le_of_pointForm_width {D : RankDecomp I} {k : ℕ} (hw : I.WidthBounded D k)
-    (hk : 1 ≤ k) (hpf : PointForm I S D.tree) {u : RTree I.V} (hu : RTree.Subtree u D.tree) :
-    Lam I sr S u ≤ 2 ^ k := by
-  have h2 : (2 : ℕ) ≤ 2 ^ k := by
-    calc (2 : ℕ) = 2 ^ 1 := (pow_one 2).symm
-      _ ≤ 2 ^ k := Nat.pow_le_pow_right (by norm_num) hk
-  have hs : I.statesSig u ≤ 2 ^ k := I.statesSig_le (hw u hu)
-  exact le_trans (Lam_le_of_pointForm I sr S (PointForm_of_subtree I S hu hpf)) (max_le h2 hs)
+@[simp] theorem bestS_leaf (v : I.V) :
+    bestS I sr (.leaf v) = decide (switchCharge I sr (.leaf v) ≤ 2) := rfl
 
-/-- **`thm:hybrid-dp` (the hybrid never loses).** A strategy forced into point form performs
-exactly the pairwise signature scan of `thm:fourier-speedup`, so its operation count meets the
-same `|V| · (2 + 4^k)` bound as `SopInstance.costMode_le'`. -/
-theorem costHybrid_point_le (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) (hk : 1 ≤ k)
-    (hpf : PointForm I S D.tree) :
-    costHybrid I sr S D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) := by
-  have hlc := I.leafCount_le_card D
-  have hnc : D.tree.nodeCount ≤ Fintype.card I.V := by
-    have := RTree.leafCount_eq D.tree
-    omega
-  have h4 : (4 : ℕ) ^ k = 2 ^ k * 2 ^ k := by
-    rw [← pow_add, ← two_mul, pow_mul]
-    norm_num
-  calc costHybrid I sr S D.tree
-      ≤ 2 * D.tree.leafCount + D.tree.nodeCount * (2 ^ k * 2 ^ k) :=
-        costHybrid_le_sharp I sr S D.tree
-          (fun _ hu => Lam_le_of_pointForm_width I sr S hw hk hpf hu)
-    _ ≤ 2 * Fintype.card I.V + Fintype.card I.V * (2 ^ k * 2 ^ k) :=
-        Nat.add_le_add (Nat.mul_le_mul le_rfl hlc) (Nat.mul_le_mul hnc le_rfl)
-    _ = Fintype.card I.V * (2 + 2 ^ k * 2 ^ k) := by ring
-    _ = Fintype.card I.V * (2 + 4 ^ k) := by rw [h4]
+@[simp] theorem bestS_node (L R : RTree I.V) :
+    bestS I sr (.node L R)
+      = decide (switchCharge I sr (.node L R)
+          ≤ costOpt I sr L + costOpt I sr R + I.statesSig L * I.statesSig R) := rfl
 
-/-! ## The ideal case: the Clifford collapse -/
-
-/-- On an instance with no magic vertex below any cut, `Rebuild` returns a single quadratic
-phase function, so the always-rebuild strategy keeps at most two of them everywhere: `2` at a
-leaf and `sr ≤ 1` at every internal vertex. -/
-theorem Lam_le_of_clifford (hsr : ∀ u, sr u ≤ 1) (hS : ∀ u, S u = Step.rebuild) :
-    ∀ t : RTree I.V, Lam I sr S t ≤ 2 := by
+/-- **The bound is attained.** `bestS` is an antichain whose cost is exactly `costOpt`, so
+`eq:switch-recurrence` returns the true minimum over antichains together with a witness realizing
+it. -/
+theorem costSwitch_bestS : ∀ t : RTree I.V,
+    costSwitch I sr (bestS I sr) t = costOpt I sr t := by
   intro t
   induction t with
-  | leaf _ => simp
-  | node L R _ _ =>
-      rw [Lam_node_rebuild I sr S (hS (RTree.node L R))]
-      exact le_trans (hsr (RTree.node L R)) (by norm_num)
-
-/-- **`thm:hybrid-dp` (Clifford collapse).** If no cut has a magic vertex below it — `sr u ≤ 1`
-— then the always-rebuild strategy runs `alg:stabjoin` in `6·|V|` operations: linear in `n` *and
-independent of the width*, where the naive join of `SopInstance.costMode_le'` still pays `4^k`
-per internal vertex. -/
-theorem costHybrid_clifford_le (D : RankDecomp I) (hsr : ∀ u, sr u ≤ 1)
-    (hS : ∀ u, S u = Step.rebuild) :
-    costHybrid I sr S D.tree ≤ 6 * Fintype.card I.V := by
-  have hlc := I.leafCount_le_card D
-  have hnc : D.tree.nodeCount ≤ Fintype.card I.V := by
-    have := RTree.leafCount_eq D.tree
-    omega
-  calc costHybrid I sr S D.tree
-      ≤ 2 * D.tree.leafCount + D.tree.nodeCount * (2 * 2) :=
-        costHybrid_le_sharp I sr S D.tree
-          (fun u _ => Lam_le_of_clifford I sr S hsr hS u)
-    _ ≤ 2 * Fintype.card I.V + Fintype.card I.V * (2 * 2) :=
-        Nat.add_le_add (Nat.mul_le_mul le_rfl hlc) (Nat.mul_le_mul hnc le_rfl)
-    _ = 6 * Fintype.card I.V := by ring
+  | leaf v =>
+      by_cases h : switchCharge I sr (.leaf v) ≤ 2
+      · simp [h]
+      · simp [h]
+        omega
+  | node L R ihL ihR =>
+      by_cases h : switchCharge I sr (.node L R)
+          ≤ costOpt I sr L + costOpt I sr R + I.statesSig L * I.statesSig R
+      · simp [h]
+      · simp only [costSwitch_node, costOpt_node, bestS_node, decide_eq_true_eq, h, if_false]
+        rw [ihL, ihR]
+        omega
 
 end Stab
 end Formal

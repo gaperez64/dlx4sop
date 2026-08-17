@@ -6,15 +6,15 @@ Authors: Alfons Laarman
 import Mathlib
 
 /-!
-# The signature-space cardinality bound (`lem:signatures-le-2^k`)
+# The signature-space cardinality bound (the `2^k` count inside `thm:dp-correct`)
 
 The single fact powering every runtime theorem of the paper: the set of boundary signatures
 occurring at a cut is the row space of the cut matrix over `F₂`, so its size is exactly
 `2 ^ rank` — and hence at most `2 ^ k` for a width-`k` decomposition.
 
 Here we prove the pure matrix statement: the image of `z ↦ z ᵥ* M` over all `z : m → ZMod 2`
-has cardinality `2 ^ M.rank`. The paper re-proves this inline in both `thm:sop-rw` and
-`thm:fourier-speedup`; we factor it out once (plan: "factor out `lem:signatures-le-2^k`").
+has cardinality `2 ^ M.rank`. The paper re-proves this inline in both `thm:dp-correct` and
+`thm:fourier-speedup`; we factor it out once.
 -/
 
 open scoped BigOperators

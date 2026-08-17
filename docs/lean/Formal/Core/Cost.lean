@@ -6,11 +6,11 @@ Authors: Alfons Laarman
 import Formal.Core.Width
 
 /-!
-# The operation-count model and the runtime bounds (`thm:sop-rw`, `thm:fourier-speedup`)
+# The operation-count model and the runtime bounds (`thm:dp-correct`, `thm:fourier-speedup`)
 
 The semantic cost of the DP of `alg:rw-dp`: each leaf initializes its two table entries
 (cost `2`), and each join scans all pairs of child states (cost `statesL · statesR`).
-`costFull` counts full DP states `(σ, φ)` (the `r · 2^k` regime of `thm:sop-rw`); `costMode`
+`costFull` counts full DP states `(σ, φ)` (the `r · 2^k` regime of `thm:dp-correct`); `costMode`
 counts signature-only states (the per-mode `2^k` regime behind `thm:fourier-speedup`).
 
 Combining the state bounds of `Formal.Core.Width` with the leaf count `≤ |V|` of a
@@ -103,7 +103,7 @@ theorem statesSig_le {u : RTree I.V} {k : ℕ} (hk : I.cutRankOf u.verts ≤ k) 
 
 end SopInstance
 
-/-- Operation count of the full DP (`thm:sop-rw`): `2` per leaf, a full pair scan
+/-- Operation count of the full DP (`thm:dp-correct`): `2` per leaf, a full pair scan
 `statesFull L · statesFull R` per join. -/
 noncomputable def SopInstance.costFull (I : SopInstance) : RTree I.V → ℕ
   | .leaf _ => 2
@@ -183,7 +183,7 @@ theorem costMode_le_sharp {k : ℕ} :
               + (RTree.node L R).nodeCount * (2 ^ k * 2 ^ k) := by
             rw [RTree.leafCount_node, RTree.nodeCount_node]; ring
 
-/-- **`thm:sop-rw` (runtime).** A width-`k` decomposition runs the full DP in at most
+/-- **`thm:dp-correct` (runtime).** A width-`k` decomposition runs the full DP in at most
 `|V| · (2 + (r·2^k)²)` operations — time `r² 4^k poly(n)`. -/
 theorem costFull_le (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) :
     I.costFull D.tree ≤ Fintype.card I.V * (2 + (I.r * 2 ^ k) * (I.r * 2 ^ k)) := by

@@ -8,7 +8,7 @@ import Formal.Stab.Magic
 import Formal.Stab.Hybrid
 
 /-!
-# Paper-facing statements for the stabilizer-rank join (`sec:stabjoin`)
+# Paper-facing statements for the stabilizer-rank optimization (`sec:stabjoin`)
 
 This module packages the independently proved closure, join, magic-decomposition and
 operation-count lemmas into statements whose assumptions and conclusions match the Lean badges
@@ -25,7 +25,7 @@ for the rank-width layer.)
   elementary `2^τ` count of `magic_decomp_spec` is machine-checked.
 * Description size `O(m²)` and running time `O(m³)` for the QPF operations are not formalized.
   As everywhere in this development, runtime is modelled by operation counts — here the
-  `Λ_L · Λ_R` pair scans of `costHybrid` — and never by a machine model.
+  charges of `costSwitch` — and never by a machine model.
 * `thm:join-mm-barrier` itself is out of scope; `stab_join_spec` is the *positive* statement
   that the barrier's black-box hypothesis fails for the tables the DP actually produces.
 -/
@@ -77,31 +77,38 @@ theorem magic_decomp_spec (I : SopInstance) (h4 : 4 ∣ I.r) (a : ZMod I.r) :
       ∧ (I.magicSet a).powerset.card = 2 ^ (I.magicSet a).card :=
   ⟨I.modeWeight_sum_qpf h4 a, I.card_powerset_magicSet a⟩
 
-/-! ## `thm:hybrid-dp`: the two extremal cases -/
+/-! ## `thm:hybrid-dp`: the two endpoints, and the optimizer of `eq:switch-recurrence` -/
 
-/-- **The paper's "Ideal case" (Gottesman–Knill).**  On an instance with no `a`-magic vertex,
-the whole mode-`a` weight is a *single* QPF, and the always-`Rebuild` strategy runs
-`alg:stabjoin` in `6·|V|` operations — linear in `n` and **independent of the rank-width**,
-where the naive join of `thm:fourier-speedup` still pays `4^k` per internal vertex. -/
-theorem clifford_collapse_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step)
+/-- **The paper's Clifford collapse (Gottesman–Knill).**  On an instance with no `a`-magic
+vertex, the whole mode-`a` weight is a *single* QPF, and switching at the root evaluates the mode
+sum in at most `2` operations — on any graph and at any rank-width, where the ordinary join of
+`thm:fourier-speedup` still pays `4^k` per internal vertex. -/
+theorem clifford_collapse_spec (I : SopInstance) (sr : RTree I.V → ℕ)
     (D : RankDecomp I) (h4 : 4 ∣ I.r) (a : ZMod I.r) (hc : ∀ v, I.ACliff a v)
-    (hsr : ∀ u, sr u ≤ 1) (hS : ∀ u, S u = Step.rebuild) :
+    (hsr : ∀ u, sr u ≤ 1) :
     IsQPF (fun z : I.V → ZMod 2 => I.chi (a * I.phi z))
-      ∧ costHybrid I sr S D.tree ≤ 6 * Fintype.card I.V :=
-  ⟨I.isQPF_modeWeight_of_cliff h4 a hc, costHybrid_clifford_le I sr S D hsr hS⟩
+      ∧ costSwitch I sr (fun _ => true) D.tree ≤ 2 :=
+  ⟨I.isQPF_modeWeight_of_cliff h4 a hc, costSwitch_clifford_le I sr D hsr⟩
 
-/-- **The paper's "Bad case" (the hybrid never loses).**  A strategy forced into point form
-keeps at most `2^{ρ_u}` phase functions at every cut and performs exactly the pairwise
-signature scan of `thm:fourier-speedup`, so it meets the same `|V| · (2 + 4^k)` operation count
-as `SopInstance.costMode_le'`.  (`1 ≤ k` only excludes the degenerate edgeless case where every
-cut has rank zero; see the scope note in `Formal.Stab.Hybrid`.) -/
-theorem hybrid_never_loses_spec (I : SopInstance) (sr : RTree I.V → ℕ) (S : RTree I.V → Step)
-    (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) (hk : 1 ≤ k)
-    (hpf : PointForm I S D.tree) :
-    (∀ u, RTree.Subtree u D.tree → Lam I sr S u ≤ 2 ^ k)
-      ∧ costHybrid I sr S D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) :=
-  ⟨fun _ hu => Lam_le_of_pointForm_width I sr S hw hk hpf hu,
-    costHybrid_point_le I sr S D hw hk hpf⟩
+/-- **The paper's `B = ∅` endpoint (the optimization never loses).**  With no switch anywhere,
+`alg:stabjoin` performs exactly the operations of the per-mode DP, so it meets the same
+`|V| · (2 + 4^k)` operation count as `SopInstance.costMode_le'`.  The two cost functions are
+equal, not merely comparable, which is why no `1 ≤ k` hypothesis appears. -/
+theorem hybrid_never_loses_spec (I : SopInstance) (sr : RTree I.V → ℕ)
+    (D : RankDecomp I) {k : ℕ} (hw : I.WidthBounded D k) :
+    costSwitch I sr (fun _ => false) D.tree = I.costMode D.tree
+      ∧ costSwitch I sr (fun _ => false) D.tree ≤ Fintype.card I.V * (2 + 4 ^ k) :=
+  ⟨costSwitch_false_eq_costMode I sr D.tree, costSwitch_false_le I sr D hw⟩
+
+/-- **`eq:switch-recurrence`, formalized.**  The postorder recurrence is a lower bound on every
+antichain, and `bestS` attains it, so it returns the exact minimum together with a witness.  This
+holds for *every* price `sr`: unlike the earlier elementary-price optimizer it assumes nothing
+about `sr(τ)`.  The paper's `O(n)` running time is a machine-model statement and is not
+formalized. -/
+theorem switch_optimum_spec (I : SopInstance) (sr : RTree I.V → ℕ) (t : RTree I.V) :
+    (∀ S : RTree I.V → Bool, costOpt I sr t ≤ costSwitch I sr S t)
+      ∧ costSwitch I sr (bestS I sr) t = costOpt I sr t :=
+  ⟨fun S => costOpt_le I sr S t, costSwitch_bestS I sr t⟩
 
 end Stab
 end Formal

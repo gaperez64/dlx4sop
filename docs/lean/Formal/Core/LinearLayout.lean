@@ -6,7 +6,7 @@ Authors: Alfons Laarman
 import Formal.Core.Cost
 
 /-!
-# Linear layouts as caterpillar decompositions (`thm:linear-layout-fourier`, `cor:lrw`)
+# Linear layouts as caterpillar decompositions (`thm:linear-layout-fourier`)
 
 A linear layout `v :: l = [v, w₁, …, wₙ]` of the variables induces the left-nested
 *caterpillar* tree `node (… (node (leaf v) (leaf w₁)) …) (leaf wₙ)`. Every rooted subtree of
@@ -20,7 +20,8 @@ most `2` occupied signature states (`statesSig_leaf_le`), so one step of the per
 at most `2 + 2 · 2^k` operations instead of the `2^k · 2^k` pair scan of a general join.
 Summing along the spine gives the op-count bound
 `costMode ≤ (n + 1) · (2 + 2 · 2^k)` (`costMode_layout_le`) — the paper's base-2 claim for
-linear layouts (`cor:lrw`) in operation-count form.
+linear layouts in operation-count form.  (The paper folded its linear-rank-width corollary
+into the closing sentence of `thm:linear-layout-fourier`.)
 -/
 
 namespace Formal
